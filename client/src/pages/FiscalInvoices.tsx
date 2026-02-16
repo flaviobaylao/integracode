@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -11,12 +11,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   FileText, Plus, Send, XCircle, Trash2, Eye, RefreshCw,
   CheckCircle2, Clock, AlertTriangle, ShieldCheck, Award,
-  Loader2, ChevronLeft
+  Loader2, ChevronLeft, ChevronsUpDown, Check
 } from 'lucide-react';
 
 interface FiscalInvoice {
@@ -160,6 +162,46 @@ export default function FiscalInvoices() {
     items: [] as Array<{ productCode: string; productName: string; ncm: string; cfop: string; quantity: string; unitPrice: string }>,
   });
   const [newItem, setNewItem] = useState({ productCode: '', productName: '', ncm: '', cfop: '', quantity: '1', unitPrice: '0' });
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+
+  const { data: allCustomers, isLoading: loadingCustomers } = useQuery<any[]>({
+    queryKey: ['/api/customers/all-for-sales'],
+    enabled: showCreateDialog,
+  });
+
+  const { data: allProducts, isLoading: loadingProducts } = useQuery<any[]>({
+    queryKey: ['/api/products'],
+    enabled: showCreateDialog,
+  });
+
+  const filteredCustomers = useMemo(() => {
+    if (!allCustomers) return [];
+    const q = customerSearch.toLowerCase();
+    if (!q) return allCustomers.slice(0, 50);
+    return allCustomers.filter(c =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.companyName || '').toLowerCase().includes(q) ||
+      (c.fantasyName || '').toLowerCase().includes(q) ||
+      (c.cnpj || '').includes(q) ||
+      (c.cpf || '').includes(q)
+    ).slice(0, 50);
+  }, [allCustomers, customerSearch]);
+
+  const filteredProducts = useMemo(() => {
+    if (!allProducts) return [];
+    const q = productSearch.toLowerCase();
+    if (!q) return allProducts.filter((p: any) => p.isActive !== false).slice(0, 50);
+    return allProducts.filter((p: any) =>
+      p.isActive !== false && (
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.omieCode || '').toLowerCase().includes(q) ||
+        (p.omieCodigo || '').toLowerCase().includes(q)
+      )
+    ).slice(0, 50);
+  }, [allProducts, productSearch]);
 
   const { data: stats, isLoading: loadingStats } = useQuery<DashboardStats>({
     queryKey: ['/api/fiscal-dashboard'],
@@ -304,6 +346,8 @@ export default function FiscalInvoices() {
       natureOfOperation: '', paymentMethod: 'a_vista', environment: 'homologacao', notes: '', items: [],
     });
     setNewItem({ productCode: '', productName: '', ncm: '', cfop: '', quantity: '1', unitPrice: '0' });
+    setCustomerSearch('');
+    setProductSearch('');
   }
 
   function handleAddItem() {
@@ -671,14 +715,71 @@ export default function FiscalInvoices() {
             <DialogDescription>Preencha os dados da NF-e. Itens podem ser adicionados abaixo.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Cliente *</Label>
+              <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" role="combobox" aria-expanded={customerSearchOpen} className="w-full justify-between font-normal h-auto min-h-[40px] text-left">
+                    {newInvoice.customerName ? (
+                      <div className="flex flex-col items-start gap-0.5">
+                        <span className="text-sm">{newInvoice.customerName}</span>
+                        {newInvoice.customerCnpjCpf && <span className="text-xs text-muted-foreground">{newInvoice.customerCnpjCpf}</span>}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Buscar cliente por nome, razão social ou CNPJ/CPF...</span>
+                    )}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[500px] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput placeholder="Digite para buscar cliente..." value={customerSearch} onValueChange={setCustomerSearch} />
+                    <CommandList>
+                      <CommandEmpty>{loadingCustomers ? 'Carregando clientes...' : 'Nenhum cliente encontrado.'}</CommandEmpty>
+                      <CommandGroup>
+                        {filteredCustomers.map((customer: any) => {
+                          const displayName = customer.companyName || customer.fantasyName || customer.name;
+                          const doc = customer.cnpj || customer.cpf || '';
+                          return (
+                            <CommandItem
+                              key={customer.id}
+                              value={customer.id}
+                              onSelect={() => {
+                                setNewInvoice(p => ({
+                                  ...p,
+                                  customerName: displayName,
+                                  customerCnpjCpf: doc,
+                                }));
+                                setCustomerSearchOpen(false);
+                                setCustomerSearch('');
+                              }}
+                            >
+                              <Check className={`mr-2 h-4 w-4 ${newInvoice.customerName === displayName ? 'opacity-100' : 'opacity-0'}`} />
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">{displayName}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {customer.fantasyName && customer.companyName ? `${customer.fantasyName} • ` : ''}
+                                  {doc ? doc : 'Sem documento'}
+                                  {customer.city ? ` • ${customer.city}/${customer.state || ''}` : ''}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Nome do Cliente *</Label>
-                <Input value={newInvoice.customerName} onChange={e => setNewInvoice(p => ({ ...p, customerName: e.target.value }))} placeholder="Nome completo ou razão social" />
+                <Label>Nome/Razão Social</Label>
+                <Input value={newInvoice.customerName} onChange={e => setNewInvoice(p => ({ ...p, customerName: e.target.value }))} placeholder="Preenchido ao selecionar cliente" />
               </div>
               <div>
-                <Label>CPF/CNPJ *</Label>
-                <Input value={newInvoice.customerCnpjCpf} onChange={e => setNewInvoice(p => ({ ...p, customerCnpjCpf: e.target.value }))} placeholder="00.000.000/0001-00" />
+                <Label>CPF/CNPJ</Label>
+                <Input value={newInvoice.customerCnpjCpf} onChange={e => setNewInvoice(p => ({ ...p, customerCnpjCpf: e.target.value }))} placeholder="Preenchido ao selecionar cliente" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -755,18 +856,65 @@ export default function FiscalInvoices() {
                   ))}
                 </div>
               )}
-              <div className="grid grid-cols-4 gap-2">
-                <Input placeholder="Produto" value={newItem.productName} onChange={e => setNewItem(p => ({ ...p, productName: e.target.value }))} className="col-span-2" />
-                <Input placeholder="Qtd" type="number" value={newItem.quantity} onChange={e => setNewItem(p => ({ ...p, quantity: e.target.value }))} />
-                <Input placeholder="Preço unit." type="number" step="0.01" value={newItem.unitPrice} onChange={e => setNewItem(p => ({ ...p, unitPrice: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <Input placeholder="Código" value={newItem.productCode} onChange={e => setNewItem(p => ({ ...p, productCode: e.target.value }))} />
-                <Input placeholder="NCM" value={newItem.ncm} onChange={e => setNewItem(p => ({ ...p, ncm: e.target.value }))} />
-                <Input placeholder="CFOP item" value={newItem.cfop} onChange={e => setNewItem(p => ({ ...p, cfop: e.target.value }))} />
-                <Button variant="outline" size="sm" onClick={handleAddItem}>
-                  <Plus className="h-4 w-4 mr-1" /> Adicionar
-                </Button>
+              <div className="space-y-2">
+                <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" aria-expanded={productSearchOpen} className="w-full justify-between font-normal h-auto min-h-[36px] text-left text-sm">
+                      {newItem.productName ? (
+                        <div className="flex items-center gap-2">
+                          <span>{newItem.productName}</span>
+                          {newItem.productCode && <span className="text-xs text-muted-foreground">({newItem.productCode})</span>}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Buscar produto por nome ou código...</span>
+                      )}
+                      <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[450px] p-0" align="start">
+                    <Command shouldFilter={false}>
+                      <CommandInput placeholder="Digite para buscar produto..." value={productSearch} onValueChange={setProductSearch} />
+                      <CommandList>
+                        <CommandEmpty>{loadingProducts ? 'Carregando produtos...' : 'Nenhum produto encontrado.'}</CommandEmpty>
+                        <CommandGroup>
+                          {filteredProducts.map((product: any) => (
+                            <CommandItem
+                              key={product.id}
+                              value={product.id}
+                              onSelect={() => {
+                                setNewItem(p => ({
+                                  ...p,
+                                  productName: product.name,
+                                  productCode: product.omieCode || product.omieCodigo || '',
+                                  unitPrice: product.price || '0',
+                                  cfop: newInvoice.cfop || p.cfop,
+                                }));
+                                setProductSearchOpen(false);
+                                setProductSearch('');
+                              }}
+                            >
+                              <Check className={`mr-2 h-4 w-4 ${newItem.productName === product.name ? 'opacity-100' : 'opacity-0'}`} />
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">{product.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {product.omieCode || product.omieCodigo || 'Sem código'} • {formatCurrency(product.price)} • Estoque: {product.stock ?? '-'}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <div className="grid grid-cols-4 gap-2">
+                  <Input placeholder="Código" value={newItem.productCode} onChange={e => setNewItem(p => ({ ...p, productCode: e.target.value }))} className="text-sm" />
+                  <Input placeholder="Qtd" type="number" value={newItem.quantity} onChange={e => setNewItem(p => ({ ...p, quantity: e.target.value }))} className="text-sm" />
+                  <Input placeholder="Preço unit." type="number" step="0.01" value={newItem.unitPrice} onChange={e => setNewItem(p => ({ ...p, unitPrice: e.target.value }))} className="text-sm" />
+                  <Button variant="outline" size="sm" onClick={handleAddItem}>
+                    <Plus className="h-4 w-4 mr-1" /> Adicionar
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
