@@ -6,6 +6,46 @@ import { nowBrazil } from "./brazilTimezone";
 import crypto from "crypto";
 import { z } from "zod";
 import { insertFiscalScenarioSchema, insertFiscalInvoiceSchema, insertFiscalInvoiceItemSchema, insertDigitalCertificateSchema } from "@shared/schema";
+import multer from "multer";
+import forge from "node-forge";
+import { objectStorageClient } from "./replit_integrations/object_storage/objectStorage";
+
+const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
+
+function encryptPassword(plaintext: string): string {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', CERT_ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+function decryptPassword(encrypted: string): string {
+  const [ivHex, encHex] = encrypted.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', CERT_ENCRYPTION_KEY, iv);
+  let decrypted = decipher.update(encHex, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+function stripSensitiveFields(cert: any) {
+  const { storageKey, certificatePassword, ...safe } = cert;
+  return safe;
+}
+
+const pfxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = file.originalname.toLowerCase();
+    if (ext.endsWith('.pfx') || ext.endsWith('.p12')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos .pfx ou .p12 são permitidos'));
+    }
+  },
+});
 
 const createInvoiceSchema = z.object({
   customerName: z.string().min(1, "Nome do cliente obrigatório"),
@@ -114,40 +154,118 @@ export function registerNfeRoutes(app: Express) {
   app.get('/api/digital-certificates', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const certs = await storage.getDigitalCertificates();
-      const safeCerts = certs.map(c => ({
-        ...c,
-        storageKey: '***',
-      }));
+      const safeCerts = certs.map(c => stripSensitiveFields(c));
       res.json(safeCerts);
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar certificados', error: error.message });
     }
   });
 
-  app.post('/api/digital-certificates', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/digital-certificates', authenticateUser, requireRole(['admin']), pfxUpload.single('pfxFile'), async (req: any, res) => {
     try {
-      const parsed = createCertificateSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.flatten().fieldErrors });
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: 'Arquivo PFX/P12 é obrigatório' });
       }
-      const { companyName, cnpj, serialNumber, issuer, validFrom, validUntil, certificateType } = parsed.data;
 
-      const storageKey = `certificates/${crypto.randomUUID()}.pfx`;
+      const password = req.body.password;
+      if (!password) {
+        return res.status(400).json({ message: 'Senha do certificado é obrigatória' });
+      }
+
+      let certInfo: { companyName: string; cnpj: string; serialNumber: string; issuer: string; validFrom: Date; validUntil: Date };
+      try {
+        const p12Der = forge.util.decode64(file.buffer.toString('base64'));
+        const p12Asn1 = forge.asn1.fromDer(p12Der);
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+
+        const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const certBagList = certBags[forge.pki.oids.certBag] || [];
+        if (certBagList.length === 0) {
+          return res.status(400).json({ message: 'Nenhum certificado encontrado no arquivo PFX' });
+        }
+
+        const x509 = certBagList[0].cert;
+        if (!x509) {
+          return res.status(400).json({ message: 'Certificado inválido no arquivo PFX' });
+        }
+
+        const subjectAttrs = x509.subject.attributes;
+        const cnAttr = subjectAttrs.find((a: any) => a.shortName === 'CN');
+        const companyName = cnAttr ? String(cnAttr.value) : 'Desconhecido';
+
+        let cnpj = '';
+        const ouAttr = subjectAttrs.find((a: any) => a.shortName === 'OU');
+        if (ouAttr) {
+          const match = String(ouAttr.value).match(/\d{14}/);
+          if (match) cnpj = match[0];
+        }
+        if (!cnpj) {
+          const san = x509.getExtension('subjectAltName');
+          if (san && (san as any).altNames) {
+            for (const alt of (san as any).altNames) {
+              const match = String(alt.value || '').match(/\d{14}/);
+              if (match) { cnpj = match[0]; break; }
+            }
+          }
+        }
+        if (!cnpj) {
+          const allText = subjectAttrs.map((a: any) => String(a.value)).join(' ');
+          const match = allText.match(/\d{14}/);
+          if (match) cnpj = match[0];
+        }
+
+        const issuerAttrs = x509.issuer.attributes;
+        const issuerCn = issuerAttrs.find((a: any) => a.shortName === 'CN');
+        const issuer = issuerCn ? String(issuerCn.value) : '';
+
+        const serialHex = x509.serialNumber;
+
+        certInfo = {
+          companyName,
+          cnpj: cnpj || req.body.cnpj || '',
+          serialNumber: serialHex,
+          issuer,
+          validFrom: x509.validity.notBefore,
+          validUntil: x509.validity.notAfter,
+        };
+      } catch (parseError: any) {
+        if (parseError.message?.includes('Invalid password') || parseError.message?.includes('PKCS#12')) {
+          return res.status(400).json({ message: 'Senha do certificado incorreta ou arquivo PFX inválido' });
+        }
+        return res.status(400).json({ message: 'Erro ao ler o certificado PFX: ' + parseError.message });
+      }
+
+      const privateDir = process.env.PRIVATE_OBJECT_DIR;
+      if (!privateDir) {
+        return res.status(500).json({ message: 'Object storage não configurado' });
+      }
+
+      const storageKey = `${privateDir}/certificates/${crypto.randomUUID()}.pfx`;
+      const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+      if (!bucketId) {
+        return res.status(500).json({ message: 'Bucket de armazenamento não configurado' });
+      }
+
+      const bucket = objectStorageClient.bucket(bucketId);
+      const gcsFile = bucket.file(storageKey);
+      await gcsFile.save(file.buffer, { contentType: 'application/x-pkcs12' });
 
       const cert = await storage.createDigitalCertificate({
-        companyName,
-        cnpj,
-        serialNumber: serialNumber || null,
-        issuer: issuer || null,
-        validFrom: validFrom ? new Date(validFrom) : null,
-        validUntil: validUntil ? new Date(validUntil) : null,
-        certificateType: certificateType || 'A1',
+        companyName: certInfo.companyName,
+        cnpj: certInfo.cnpj,
+        serialNumber: certInfo.serialNumber || null,
+        issuer: certInfo.issuer || null,
+        validFrom: certInfo.validFrom,
+        validUntil: certInfo.validUntil,
+        certificateType: 'A1',
         storageKey,
+        certificatePassword: encryptPassword(password),
         isActive: true,
         uploadedBy: req.user?.id || null,
       });
 
-      res.status(201).json({ ...cert, storageKey: '***' });
+      res.status(201).json(stripSensitiveFields(cert));
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao cadastrar certificado', error: error.message });
     }
@@ -173,7 +291,7 @@ export function registerNfeRoutes(app: Express) {
       if (isActive !== undefined) updateData.isActive = isActive;
 
       const cert = await storage.updateDigitalCertificate(req.params.id, updateData);
-      res.json({ ...cert, storageKey: '***' });
+      res.json(stripSensitiveFields(cert));
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao atualizar certificado', error: error.message });
     }

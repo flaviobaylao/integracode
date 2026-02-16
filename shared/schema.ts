@@ -2554,6 +2554,7 @@ export const digitalCertificates = pgTable("digital_certificates", {
   validUntil: timestamp("valid_until"),
   certificateType: varchar("certificate_type").notNull().default('A1'),
   storageKey: varchar("storage_key").notNull(),
+  certificatePassword: varchar("certificate_password"),
   isActive: boolean("is_active").default(true),
   uploadedBy: varchar("uploaded_by"),
   createdAt: timestamp("created_at").defaultNow(),

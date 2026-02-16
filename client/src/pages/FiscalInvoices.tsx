@@ -146,15 +146,8 @@ export default function FiscalInvoices() {
   const [showCertDialog, setShowCertDialog] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [cancelJustification, setCancelJustification] = useState('');
-  const [newCert, setNewCert] = useState({
-    companyName: '',
-    cnpj: '',
-    serialNumber: '',
-    issuer: '',
-    validFrom: '',
-    validUntil: '',
-    certificateType: 'A1',
-  });
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certPassword, setCertPassword] = useState('');
   const [newInvoice, setNewInvoice] = useState({
     customerName: '',
     customerCnpjCpf: '',
@@ -253,13 +246,25 @@ export default function FiscalInvoices() {
   });
 
   const createCertMutation = useMutation({
-    mutationFn: (data: any) => apiRequest('POST', '/api/digital-certificates', data),
+    mutationFn: async (formData: FormData) => {
+      const res = await fetch('/api/digital-certificates', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: 'Erro ao cadastrar certificado' }));
+        throw new Error(err.message || 'Erro ao cadastrar certificado');
+      }
+      return res.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/digital-certificates'] });
       queryClient.invalidateQueries({ queryKey: ['/api/fiscal-dashboard'] });
       setShowCertDialog(false);
-      setNewCert({ companyName: '', cnpj: '', serialNumber: '', issuer: '', validFrom: '', validUntil: '', certificateType: 'A1' });
-      toast({ title: 'Certificado cadastrado', description: 'Certificado digital cadastrado com sucesso.' });
+      setCertFile(null);
+      setCertPassword('');
+      toast({ title: 'Certificado cadastrado', description: 'Certificado digital importado com sucesso. Dados extraídos automaticamente do arquivo.' });
     },
     onError: (err: any) => {
       toast({ title: 'Erro ao cadastrar certificado', description: err.message, variant: 'destructive' });
@@ -279,11 +284,18 @@ export default function FiscalInvoices() {
   });
 
   function handleCreateCert() {
-    if (!newCert.companyName || !newCert.cnpj) {
-      toast({ title: 'Campos obrigatórios', description: 'Preencha o nome da empresa e o CNPJ.', variant: 'destructive' });
+    if (!certFile) {
+      toast({ title: 'Arquivo obrigatório', description: 'Selecione o arquivo PFX/P12 do certificado digital.', variant: 'destructive' });
       return;
     }
-    createCertMutation.mutate(newCert);
+    if (!certPassword) {
+      toast({ title: 'Senha obrigatória', description: 'Informe a senha do certificado digital.', variant: 'destructive' });
+      return;
+    }
+    const formData = new FormData();
+    formData.append('pfxFile', certFile);
+    formData.append('password', certPassword);
+    createCertMutation.mutate(formData);
   }
 
   function resetNewInvoice() {
@@ -964,63 +976,48 @@ export default function FiscalInvoices() {
       </Dialog>
 
       {/* Create Certificate Dialog */}
-      <Dialog open={showCertDialog} onOpenChange={(open) => { setShowCertDialog(open); if (!open) setNewCert({ companyName: '', cnpj: '', serialNumber: '', issuer: '', validFrom: '', validUntil: '', certificateType: 'A1' }); }}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={showCertDialog} onOpenChange={(open) => { setShowCertDialog(open); if (!open) { setCertFile(null); setCertPassword(''); } }}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5" /> Novo Certificado Digital
+              <ShieldCheck className="h-5 w-5" /> Importar Certificado Digital
             </DialogTitle>
-            <DialogDescription>Cadastre os dados do certificado digital A1 para emissão de NF-e.</DialogDescription>
+            <DialogDescription>
+              Importe o arquivo PFX/P12 do certificado digital A1. Os dados da empresa, CNPJ, validade e emissor serão extraídos automaticamente do certificado.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Nome da Empresa *</Label>
-                <Input value={newCert.companyName} onChange={e => setNewCert(p => ({ ...p, companyName: e.target.value }))} placeholder="Razão social" />
+            <div>
+              <Label>Arquivo do Certificado (PFX/P12) *</Label>
+              <div className="mt-1">
+                <Input
+                  type="file"
+                  accept=".pfx,.p12"
+                  onChange={e => setCertFile(e.target.files?.[0] || null)}
+                  className="cursor-pointer"
+                />
               </div>
-              <div>
-                <Label>CNPJ *</Label>
-                <Input value={newCert.cnpj} onChange={e => setNewCert(p => ({ ...p, cnpj: e.target.value }))} placeholder="00.000.000/0001-00" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Número de Série</Label>
-                <Input value={newCert.serialNumber} onChange={e => setNewCert(p => ({ ...p, serialNumber: e.target.value }))} placeholder="Número serial do certificado" />
-              </div>
-              <div>
-                <Label>Emissor</Label>
-                <Input value={newCert.issuer} onChange={e => setNewCert(p => ({ ...p, issuer: e.target.value }))} placeholder="AC emissora" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Válido de</Label>
-                <Input type="date" value={newCert.validFrom} onChange={e => setNewCert(p => ({ ...p, validFrom: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Válido até</Label>
-                <Input type="date" value={newCert.validUntil} onChange={e => setNewCert(p => ({ ...p, validUntil: e.target.value }))} />
-              </div>
+              {certFile && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Arquivo selecionado: {certFile.name} ({(certFile.size / 1024).toFixed(1)} KB)
+                </p>
+              )}
             </div>
             <div>
-              <Label>Tipo de Certificado</Label>
-              <Select value={newCert.certificateType} onValueChange={v => setNewCert(p => ({ ...p, certificateType: v }))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A1">A1 (Arquivo digital)</SelectItem>
-                  <SelectItem value="A3">A3 (Token/Cartão)</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Senha do Certificado *</Label>
+              <Input
+                type="password"
+                value={certPassword}
+                onChange={e => setCertPassword(e.target.value)}
+                placeholder="Senha de acesso ao certificado"
+              />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCertDialog(false)}>Cancelar</Button>
-            <Button onClick={handleCreateCert} disabled={createCertMutation.isPending}>
+            <Button onClick={handleCreateCert} disabled={createCertMutation.isPending || !certFile || !certPassword}>
               {createCertMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Cadastrar Certificado
+              Importar Certificado
             </Button>
           </DialogFooter>
         </DialogContent>
