@@ -7,7 +7,10 @@ import crypto from "crypto";
 import { z } from "zod";
 import { insertFiscalScenarioSchema, insertFiscalInvoiceSchema, insertFiscalInvoiceItemSchema, insertDigitalCertificateSchema } from "@shared/schema";
 import multer from "multer";
-import forge from "node-forge";
+import { execSync } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { objectStorageClient } from "./replit_integrations/object_storage/objectStorage";
 
 const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
@@ -174,66 +177,97 @@ export function registerNfeRoutes(app: Express) {
       }
 
       let certInfo: { companyName: string; cnpj: string; serialNumber: string; issuer: string; validFrom: Date; validUntil: Date };
+      const tmpFile = path.join(os.tmpdir(), `cert_${crypto.randomUUID()}.pfx`);
       try {
-        const p12Der = forge.util.decode64(file.buffer.toString('base64'));
-        const p12Asn1 = forge.asn1.fromDer(p12Der);
-        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, password);
+        fs.writeFileSync(tmpFile, file.buffer);
 
-        const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
-        const certBagList = certBags[forge.pki.oids.certBag] || [];
-        if (certBagList.length === 0) {
+        const passFile = path.join(os.tmpdir(), `pass_${crypto.randomUUID()}.txt`);
+        fs.writeFileSync(passFile, password, { mode: 0o600 });
+
+        let certText: string;
+        try {
+          try {
+            certText = execSync(
+              `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy 2>&1`,
+              { encoding: 'utf-8', timeout: 15000 }
+            );
+          } catch {
+            certText = execSync(
+              `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" 2>&1`,
+              { encoding: 'utf-8', timeout: 15000 }
+            );
+          }
+        } catch (e: any) {
+          try { fs.unlinkSync(passFile); } catch {}
+          const errMsg = String(e.stderr || e.stdout || e.message || '').toLowerCase();
+          if (errMsg.includes('mac verify') || errMsg.includes('invalid password') || errMsg.includes('mac verify failure')) {
+            return res.status(400).json({ message: 'Senha do certificado incorreta' });
+          }
+          return res.status(400).json({ message: 'Arquivo PFX inválido ou não suportado' });
+        }
+
+        if (!certText || !certText.includes('BEGIN CERTIFICATE')) {
+          try { fs.unlinkSync(passFile); } catch {}
           return res.status(400).json({ message: 'Nenhum certificado encontrado no arquivo PFX' });
         }
 
-        const x509 = certBagList[0].cert;
-        if (!x509) {
-          return res.status(400).json({ message: 'Certificado inválido no arquivo PFX' });
+        let certDetails: string;
+        try {
+          try {
+            certDetails = execSync(
+              `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy 2>/dev/null | openssl x509 -noout -subject -issuer -serial -dates 2>/dev/null`,
+              { encoding: 'utf-8', timeout: 15000 }
+            );
+          } catch {
+            certDetails = execSync(
+              `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" 2>/dev/null | openssl x509 -noout -subject -issuer -serial -dates 2>/dev/null`,
+              { encoding: 'utf-8', timeout: 15000 }
+            );
+          }
+        } catch {
+          certDetails = '';
         }
+        try { fs.unlinkSync(passFile); } catch {}
 
-        const subjectAttrs = x509.subject.attributes;
-        const cnAttr = subjectAttrs.find((a: any) => a.shortName === 'CN');
-        const companyName = cnAttr ? String(cnAttr.value) : 'Desconhecido';
+        const subjectMatch = certDetails.match(/subject\s*=\s*(.*)/i);
+        const subjectLine = subjectMatch ? subjectMatch[1] : '';
+
+        const cnMatch = subjectLine.match(/CN\s*=\s*([^,/\n]+)/i);
+        const companyName = cnMatch ? cnMatch[1].trim() : 'Desconhecido';
 
         let cnpj = '';
-        const ouAttr = subjectAttrs.find((a: any) => a.shortName === 'OU');
-        if (ouAttr) {
-          const match = String(ouAttr.value).match(/\d{14}/);
-          if (match) cnpj = match[0];
-        }
+        const cnpjMatch = certDetails.match(/\d{14}/);
+        if (cnpjMatch) cnpj = cnpjMatch[0];
         if (!cnpj) {
-          const san = x509.getExtension('subjectAltName');
-          if (san && (san as any).altNames) {
-            for (const alt of (san as any).altNames) {
-              const match = String(alt.value || '').match(/\d{14}/);
-              if (match) { cnpj = match[0]; break; }
-            }
-          }
-        }
-        if (!cnpj) {
-          const allText = subjectAttrs.map((a: any) => String(a.value)).join(' ');
-          const match = allText.match(/\d{14}/);
-          if (match) cnpj = match[0];
+          const subjectCnpjMatch = subjectLine.match(/\d{14}/);
+          if (subjectCnpjMatch) cnpj = subjectCnpjMatch[0];
         }
 
-        const issuerAttrs = x509.issuer.attributes;
-        const issuerCn = issuerAttrs.find((a: any) => a.shortName === 'CN');
-        const issuer = issuerCn ? String(issuerCn.value) : '';
+        const issuerMatch = certDetails.match(/issuer\s*=\s*(.*)/i);
+        const issuerLine = issuerMatch ? issuerMatch[1] : '';
+        const issuerCnMatch = issuerLine.match(/CN\s*=\s*([^,/\n]+)/i);
+        const issuer = issuerCnMatch ? issuerCnMatch[1].trim() : '';
 
-        const serialHex = x509.serialNumber;
+        const serialMatch = certDetails.match(/serial\s*=\s*([0-9A-Fa-f]+)/i);
+        const serialNumber = serialMatch ? serialMatch[1] : '';
+
+        const notBeforeMatch = certDetails.match(/notBefore\s*=\s*(.*)/i);
+        const notAfterMatch = certDetails.match(/notAfter\s*=\s*(.*)/i);
+        const validFrom = notBeforeMatch ? new Date(notBeforeMatch[1].trim()) : new Date();
+        const validUntil = notAfterMatch ? new Date(notAfterMatch[1].trim()) : new Date();
 
         certInfo = {
           companyName,
           cnpj: cnpj || req.body.cnpj || '',
-          serialNumber: serialHex,
+          serialNumber,
           issuer,
-          validFrom: x509.validity.notBefore,
-          validUntil: x509.validity.notAfter,
+          validFrom,
+          validUntil,
         };
       } catch (parseError: any) {
-        if (parseError.message?.includes('Invalid password') || parseError.message?.includes('PKCS#12')) {
-          return res.status(400).json({ message: 'Senha do certificado incorreta ou arquivo PFX inválido' });
-        }
         return res.status(400).json({ message: 'Erro ao ler o certificado PFX: ' + parseError.message });
+      } finally {
+        try { fs.unlinkSync(tmpFile); } catch {}
       }
 
       const privateDir = process.env.PRIVATE_OBJECT_DIR;
