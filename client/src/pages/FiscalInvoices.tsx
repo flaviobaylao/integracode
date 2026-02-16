@@ -717,7 +717,7 @@ export default function FiscalInvoices() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Cliente *</Label>
-              <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+              <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen} modal={true}>
                 <PopoverTrigger asChild>
                   <Button variant="outline" role="combobox" aria-expanded={customerSearchOpen} className="w-full justify-between font-normal h-auto min-h-[40px] text-left">
                     {newInvoice.customerName ? (
@@ -731,7 +731,7 @@ export default function FiscalInvoices() {
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[500px] p-0" align="start">
+                <PopoverContent className="w-[500px] p-0 z-[10000]" align="start" sideOffset={4} onOpenAutoFocus={(e) => e.preventDefault()}>
                   <Command shouldFilter={false}>
                     <CommandInput placeholder="Digite para buscar cliente..." value={customerSearch} onValueChange={setCustomerSearch} />
                     <CommandList>
@@ -857,7 +857,7 @@ export default function FiscalInvoices() {
                 </div>
               )}
               <div className="space-y-2">
-                <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+                <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen} modal={true}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" role="combobox" aria-expanded={productSearchOpen} className="w-full justify-between font-normal h-auto min-h-[36px] text-left text-sm">
                       {newItem.productName ? (
@@ -871,7 +871,7 @@ export default function FiscalInvoices() {
                       <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[450px] p-0" align="start">
+                  <PopoverContent className="w-[450px] p-0 z-[10000]" align="start" sideOffset={4} onOpenAutoFocus={(e) => e.preventDefault()}>
                     <Command shouldFilter={false}>
                       <CommandInput placeholder="Digite para buscar produto..." value={productSearch} onValueChange={setProductSearch} />
                       <CommandList>
