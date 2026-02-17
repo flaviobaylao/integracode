@@ -371,7 +371,18 @@ export default function FiscalInvoices() {
       toast({ title: 'Campos obrigatórios', description: 'Preencha o nome e CPF/CNPJ do cliente.', variant: 'destructive' });
       return;
     }
-    createMutation.mutate(newInvoice);
+    if (newInvoice.items.length === 0) {
+      toast({ title: 'Itens obrigatórios', description: 'Adicione pelo menos um item à NF-e.', variant: 'destructive' });
+      return;
+    }
+    const payload = {
+      ...newInvoice,
+      items: newInvoice.items.map(item => ({
+        ...item,
+        totalPrice: (parseFloat(item.quantity || '0') * parseFloat(item.unitPrice || '0')).toString(),
+      })),
+    };
+    createMutation.mutate(payload);
   }
 
   function handleScenarioSelect(scenarioId: string) {
