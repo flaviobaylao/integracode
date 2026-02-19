@@ -9265,45 +9265,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Expires': '0'
       });
 
-      const omieService = getOmieService(storage);
-      if (!omieService) {
-        return res.status(503).json({ 
-          message: "Integração Omie não configurada" 
-        });
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] Fetching overdue debts from ALL Omie instances - NO CACHE...`);
+
+      // Multi-tenant: iterar todas as instâncias ativas
+      const allInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
+      const debtSvcs: Array<{ svc: OmieService; name: string }> = [];
+      
+      if (allInstances.length > 0) {
+        for (const inst of allInstances) {
+          debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+        }
+      } else {
+        const defaultSvc = getOmieService(storage);
+        if (!defaultSvc) {
+          return res.status(503).json({ message: "Integração Omie não configurada" });
+        }
+        debtSvcs.push({ svc: defaultSvc, name: 'Padrão (env vars)' });
       }
 
-      const timestamp = new Date().toISOString();
-      console.log(`[${timestamp}] Fetching overdue debts from Omie - NO CACHE...`);
-      const overdueData = await omieService.getOverdueDebts();
-      console.log(`[${timestamp}] Overdue debts fetch complete - returning ${overdueData.totalClients} clients, success: ${overdueData.success}`);
-      
-      // PROTEÇÃO: Só salvar se a sincronização foi bem-sucedida
-      if (!overdueData.success) {
-        console.error(`❌ Sincronização falhou: ${overdueData.errorMessage}`);
-        return res.status(503).json({
-          message: `Erro na sincronização com Omie: ${overdueData.errorMessage || 'Erro desconhecido'}`,
-          error: overdueData.errorMessage,
-          preservedData: true // Indica que os dados anteriores foram preservados
-        });
+      let allDebts: any[] = [];
+      let totalClients = 0;
+      let totalAmount = 0;
+      const instanceErrors: string[] = [];
+
+      for (const { svc, name } of debtSvcs) {
+        try {
+          console.log(`📡 [OVERDUE-DEBTS] Sincronizando débitos da instância: ${name}`);
+          const overdueData = await svc.getOverdueDebts();
+          
+          if (overdueData.success) {
+            await storage.syncOverdueDebts(overdueData.debts, false, svc.omieInstanceId);
+            allDebts = allDebts.concat(overdueData.debts || []);
+            totalClients += overdueData.totalClients || 0;
+            totalAmount += overdueData.totalAmount || 0;
+            console.log(`✅ [OVERDUE-DEBTS] Instância ${name}: ${overdueData.debts?.length || 0} clientes com débitos`);
+          } else {
+            console.error(`❌ [OVERDUE-DEBTS] Instância ${name} falhou: ${overdueData.errorMessage}`);
+            instanceErrors.push(`${name}: ${overdueData.errorMessage}`);
+          }
+        } catch (instErr: any) {
+          console.error(`❌ [OVERDUE-DEBTS] Erro na instância ${name}:`, instErr.message);
+          instanceErrors.push(`${name}: ${instErr.message}`);
+        }
       }
-      
-      // Salvar débitos no banco de dados (apenas se sucesso)
-      // Multi-tenant: tagear débitos com a instância Omie
-      try {
-        await storage.syncOverdueDebts(overdueData.debts, false, omieService.omieInstanceId);
-        console.log('✅ Débitos salvos no banco de dados');
-      } catch (saveError) {
-        console.error('❌ Erro ao salvar débitos no banco:', saveError);
-      }
+
+      console.log(`[${timestamp}] Overdue debts fetch complete - ${totalClients} clients from ${debtSvcs.length} instances`);
       
       // Gerar e salvar planilha Excel automaticamente após a sincronização
       try {
         const fileName = `debitos-vencidos-${getBrazilDateString()}.xlsx`;
         
-        // Preparar dados detalhados (todos os documentos)
         const detalhesData: any[] = [];
-        overdueData.debts.forEach((debt: any) => {
-          debt.debitos.forEach((documento: any) => {
+        allDebts.forEach((debt: any) => {
+          (debt.debitos || []).forEach((documento: any) => {
             detalhesData.push({
               'Cliente': debt.cliente.nome_fantasia,
               'CNPJ/CPF': debt.cliente.cnpj_cpf,
@@ -9315,23 +9330,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         });
 
-        // Criar workbook
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(detalhesData);
         XLSX.utils.book_append_sheet(wb, ws, 'Detalhes dos Documentos');
 
-        // Gerar buffer e converter para base64
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
         const base64Data = excelBuffer.toString('base64');
 
-        // Salvar no banco de dados
         await storage.saveExportedReport(
           'overdue_debts',
           fileName,
           base64Data,
           {
-            totalClients: overdueData.totalClients,
-            totalAmount: overdueData.totalAmount,
+            totalClients: totalClients,
+            totalAmount: totalAmount,
             syncDate: nowBrazil().toISOString()
           },
           req.user?.id
@@ -9340,10 +9352,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`[${timestamp}] Excel report saved successfully: ${fileName}`);
       } catch (excelError) {
         console.error('Error generating/saving Excel report:', excelError);
-        // Não falhar a requisição se o Excel falhar
       }
       
-      res.json(overdueData);
+      res.json({
+        success: true,
+        debts: allDebts,
+        totalClients,
+        totalAmount,
+        instanceErrors: instanceErrors.length > 0 ? instanceErrors : undefined
+      });
 
     } catch (error) {
       console.error("Error fetching overdue debts from Omie:", error);
