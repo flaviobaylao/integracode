@@ -2670,6 +2670,8 @@ export const fiscalInvoiceItems = pgTable("fiscal_invoice_items", {
   unitPrice: decimal("unit_price", { precision: 12, scale: 4 }).notNull(),
   totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
   discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
+  lotNumber: varchar("lot_number"),
+  lotId: varchar("lot_id"),
   cstIcms: varchar("cst_icms"),
   baseIcms: decimal("base_icms", { precision: 12, scale: 2 }).default('0'),
   aliqIcms: decimal("aliq_icms", { precision: 5, scale: 2 }).default('0'),
@@ -2764,4 +2766,97 @@ export const insertFiscalBackupSchema = createInsertSchema(fiscalBackups).omit({
 
 export type FiscalBackup = typeof fiscalBackups.$inferSelect;
 export type InsertFiscalBackup = z.infer<typeof insertFiscalBackupSchema>;
+
+// ============================================================================
+// INVENTORY / STOCK MANAGEMENT
+// ============================================================================
+
+export const stockTypeEnum = pgEnum('stock_type', ['in_use', 'blocked']);
+export const movementTypeEnum = pgEnum('movement_type', ['consume', 'replenish', 'transfer', 'adjust', 'cancel_reversal']);
+export const movementSourceEnum = pgEnum('movement_source', ['invoice', 'order', 'manual']);
+
+export const inventoryLots = pgTable("inventory_lots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productId: varchar("product_id").notNull(),
+  instanceId: varchar("instance_id").notNull(),
+  stockType: stockTypeEnum("stock_type").notNull(),
+  lotNumber: varchar("lot_number").notNull(),
+  quantity: decimal("quantity", { precision: 12, scale: 4 }).notNull().default('0'),
+  minQuantity: decimal("min_quantity", { precision: 12, scale: 4 }).default('0'),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_inventory_lots_product").on(table.productId),
+  index("idx_inventory_lots_instance").on(table.instanceId),
+  index("idx_inventory_lots_type").on(table.stockType),
+  index("idx_inventory_lots_active").on(table.isActive),
+]);
+
+export const inventoryLotsRelations = relations(inventoryLots, ({ one, many }) => ({
+  product: one(products, {
+    fields: [inventoryLots.productId],
+    references: [products.id],
+  }),
+  instance: one(omieInstances, {
+    fields: [inventoryLots.instanceId],
+    references: [omieInstances.id],
+  }),
+  movements: many(inventoryMovements),
+}));
+
+export const insertInventoryLotSchema = createInsertSchema(inventoryLots).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InventoryLot = typeof inventoryLots.$inferSelect;
+export type InsertInventoryLot = z.infer<typeof insertInventoryLotSchema>;
+
+export const inventoryMovements = pgTable("inventory_movements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  lotId: varchar("lot_id").notNull(),
+  productId: varchar("product_id").notNull(),
+  instanceId: varchar("instance_id").notNull(),
+  movementType: movementTypeEnum("movement_type").notNull(),
+  quantity: decimal("quantity", { precision: 12, scale: 4 }).notNull(),
+  previousQuantity: decimal("previous_quantity", { precision: 12, scale: 4 }),
+  newQuantity: decimal("new_quantity", { precision: 12, scale: 4 }),
+  sourceType: movementSourceEnum("source_type"),
+  sourceId: varchar("source_id"),
+  lotNumber: varchar("lot_number"),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_inventory_movements_lot").on(table.lotId),
+  index("idx_inventory_movements_product").on(table.productId),
+  index("idx_inventory_movements_source").on(table.sourceType, table.sourceId),
+  index("idx_inventory_movements_created").on(table.createdAt),
+]);
+
+export const inventoryMovementsRelations = relations(inventoryMovements, ({ one }) => ({
+  lot: one(inventoryLots, {
+    fields: [inventoryMovements.lotId],
+    references: [inventoryLots.id],
+  }),
+  product: one(products, {
+    fields: [inventoryMovements.productId],
+    references: [products.id],
+  }),
+  instance: one(omieInstances, {
+    fields: [inventoryMovements.instanceId],
+    references: [omieInstances.id],
+  }),
+}));
+
+export const insertInventoryMovementSchema = createInsertSchema(inventoryMovements).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InventoryMovement = typeof inventoryMovements.$inferSelect;
+export type InsertInventoryMovement = z.infer<typeof insertInventoryMovementSchema>;
 

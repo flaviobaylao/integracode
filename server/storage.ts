@@ -124,6 +124,8 @@ import {
   fiscalInvoiceItems,
   fiscalInvoiceEvents,
   fiscalBackups,
+  inventoryLots,
+  inventoryMovements,
   type PhonebookContact,
   type InsertPhonebookContact,
   type VirtualAttendanceStat,
@@ -141,6 +143,10 @@ import {
   type InsertFiscalInvoiceEvent,
   type FiscalBackup,
   type InsertFiscalBackup,
+  type InventoryLot,
+  type InsertInventoryLot,
+  type InventoryMovement,
+  type InsertInventoryMovement,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -551,6 +557,17 @@ export interface IStorage {
   // Fiscal Backups
   getFiscalBackups(filters?: { backupType?: string; referenceId?: string }): Promise<FiscalBackup[]>;
   createFiscalBackup(data: InsertFiscalBackup): Promise<FiscalBackup>;
+
+  // Inventory Lots
+  getInventoryLots(filters?: { productId?: string; instanceId?: string; stockType?: string; isActive?: boolean }): Promise<InventoryLot[]>;
+  getInventoryLot(id: string): Promise<InventoryLot | undefined>;
+  createInventoryLot(data: InsertInventoryLot): Promise<InventoryLot>;
+  updateInventoryLot(id: string, data: Partial<InsertInventoryLot>): Promise<InventoryLot>;
+  deleteInventoryLot(id: string): Promise<void>;
+
+  // Inventory Movements
+  getInventoryMovements(filters?: { lotId?: string; productId?: string; instanceId?: string; sourceType?: string; sourceId?: string }): Promise<InventoryMovement[]>;
+  createInventoryMovement(data: InsertInventoryMovement): Promise<InventoryMovement>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7906,6 +7923,73 @@ export class DatabaseStorage implements IStorage {
   async createFiscalBackup(data: InsertFiscalBackup): Promise<FiscalBackup> {
     const [backup] = await db.insert(fiscalBackups).values(data).returning();
     return backup;
+  }
+
+  // ============================================================================
+  // INVENTORY LOTS
+  // ============================================================================
+
+  async getInventoryLots(filters?: { productId?: string; instanceId?: string; stockType?: string; isActive?: boolean }): Promise<InventoryLot[]> {
+    const conditions = [];
+    if (filters?.productId) conditions.push(eq(inventoryLots.productId, filters.productId));
+    if (filters?.instanceId) conditions.push(eq(inventoryLots.instanceId, filters.instanceId));
+    if (filters?.stockType) conditions.push(eq(inventoryLots.stockType, filters.stockType as any));
+    if (filters?.isActive !== undefined) conditions.push(eq(inventoryLots.isActive, filters.isActive));
+
+    if (conditions.length > 0) {
+      return db.select().from(inventoryLots)
+        .where(and(...conditions))
+        .orderBy(asc(inventoryLots.productId), asc(inventoryLots.instanceId), asc(inventoryLots.stockType));
+    }
+    return db.select().from(inventoryLots)
+      .orderBy(asc(inventoryLots.productId), asc(inventoryLots.instanceId), asc(inventoryLots.stockType));
+  }
+
+  async getInventoryLot(id: string): Promise<InventoryLot | undefined> {
+    const [lot] = await db.select().from(inventoryLots).where(eq(inventoryLots.id, id));
+    return lot;
+  }
+
+  async createInventoryLot(data: InsertInventoryLot): Promise<InventoryLot> {
+    const [lot] = await db.insert(inventoryLots).values(data).returning();
+    return lot;
+  }
+
+  async updateInventoryLot(id: string, data: Partial<InsertInventoryLot>): Promise<InventoryLot> {
+    const [lot] = await db.update(inventoryLots)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(inventoryLots.id, id))
+      .returning();
+    return lot;
+  }
+
+  async deleteInventoryLot(id: string): Promise<void> {
+    await db.delete(inventoryLots).where(eq(inventoryLots.id, id));
+  }
+
+  // ============================================================================
+  // INVENTORY MOVEMENTS
+  // ============================================================================
+
+  async getInventoryMovements(filters?: { lotId?: string; productId?: string; instanceId?: string; sourceType?: string; sourceId?: string }): Promise<InventoryMovement[]> {
+    const conditions = [];
+    if (filters?.lotId) conditions.push(eq(inventoryMovements.lotId, filters.lotId));
+    if (filters?.productId) conditions.push(eq(inventoryMovements.productId, filters.productId));
+    if (filters?.instanceId) conditions.push(eq(inventoryMovements.instanceId, filters.instanceId));
+    if (filters?.sourceType) conditions.push(eq(inventoryMovements.sourceType, filters.sourceType as any));
+    if (filters?.sourceId) conditions.push(eq(inventoryMovements.sourceId, filters.sourceId));
+
+    if (conditions.length > 0) {
+      return db.select().from(inventoryMovements)
+        .where(and(...conditions))
+        .orderBy(desc(inventoryMovements.createdAt));
+    }
+    return db.select().from(inventoryMovements).orderBy(desc(inventoryMovements.createdAt)).limit(500);
+  }
+
+  async createInventoryMovement(data: InsertInventoryMovement): Promise<InventoryMovement> {
+    const [movement] = await db.insert(inventoryMovements).values(data).returning();
+    return movement;
   }
 }
 

@@ -495,6 +495,29 @@ export function registerNfeRoutes(app: Express) {
         const invoice = await storage.getFiscalInvoice(req.params.id);
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
+
+        // Consume stock for each item in the invoice
+        try {
+          const { consumeStock } = await import('./inventory-routes.js');
+          const userId = req.user?.id || req.userId || null;
+          for (const item of items) {
+            if (item.productId) {
+              const product = await storage.getProduct(item.productId);
+              const instanceId = product?.omieInstanceId || 'default';
+              await consumeStock(
+                item.productId,
+                instanceId,
+                parseFloat(item.quantity),
+                'invoice',
+                req.params.id,
+                userId,
+              );
+            }
+          }
+        } catch (stockErr: any) {
+          console.warn('⚠️ Erro ao consumir estoque após emissão NF-e:', stockErr.message);
+        }
+
         res.json({ ...result, invoice: { ...invoice, items, events } });
       } else {
         res.status(400).json(result);
@@ -516,7 +539,31 @@ export function registerNfeRoutes(app: Express) {
 
       if (result.success) {
         const invoice = await storage.getFiscalInvoice(req.params.id);
+        const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
+
+        // Reverse stock consumption for cancelled invoice
+        try {
+          const { reverseStockConsumption } = await import('./inventory-routes.js');
+          const userId = req.user?.id || req.userId || null;
+          for (const item of items) {
+            if (item.productId) {
+              const product = await storage.getProduct(item.productId);
+              const instanceId = product?.omieInstanceId || 'default';
+              await reverseStockConsumption(
+                item.productId,
+                instanceId,
+                parseFloat(item.quantity),
+                'invoice',
+                req.params.id,
+                userId,
+              );
+            }
+          }
+        } catch (stockErr: any) {
+          console.warn('⚠️ Erro ao reverter estoque após cancelamento NF-e:', stockErr.message);
+        }
+
         res.json({ ...result, invoice: { ...invoice, events } });
       } else {
         res.status(400).json(result);

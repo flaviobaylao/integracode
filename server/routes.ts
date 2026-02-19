@@ -23693,6 +23693,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerNfeRoutes } = await import('./nfe-routes.js');
   registerNfeRoutes(app);
 
+  // Registrar rotas de Estoque (Inventário)
+  const { registerInventoryRoutes } = await import('./inventory-routes.js');
+  registerInventoryRoutes(app);
+
   const httpServer = createServer(app);
 
   return httpServer;
