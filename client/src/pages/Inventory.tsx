@@ -118,7 +118,7 @@ export default function Inventory() {
   });
 
   const instancesQuery = useQuery<OmieInstance[]>({
-    queryKey: ['/api/omie-instances'],
+    queryKey: ['/api/omie/instances'],
   });
 
   const createMutation = useMutation({
