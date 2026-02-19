@@ -2869,14 +2869,20 @@ export class OmieService {
         ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
         : undefined;
 
-      // Verificar se a conta existe nesta instância, senão buscar a primeira disponível
+      // Verificar se a conta existe nesta instância, senão buscar a melhor disponível
       try {
         const accounts = await this.listBankAccounts();
         if (accounts.length > 0) {
           const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
           if (!currentValid) {
-            omieAccountCode = accounts[0].nCodCC;
-            console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accounts[0].descricao || accounts[0].cDescricao || 'default'})`);
+            // Preferir conta "OMIE CASH" (padrão para operações à vista/PIX/boleto)
+            const omieCash = accounts.find((a: any) => 
+              (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
+              (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
+            );
+            omieAccountCode = omieCash ? omieCash.nCodCC : accounts[0].nCodCC;
+            const accName = omieCash ? (omieCash.descricao || omieCash.cDescricao) : (accounts[0].descricao || accounts[0].cDescricao);
+            console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
           }
         }
       } catch (err: any) {
@@ -5150,13 +5156,17 @@ export async function createOmieOrder(orderData: {
       ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[orderData.paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
       : undefined;
 
-    // Verificar se a conta existe nesta instância, senão buscar a primeira disponível
+    // Verificar se a conta existe nesta instância, senão buscar a melhor disponível
     try {
       const accounts = await this.listBankAccounts();
       if (accounts.length > 0) {
         const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
         if (!currentValid) {
-          omieAccountCode = accounts[0].nCodCC;
+          const omieCash = accounts.find((a: any) => 
+            (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
+            (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
+          );
+          omieAccountCode = omieCash ? omieCash.nCodCC : accounts[0].nCodCC;
           console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode}`);
         }
       }
