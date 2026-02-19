@@ -2865,9 +2865,24 @@ export class OmieService {
       });
 
       // Determinar conta do Omie baseada no método de pagamento
-      const omieAccountCode = paymentMethod 
+      let omieAccountCode: number | undefined = paymentMethod 
         ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
-        : 2425423833; // Padrão: Caixinha (À vista)
+        : undefined;
+
+      // Verificar se a conta existe nesta instância, senão buscar a primeira disponível
+      try {
+        const accounts = await this.listBankAccounts();
+        if (accounts.length > 0) {
+          const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
+          if (!currentValid) {
+            omieAccountCode = accounts[0].nCodCC;
+            console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accounts[0].descricao || accounts[0].cDescricao || 'default'})`);
+          }
+        }
+      } catch (err: any) {
+        console.warn(`⚠️ [CONTA] Erro ao buscar contas correntes:`, err.message);
+        if (!omieAccountCode) omieAccountCode = 2425423833;
+      }
 
       // Determinar código da parcela baseado no método de pagamento e prazo
       let parcelaCode = '000'; // Padrão universal: À vista
@@ -5131,9 +5146,24 @@ export async function createOmieOrder(orderData: {
 
     // 2. Criar pedido de venda no Omie
     // Determinar conta do Omie baseada no método de pagamento
-    const omieAccountCode = orderData.paymentMethod 
+    let omieAccountCode: number | undefined = orderData.paymentMethod 
       ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[orderData.paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
-      : 2425423833; // Padrão: Caixinha (À vista)
+      : undefined;
+
+    // Verificar se a conta existe nesta instância, senão buscar a primeira disponível
+    try {
+      const accounts = await this.listBankAccounts();
+      if (accounts.length > 0) {
+        const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
+        if (!currentValid) {
+          omieAccountCode = accounts[0].nCodCC;
+          console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`⚠️ [CONTA-HOTSITE] Erro ao buscar contas:`, err.message);
+      if (!omieAccountCode) omieAccountCode = 2425423833;
+    }
 
     // Determinar código da parcela baseado no método de pagamento e prazo
     let parcelaCode = '000'; // Padrão universal: À vista
