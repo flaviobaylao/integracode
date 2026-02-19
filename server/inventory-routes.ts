@@ -119,9 +119,23 @@ export function registerInventoryRoutes(app: Express) {
     try {
       const existing = await storage.getInventoryLot(req.params.id);
       if (!existing) return res.status(404).json({ message: 'Lote não encontrado' });
+
       if (parseFloat(existing.quantity) > 0) {
-        return res.status(400).json({ message: 'Não é possível excluir um lote com estoque. Zere o estoque antes.' });
+        await storage.createInventoryMovement({
+          lotId: existing.id,
+          productId: existing.productId,
+          instanceId: existing.instanceId,
+          movementType: 'adjust',
+          quantity: (-parseFloat(existing.quantity)).toString(),
+          previousQuantity: existing.quantity,
+          newQuantity: '0',
+          sourceType: 'manual',
+          lotNumber: existing.lotNumber,
+          notes: `Lote excluído manualmente (tinha ${existing.quantity} em estoque)`,
+          createdBy: req.user?.id || req.userId || null,
+        });
       }
+
       await storage.deleteInventoryLot(req.params.id);
       res.json({ success: true });
     } catch (error: any) {

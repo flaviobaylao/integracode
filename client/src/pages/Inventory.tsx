@@ -489,7 +489,6 @@ export default function Inventory() {
                                         size="sm"
                                         className="text-red-500 hover:text-red-700"
                                         onClick={() => handleDelete(lot)}
-                                        disabled={qty > 0}
                                       >
                                         <Trash2 className="h-4 w-4" />
                                       </Button>
