@@ -8175,15 +8175,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⏰ Sincronizando débitos vencidos (todas as instâncias)...');
         
         const debtInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
-        const hasDebtInstances = debtInstances.length > 0;
         
         const debtSvcs: Array<{ svc: OmieService; name: string }> = [];
-        if (hasDebtInstances) {
-          for (const inst of debtInstances) {
-            debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+        for (const inst of debtInstances) {
+          debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+        }
+        
+        // Adicionar instância padrão (env vars) se não coincide com nenhuma instância registrada
+        if (omieService) {
+          const envKey = process.env.OMIE_APP_KEY;
+          const alreadyIncluded = debtInstances.some((i: any) => i.appKey === envKey);
+          if (!alreadyIncluded) {
+            debtSvcs.push({ svc: omieService, name: 'BSB (env vars)' });
           }
-        } else {
-          debtSvcs.push({ svc: omieService, name: 'Padrão (env vars)' });
         }
         
         let debtTotalClients = 0;
@@ -9268,20 +9272,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timestamp = new Date().toISOString();
       console.log(`[${timestamp}] Fetching overdue debts from ALL Omie instances - NO CACHE...`);
 
-      // Multi-tenant: iterar todas as instâncias ativas
+      // Multi-tenant: iterar todas as instâncias ativas + instância padrão (env vars)
       const allInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
       const debtSvcs: Array<{ svc: OmieService; name: string }> = [];
       
-      if (allInstances.length > 0) {
-        for (const inst of allInstances) {
-          debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+      // Adicionar instâncias registradas no banco
+      for (const inst of allInstances) {
+        debtSvcs.push({ svc: OmieService.createFromInstance(inst, storage), name: inst.displayName || inst.name });
+      }
+      
+      // Adicionar instância padrão (env vars) se não coincide com nenhuma instância registrada
+      const defaultSvc = getOmieService(storage);
+      if (defaultSvc) {
+        const envKey = process.env.OMIE_APP_KEY;
+        const alreadyIncluded = allInstances.some((i: any) => i.appKey === envKey);
+        if (!alreadyIncluded) {
+          debtSvcs.push({ svc: defaultSvc, name: 'BSB (env vars)' });
         }
-      } else {
-        const defaultSvc = getOmieService(storage);
-        if (!defaultSvc) {
-          return res.status(503).json({ message: "Integração Omie não configurada" });
-        }
-        debtSvcs.push({ svc: defaultSvc, name: 'Padrão (env vars)' });
+      }
+      
+      if (debtSvcs.length === 0) {
+        return res.status(503).json({ message: "Integração Omie não configurada" });
       }
 
       let allDebts: any[] = [];
