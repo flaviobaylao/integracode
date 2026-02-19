@@ -2870,10 +2870,28 @@ export class OmieService {
         : 2425423833; // Padrão: Caixinha (À vista)
 
       // Determinar código da parcela baseado no método de pagamento e prazo
-      let parcelaCode = 'A03'; // Padrão: Para 3 dias (à vista/PIX)
+      let parcelaCode = '000'; // Padrão universal: À vista
       if (paymentMethod === 'boleto') {
         const boletoDays = salesCard.boletoDays || 7; // Padrão 7 dias se não especificado
         parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
+      } else {
+        // Tentar encontrar um código de parcela válido para à vista nesta instância
+        try {
+          const parcelas = await this.listPaymentTerms();
+          const aVistaParcela = parcelas.find((p: any) => 
+            p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
+            (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
+          );
+          if (aVistaParcela) {
+            parcelaCode = aVistaParcela.cCodigo;
+            console.log(`✅ [PARCELA] Código à vista encontrado para esta instância: ${parcelaCode} (${aVistaParcela.cDescricao})`);
+          } else if (parcelas.length > 0) {
+            parcelaCode = parcelas[0].cCodigo;
+            console.log(`⚠️ [PARCELA] Nenhum código à vista encontrado, usando primeiro disponível: ${parcelaCode}`);
+          }
+        } catch (err: any) {
+          console.warn(`⚠️ [PARCELA] Erro ao buscar parcelas, usando padrão '000':`, err.message);
+        }
       }
 
       console.log(`🔍 [OMIE-VENDOR-DEBUG] omieVendorCode=${omieVendorCode}, omieClientCode=${omieClientCode}, sellerId=${sellerId}`);
@@ -5118,10 +5136,27 @@ export async function createOmieOrder(orderData: {
       : 2425423833; // Padrão: Caixinha (À vista)
 
     // Determinar código da parcela baseado no método de pagamento e prazo
-    let parcelaCode = 'A03'; // Padrão: Para 3 dias (à vista/PIX)
+    let parcelaCode = '000'; // Padrão universal: À vista
     if (orderData.paymentMethod === 'boleto') {
       const boletoDays = orderData.boletoDays || 7; // Padrão 7 dias se não especificado
       parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
+    } else {
+      try {
+        const parcelas = await this.listPaymentTerms();
+        const aVistaParcela = parcelas.find((p: any) => 
+          p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
+          (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
+        );
+        if (aVistaParcela) {
+          parcelaCode = aVistaParcela.cCodigo;
+          console.log(`✅ [PARCELA-HOTSITE] Código à vista: ${parcelaCode} (${aVistaParcela.cDescricao})`);
+        } else if (parcelas.length > 0) {
+          parcelaCode = parcelas[0].cCodigo;
+          console.log(`⚠️ [PARCELA-HOTSITE] Usando primeiro disponível: ${parcelaCode}`);
+        }
+      } catch (err: any) {
+        console.warn(`⚠️ [PARCELA-HOTSITE] Erro ao buscar parcelas, usando '000':`, err.message);
+      }
     }
 
     // Extrair código do vendedor do formato "omie-vendor-XXXXX"
