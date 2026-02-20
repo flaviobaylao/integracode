@@ -9272,6 +9272,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timestamp = new Date().toISOString();
       console.log(`[${timestamp}] Fetching overdue debts from ALL Omie instances - NO CACHE...`);
 
+      // Aumentar timeout para sincronizações longas (10 minutos)
+      req.setTimeout(600000);
+      res.setTimeout(600000);
+
       // Multi-tenant: iterar todas as instâncias ativas + instância padrão (env vars)
       const allInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
       const debtSvcs: Array<{ svc: OmieService; name: string }> = [];
@@ -9295,16 +9299,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: "Integração Omie não configurada" });
       }
 
+      console.log(`📡 [OVERDUE-DEBTS] Sincronizando ${debtSvcs.length} instâncias EM PARALELO: ${debtSvcs.map(d => d.name).join(', ')}`);
+
       let allDebts: any[] = [];
       let totalClients = 0;
       let totalAmount = 0;
       const instanceErrors: string[] = [];
 
-      for (const { svc, name } of debtSvcs) {
-        try {
-          console.log(`📡 [OVERDUE-DEBTS] Sincronizando débitos da instância: ${name}`);
+      // Executar TODAS as instâncias em paralelo para evitar timeout
+      const results = await Promise.allSettled(
+        debtSvcs.map(async ({ svc, name }) => {
+          console.log(`📡 [OVERDUE-DEBTS] Iniciando sync instância: ${name}`);
           const overdueData = await svc.getOverdueDebts();
-          
+          return { svc, name, overdueData };
+        })
+      );
+
+      // Processar resultados
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          const { svc, name, overdueData } = result.value;
           if (overdueData.success) {
             await storage.syncOverdueDebts(overdueData.debts, false, svc.omieInstanceId);
             allDebts = allDebts.concat(overdueData.debts || []);
@@ -9315,13 +9329,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error(`❌ [OVERDUE-DEBTS] Instância ${name} falhou: ${overdueData.errorMessage}`);
             instanceErrors.push(`${name}: ${overdueData.errorMessage}`);
           }
-        } catch (instErr: any) {
-          console.error(`❌ [OVERDUE-DEBTS] Erro na instância ${name}:`, instErr.message);
-          instanceErrors.push(`${name}: ${instErr.message}`);
+        } else {
+          const error = result.reason;
+          const name = 'instância desconhecida';
+          console.error(`❌ [OVERDUE-DEBTS] Erro em instância:`, error?.message || error);
+          instanceErrors.push(`${name}: ${error?.message || 'Erro desconhecido'}`);
         }
       }
 
-      console.log(`[${timestamp}] Overdue debts fetch complete - ${totalClients} clients from ${debtSvcs.length} instances`);
+      console.log(`[${timestamp}] Overdue debts fetch complete - ${totalClients} clients from ${debtSvcs.length} instances (${instanceErrors.length} erros)`);
       
       // Gerar e salvar planilha Excel automaticamente após a sincronização
       try {

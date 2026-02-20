@@ -185,17 +185,25 @@ export default function OverdueDebtsManagement() {
   // Mutation para sincronizar débitos vencidos
   const syncOverdueDebts = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/omie/overdue-debts', {
-        method: 'GET',
-        credentials: 'include'
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 600000);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Erro ao sincronizar débitos');
+      try {
+        const response = await fetch('/api/omie/overdue-debts', {
+          method: 'GET',
+          credentials: 'include',
+          signal: controller.signal
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Erro ao sincronizar débitos');
+        }
+        
+        return await response.json();
+      } finally {
+        clearTimeout(timeoutId);
       }
-      
-      return await response.json();
     },
     onSuccess: (data) => {
       // Atualizar cache com dados da sincronização
