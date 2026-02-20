@@ -18,8 +18,10 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   FileText, Plus, Send, XCircle, Trash2, Eye, RefreshCw,
   CheckCircle2, Clock, AlertTriangle, ShieldCheck, Award,
-  Loader2, ChevronLeft, ChevronsUpDown, Check
+  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface FiscalInvoice {
   id: string;
@@ -27,17 +29,30 @@ interface FiscalInvoice {
   series: string;
   customerName: string;
   customerCnpjCpf: string;
+  customerIe: string;
+  customerAddress: string;
   cfop: string;
   natureOfOperation: string;
+  operationType: string;
   status: string;
   environment: string;
   totalProducts: string;
+  totalDiscount: string;
+  totalFreight: string;
+  totalInsurance: string;
+  totalOtherExpenses: string;
+  totalIcms: string;
+  totalPis: string;
+  totalCofins: string;
+  totalIpi: string;
   totalInvoice: string;
   paymentMethod: string;
   notes: string;
   accessKey: string;
   protocolNumber: string;
   fiscalScenarioId: string;
+  emissionDate: string;
+  authorizationDate: string;
   createdAt: string;
   updatedAt: string;
   items?: FiscalInvoiceItem[];
@@ -52,10 +67,20 @@ interface FiscalInvoiceItem {
   productName: string;
   ncm: string;
   cfop: string;
+  unit: string;
   quantity: string;
   unitPrice: string;
   totalPrice: string;
   discount: string;
+  cstIcms: string;
+  baseIcms: string;
+  aliqIcms: string;
+  valorIcms: string;
+  cstPis: string;
+  valorPis: string;
+  cstCofins: string;
+  valorCofins: string;
+  valorIpi: string;
 }
 
 interface FiscalInvoiceEvent {
@@ -136,6 +161,236 @@ function formatDate(dateString: string) {
 function formatDateTime(dateString: string) {
   if (!dateString) return '-';
   return new Date(dateString).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
+function generateDanfePdf(invoice: FiscalInvoice) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = 210;
+  const margin = 7;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  const isHomologacao = invoice.environment === 'homologacao';
+  const fmtCurrency = (v: string | number) => {
+    const n = typeof v === 'string' ? parseFloat(v) : v;
+    if (isNaN(n)) return '0,00';
+    return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const fmtQty = (v: string | number) => {
+    const n = typeof v === 'string' ? parseFloat(v) : v;
+    if (isNaN(n)) return '0';
+    return n.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+  };
+  const fmtDate = (d: string) => {
+    if (!d) return '-';
+    return new Date(d).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  };
+
+  const drawBox = (x: number, yPos: number, w: number, h: number) => {
+    doc.setDrawColor(0);
+    doc.setLineWidth(0.3);
+    doc.rect(x, yPos, w, h);
+  };
+
+  const drawField = (label: string, value: string, x: number, yPos: number, w: number, h: number = 10) => {
+    drawBox(x, yPos, w, h);
+    doc.setFontSize(5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100);
+    doc.text(label, x + 1, yPos + 3);
+    doc.setFontSize(7);
+    doc.setTextColor(0);
+    doc.setFont('helvetica', 'bold');
+    const lines = doc.splitTextToSize(value || '-', w - 2);
+    doc.text(lines.slice(0, 2), x + 1, yPos + 6.5);
+  };
+
+  // HEADER
+  drawBox(margin, y, contentWidth, 28);
+
+  // Company info (left side)
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0);
+  doc.text('PURO INDÚSTRIA E COMÉRCIO LTDA', margin + 2, y + 6);
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'normal');
+  doc.text('CNPJ: 26.975.835/0001-09', margin + 2, y + 10);
+  doc.text('IE: 10.451.466-0', margin + 2, y + 13.5);
+  doc.text('Rua 10, Qd. 34, Lt. 14 - Setor Boa Vista', margin + 2, y + 17);
+  doc.text('Senador Canedo - GO - CEP: 75.250-810', margin + 2, y + 20.5);
+  doc.text('Fone: (62) 3093-5050', margin + 2, y + 24);
+
+  // DANFE title (center)
+  const centerX = pageWidth / 2;
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DANFE', centerX, y + 8, { align: 'center' });
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'normal');
+  doc.text('DOCUMENTO AUXILIAR DA', centerX, y + 12, { align: 'center' });
+  doc.text('NOTA FISCAL ELETRÔNICA', centerX, y + 15, { align: 'center' });
+  doc.setFontSize(7);
+  doc.text(`${invoice.operationType === 'entrada' ? '0 - ENTRADA' : '1 - SAÍDA'}`, centerX, y + 19, { align: 'center' });
+  doc.text(`Nº ${invoice.invoiceNumber || '0'}`, centerX, y + 23, { align: 'center' });
+  doc.text(`Série ${invoice.series || '1'}`, centerX, y + 26, { align: 'center' });
+
+  // Page info (right)
+  doc.setFontSize(6);
+  doc.text('Folha 1/1', pageWidth - margin - 2, y + 8, { align: 'right' });
+
+  y += 28;
+
+  // HOMOLOGAÇÃO WARNING
+  if (isHomologacao) {
+    drawBox(margin, y, contentWidth, 8);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(200, 0, 0);
+    doc.text('SEM VALOR FISCAL - EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO', centerX, y + 5.5, { align: 'center' });
+    doc.setTextColor(0);
+    y += 8;
+  }
+
+  // ACCESS KEY
+  drawBox(margin, y, contentWidth, 10);
+  doc.setFontSize(5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100);
+  doc.text('CHAVE DE ACESSO', margin + 2, y + 3.5);
+  doc.setFontSize(7);
+  doc.setTextColor(0);
+  doc.setFont('helvetica', 'bold');
+  const accessKey = invoice.accessKey || 'N/A';
+  const formattedKey = accessKey.replace(/(.{4})/g, '$1 ').trim();
+  doc.text(formattedKey, centerX, y + 7.5, { align: 'center' });
+  y += 10;
+
+  // PROTOCOL
+  const halfW = contentWidth / 2;
+  drawField('PROTOCOLO DE AUTORIZAÇÃO', invoice.protocolNumber || 'N/A', margin, y, halfW, 10);
+  drawField('DATA DA AUTORIZAÇÃO', fmtDate(invoice.authorizationDate || invoice.emissionDate || invoice.createdAt), margin + halfW, y, halfW, 10);
+  y += 10;
+
+  // NATURE OF OPERATION
+  drawField('NATUREZA DA OPERAÇÃO', invoice.natureOfOperation || 'Venda', margin, y, contentWidth, 10);
+  y += 10;
+
+  // EMITENTE section header
+  drawBox(margin, y, contentWidth, 5);
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0);
+  doc.text('DESTINATÁRIO / REMETENTE', margin + 2, y + 3.5);
+  y += 5;
+
+  // DESTINATÁRIO fields
+  const col3 = contentWidth / 3;
+  drawField('NOME / RAZÃO SOCIAL', invoice.customerName || 'N/A', margin, y, col3 * 2, 10);
+  drawField('CNPJ/CPF', invoice.customerCnpjCpf || 'N/A', margin + col3 * 2, y, col3, 10);
+  y += 10;
+
+  drawField('ENDEREÇO', invoice.customerAddress || '-', margin, y, col3 * 2, 10);
+  drawField('INSCRIÇÃO ESTADUAL', invoice.customerIe || '-', margin + col3 * 2, y, col3, 10);
+  y += 10;
+
+  // PAYMENT
+  const payLabels: Record<string, string> = {
+    'a_vista': 'À Vista', 'a_prazo': 'A Prazo', 'pix': 'PIX',
+    'boleto': 'Boleto', 'cartao': 'Cartão', 'dinheiro': 'Dinheiro'
+  };
+  drawField('FORMA DE PAGAMENTO', payLabels[invoice.paymentMethod] || invoice.paymentMethod || '-', margin, y, halfW, 10);
+  drawField('DATA DE EMISSÃO', fmtDate(invoice.emissionDate || invoice.createdAt), margin + halfW, y, halfW, 10);
+  y += 10;
+
+  // ITEMS HEADER
+  drawBox(margin, y, contentWidth, 5);
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DADOS DOS PRODUTOS / SERVIÇOS', margin + 2, y + 3.5);
+  y += 5;
+
+  // ITEMS TABLE
+  const items = invoice.items || [];
+  const tableHead = [['#', 'Código', 'Descrição', 'NCM', 'CFOP', 'Un', 'Qtd', 'V.Unit', 'V.Total', 'BC ICMS', 'V.ICMS']];
+  const tableBody = items.map(item => [
+    item.itemNumber?.toString() || '',
+    item.productCode || '',
+    isHomologacao ? 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL' : (item.productName || ''),
+    item.ncm || '',
+    item.cfop || invoice.cfop || '',
+    item.unit || 'UN',
+    fmtQty(item.quantity),
+    fmtCurrency(item.unitPrice),
+    fmtCurrency(item.totalPrice),
+    fmtCurrency(item.baseIcms || '0'),
+    fmtCurrency(item.valorIcms || '0'),
+  ]);
+
+  autoTable(doc, {
+    startY: y,
+    head: tableHead,
+    body: tableBody,
+    theme: 'grid',
+    styles: { fontSize: 5.5, cellPadding: 1.5, lineWidth: 0.2, lineColor: [0, 0, 0] },
+    headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 5 },
+    columnStyles: {
+      0: { cellWidth: 8 },
+      1: { cellWidth: 16 },
+      2: { cellWidth: 52 },
+      3: { cellWidth: 16 },
+      4: { cellWidth: 12 },
+      5: { cellWidth: 10 },
+      6: { cellWidth: 16, halign: 'right' },
+      7: { cellWidth: 16, halign: 'right' },
+      8: { cellWidth: 16, halign: 'right' },
+      9: { cellWidth: 16, halign: 'right' },
+      10: { cellWidth: 16, halign: 'right' },
+    },
+    margin: { left: margin, right: margin },
+  });
+
+  y = (doc as any).lastAutoTable.finalY + 2;
+
+  // TOTALS SECTION
+  drawBox(margin, y, contentWidth, 5);
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'bold');
+  doc.text('CÁLCULO DO IMPOSTO', margin + 2, y + 3.5);
+  y += 5;
+
+  const col5 = contentWidth / 5;
+  drawField('BASE CÁLC. ICMS', fmtCurrency(invoice.totalIcms || '0'), margin, y, col5, 10);
+  drawField('VALOR DO ICMS', fmtCurrency(invoice.totalIcms || '0'), margin + col5, y, col5, 10);
+  drawField('VALOR DO PIS', fmtCurrency(invoice.totalPis || '0'), margin + col5 * 2, y, col5, 10);
+  drawField('VALOR DO COFINS', fmtCurrency(invoice.totalCofins || '0'), margin + col5 * 3, y, col5, 10);
+  drawField('VALOR DO IPI', fmtCurrency(invoice.totalIpi || '0'), margin + col5 * 4, y, col5, 10);
+  y += 10;
+
+  drawField('VALOR DOS PRODUTOS', fmtCurrency(invoice.totalProducts || '0'), margin, y, col5, 10);
+  drawField('VALOR DO FRETE', fmtCurrency(invoice.totalFreight || '0'), margin + col5, y, col5, 10);
+  drawField('VALOR DO SEGURO', fmtCurrency(invoice.totalInsurance || '0'), margin + col5 * 2, y, col5, 10);
+  drawField('DESCONTO', fmtCurrency(invoice.totalDiscount || '0'), margin + col5 * 3, y, col5, 10);
+  drawField('VALOR TOTAL DA NF-e', fmtCurrency(invoice.totalInvoice || '0'), margin + col5 * 4, y, col5, 10);
+  y += 10;
+
+  // ADDITIONAL INFO
+  if (invoice.notes) {
+    drawBox(margin, y, contentWidth, 5);
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'bold');
+    doc.text('INFORMAÇÕES COMPLEMENTARES', margin + 2, y + 3.5);
+    y += 5;
+    drawBox(margin, y, contentWidth, 15);
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
+    const noteLines = doc.splitTextToSize(invoice.notes, contentWidth - 4);
+    doc.text(noteLines.slice(0, 5), margin + 2, y + 4);
+    y += 15;
+  }
+
+  const fileName = `DANFE_${invoice.invoiceNumber || 'rascunho'}_${invoice.environment === 'homologacao' ? 'HOM' : 'PROD'}.pdf`;
+  doc.save(fileName);
 }
 
 export default function FiscalInvoices() {
@@ -574,6 +829,17 @@ export default function FiscalInvoices() {
                             {(inv.status === 'draft' || inv.status === 'rejected') && (
                               <Button variant="ghost" size="icon" title="Emitir NF-e" onClick={() => emitMutation.mutate(inv.id)} disabled={emitMutation.isPending}>
                                 <Send className="h-4 w-4 text-blue-600" />
+                              </Button>
+                            )}
+                            {inv.status === 'authorized' && (
+                              <Button variant="ghost" size="icon" title="Gerar DANFE" onClick={async () => {
+                                try {
+                                  const res = await fetch(`/api/fiscal-invoices/${inv.id}`, { credentials: 'include' });
+                                  const fullInvoice = await res.json();
+                                  generateDanfePdf(fullInvoice);
+                                } catch { toast({ title: 'Erro', description: 'Não foi possível gerar o DANFE', variant: 'destructive' }); }
+                              }}>
+                                <Printer className="h-4 w-4 text-green-600" />
                               </Button>
                             )}
                             {inv.status === 'authorized' && (
@@ -1068,6 +1334,11 @@ export default function FiscalInvoices() {
 
               {/* Action buttons */}
               <div className="flex gap-2 justify-end border-t pt-4">
+                {invoiceDetail.status === 'authorized' && (
+                  <Button variant="outline" onClick={() => generateDanfePdf(invoiceDetail)} className="border-green-300 text-green-700 hover:bg-green-50">
+                    <Printer className="h-4 w-4 mr-2" /> Gerar DANFE
+                  </Button>
+                )}
                 {(invoiceDetail.status === 'draft' || invoiceDetail.status === 'rejected') && (
                   <Button onClick={() => emitMutation.mutate(invoiceDetail.id)} disabled={emitMutation.isPending} className="bg-blue-600 hover:bg-blue-700">
                     {emitMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
