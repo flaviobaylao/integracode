@@ -622,12 +622,20 @@ export default function FiscalInvoices() {
   const [newInvoice, setNewInvoice] = useState({
     customerName: '',
     customerCnpjCpf: '',
+    customerIe: '',
+    customerAddress: '',
+    customerBairro: '',
+    customerCep: '',
+    customerCity: '',
+    customerUf: '',
+    customerPhone: '',
     fiscalScenarioId: '',
     cfop: '',
     natureOfOperation: '',
     paymentMethod: 'a_vista',
     environment: 'homologacao',
     notes: '',
+    operationType: 'saida',
     omieInstanceId: '',
     issuerName: '',
     issuerCnpj: '',
@@ -825,8 +833,10 @@ export default function FiscalInvoices() {
 
   function resetNewInvoice() {
     setNewInvoice({
-      customerName: '', customerCnpjCpf: '', fiscalScenarioId: '', cfop: '',
-      natureOfOperation: '', paymentMethod: 'a_vista', environment: 'homologacao', notes: '',
+      customerName: '', customerCnpjCpf: '', customerIe: '', customerAddress: '',
+      customerBairro: '', customerCep: '', customerCity: '', customerUf: '', customerPhone: '',
+      fiscalScenarioId: '', cfop: '', natureOfOperation: '', paymentMethod: 'a_vista',
+      environment: 'homologacao', notes: '', operationType: 'saida',
       omieInstanceId: '', issuerName: '', issuerCnpj: '', issuerIe: '',
       issuerAddress: '', issuerUf: '', issuerCityCode: '', issuerCity: '', issuerPhone: '',
       items: [],
@@ -1299,10 +1309,18 @@ export default function FiscalInvoices() {
                               key={customer.id}
                               value={customer.id}
                               onSelect={() => {
+                                const address = [customer.address, customer.addressNumber, customer.addressComplement].filter(Boolean).join(', ');
                                 setNewInvoice(p => ({
                                   ...p,
                                   customerName: displayName,
                                   customerCnpjCpf: doc,
+                                  customerIe: customer.ie || customer.stateRegistration || '',
+                                  customerAddress: address || '',
+                                  customerBairro: customer.neighborhood || customer.bairro || '',
+                                  customerCep: customer.zipCode || customer.cep || '',
+                                  customerCity: customer.city || '',
+                                  customerUf: customer.state || customer.uf || '',
+                                  customerPhone: customer.phone || customer.phoneMain || '',
                                 }));
                                 setCustomerSearchOpen(false);
                                 setCustomerSearch('');

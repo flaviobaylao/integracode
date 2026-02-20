@@ -2680,6 +2680,7 @@ export const fiscalInvoiceItems = pgTable("fiscal_invoice_items", {
   discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
   lotNumber: varchar("lot_number"),
   lotId: varchar("lot_id"),
+  csosn: varchar("csosn"),
   cstIcms: varchar("cst_icms"),
   baseIcms: decimal("base_icms", { precision: 12, scale: 2 }).default('0'),
   aliqIcms: decimal("aliq_icms", { precision: 5, scale: 2 }).default('0'),

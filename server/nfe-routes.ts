@@ -119,6 +119,11 @@ const createInvoiceSchema = z.object({
   customerCnpjCpf: z.string().optional(),
   customerIe: z.string().optional(),
   customerAddress: z.string().optional(),
+  customerBairro: z.string().optional(),
+  customerCep: z.string().optional(),
+  customerCity: z.string().optional(),
+  customerUf: z.string().optional(),
+  customerPhone: z.string().optional(),
   fiscalScenarioId: z.string().optional(),
   cfop: z.string().optional(),
   natureOfOperation: z.string().optional(),
@@ -127,12 +132,29 @@ const createInvoiceSchema = z.object({
   notes: z.string().optional(),
   series: z.string().optional(),
   operationType: z.string().optional(),
+  omieInstanceId: z.string().optional(),
+  issuerName: z.string().optional(),
+  issuerCnpj: z.string().optional(),
+  issuerIe: z.string().optional(),
+  issuerAddress: z.string().optional(),
+  issuerUf: z.string().optional(),
+  issuerCityCode: z.string().optional(),
+  issuerCity: z.string().optional(),
+  issuerPhone: z.string().optional(),
   totalProducts: z.string().optional(),
   totalDiscount: z.string().optional(),
   totalFreight: z.string().optional(),
   totalInsurance: z.string().optional(),
   totalOtherExpenses: z.string().optional(),
   totalInvoice: z.string().optional(),
+  totalIcms: z.string().optional(),
+  totalPis: z.string().optional(),
+  totalCofins: z.string().optional(),
+  totalIpi: z.string().optional(),
+  totalBaseIcms: z.string().optional(),
+  totalBaseIcmsSt: z.string().optional(),
+  totalIcmsSt: z.string().optional(),
+  dueDate: z.string().optional(),
   items: z.array(z.object({
     productName: z.string().min(1, "Nome do produto obrigatório"),
     productCode: z.string().optional(),
@@ -144,9 +166,17 @@ const createInvoiceSchema = z.object({
     unitPrice: z.string().or(z.number()),
     totalPrice: z.string().or(z.number()),
     discount: z.string().or(z.number()).optional(),
+    csosn: z.string().optional(),
     cstIcms: z.string().optional(),
+    baseIcms: z.string().or(z.number()).optional(),
+    aliqIcms: z.string().or(z.number()).optional(),
+    valorIcms: z.string().or(z.number()).optional(),
+    aliqIpi: z.string().or(z.number()).optional(),
     cstPis: z.string().optional(),
+    valorPis: z.string().or(z.number()).optional(),
     cstCofins: z.string().optional(),
+    valorCofins: z.string().or(z.number()).optional(),
+    valorIpi: z.string().or(z.number()).optional(),
   })).optional(),
 });
 
@@ -491,6 +521,22 @@ export function registerNfeRoutes(app: Express) {
 
       const { items, ...invoiceFields } = parsed.data;
       const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1');
+
+      if (invoiceFields.omieInstanceId && !invoiceFields.issuerName) {
+        const instances = await storage.getOmieInstances();
+        const inst = instances.find(i => i.id === invoiceFields.omieInstanceId);
+        if (inst && INSTANCE_COMPANY_DATA[inst.name]) {
+          const cd = INSTANCE_COMPANY_DATA[inst.name];
+          invoiceFields.issuerName = cd.name;
+          invoiceFields.issuerCnpj = cd.cnpj;
+          invoiceFields.issuerIe = cd.ie;
+          invoiceFields.issuerAddress = cd.address;
+          invoiceFields.issuerUf = cd.uf;
+          invoiceFields.issuerCityCode = cd.cityCode;
+          invoiceFields.issuerCity = cd.city;
+          invoiceFields.issuerPhone = cd.phone;
+        }
+      }
       
       const invoice = await storage.createFiscalInvoice({
         ...invoiceFields,
@@ -501,14 +547,31 @@ export function registerNfeRoutes(app: Express) {
 
       if (items && items.length > 0) {
         for (let i = 0; i < items.length; i++) {
+          const item = items[i];
           await storage.createFiscalInvoiceItem({
-            ...items[i],
+            productName: item.productName,
+            productCode: item.productCode,
+            productId: item.productId,
+            ncm: item.ncm,
+            cfop: item.cfop,
+            unit: item.unit,
+            csosn: item.csosn,
+            cstIcms: item.cstIcms,
+            cstPis: item.cstPis,
+            cstCofins: item.cstCofins,
             invoiceId: invoice.id,
             itemNumber: i + 1,
-            quantity: items[i].quantity.toString(),
-            unitPrice: items[i].unitPrice.toString(),
-            totalPrice: items[i].totalPrice.toString(),
-            discount: items[i].discount?.toString() || '0',
+            quantity: item.quantity.toString(),
+            unitPrice: item.unitPrice.toString(),
+            totalPrice: item.totalPrice.toString(),
+            discount: item.discount?.toString() || '0',
+            baseIcms: item.baseIcms?.toString(),
+            aliqIcms: item.aliqIcms?.toString(),
+            valorIcms: item.valorIcms?.toString(),
+            aliqIpi: item.aliqIpi?.toString(),
+            valorPis: item.valorPis?.toString(),
+            valorCofins: item.valorCofins?.toString(),
+            valorIpi: item.valorIpi?.toString(),
           });
         }
       }
