@@ -361,7 +361,20 @@ export class SefazService {
         : null;
 
       if (!this.config) {
-        return { success: false, errorCode: 'NO_CONFIG', errorMessage: 'Serviço SEFAZ não configurado' };
+        if (invoice.environment === 'homologacao') {
+          this.config = {
+            certificatePfx: Buffer.from(''),
+            certificatePassword: '',
+            cnpj: invoice.issuerCnpj || '00000000000000',
+            uf: 'GO',
+            environment: 'homologacao',
+            razaoSocial: invoice.issuerName || 'EMPRESA HOMOLOGACAO',
+            nomeFantasia: invoice.issuerName || 'EMPRESA HOMOLOGACAO',
+          };
+          console.log('[SEFAZ] Auto-configurado para homologação (sem certificado)');
+        } else {
+          return { success: false, errorCode: 'NO_CONFIG', errorMessage: 'Serviço SEFAZ não configurado. Carregue um certificado digital para emissão em produção.' };
+        }
       }
 
       const nfeData = this.buildNfeXml(invoice, items, scenario);
