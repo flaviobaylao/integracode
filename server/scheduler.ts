@@ -190,11 +190,11 @@ async function syncComplete(horario: string) {
         console.error(`❌ [${horario}] ${errorMsg}`);
       }
 
-      // 3. Sincronizar débitos vencidos
+      // 3. Sincronizar débitos vencidos (com instanceId para não apagar dados de outras instâncias)
       try {
         console.log(`📊 [${horario}] [${label}] Sincronizando débitos vencidos...`);
         const debtResult = await svc.getOverdueDebts();
-        await storage.syncOverdueDebts(debtResult.debts);
+        await storage.syncOverdueDebts(debtResult.debts, false, svc.omieInstanceId);
         globalResults.overdueDebts.totalClients += debtResult.totalClients || 0;
         globalResults.overdueDebts.totalAmount += debtResult.totalAmount || 0;
         console.log(`✅ [${horario}] [${label}] Débitos: ${debtResult.totalClients} clientes, R$ ${debtResult.totalAmount.toFixed(2)}`);
