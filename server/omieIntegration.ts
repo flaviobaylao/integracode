@@ -3324,10 +3324,10 @@ export class OmieService {
       console.log(`⚠️  IMPORTANTE: Débitos que vencem HOJE (${dataHoje}) NÃO são considerados vencidos`);
       console.log(`📅 Serão incluídos apenas débitos com data_previsao < ${dataHoje}`);
       
-      // Implementar paginação para buscar TODOS os títulos
+      // Implementar paginação para buscar títulos ATRASADOS
       let currentPage = 1;
       let hasMorePages = true;
-      const pageSize = 500; // Aumentar para processar mais registros por vez
+      const pageSize = 500;
       
       while (hasMorePages) {
         console.log(`📄 Fetching page ${currentPage} with ${pageSize} records...`);
@@ -3335,7 +3335,8 @@ export class OmieService {
         const response = await this.makeRequest('/financas/contareceber/', 'ListarContasReceber', {
           pagina: currentPage,
           registros_por_pagina: pageSize,
-          apenas_importado_api: 'N'
+          apenas_importado_api: 'N',
+          filtrar_por_status: 'ATRASADO'
         });
 
         // Log da estrutura da resposta para debug
@@ -3353,13 +3354,10 @@ export class OmieService {
                        response.lista_contas_receber || 
                        [];
 
-        console.log(`📊 Page ${currentPage}: Found ${contas.length} accounts to process`);
-        
-        // Log básico para debug
-        if (currentPage <= 2) {
-          console.log(`\n=== DEBUG PÁGINA ${currentPage} ===`);
-          console.log(`Total de contas na página: ${contas.length}`);
+        if (currentPage === 1) {
+          console.log(`📊 Total de registros ATRASADOS: ${response.total_de_registros || 'N/A'}, páginas: ${response.total_de_paginas || 'N/A'}`);
         }
+        console.log(`📊 Page ${currentPage}: ${contas.length} contas`);
 
         let contaIndex = 0;
         let debitosEncontradosNaPagina = 0;
