@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import WhatsAppButton from "@/components/WhatsAppButton";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -59,6 +59,8 @@ export default function OverdueDebtsManagement() {
   const [selectedVendor, setSelectedVendor] = useState<string>("all");
   const [downloadingBoleto, setDownloadingBoleto] = useState<number | null>(null);
   const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
+  const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor'>('dias_atraso');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -292,6 +294,46 @@ export default function OverdueDebtsManagement() {
     
     return matchesSearch && matchesVendor;
   }) || [];
+
+  const handleSort = (column: typeof sortBy) => {
+    if (sortBy === column) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDir(column === 'cliente' ? 'asc' : 'desc');
+    }
+  };
+
+  const SortIcon = ({ column }: { column: typeof sortBy }) => {
+    if (sortBy !== column) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />;
+    return sortDir === 'asc' 
+      ? <ArrowUp className="h-3 w-3 ml-1 text-blue-600" /> 
+      : <ArrowDown className="h-3 w-3 ml-1 text-blue-600" />;
+  };
+
+  const instanceLabel = (id?: string | null) => {
+    if (!id) return '';
+    const labels: Record<string, string> = {
+      '9ca142af': 'BSB', '750878b1': 'GYN', 'db80925f': 'IND', '0f2e5d32': 'SERV',
+    };
+    return labels[id] || id.substring(0, 4).toUpperCase();
+  };
+
+  const sortedDebts = [...filteredDebts].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    switch (sortBy) {
+      case 'dias_atraso':
+        return (a.diasMaximoAtraso - b.diasMaximoAtraso) * dir;
+      case 'cliente':
+        return a.cliente.nome_fantasia.localeCompare(b.cliente.nome_fantasia, 'pt-BR') * dir;
+      case 'instancia':
+        return instanceLabel(a.omieInstanceId).localeCompare(instanceLabel(b.omieInstanceId), 'pt-BR') * dir;
+      case 'valor':
+        return (a.valorTotal - b.valorTotal) * dir;
+      default:
+        return 0;
+    }
+  });
 
   // Calcular subtotais dos débitos filtrados
   const filteredTotals = {
@@ -671,18 +713,27 @@ export default function OverdueDebtsManagement() {
                 <table className="w-full border-collapse" data-testid="table-debts">
                   <thead>
                     <tr className="bg-gray-50 border-b">
-                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Cliente</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('cliente')}>
+                        <span className="flex items-center">Cliente <SortIcon column="cliente" /></span>
+                      </th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">CNPJ/CPF</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Telefone</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Nº Nota Fiscal</th>
-                      <th className="text-right p-3 font-semibold text-sm text-gray-700">Valor</th>
+                      <th className="text-right p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('valor')}>
+                        <span className="flex items-center justify-end">Valor <SortIcon column="valor" /></span>
+                      </th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Data Vencimento</th>
-                      <th className="text-right p-3 font-semibold text-sm text-gray-700">Dias Atraso</th>
+                      <th className="text-right p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('dias_atraso')}>
+                        <span className="flex items-center justify-end">Dias Atraso <SortIcon column="dias_atraso" /></span>
+                      </th>
+                      <th className="text-center p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('instancia')}>
+                        <span className="flex items-center justify-center">Instância <SortIcon column="instancia" /></span>
+                      </th>
                       <th className="text-center p-3 font-semibold text-sm text-gray-700">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredDebts.map((debt, debtIndex) => (
+                    {sortedDebts.map((debt, debtIndex) => (
                       debt.debitos.map((documento, docIndex) => (
                         <tr 
                           key={`${debtIndex}-${docIndex}`}
@@ -690,9 +741,8 @@ export default function OverdueDebtsManagement() {
                           data-testid={`row-debt-${debtIndex}-${docIndex}`}
                         >
                           <td className="p-3">
-                            <div className="font-medium text-gray-900 flex items-center gap-2">
-                              <span>{debt.cliente.nome_fantasia}</span>
-                              <OmieInstanceBadge instanceId={debt.omieInstanceId} />
+                            <div className="font-medium text-gray-900">
+                              {debt.cliente.nome_fantasia}
                             </div>
                           </td>
                           <td className="p-3 text-sm text-gray-600">{debt.cliente.cnpj_cpf}</td>
@@ -719,6 +769,9 @@ export default function OverdueDebtsManagement() {
                             >
                               {documento.dias_atraso} dias
                             </Badge>
+                          </td>
+                          <td className="p-3 text-center">
+                            <OmieInstanceBadge instanceId={debt.omieInstanceId} />
                           </td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">
