@@ -15,6 +15,70 @@ import { objectStorageClient } from "./replit_integrations/object_storage/object
 
 const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
 
+export interface CompanyData {
+  name: string;
+  cnpj: string;
+  ie: string;
+  address: string;
+  city: string;
+  cityCode: string;
+  uf: string;
+  cep: string;
+  phone: string;
+  crt: string;
+}
+
+export const INSTANCE_COMPANY_DATA: Record<string, CompanyData> = {
+  'BSB': {
+    name: 'PURO INDÚSTRIA E COMÉRCIO LTDA - BSB',
+    cnpj: '26.975.835/0002-80',
+    ie: '07.668.149/001-08',
+    address: 'SIA Trecho 5A, Lote 180/200, Sala 2 - SIA, Brasília/DF',
+    city: 'Brasília',
+    cityCode: '5300108',
+    uf: 'DF',
+    cep: '71200-055',
+    phone: '(61) 3333-5050',
+    crt: '3',
+  },
+  'GYN': {
+    name: 'PURO INDÚSTRIA E COMÉRCIO LTDA',
+    cnpj: '26.975.835/0001-09',
+    ie: '10.451.466-0',
+    address: 'Rua 10, Qd. 34, Lt. 14 - Setor Boa Vista, Senador Canedo/GO',
+    city: 'Senador Canedo',
+    cityCode: '5220454',
+    uf: 'GO',
+    cep: '75250-810',
+    phone: '(62) 3093-5050',
+    crt: '3',
+  },
+  'IND': {
+    name: 'PURO INDÚSTRIA E COMÉRCIO LTDA - INDÚSTRIA',
+    cnpj: '26.975.835/0003-61',
+    ie: '10.451.466-0',
+    address: 'Rua 10, Qd. 34, Lt. 14 - Setor Boa Vista, Senador Canedo/GO',
+    city: 'Senador Canedo',
+    cityCode: '5220454',
+    uf: 'GO',
+    cep: '75250-810',
+    phone: '(62) 3093-5050',
+    crt: '3',
+  },
+  'SERV': {
+    name: 'PURO SERVIÇOS LTDA',
+    cnpj: '26.975.835/0004-42',
+    ie: 'ISENTO',
+    address: 'Rua 10, Qd. 34, Lt. 14 - Setor Boa Vista, Senador Canedo/GO',
+    city: 'Senador Canedo',
+    cityCode: '5220454',
+    uf: 'GO',
+    cep: '75250-810',
+    phone: '(62) 3093-5050',
+    crt: '3',
+  },
+};
+
 function encryptPassword(plaintext: string): string {
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-cbc', CERT_ENCRYPTION_KEY, iv);
@@ -101,6 +165,31 @@ const cancelInvoiceSchema = z.object({
 });
 
 export function registerNfeRoutes(app: Express) {
+
+  // ============================================================================
+  // COMPANY DATA PER INSTANCE
+  // ============================================================================
+
+  app.get('/api/nfe/company-data', authenticateUser, async (req: any, res) => {
+    try {
+      const instances = await storage.getOmieInstances();
+      const result = instances
+        .filter(inst => inst.isActive && INSTANCE_COMPANY_DATA[inst.name])
+        .map(inst => {
+          const companyData = INSTANCE_COMPANY_DATA[inst.name];
+          return {
+            instanceId: inst.id,
+            instanceName: inst.name,
+            displayName: inst.displayName,
+            tagColor: inst.tagColor,
+            ...companyData,
+          };
+        });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao buscar dados das empresas', error: error.message });
+    }
+  });
 
   // ============================================================================
   // FISCAL SCENARIOS

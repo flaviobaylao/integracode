@@ -360,19 +360,34 @@ export class SefazService {
         ? await storage.getFiscalScenario(invoice.fiscalScenarioId)
         : null;
 
-      if (!this.config) {
+      if (!this.config || invoice.environment === 'homologacao') {
+        const cnpj = (invoice.issuerCnpj || '00000000000000').replace(/\D/g, '');
+        const uf = invoice.issuerUf || 'GO';
+        this.config = {
+          certificatePfx: this.config?.certificatePfx || Buffer.from(''),
+          certificatePassword: this.config?.certificatePassword || '',
+          cnpj,
+          uf,
+          environment: invoice.environment as 'homologacao' | 'producao',
+          razaoSocial: invoice.issuerName || 'EMPRESA EMITENTE',
+          nomeFantasia: invoice.issuerName || 'EMPRESA EMITENTE',
+          inscricaoEstadual: invoice.issuerIe || '',
+          endereco: {
+            logradouro: invoice.issuerAddress || '',
+            numero: 'S/N',
+            bairro: '',
+            codigoMunicipio: invoice.issuerCityCode || '5220454',
+            nomeMunicipio: invoice.issuerCity || '',
+            uf,
+            cep: '',
+            pais: 'Brasil',
+            codigoPais: '1058',
+          },
+        };
         if (invoice.environment === 'homologacao') {
-          this.config = {
-            certificatePfx: Buffer.from(''),
-            certificatePassword: '',
-            cnpj: invoice.issuerCnpj || '00000000000000',
-            uf: 'GO',
-            environment: 'homologacao',
-            razaoSocial: invoice.issuerName || 'EMPRESA HOMOLOGACAO',
-            nomeFantasia: invoice.issuerName || 'EMPRESA HOMOLOGACAO',
-          };
-          console.log('[SEFAZ] Auto-configurado para homologação (sem certificado)');
-        } else {
+          console.log(`[SEFAZ] Auto-configurado para homologação - CNPJ: ${cnpj}, UF: ${uf}`);
+        }
+        if (!this.config.certificatePfx?.length && invoice.environment === 'producao') {
           return { success: false, errorCode: 'NO_CONFIG', errorMessage: 'Serviço SEFAZ não configurado. Carregue um certificado digital para emissão em produção.' };
         }
       }

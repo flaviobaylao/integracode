@@ -27,6 +27,14 @@ interface FiscalInvoice {
   id: string;
   invoiceNumber: string;
   series: string;
+  issuerName: string;
+  issuerCnpj: string;
+  issuerIe: string;
+  issuerAddress: string;
+  issuerUf: string;
+  issuerCityCode: string;
+  issuerCity: string;
+  issuerPhone: string;
   customerName: string;
   customerCnpjCpf: string;
   customerIe: string;
@@ -34,6 +42,7 @@ interface FiscalInvoice {
   cfop: string;
   natureOfOperation: string;
   operationType: string;
+  omieInstanceId: string;
   status: string;
   environment: string;
   totalProducts: string;
@@ -208,32 +217,43 @@ function generateDanfePdf(invoice: FiscalInvoice) {
   // HEADER
   drawBox(margin, y, contentWidth, 28);
 
-  // Company info (left side)
-  doc.setFontSize(10);
+  // Company info (left side) - dynamic from invoice issuer data
+  const emitName = invoice.issuerName || 'EMPRESA EMITENTE';
+  const emitCnpj = invoice.issuerCnpj || '';
+  const emitIe = invoice.issuerIe || '';
+  const emitAddress = invoice.issuerAddress || '';
+  const emitPhone = invoice.issuerPhone || '';
+
+  doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0);
-  doc.text('PURO INDÚSTRIA E COMÉRCIO LTDA', margin + 2, y + 6);
+  const nameLines = doc.splitTextToSize(emitName, 80);
+  doc.text(nameLines[0], margin + 2, y + 6);
   doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
-  doc.text('CNPJ: 26.975.835/0001-09', margin + 2, y + 10);
-  doc.text('IE: 10.451.466-0', margin + 2, y + 13.5);
-  doc.text('Rua 10, Qd. 34, Lt. 14 - Setor Boa Vista', margin + 2, y + 17);
-  doc.text('Senador Canedo - GO - CEP: 75.250-810', margin + 2, y + 20.5);
-  doc.text('Fone: (62) 3093-5050', margin + 2, y + 24);
+  doc.text(`CNPJ: ${emitCnpj}`, margin + 2, y + 10);
+  doc.text(`IE: ${emitIe}`, margin + 2, y + 13.5);
+  const addrLines = doc.splitTextToSize(emitAddress, 80);
+  doc.text(addrLines[0] || '', margin + 2, y + 17);
+  if (addrLines[1]) doc.text(addrLines[1], margin + 2, y + 20.5);
+  doc.text(`Fone: ${emitPhone}`, margin + 2, y + 24);
 
-  // DANFE title (center)
+  // DANFE title (center) - Modelo 55
   const centerX = pageWidth / 2;
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text('DANFE', centerX, y + 8, { align: 'center' });
+  doc.text('DANFE', centerX, y + 7, { align: 'center' });
+  doc.setFontSize(5.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text('DOCUMENTO AUXILIAR DA', centerX, y + 11, { align: 'center' });
+  doc.text('NOTA FISCAL ELETRÔNICA', centerX, y + 14, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`${invoice.operationType === 'entrada' ? '0 - ENTRADA' : '1 - SAÍDA'}`, centerX, y + 18, { align: 'center' });
+  doc.text(`Nº ${invoice.invoiceNumber || '0'}  -  Série ${invoice.series || '1'}`, centerX, y + 22, { align: 'center' });
   doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
-  doc.text('DOCUMENTO AUXILIAR DA', centerX, y + 12, { align: 'center' });
-  doc.text('NOTA FISCAL ELETRÔNICA', centerX, y + 15, { align: 'center' });
-  doc.setFontSize(7);
-  doc.text(`${invoice.operationType === 'entrada' ? '0 - ENTRADA' : '1 - SAÍDA'}`, centerX, y + 19, { align: 'center' });
-  doc.text(`Nº ${invoice.invoiceNumber || '0'}`, centerX, y + 23, { align: 'center' });
-  doc.text(`Série ${invoice.series || '1'}`, centerX, y + 26, { align: 'center' });
+  doc.text('Modelo 55', centerX, y + 26, { align: 'center' });
 
   // Page info (right)
   doc.setFontSize(6);
@@ -414,6 +434,15 @@ export default function FiscalInvoices() {
     paymentMethod: 'a_vista',
     environment: 'homologacao',
     notes: '',
+    omieInstanceId: '',
+    issuerName: '',
+    issuerCnpj: '',
+    issuerIe: '',
+    issuerAddress: '',
+    issuerUf: '',
+    issuerCityCode: '',
+    issuerCity: '',
+    issuerPhone: '',
     items: [] as Array<{ productCode: string; productName: string; ncm: string; cfop: string; quantity: string; unitPrice: string }>,
   });
   const [newItem, setNewItem] = useState({ productCode: '', productName: '', ncm: '', cfop: '', quantity: '1', unitPrice: '0' });
@@ -421,6 +450,11 @@ export default function FiscalInvoices() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
+
+  const { data: companyDataList } = useQuery<any[]>({
+    queryKey: ['/api/nfe/company-data'],
+    enabled: showCreateDialog,
+  });
 
   const { data: allCustomers, isLoading: loadingCustomers } = useQuery<any[]>({
     queryKey: ['/api/customers/all-for-sales'],
@@ -598,7 +632,10 @@ export default function FiscalInvoices() {
   function resetNewInvoice() {
     setNewInvoice({
       customerName: '', customerCnpjCpf: '', fiscalScenarioId: '', cfop: '',
-      natureOfOperation: '', paymentMethod: 'a_vista', environment: 'homologacao', notes: '', items: [],
+      natureOfOperation: '', paymentMethod: 'a_vista', environment: 'homologacao', notes: '',
+      omieInstanceId: '', issuerName: '', issuerCnpj: '', issuerIe: '',
+      issuerAddress: '', issuerUf: '', issuerCityCode: '', issuerCity: '', issuerPhone: '',
+      items: [],
     });
     setNewItem({ productCode: '', productName: '', ncm: '', cfop: '', quantity: '1', unitPrice: '0' });
     setCustomerSearch('');
@@ -621,7 +658,29 @@ export default function FiscalInvoices() {
     }));
   }
 
+  function handleInstanceSelect(instanceId: string) {
+    const company = companyDataList?.find((c: any) => c.instanceId === instanceId);
+    if (company) {
+      setNewInvoice(p => ({
+        ...p,
+        omieInstanceId: instanceId,
+        issuerName: company.name,
+        issuerCnpj: company.cnpj,
+        issuerIe: company.ie,
+        issuerAddress: company.address,
+        issuerUf: company.uf,
+        issuerCityCode: company.cityCode,
+        issuerCity: company.city,
+        issuerPhone: company.phone,
+      }));
+    }
+  }
+
   function handleCreateInvoice() {
+    if (!newInvoice.omieInstanceId) {
+      toast({ title: 'Instância obrigatória', description: 'Selecione a empresa emitente.', variant: 'destructive' });
+      return;
+    }
     if (!newInvoice.customerName || !newInvoice.customerCnpjCpf) {
       toast({ title: 'Campos obrigatórios', description: 'Preencha o nome e CPF/CNPJ do cliente.', variant: 'destructive' });
       return;
@@ -993,6 +1052,30 @@ export default function FiscalInvoices() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
+              <Label>Empresa Emitente (Instância) *</Label>
+              <Select value={newInvoice.omieInstanceId} onValueChange={handleInstanceSelect}>
+                <SelectTrigger className={!newInvoice.omieInstanceId ? 'border-orange-300' : 'border-green-300'}>
+                  <SelectValue placeholder="Selecione a empresa emitente..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {companyDataList?.map((company: any) => (
+                    <SelectItem key={company.instanceId} value={company.instanceId}>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: company.tagColor || '#3B82F6' }} />
+                        <span className="font-medium">{company.instanceName}</span>
+                        <span className="text-xs text-muted-foreground">- {company.name}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {newInvoice.issuerCnpj && (
+                <div className="text-xs text-muted-foreground bg-gray-50 rounded p-2 mt-1">
+                  <strong>{newInvoice.issuerName}</strong> | CNPJ: {newInvoice.issuerCnpj} | IE: {newInvoice.issuerIe} | {newInvoice.issuerAddress}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
               <Label>Cliente *</Label>
               <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen} modal={true}>
                 <PopoverTrigger asChild>
@@ -1222,6 +1305,15 @@ export default function FiscalInvoices() {
             </div>
           ) : invoiceDetail ? (
             <div className="space-y-6">
+              {/* Emitente info */}
+              {invoiceDetail.issuerName && (
+                <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">EMITENTE</p>
+                  <p className="font-medium text-sm">{invoiceDetail.issuerName}</p>
+                  <p className="text-xs text-muted-foreground">CNPJ: {invoiceDetail.issuerCnpj} | IE: {invoiceDetail.issuerIe} | {invoiceDetail.issuerAddress}</p>
+                </div>
+              )}
+
               {/* Info grid */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div>
