@@ -2941,3 +2941,340 @@ export const insertBillingPipelineSchema = createInsertSchema(billingPipeline).o
 export type BillingPipeline = typeof billingPipeline.$inferSelect;
 export type InsertBillingPipeline = z.infer<typeof insertBillingPipelineSchema>;
 
+// ============================================================================
+// FINANCIAL MODULE - CHART OF ACCOUNTS
+// ============================================================================
+
+export const chartOfAccountTypeEnum = pgEnum("chart_of_account_type", [
+  "receita",
+  "despesa",
+  "ativo",
+  "passivo",
+]);
+
+export const chartOfAccounts = pgTable("chart_of_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code").notNull(),
+  name: varchar("name").notNull(),
+  type: chartOfAccountTypeEnum("type").notNull(),
+  parentId: varchar("parent_id"),
+  omieInstanceId: varchar("omie_instance_id"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_chart_accounts_type").on(table.type),
+  index("idx_chart_accounts_instance").on(table.omieInstanceId),
+  index("idx_chart_accounts_code").on(table.code),
+]);
+
+export const chartOfAccountsRelations = relations(chartOfAccounts, ({ one }) => ({
+  parent: one(chartOfAccounts, {
+    fields: [chartOfAccounts.parentId],
+    references: [chartOfAccounts.id],
+  }),
+}));
+
+export const insertChartOfAccountSchema = createInsertSchema(chartOfAccounts).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ChartOfAccount = typeof chartOfAccounts.$inferSelect;
+export type InsertChartOfAccount = z.infer<typeof insertChartOfAccountSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - FINANCIAL ACCOUNTS (bank/cash)
+// ============================================================================
+
+export const financialAccountTypeEnum = pgEnum("financial_account_type", [
+  "caixa",
+  "banco",
+  "carteira_digital",
+]);
+
+export const financialAccounts = pgTable("financial_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  type: financialAccountTypeEnum("type").notNull(),
+  bankName: varchar("bank_name"),
+  bankCode: varchar("bank_code"),
+  agency: varchar("agency"),
+  accountNumber: varchar("account_number"),
+  pixKey: varchar("pix_key"),
+  omieInstanceId: varchar("omie_instance_id"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_financial_accounts_instance").on(table.omieInstanceId),
+  index("idx_financial_accounts_type").on(table.type),
+]);
+
+export const insertFinancialAccountSchema = createInsertSchema(financialAccounts).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FinancialAccount = typeof financialAccounts.$inferSelect;
+export type InsertFinancialAccount = z.infer<typeof insertFinancialAccountSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - ACCOUNTS RECEIVABLE (Contas a Receber)
+// ============================================================================
+
+export const receivableStatusEnum = pgEnum("receivable_status", [
+  "a_vencer",
+  "recebida",
+  "vencida",
+  "cancelada",
+]);
+
+export const financialPaymentMethodEnum = pgEnum("financial_payment_method", [
+  "dinheiro",
+  "boleto",
+  "cartao_credito",
+  "cartao_debito",
+  "pix",
+  "transferencia",
+  "cheque",
+  "outros",
+]);
+
+export const receivables = pgTable("receivables", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  titleNumber: varchar("title_number"),
+  customerId: varchar("customer_id"),
+  customerName: varchar("customer_name").notNull(),
+  customerDocument: varchar("customer_document"),
+  description: text("description"),
+  issueDate: timestamp("issue_date").notNull(),
+  dueDate: timestamp("due_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  amountPaid: decimal("amount_paid", { precision: 12, scale: 2 }).default('0'),
+  status: receivableStatusEnum("status").notNull().default("a_vencer"),
+  paymentMethod: financialPaymentMethodEnum("payment_method"),
+  financialAccountId: varchar("financial_account_id"),
+  chartAccountId: varchar("chart_account_id"),
+  fiscalInvoiceId: varchar("fiscal_invoice_id"),
+  billingPipelineId: varchar("billing_pipeline_id"),
+  salesCardId: varchar("sales_card_id"),
+  omieInstanceId: varchar("omie_instance_id"),
+  notes: text("notes"),
+  externalId: varchar("external_id"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_receivables_customer").on(table.customerId),
+  index("idx_receivables_status").on(table.status),
+  index("idx_receivables_due_date").on(table.dueDate),
+  index("idx_receivables_issue_date").on(table.issueDate),
+  index("idx_receivables_instance").on(table.omieInstanceId),
+  index("idx_receivables_fiscal_invoice").on(table.fiscalInvoiceId),
+]);
+
+export const receivablesRelations = relations(receivables, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [receivables.customerId],
+    references: [customers.id],
+  }),
+  financialAccount: one(financialAccounts, {
+    fields: [receivables.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+  chartAccount: one(chartOfAccounts, {
+    fields: [receivables.chartAccountId],
+    references: [chartOfAccounts.id],
+  }),
+  fiscalInvoice: one(fiscalInvoices, {
+    fields: [receivables.fiscalInvoiceId],
+    references: [fiscalInvoices.id],
+  }),
+  payments: many(receivablePayments),
+}));
+
+export const insertReceivableSchema = createInsertSchema(receivables).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Receivable = typeof receivables.$inferSelect;
+export type InsertReceivable = z.infer<typeof insertReceivableSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - RECEIVABLE PAYMENTS
+// ============================================================================
+
+export const receivablePayments = pgTable("receivable_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  receivableId: varchar("receivable_id").notNull(),
+  paidAt: timestamp("paid_at").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: financialPaymentMethodEnum("payment_method"),
+  financialAccountId: varchar("financial_account_id"),
+  reference: varchar("reference"),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_receivable_payments_receivable").on(table.receivableId),
+  index("idx_receivable_payments_paid_at").on(table.paidAt),
+]);
+
+export const receivablePaymentsRelations = relations(receivablePayments, ({ one }) => ({
+  receivable: one(receivables, {
+    fields: [receivablePayments.receivableId],
+    references: [receivables.id],
+  }),
+  financialAccount: one(financialAccounts, {
+    fields: [receivablePayments.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+}));
+
+export const insertReceivablePaymentSchema = createInsertSchema(receivablePayments).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ReceivablePayment = typeof receivablePayments.$inferSelect;
+export type InsertReceivablePayment = z.infer<typeof insertReceivablePaymentSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - ACCOUNTS PAYABLE (Contas a Pagar)
+// ============================================================================
+
+export const payableStatusEnum = pgEnum("payable_status", [
+  "a_vencer",
+  "paga",
+  "vencida",
+  "cancelada",
+]);
+
+export const payableSourceEnum = pgEnum("payable_source", [
+  "manual",
+  "xml_import",
+  "radar",
+]);
+
+export const payables = pgTable("payables", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  titleNumber: varchar("title_number"),
+  supplierName: varchar("supplier_name").notNull(),
+  supplierDocument: varchar("supplier_document"),
+  description: text("description"),
+  issueDate: timestamp("issue_date").notNull(),
+  dueDate: timestamp("due_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  amountPaid: decimal("amount_paid", { precision: 12, scale: 2 }).default('0'),
+  status: payableStatusEnum("status").notNull().default("a_vencer"),
+  paymentMethod: financialPaymentMethodEnum("payment_method"),
+  financialAccountId: varchar("financial_account_id"),
+  chartAccountId: varchar("chart_account_id"),
+  source: payableSourceEnum("source").notNull().default("manual"),
+  fiscalInvoiceId: varchar("fiscal_invoice_id"),
+  xmlAccessKey: varchar("xml_access_key"),
+  xmlContent: text("xml_content"),
+  omieInstanceId: varchar("omie_instance_id"),
+  notes: text("notes"),
+  externalId: varchar("external_id"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_payables_supplier").on(table.supplierDocument),
+  index("idx_payables_status").on(table.status),
+  index("idx_payables_due_date").on(table.dueDate),
+  index("idx_payables_issue_date").on(table.issueDate),
+  index("idx_payables_instance").on(table.omieInstanceId),
+  index("idx_payables_source").on(table.source),
+]);
+
+export const payablesRelations = relations(payables, ({ one, many }) => ({
+  financialAccount: one(financialAccounts, {
+    fields: [payables.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+  chartAccount: one(chartOfAccounts, {
+    fields: [payables.chartAccountId],
+    references: [chartOfAccounts.id],
+  }),
+  payments: many(payablePayments),
+}));
+
+export const insertPayableSchema = createInsertSchema(payables).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Payable = typeof payables.$inferSelect;
+export type InsertPayable = z.infer<typeof insertPayableSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - PAYABLE PAYMENTS
+// ============================================================================
+
+export const payablePayments = pgTable("payable_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payableId: varchar("payable_id").notNull(),
+  paidAt: timestamp("paid_at").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: financialPaymentMethodEnum("payment_method"),
+  financialAccountId: varchar("financial_account_id"),
+  reference: varchar("reference"),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_payable_payments_payable").on(table.payableId),
+  index("idx_payable_payments_paid_at").on(table.paidAt),
+]);
+
+export const payablePaymentsRelations = relations(payablePayments, ({ one }) => ({
+  payable: one(payables, {
+    fields: [payablePayments.payableId],
+    references: [payables.id],
+  }),
+  financialAccount: one(financialAccounts, {
+    fields: [payablePayments.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+}));
+
+export const insertPayablePaymentSchema = createInsertSchema(payablePayments).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PayablePayment = typeof payablePayments.$inferSelect;
+export type InsertPayablePayment = z.infer<typeof insertPayablePaymentSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - SPED FISCAL EXPORTS
+// ============================================================================
+
+export const spedExports = pgTable("sped_exports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: varchar("type").notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  omieInstanceId: varchar("omie_instance_id"),
+  fileName: varchar("file_name"),
+  fileContent: text("file_content"),
+  status: varchar("status").default("generated"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_sped_exports_instance").on(table.omieInstanceId),
+  index("idx_sped_exports_period").on(table.periodStart, table.periodEnd),
+]);
+
+export const insertSpedExportSchema = createInsertSchema(spedExports).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type SpedExport = typeof spedExports.$inferSelect;
+export type InsertSpedExport = z.infer<typeof insertSpedExportSchema>;
+

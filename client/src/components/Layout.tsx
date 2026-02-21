@@ -185,6 +185,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       badge: null
     },
     { 
+      id: 'financeiro', 
+      label: 'Módulo Financeiro', 
+      icon: 'fas fa-dollar-sign', 
+      available: canAccessReports,
+      badge: null
+    },
+    { 
       id: 'overdue-debts', 
       label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', 
       icon: 'fas fa-exclamation-triangle', 
@@ -284,7 +291,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
     
     // Rotas admin especiais
     if (itemId === 'omie-instances') {

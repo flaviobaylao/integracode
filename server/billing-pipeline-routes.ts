@@ -215,6 +215,15 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       }
 
+      if (stage === 'faturado' && item.stage !== 'faturado') {
+        try {
+          await createReceivableFromPipelineItem(item, fiscalInvoiceId, user);
+          console.log(`💰 [BILLING-PIPELINE] Conta a receber criada para item ${req.params.id}`);
+        } catch (recError: any) {
+          console.error(`❌ [BILLING-PIPELINE] Erro ao criar conta a receber:`, recError.message);
+        }
+      }
+
       const updateData: any = { stage, stageHistory: history };
       if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
 
@@ -293,6 +302,14 @@ export function registerBillingPipelineRoutes(app: Express) {
               }
             } catch (invoiceError: any) {
               console.error(`❌ [BATCH] Erro NF-e para ${id}:`, invoiceError.message);
+            }
+          }
+
+          if (stage === 'faturado' && item.stage !== 'faturado') {
+            try {
+              await createReceivableFromPipelineItem(item, fiscalInvoiceId || null, user);
+            } catch (recError: any) {
+              console.error(`❌ [BATCH] Erro conta a receber para ${id}:`, recError.message);
             }
           }
 
@@ -453,4 +470,44 @@ async function createInvoiceFromPipelineItem(item: any, user: any) {
   });
 
   return invoice;
+}
+
+async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
+  const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
+  if (totalValue <= 0) return null;
+
+  const now = nowBrazil();
+  const dueDate = new Date(now);
+  dueDate.setDate(dueDate.getDate() + 30);
+
+  let paymentMethod: string | null = null;
+  if (item.paymentMethod) {
+    const methodMap: Record<string, string> = {
+      'a_vista': 'dinheiro',
+      'boleto': 'boleto',
+      'pix': 'pix',
+    };
+    paymentMethod = methodMap[item.paymentMethod] || 'outros';
+  }
+
+  const receivable = await storage.createReceivable({
+    titleNumber: item.invoiceNumber || `TIT-${item.salesCardId?.substring(0, 8)}`,
+    customerId: item.customerId || null,
+    customerName: item.customerName || 'Cliente',
+    customerDocument: item.customerDocument || null,
+    description: `Faturamento pipeline - ${item.orderNumber || item.salesCardId}`,
+    issueDate: now,
+    dueDate: dueDate,
+    amount: totalValue.toFixed(2),
+    amountPaid: '0',
+    status: 'a_vencer',
+    paymentMethod: paymentMethod as any,
+    fiscalInvoiceId: fiscalInvoiceId,
+    billingPipelineId: item.id,
+    salesCardId: item.salesCardId || null,
+    omieInstanceId: item.omieInstanceId || null,
+    createdBy: user?.email || null,
+  });
+
+  return receivable;
 }

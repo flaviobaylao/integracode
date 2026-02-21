@@ -23773,6 +23773,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerBillingPipelineRoutes } = await import('./billing-pipeline-routes.js');
   registerBillingPipelineRoutes(app);
 
+  // Registrar rotas do Módulo Financeiro
+  const { registerFinancialRoutes } = await import('./financial-routes.js');
+  registerFinancialRoutes(app);
+
   const httpServer = createServer(app);
 
   return httpServer;

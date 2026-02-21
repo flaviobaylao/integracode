@@ -150,6 +150,27 @@ import {
   billingPipeline,
   type BillingPipeline,
   type InsertBillingPipeline,
+  chartOfAccounts,
+  financialAccounts,
+  receivables,
+  receivablePayments,
+  payables,
+  payablePayments,
+  spedExports,
+  type ChartOfAccount,
+  type InsertChartOfAccount,
+  type FinancialAccount,
+  type InsertFinancialAccount,
+  type Receivable,
+  type InsertReceivable,
+  type ReceivablePayment,
+  type InsertReceivablePayment,
+  type Payable,
+  type InsertPayable,
+  type PayablePayment,
+  type InsertPayablePayment,
+  type SpedExport,
+  type InsertSpedExport,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -578,6 +599,46 @@ export interface IStorage {
   createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline>;
   updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline>;
   deleteBillingPipelineItem(id: string): Promise<void>;
+
+  // Financial Module - Chart of Accounts
+  getChartOfAccounts(instanceId?: string): Promise<ChartOfAccount[]>;
+  getChartOfAccount(id: string): Promise<ChartOfAccount | undefined>;
+  createChartOfAccount(data: InsertChartOfAccount): Promise<ChartOfAccount>;
+  updateChartOfAccount(id: string, data: Partial<InsertChartOfAccount>): Promise<ChartOfAccount>;
+  deleteChartOfAccount(id: string): Promise<void>;
+
+  // Financial Module - Financial Accounts
+  getFinancialAccounts(instanceId?: string): Promise<FinancialAccount[]>;
+  getFinancialAccount(id: string): Promise<FinancialAccount | undefined>;
+  createFinancialAccount(data: InsertFinancialAccount): Promise<FinancialAccount>;
+  updateFinancialAccount(id: string, data: Partial<InsertFinancialAccount>): Promise<FinancialAccount>;
+  deleteFinancialAccount(id: string): Promise<void>;
+
+  // Financial Module - Receivables
+  getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]>;
+  getReceivable(id: string): Promise<Receivable | undefined>;
+  createReceivable(data: InsertReceivable): Promise<Receivable>;
+  updateReceivable(id: string, data: Partial<InsertReceivable>): Promise<Receivable>;
+  deleteReceivable(id: string): Promise<void>;
+  
+  // Financial Module - Receivable Payments
+  getReceivablePayments(receivableId: string): Promise<ReceivablePayment[]>;
+  createReceivablePayment(data: InsertReceivablePayment): Promise<ReceivablePayment>;
+
+  // Financial Module - Payables
+  getPayables(filters?: { supplierDocument?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; source?: string; chartAccountId?: string }): Promise<Payable[]>;
+  getPayable(id: string): Promise<Payable | undefined>;
+  createPayable(data: InsertPayable): Promise<Payable>;
+  updatePayable(id: string, data: Partial<InsertPayable>): Promise<Payable>;
+  deletePayable(id: string): Promise<void>;
+
+  // Financial Module - Payable Payments
+  getPayablePayments(payableId: string): Promise<PayablePayment[]>;
+  createPayablePayment(data: InsertPayablePayment): Promise<PayablePayment>;
+
+  // Financial Module - SPED
+  getSpedExports(instanceId?: string): Promise<SpedExport[]>;
+  createSpedExport(data: InsertSpedExport): Promise<SpedExport>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -8029,6 +8090,190 @@ export class DatabaseStorage implements IStorage {
 
   async deleteBillingPipelineItem(id: string): Promise<void> {
     await db.delete(billingPipeline).where(eq(billingPipeline.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Chart of Accounts
+  // ============================================================================
+
+  async getChartOfAccounts(instanceId?: string): Promise<ChartOfAccount[]> {
+    if (instanceId) {
+      return db.select().from(chartOfAccounts).where(eq(chartOfAccounts.omieInstanceId, instanceId)).orderBy(asc(chartOfAccounts.code));
+    }
+    return db.select().from(chartOfAccounts).orderBy(asc(chartOfAccounts.code));
+  }
+
+  async getChartOfAccount(id: string): Promise<ChartOfAccount | undefined> {
+    const [item] = await db.select().from(chartOfAccounts).where(eq(chartOfAccounts.id, id));
+    return item;
+  }
+
+  async createChartOfAccount(data: InsertChartOfAccount): Promise<ChartOfAccount> {
+    const [item] = await db.insert(chartOfAccounts).values(data).returning();
+    return item;
+  }
+
+  async updateChartOfAccount(id: string, data: Partial<InsertChartOfAccount>): Promise<ChartOfAccount> {
+    const [item] = await db.update(chartOfAccounts).set(data).where(eq(chartOfAccounts.id, id)).returning();
+    return item;
+  }
+
+  async deleteChartOfAccount(id: string): Promise<void> {
+    await db.delete(chartOfAccounts).where(eq(chartOfAccounts.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Financial Accounts
+  // ============================================================================
+
+  async getFinancialAccounts(instanceId?: string): Promise<FinancialAccount[]> {
+    if (instanceId) {
+      return db.select().from(financialAccounts).where(eq(financialAccounts.omieInstanceId, instanceId)).orderBy(desc(financialAccounts.createdAt));
+    }
+    return db.select().from(financialAccounts).orderBy(desc(financialAccounts.createdAt));
+  }
+
+  async getFinancialAccount(id: string): Promise<FinancialAccount | undefined> {
+    const [item] = await db.select().from(financialAccounts).where(eq(financialAccounts.id, id));
+    return item;
+  }
+
+  async createFinancialAccount(data: InsertFinancialAccount): Promise<FinancialAccount> {
+    const [item] = await db.insert(financialAccounts).values(data).returning();
+    return item;
+  }
+
+  async updateFinancialAccount(id: string, data: Partial<InsertFinancialAccount>): Promise<FinancialAccount> {
+    const [item] = await db.update(financialAccounts).set(data).where(eq(financialAccounts.id, id)).returning();
+    return item;
+  }
+
+  async deleteFinancialAccount(id: string): Promise<void> {
+    await db.delete(financialAccounts).where(eq(financialAccounts.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Receivables
+  // ============================================================================
+
+  async getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]> {
+    const conditions = [];
+    if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
+    if (filters?.status) conditions.push(eq(receivables.status, filters.status as any));
+    if (filters?.instanceId) conditions.push(eq(receivables.omieInstanceId, filters.instanceId));
+    if (filters?.startDate) conditions.push(gte(receivables.issueDate, filters.startDate));
+    if (filters?.endDate) conditions.push(lte(receivables.issueDate, filters.endDate));
+    if (filters?.dueDateStart) conditions.push(gte(receivables.dueDate, filters.dueDateStart));
+    if (filters?.dueDateEnd) conditions.push(lte(receivables.dueDate, filters.dueDateEnd));
+    if (filters?.paymentMethod) conditions.push(eq(receivables.paymentMethod, filters.paymentMethod as any));
+    if (filters?.chartAccountId) conditions.push(eq(receivables.chartAccountId, filters.chartAccountId));
+
+    if (conditions.length > 0) {
+      return db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt));
+    }
+    return db.select().from(receivables).orderBy(desc(receivables.createdAt));
+  }
+
+  async getReceivable(id: string): Promise<Receivable | undefined> {
+    const [item] = await db.select().from(receivables).where(eq(receivables.id, id));
+    return item;
+  }
+
+  async createReceivable(data: InsertReceivable): Promise<Receivable> {
+    const [item] = await db.insert(receivables).values(data).returning();
+    return item;
+  }
+
+  async updateReceivable(id: string, data: Partial<InsertReceivable>): Promise<Receivable> {
+    const [item] = await db.update(receivables).set({ ...data, updatedAt: new Date() }).where(eq(receivables.id, id)).returning();
+    return item;
+  }
+
+  async deleteReceivable(id: string): Promise<void> {
+    await db.delete(receivables).where(eq(receivables.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Receivable Payments
+  // ============================================================================
+
+  async getReceivablePayments(receivableId: string): Promise<ReceivablePayment[]> {
+    return db.select().from(receivablePayments).where(eq(receivablePayments.receivableId, receivableId)).orderBy(desc(receivablePayments.createdAt));
+  }
+
+  async createReceivablePayment(data: InsertReceivablePayment): Promise<ReceivablePayment> {
+    const [item] = await db.insert(receivablePayments).values(data).returning();
+    return item;
+  }
+
+  // ============================================================================
+  // Financial Module - Payables
+  // ============================================================================
+
+  async getPayables(filters?: { supplierDocument?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; source?: string; chartAccountId?: string }): Promise<Payable[]> {
+    const conditions = [];
+    if (filters?.supplierDocument) conditions.push(eq(payables.supplierDocument, filters.supplierDocument));
+    if (filters?.status) conditions.push(eq(payables.status, filters.status as any));
+    if (filters?.instanceId) conditions.push(eq(payables.omieInstanceId, filters.instanceId));
+    if (filters?.startDate) conditions.push(gte(payables.issueDate, filters.startDate));
+    if (filters?.endDate) conditions.push(lte(payables.issueDate, filters.endDate));
+    if (filters?.dueDateStart) conditions.push(gte(payables.dueDate, filters.dueDateStart));
+    if (filters?.dueDateEnd) conditions.push(lte(payables.dueDate, filters.dueDateEnd));
+    if (filters?.source) conditions.push(eq(payables.source, filters.source as any));
+    if (filters?.chartAccountId) conditions.push(eq(payables.chartAccountId, filters.chartAccountId));
+
+    if (conditions.length > 0) {
+      return db.select().from(payables).where(and(...conditions)).orderBy(desc(payables.createdAt));
+    }
+    return db.select().from(payables).orderBy(desc(payables.createdAt));
+  }
+
+  async getPayable(id: string): Promise<Payable | undefined> {
+    const [item] = await db.select().from(payables).where(eq(payables.id, id));
+    return item;
+  }
+
+  async createPayable(data: InsertPayable): Promise<Payable> {
+    const [item] = await db.insert(payables).values(data).returning();
+    return item;
+  }
+
+  async updatePayable(id: string, data: Partial<InsertPayable>): Promise<Payable> {
+    const [item] = await db.update(payables).set({ ...data, updatedAt: new Date() }).where(eq(payables.id, id)).returning();
+    return item;
+  }
+
+  async deletePayable(id: string): Promise<void> {
+    await db.delete(payables).where(eq(payables.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Payable Payments
+  // ============================================================================
+
+  async getPayablePayments(payableId: string): Promise<PayablePayment[]> {
+    return db.select().from(payablePayments).where(eq(payablePayments.payableId, payableId)).orderBy(desc(payablePayments.createdAt));
+  }
+
+  async createPayablePayment(data: InsertPayablePayment): Promise<PayablePayment> {
+    const [item] = await db.insert(payablePayments).values(data).returning();
+    return item;
+  }
+
+  // ============================================================================
+  // Financial Module - SPED Exports
+  // ============================================================================
+
+  async getSpedExports(instanceId?: string): Promise<SpedExport[]> {
+    if (instanceId) {
+      return db.select().from(spedExports).where(eq(spedExports.omieInstanceId, instanceId)).orderBy(desc(spedExports.createdAt));
+    }
+    return db.select().from(spedExports).orderBy(desc(spedExports.createdAt));
+  }
+
+  async createSpedExport(data: InsertSpedExport): Promise<SpedExport> {
+    const [item] = await db.insert(spedExports).values(data).returning();
+    return item;
   }
 }
 
