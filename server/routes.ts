@@ -14374,6 +14374,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Card não encontrado' });
       }
       
+      // VERIFICAR SE MODO FATURAMENTO INTERNO ESTÁ ATIVO
+      try {
+        const { isInternalBillingModeActive, autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+        if (isInternalBillingModeActive()) {
+          console.log(`🔄 [INTERNAL-BILLING] Modo interno ativo - redirecionando pedido ${cardId} para pipeline interno`);
+          const user = (req as any).currentUser || (req as any).user;
+          const result = await autoSendToBillingPipeline(card, user?.email || 'system');
+          if (result) {
+            return res.json({ 
+              success: true, 
+              message: 'Pedido enviado para faturamento interno',
+              internalBilling: true,
+              pipelineItemId: result.id
+            });
+          }
+          return res.json({ success: true, message: 'Pedido já está no pipeline interno', internalBilling: true });
+        }
+      } catch (e) {
+        console.error('Erro ao verificar modo faturamento interno:', e);
+      }
+      
       // Multi-tenant: usar instância Omie do cliente ou default
       let omieService: OmieService | null = null;
       
