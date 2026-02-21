@@ -77,8 +77,33 @@ export interface DanfeInvoiceItem {
   valorIpi?: string;
 }
 
+export function generateMultiDanfePdf(invoices: DanfeInvoice[]) {
+  if (invoices.length === 0) return;
+  if (invoices.length === 1) {
+    generateDanfePdf(invoices[0]);
+    return;
+  }
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  for (let i = 0; i < invoices.length; i++) {
+    if (i > 0) doc.addPage();
+    renderDanfeToDoc(doc, invoices[i]);
+  }
+  const firstNum = invoices[0].invoiceNumber || '0';
+  const lastNum = invoices[invoices.length - 1].invoiceNumber || '0';
+  const env = invoices[0].environment === 'homologacao' ? 'HOM' : 'PROD';
+  const fileName = `DANFE_${firstNum}-${lastNum}_${env}.pdf`;
+  doc.save(fileName);
+}
+
 export function generateDanfePdf(invoice: DanfeInvoice) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  renderDanfeToDoc(doc, invoice);
+  const nfNum = invoice.invoiceNumber || '0';
+  const fileName = `DANFE_${nfNum}_${invoice.environment === 'homologacao' ? 'HOM' : 'PROD'}.pdf`;
+  doc.save(fileName);
+}
+
+function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice) {
   const pageWidth = 210;
   const margin = 7;
   const contentWidth = pageWidth - margin * 2;
@@ -485,7 +510,4 @@ export function generateDanfePdf(invoice: DanfeInvoice) {
   doc.text(`Impresso em ${printDate}`, margin, y + 4);
   doc.text('Sistema Integra - Beba Honest', pageWidth - margin, y + 4, { align: 'right' });
   doc.setTextColor(0);
-
-  const fileName = `DANFE_${nfNum}_${invoice.environment === 'homologacao' ? 'HOM' : 'PROD'}.pdf`;
-  doc.save(fileName);
 }

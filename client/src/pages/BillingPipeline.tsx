@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
-import { generateDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
+import { generateDanfePdf, generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
@@ -263,22 +263,13 @@ export default function BillingPipeline() {
         return;
       }
 
-      let printed = 0;
-      for (const invoice of invoices) {
-        try {
-          generateDanfePdf(invoice);
-          printed++;
-          if (invoices.length > 1) {
-            await new Promise(r => setTimeout(r, 500));
-          }
-        } catch (err) {
-          console.error('Erro ao gerar DANFE:', err);
-        }
-      }
+      generateMultiDanfePdf(invoices);
 
       toast({
-        title: `${printed} DANFE${printed > 1 ? 's' : ''} ${printed > 1 ? 'geradas' : 'gerada'}`,
-        description: `${printed}/${invoices.length} notas fiscais impressas com sucesso`,
+        title: `${invoices.length} DANFE${invoices.length > 1 ? 's' : ''} ${invoices.length > 1 ? 'geradas' : 'gerada'}`,
+        description: invoices.length > 1
+          ? `${invoices.length} notas fiscais reunidas em um único PDF`
+          : `Nota fiscal impressa com sucesso`,
       });
     } catch (err: any) {
       toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' });
