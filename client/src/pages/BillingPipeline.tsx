@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import { generateDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
@@ -84,6 +85,7 @@ export default function BillingPipeline() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  const [isPrintingDanfe, setIsPrintingDanfe] = useState(false);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -232,6 +234,59 @@ export default function BillingPipeline() {
     return selectedItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
   }, [selectedItems]);
 
+  const selectedFaturadoCount = useMemo(() => {
+    return selectedItems.filter(i => i.invoiceNumber).length;
+  }, [selectedItems]);
+
+  const handlePrintDanfe = useCallback(async () => {
+    const faturadoItems = selectedItems.filter(i => i.invoiceNumber);
+    if (faturadoItems.length === 0) {
+      toast({ title: 'Nenhum pedido faturado selecionado', description: 'Selecione pedidos que já possuem nota fiscal gerada', variant: 'destructive' });
+      return;
+    }
+
+    setIsPrintingDanfe(true);
+    try {
+      const invoiceNumbers = faturadoItems.map(i => i.invoiceNumber!);
+      const response = await fetch('/api/fiscal-invoices/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ invoiceNumbers }),
+      });
+
+      if (!response.ok) throw new Error('Erro ao buscar notas fiscais');
+      const invoices: DanfeInvoice[] = await response.json();
+
+      if (invoices.length === 0) {
+        toast({ title: 'Nenhuma NF-e encontrada', description: 'As notas fiscais para os pedidos selecionados não foram encontradas', variant: 'destructive' });
+        return;
+      }
+
+      let printed = 0;
+      for (const invoice of invoices) {
+        try {
+          generateDanfePdf(invoice);
+          printed++;
+          if (invoices.length > 1) {
+            await new Promise(r => setTimeout(r, 500));
+          }
+        } catch (err) {
+          console.error('Erro ao gerar DANFE:', err);
+        }
+      }
+
+      toast({
+        title: `${printed} DANFE${printed > 1 ? 's' : ''} ${printed > 1 ? 'geradas' : 'gerada'}`,
+        description: `${printed}/${invoices.length} notas fiscais impressas com sucesso`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' });
+    } finally {
+      setIsPrintingDanfe(false);
+    }
+  }, [selectedItems]);
+
   const moveItem = (item: BillingPipelineItem, direction: 'forward' | 'backward') => {
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
@@ -329,6 +384,21 @@ export default function BillingPipeline() {
                 );
               })}
               <div className="w-px h-6 bg-gray-300 mx-1" />
+              {selectedFaturadoCount > 0 && (
+                <Button
+                  size="sm"
+                  className="text-xs h-7 bg-green-600 hover:bg-green-700 text-white"
+                  onClick={handlePrintDanfe}
+                  disabled={isPrintingDanfe}
+                >
+                  {isPrintingDanfe ? (
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  ) : (
+                    <Printer className="h-3 w-3 mr-1" />
+                  )}
+                  Imprimir DANFE ({selectedFaturadoCount})
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="destructive"

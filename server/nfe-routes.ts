@@ -498,6 +498,34 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
+  app.post('/api/fiscal-invoices/batch', authenticateUser, async (req: any, res) => {
+    try {
+      const { invoiceNumbers } = req.body;
+      if (!invoiceNumbers || !Array.isArray(invoiceNumbers) || invoiceNumbers.length === 0) {
+        return res.status(400).json({ message: 'invoiceNumbers é obrigatório (array)' });
+      }
+
+      const allInvoices = await storage.getFiscalInvoices();
+      const matched = allInvoices.filter(inv => {
+        const num = inv.invoiceNumber?.toString();
+        return invoiceNumbers.some((n: string) => {
+          const clean = n.replace('NF-', '');
+          return num === clean;
+        });
+      });
+
+      const results = [];
+      for (const inv of matched) {
+        const items = await storage.getFiscalInvoiceItems(inv.id);
+        results.push({ ...inv, items });
+      }
+
+      res.json(results);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao buscar notas fiscais em lote', error: error.message });
+    }
+  });
+
   app.get('/api/fiscal-invoices/:id', authenticateUser, async (req: any, res) => {
     try {
       const invoice = await storage.getFiscalInvoice(req.params.id);
