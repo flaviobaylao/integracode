@@ -839,11 +839,26 @@ function PayablesTab() {
 // ============================================================================
 // TAB 3: PLANO DE CONTAS
 // ============================================================================
+const DRE_GROUP_LABELS: Record<string, string> = {
+  receita_bruta: 'Receita Bruta de Vendas',
+  devolucoes: 'Devoluções/Descontos',
+  impostos_vendas: 'Impostos sobre Vendas',
+  cpv: 'CPV',
+  despesas_comerciais: 'Despesas Comerciais',
+  despesas_administrativas: 'Despesas Administrativas',
+  despesas_gerais: 'Despesas Gerais',
+  outras_receitas_despesas: 'Outras Receitas/Despesas',
+  depreciacao: 'Depreciação e Amortização',
+  receitas_financeiras: 'Receitas Financeiras',
+  despesas_financeiras: 'Despesas Financeiras',
+  irpj_csll: 'IRPJ/CSLL',
+};
+
 function ChartOfAccountsTab() {
   const [instanceId, setInstanceId] = useState('');
   const [showDialog, setShowDialog] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
-  const [form, setForm] = useState<any>({ code: '', name: '', type: 'receita', instanceId: '', isActive: true });
+  const [form, setForm] = useState<any>({ code: '', name: '', type: 'receita', dreGroup: '', instanceId: '', isActive: true });
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/financial/chart-of-accounts', instanceId],
@@ -880,6 +895,15 @@ function ChartOfAccountsTab() {
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
+  const seedMutation = useMutation({
+    mutationFn: () => apiRequest('POST', '/api/financial/chart-of-accounts/seed'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/chart-of-accounts'] });
+      toast({ title: 'Plano de contas DRE populado com sucesso' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+
   const typeBadges: Record<string, { label: string; className: string }> = {
     receita: { label: 'Receita', className: 'bg-green-100 text-green-800' },
     despesa: { label: 'Despesa', className: 'bg-red-100 text-red-800' },
@@ -887,14 +911,24 @@ function ChartOfAccountsTab() {
     passivo: { label: 'Passivo', className: 'bg-purple-100 text-purple-800' },
   };
 
-  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', instanceId: '', isActive: true }); setShowDialog(true); };
+  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', dreGroup: '', instanceId: '', isActive: true }); setShowDialog(true); };
   const openEdit = (item: any) => { setEditItem(item); setForm({ ...item }); setShowDialog(true); };
+
+  const isGroupHeader = (code: string) => !code.includes('.');
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-end">
         <div><Label className="text-xs">Instância</Label><InstanceFilter value={instanceId} onChange={setInstanceId} /></div>
-        <Button onClick={openCreate} className="ml-auto"><Plus className="w-4 h-4 mr-2" />Nova Conta</Button>
+        <div className="ml-auto flex gap-2">
+          {accounts.length === 0 && (
+            <Button variant="outline" onClick={() => { if (confirm('Deseja popular o plano de contas com a estrutura padrão da DRE?')) seedMutation.mutate(); }} disabled={seedMutation.isPending}>
+              {seedMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              <Database className="w-4 h-4 mr-2" />Popular DRE Padrão
+            </Button>
+          )}
+          <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" />Nova Conta</Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -904,22 +938,25 @@ function ChartOfAccountsTab() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Código</TableHead>
+                <TableHead className="w-[80px]">Código</TableHead>
                 <TableHead>Nome</TableHead>
+                <TableHead>Grupo DRE</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Ações</TableHead>
+                <TableHead className="w-[80px]">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {accounts.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhuma conta encontrada</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhuma conta encontrada. Clique em "Popular DRE Padrão" para criar a estrutura.</TableCell></TableRow>
               ) : accounts.map((a: any) => {
                 const tb = typeBadges[a.type] || { label: a.type, className: '' };
+                const isHeader = isGroupHeader(a.code);
                 return (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-mono">{a.code || '-'}</TableCell>
-                    <TableCell className="font-medium">{a.name}</TableCell>
+                  <TableRow key={a.id} className={isHeader ? 'bg-muted/50 font-semibold' : ''}>
+                    <TableCell className="font-mono text-xs">{a.code || '-'}</TableCell>
+                    <TableCell className={isHeader ? 'font-semibold' : 'pl-8'}>{isHeader ? '' : '(-) '}{a.name}</TableCell>
+                    <TableCell><span className="text-xs text-muted-foreground">{DRE_GROUP_LABELS[a.dreGroup] || a.dreGroup || '-'}</span></TableCell>
                     <TableCell><Badge className={tb.className}>{tb.label}</Badge></TableCell>
                     <TableCell>{a.isActive !== false ? <Badge className="bg-green-100 text-green-800">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}</TableCell>
                     <TableCell>
@@ -943,17 +980,31 @@ function ChartOfAccountsTab() {
             <DialogDescription>Preencha os dados do plano de contas</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div><Label>Código</Label><Input value={form.code || ''} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="1.1.01" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Código</Label><Input value={form.code || ''} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="2.01" /></div>
+              <div>
+                <Label>Tipo</Label>
+                <Select value={form.type || 'receita'} onValueChange={v => setForm({ ...form, type: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="receita">Receita</SelectItem>
+                    <SelectItem value="despesa">Despesa</SelectItem>
+                    <SelectItem value="ativo">Ativo</SelectItem>
+                    <SelectItem value="passivo">Passivo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div><Label>Nome</Label><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div>
-              <Label>Tipo</Label>
-              <Select value={form.type || 'receita'} onValueChange={v => setForm({ ...form, type: v })}>
+              <Label>Grupo DRE</Label>
+              <Select value={form.dreGroup || 'none'} onValueChange={v => setForm({ ...form, dreGroup: v === 'none' ? '' : v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="receita">Receita</SelectItem>
-                  <SelectItem value="despesa">Despesa</SelectItem>
-                  <SelectItem value="ativo">Ativo</SelectItem>
-                  <SelectItem value="passivo">Passivo</SelectItem>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {Object.entries(DRE_GROUP_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1140,124 +1191,214 @@ function FinancialAccountsTab() {
 // ============================================================================
 function DRETab() {
   const [instanceId, setInstanceId] = useState('');
-  const now = new Date();
-  const [startDate, setStartDate] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`);
-  const [endDate, setEndDate] = useState(now.toISOString().split('T')[0]);
+  const [year, setYear] = useState(new Date().getFullYear());
 
   const buildUrl = () => {
     const p = new URLSearchParams();
     if (instanceId) p.set('instanceId', instanceId);
-    if (startDate) p.set('startDate', startDate);
-    if (endDate) p.set('endDate', endDate);
+    p.set('year', year.toString());
     return `/api/financial/dre?${p.toString()}`;
   };
 
   const { data: dre, isLoading } = useQuery<any>({
-    queryKey: ['/api/financial/dre', instanceId, startDate, endDate],
+    queryKey: ['/api/financial/dre', instanceId, year],
     queryFn: () => fetch(buildUrl(), { credentials: 'include' }).then(r => r.json()),
   });
+
+  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+
+  const fmtNum = (v: number) => {
+    if (v === 0) return '-';
+    return v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  };
+
+  const fmtPct = (v: number) => {
+    if (isNaN(v) || !isFinite(v)) return '-';
+    return `${v.toFixed(1)}%`;
+  };
+
+  type RowStyle = 'normal' | 'deduction' | 'header' | 'total' | 'highlight' | 'indicator' | 'separator';
+
+  const renderRow = (label: string, monthly: number[], total: number, avPct: number, style: RowStyle = 'normal') => {
+    const baseClass = {
+      normal: 'text-xs',
+      deduction: 'text-xs',
+      header: 'text-xs font-semibold bg-muted/30',
+      total: 'text-xs font-bold border-t border-b bg-muted/50',
+      highlight: 'text-xs font-bold bg-green-50 dark:bg-green-950/30 border-t-2 border-b',
+      indicator: 'text-xs italic text-muted-foreground',
+      separator: 'h-2',
+    }[style];
+
+    if (style === 'separator') {
+      return <tr key={`sep-${label}-${Math.random()}`} className="h-2"><td colSpan={15}></td></tr>;
+    }
+
+    if (style === 'header' && monthly.length === 0) {
+      return (
+        <tr key={label} className="text-xs font-semibold bg-muted/30">
+          <td colSpan={15} className="sticky left-0 bg-muted/30 px-2 py-1.5 z-10">{label}</td>
+        </tr>
+      );
+    }
+
+    const textColor = (v: number) => {
+      if (style === 'indicator') return '';
+      if (style === 'highlight' && v < 0) return 'text-red-600';
+      if (style === 'highlight' && v > 0) return 'text-green-700';
+      if (style === 'total' && v < 0) return 'text-red-600';
+      return '';
+    };
+
+    return (
+      <tr key={label} className={baseClass}>
+        <td className="sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] max-w-[300px] truncate z-10">
+          {style === 'deduction' ? `(-) ${label}` : label}
+        </td>
+        {monthly.map((v, i) => (
+          <td key={i} className={`px-2 py-1 text-right whitespace-nowrap tabular-nums ${textColor(v)}`}>
+            {fmtNum(v)}
+          </td>
+        ))}
+        <td className={`px-2 py-1 text-right whitespace-nowrap tabular-nums font-medium border-l ${textColor(total)}`}>
+          {fmtNum(total)}
+        </td>
+        <td className={`px-2 py-1 text-right whitespace-nowrap tabular-nums border-l ${textColor(avPct)}`}>
+          {fmtPct(avPct)}
+        </td>
+      </tr>
+    );
+  };
+
+  const renderIndicatorRow = (label: string, monthly: number[], totalPct: number) => {
+    return (
+      <tr key={label} className="text-xs italic text-muted-foreground">
+        <td className="sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] z-10">{label}</td>
+        {monthly.map((v, i) => (
+          <td key={i} className="px-2 py-1 text-right whitespace-nowrap tabular-nums">{fmtPct(v)}</td>
+        ))}
+        <td className="px-2 py-1 text-right whitespace-nowrap tabular-nums border-l"></td>
+        <td className="px-2 py-1 text-right whitespace-nowrap tabular-nums font-medium border-l">{fmtPct(totalPct)}</td>
+      </tr>
+    );
+  };
+
+  const computeAV = (total: number, recLiqTotal: number) => recLiqTotal !== 0 ? (total / recLiqTotal) * 100 : 0;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-end">
         <div><Label className="text-xs">Instância</Label><InstanceFilter value={instanceId} onChange={setInstanceId} /></div>
-        <div><Label className="text-xs">Período de</Label><Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-[160px]" /></div>
-        <div><Label className="text-xs">Período até</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-[160px]" /></div>
+        <div>
+          <Label className="text-xs">Ano</Label>
+          <Select value={year.toString()} onValueChange={v => setYear(parseInt(v))}>
+            <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin" /></div>
-      ) : dre ? (
-        <>
-          <div className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Receitas</CardTitle>
-                <TrendingUp className="h-4 w-4 text-green-600" />
-              </CardHeader>
-              <CardContent><div className="text-2xl font-bold text-green-600">{formatCurrency(dre.summary?.totalRevenue)}</div></CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Despesas</CardTitle>
-                <TrendingDown className="h-4 w-4 text-red-600" />
-              </CardHeader>
-              <CardContent><div className="text-2xl font-bold text-red-600">{formatCurrency(dre.summary?.totalExpenses)}</div></CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Resultado Líquido</CardTitle>
-                <BarChart3 className="h-4 w-4 text-blue-600" />
-              </CardHeader>
-              <CardContent>
-                <div className={`text-2xl font-bold ${(dre.summary?.netResult || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(dre.summary?.netResult)}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+      ) : dre?.computed ? (() => {
+        const c = dre.computed;
+        const rl = c.receitaLiquida.total || 1;
+        const lines = dre.lines || [];
+        const getGroupLines = (group: string) => lines.filter((l: any) => l.dreGroup === group);
 
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-green-700 flex items-center gap-2"><TrendingUp className="h-5 w-5" />Receitas</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {(dre.revenue || []).map((r: any) => (
-                    <div key={r.accountId} className="flex justify-between items-center py-2 border-b">
-                      <div>
-                        <span className="font-mono text-xs text-muted-foreground mr-2">{r.accountCode}</span>
-                        <span className="text-sm">{r.accountName}</span>
-                        <span className="text-xs text-muted-foreground ml-2">({r.count})</span>
-                      </div>
-                      <span className="font-medium text-green-700">{formatCurrency(r.total)}</span>
-                    </div>
-                  ))}
-                  {dre.summary?.unclassifiedRevenue > 0 && (
-                    <div className="flex justify-between items-center py-2 border-b border-dashed">
-                      <span className="text-sm italic text-muted-foreground">Não classificadas</span>
-                      <span className="font-medium text-green-600">{formatCurrency(dre.summary.unclassifiedRevenue)}</span>
-                    </div>
-                  )}
-                  {(dre.revenue || []).length === 0 && !dre.summary?.unclassifiedRevenue && (
-                    <p className="text-sm text-muted-foreground text-center py-4">Nenhuma receita no período</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+        const pctMonthly = (monthly: number[], base: number[]) =>
+          monthly.map((v: number, i: number) => base[i] !== 0 ? (v / base[i]) * 100 : 0);
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-red-700 flex items-center gap-2"><TrendingDown className="h-5 w-5" />Despesas</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {(dre.expenses || []).map((e: any) => (
-                    <div key={e.accountId} className="flex justify-between items-center py-2 border-b">
-                      <div>
-                        <span className="font-mono text-xs text-muted-foreground mr-2">{e.accountCode}</span>
-                        <span className="text-sm">{e.accountName}</span>
-                        <span className="text-xs text-muted-foreground ml-2">({e.count})</span>
-                      </div>
-                      <span className="font-medium text-red-700">{formatCurrency(e.total)}</span>
-                    </div>
-                  ))}
-                  {dre.summary?.unclassifiedExpenses > 0 && (
-                    <div className="flex justify-between items-center py-2 border-b border-dashed">
-                      <span className="text-sm italic text-muted-foreground">Não classificadas</span>
-                      <span className="font-medium text-red-600">{formatCurrency(dre.summary.unclassifiedExpenses)}</span>
-                    </div>
-                  )}
-                  {(dre.expenses || []).length === 0 && !dre.summary?.unclassifiedExpenses && (
-                    <p className="text-sm text-muted-foreground text-center py-4">Nenhuma despesa no período</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+        return (
+          <div className="border rounded-lg overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted sticky top-0 z-20">
+                <tr className="text-xs font-semibold">
+                  <th className="sticky left-0 bg-muted px-2 py-2 text-left border-r min-w-[250px] z-30">Descrição</th>
+                  {months.map(m => <th key={m} className="px-2 py-2 text-right whitespace-nowrap min-w-[75px]">{m}</th>)}
+                  <th className="px-2 py-2 text-right whitespace-nowrap border-l min-w-[85px]">Total</th>
+                  <th className="px-2 py-2 text-right whitespace-nowrap border-l min-w-[60px]">AV %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {renderRow('Receita Bruta de Vendas', c.receitaBruta.monthly, c.receitaBruta.total, computeAV(c.receitaBruta.total, rl), 'total')}
+                {renderRow('Devoluções/Descontos', c.devolucoes.monthly, c.devolucoes.total, computeAV(c.devolucoes.total, rl), 'deduction')}
+                {renderRow('Impostos sobre Vendas (ICMS, PIS/COFINS, ISS)', c.impostos.monthly, c.impostos.total, computeAV(c.impostos.total, rl), 'deduction')}
+                {renderRow('Receita Líquida', c.receitaLiquida.monthly, c.receitaLiquida.total, 100, 'highlight')}
+
+                {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+
+                {renderRow('(-) CPV', [], 0, 0, 'header')}
+                {getGroupLines('cpv').map((l: any) =>
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                )}
+                {renderRow('CPV Total', c.cpvTotal.monthly, c.cpvTotal.total, computeAV(c.cpvTotal.total, rl), 'total')}
+                {renderRow('Lucro Bruto', c.lucroBruto.monthly, c.lucroBruto.total, computeAV(c.lucroBruto.total, rl), 'highlight')}
+
+                {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+
+                {renderRow('(-) Despesas Comerciais', [], 0, 0, 'header')}
+                {getGroupLines('despesas_comerciais').map((l: any) =>
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                )}
+                {renderRow('Despesas Comerciais Total', c.despesasComerciais.monthly, c.despesasComerciais.total, computeAV(c.despesasComerciais.total, rl), 'total')}
+
+                {renderRow('(-) Despesas Administrativas', [], 0, 0, 'header')}
+                {getGroupLines('despesas_administrativas').map((l: any) =>
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                )}
+                {renderRow('Despesas Administrativas Total', c.despesasAdministrativas.monthly, c.despesasAdministrativas.total, computeAV(c.despesasAdministrativas.total, rl), 'total')}
+
+                {renderRow('(-) Despesas Gerais', [], 0, 0, 'header')}
+                {getGroupLines('despesas_gerais').map((l: any) =>
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                )}
+                {renderRow('Despesas Gerais Total', c.despesasGerais.monthly, c.despesasGerais.total, computeAV(c.despesasGerais.total, rl), 'total')}
+
+                {renderRow('(-) Outras Receitas/Despesas Operacionais', c.outrasReceitasDespesas.monthly, c.outrasReceitasDespesas.total, computeAV(c.outrasReceitasDespesas.total, rl), 'deduction')}
+                {renderRow('Despesas Operacionais Total', c.despesasOperacionaisTotal.monthly, c.despesasOperacionaisTotal.total, computeAV(c.despesasOperacionaisTotal.total, rl), 'total')}
+                {renderRow('(-) Depreciação e Amortização', c.depreciacao.monthly, c.depreciacao.total, computeAV(c.depreciacao.total, rl), 'deduction')}
+                {renderRow('EBITDA', c.ebitda.monthly, c.ebitda.total, computeAV(c.ebitda.total, rl), 'highlight')}
+                {renderRow('Resultado Operacional (EBIT)', c.ebit.monthly, c.ebit.total, computeAV(c.ebit.total, rl), 'highlight')}
+
+                {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+
+                {renderRow('(+/-) Resultado Financeiro', [], 0, 0, 'header')}
+                {renderRow('(+) Receitas Financeiras', c.receitasFinanceiras.monthly, c.receitasFinanceiras.total, computeAV(c.receitasFinanceiras.total, rl), 'normal')}
+                {renderRow('(-) Despesas Financeiras (juros, tarifas)', c.despesasFinanceiras.monthly, c.despesasFinanceiras.total, computeAV(c.despesasFinanceiras.total, rl), 'deduction')}
+                {renderRow('Resultado Financeiro Total', c.resultadoFinanceiro.monthly, c.resultadoFinanceiro.total, computeAV(c.resultadoFinanceiro.total, rl), 'total')}
+
+                {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+
+                {renderRow('Resultado Antes do IR/CSLL', c.resultadoAntesIR.monthly, c.resultadoAntesIR.total, computeAV(c.resultadoAntesIR.total, rl), 'total')}
+                {renderRow('(-) IRPJ/CSLL', c.irpjCsll.monthly, c.irpjCsll.total, computeAV(c.irpjCsll.total, rl), 'deduction')}
+                {renderRow('Lucro/Prejuízo Líquido', c.lucroLiquido.monthly, c.lucroLiquido.total, computeAV(c.lucroLiquido.total, rl), 'highlight')}
+
+                {(c.unclassifiedReceivables.total > 0 || c.unclassifiedPayables.total > 0) && (
+                  <>
+                    {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+                    {renderRow('⚠ Receitas não classificadas', c.unclassifiedReceivables.monthly, c.unclassifiedReceivables.total, 0, 'normal')}
+                    {renderRow('⚠ Despesas não classificadas', c.unclassifiedPayables.monthly, c.unclassifiedPayables.total, 0, 'normal')}
+                  </>
+                )}
+
+                {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
+                <tr className="text-xs font-bold bg-muted/30"><td colSpan={15} className="px-2 py-2 sticky left-0 bg-muted/30 z-10">Indicadores</td></tr>
+                {renderIndicatorRow('Margem Bruta (%)', pctMonthly(c.lucroBruto.monthly, c.receitaLiquida.monthly), c.receitaLiquida.total !== 0 ? (c.lucroBruto.total / c.receitaLiquida.total) * 100 : 0)}
+                {renderIndicatorRow('Margem EBITDA (%)', pctMonthly(c.ebitda.monthly, c.receitaLiquida.monthly), c.receitaLiquida.total !== 0 ? (c.ebitda.total / c.receitaLiquida.total) * 100 : 0)}
+                {renderIndicatorRow('Margem Líquida (%)', pctMonthly(c.lucroLiquido.monthly, c.receitaLiquida.monthly), c.receitaLiquida.total !== 0 ? (c.lucroLiquido.total / c.receitaLiquida.total) * 100 : 0)}
+                {renderIndicatorRow('CPV % da Receita', pctMonthly(c.cpvTotal.monthly, c.receitaLiquida.monthly), c.receitaLiquida.total !== 0 ? (c.cpvTotal.total / c.receitaLiquida.total) * 100 : 0)}
+                {renderIndicatorRow('Opex % da Receita', pctMonthly(c.despesasOperacionaisTotal.monthly, c.receitaLiquida.monthly), c.receitaLiquida.total !== 0 ? (c.despesasOperacionaisTotal.total / c.receitaLiquida.total) * 100 : 0)}
+              </tbody>
+            </table>
           </div>
-        </>
-      ) : null}
+        );
+      })() : (
+        <div className="text-center text-muted-foreground py-8">Nenhum dado disponível para o período</div>
+      )}
     </div>
   );
 }

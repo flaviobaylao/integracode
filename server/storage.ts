@@ -8098,7 +8098,9 @@ export class DatabaseStorage implements IStorage {
 
   async getChartOfAccounts(instanceId?: string): Promise<ChartOfAccount[]> {
     if (instanceId) {
-      return db.select().from(chartOfAccounts).where(eq(chartOfAccounts.omieInstanceId, instanceId)).orderBy(asc(chartOfAccounts.code));
+      return db.select().from(chartOfAccounts).where(
+        or(eq(chartOfAccounts.omieInstanceId, instanceId), isNull(chartOfAccounts.omieInstanceId))
+      ).orderBy(asc(chartOfAccounts.code));
     }
     return db.select().from(chartOfAccounts).orderBy(asc(chartOfAccounts.code));
   }

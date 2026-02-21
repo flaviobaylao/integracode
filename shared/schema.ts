@@ -2963,6 +2963,7 @@ export const chartOfAccounts = pgTable("chart_of_accounts", {
   name: varchar("name").notNull(),
   type: chartOfAccountTypeEnum("type").notNull(),
   parentId: varchar("parent_id"),
+  dreGroup: varchar("dre_group"),
   omieInstanceId: varchar("omie_instance_id"),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -2970,6 +2971,7 @@ export const chartOfAccounts = pgTable("chart_of_accounts", {
   index("idx_chart_accounts_type").on(table.type),
   index("idx_chart_accounts_instance").on(table.omieInstanceId),
   index("idx_chart_accounts_code").on(table.code),
+  index("idx_chart_accounts_dre_group").on(table.dreGroup),
 ]);
 
 export const chartOfAccountsRelations = relations(chartOfAccounts, ({ one }) => ({

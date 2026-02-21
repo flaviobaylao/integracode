@@ -66,6 +66,82 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  app.post('/api/financial/chart-of-accounts/seed', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const existing = await storage.getChartOfAccounts();
+      if (existing.length > 0) {
+        return res.status(400).json({ message: 'Plano de contas já possui registros. Limpe antes de popular novamente.' });
+      }
+
+      const dreAccounts = [
+        { code: '1', name: 'Receita Bruta de Vendas', type: 'receita' as const, dreGroup: 'receita_bruta' },
+        { code: '1.01', name: 'Devoluções/Descontos', type: 'receita' as const, dreGroup: 'devolucoes' },
+        { code: '1.02', name: 'Impostos sobre Vendas (ICMS, PIS/COFINS, ISS)', type: 'receita' as const, dreGroup: 'impostos_vendas' },
+
+        { code: '2', name: 'CPV', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.01', name: 'Matéria-prima (frutas/polpas)', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.02', name: 'Embalagens (garrafas/tampas/rótulos)', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.03', name: 'Energia e utilidades de produção', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.04', name: 'Mão de obra direta', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.05', name: 'Manutenção/limpeza fabril', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.06', name: 'Fretes de entrada', type: 'despesa' as const, dreGroup: 'cpv' },
+        { code: '2.07', name: 'Análise produto', type: 'despesa' as const, dreGroup: 'cpv' },
+
+        { code: '3', name: 'Despesas Comerciais', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.01', name: 'Comissões', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.02', name: 'Marketing', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.03', name: 'Salários logística', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.04', name: 'Locação veículo', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.05', name: 'Energia e utilidades de armazenamento', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.06', name: 'Manutenções (refrigeradores, veículos, máquinas)', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.07', name: 'Combustível, gelo, IPVA, manutenção', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+        { code: '3.08', name: 'Representantes', type: 'despesa' as const, dreGroup: 'despesas_comerciais' },
+
+        { code: '4', name: 'Despesas Administrativas', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.01', name: 'Salários ADM', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.02', name: 'Serviços contábeis', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.03', name: 'TI (ERP, internet)', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.04', name: 'Energia ADM', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.05', name: 'Água/esgoto', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.06', name: 'Aluguel', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.07', name: 'Limpeza', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.08', name: 'Telefone', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+        { code: '4.09', name: 'Material escritório', type: 'despesa' as const, dreGroup: 'despesas_administrativas' },
+
+        { code: '5', name: 'Despesas Gerais', type: 'despesa' as const, dreGroup: 'despesas_gerais' },
+        { code: '5.01', name: 'Seguros', type: 'despesa' as const, dreGroup: 'despesas_gerais' },
+        { code: '5.02', name: 'Taxas', type: 'despesa' as const, dreGroup: 'despesas_gerais' },
+        { code: '5.03', name: 'Taxas bancárias', type: 'despesa' as const, dreGroup: 'despesas_gerais' },
+
+        { code: '6', name: 'Outras Receitas/Despesas Operacionais', type: 'despesa' as const, dreGroup: 'outras_receitas_despesas' },
+
+        { code: '7', name: 'Depreciação e Amortização', type: 'despesa' as const, dreGroup: 'depreciacao' },
+
+        { code: '8', name: 'Receitas Financeiras', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
+
+        { code: '9', name: 'Despesas Financeiras (juros, tarifas)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
+
+        { code: '10', name: 'IRPJ/CSLL', type: 'despesa' as const, dreGroup: 'irpj_csll' },
+      ];
+
+      const created = [];
+      for (const acc of dreAccounts) {
+        const result = await storage.createChartOfAccount({
+          code: acc.code,
+          name: acc.name,
+          type: acc.type,
+          dreGroup: acc.dreGroup,
+          isActive: true,
+        });
+        created.push(result);
+      }
+
+      res.json({ message: `${created.length} contas criadas com sucesso`, count: created.length });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // ============================================================================
   // FINANCIAL ACCOUNTS (bank/cash)
   // ============================================================================
@@ -310,82 +386,164 @@ export function registerFinancialRoutes(app: Express) {
   });
 
   // ============================================================================
-  // DRE (Income Statement)
+  // DRE (Income Statement) - Monthly Breakdown
   // ============================================================================
 
   app.get('/api/financial/dre', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const instanceId = req.query.instanceId as string | undefined;
-      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
-      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const receivables = await storage.getReceivables({ 
-        instanceId, 
-        startDate, 
-        endDate 
-      });
-      const payables = await storage.getPayables({ 
-        instanceId, 
-        startDate, 
-        endDate 
-      });
+      const startDate = new Date(year, 0, 1);
+      const endDate = new Date(year, 11, 31, 23, 59, 59);
+
+      const receivables = await storage.getReceivables({ instanceId, startDate, endDate });
+      const payables = await storage.getPayables({ instanceId, startDate, endDate });
       const chartAccounts = await storage.getChartOfAccounts(instanceId);
 
-      const revenueAccounts = chartAccounts.filter(a => a.type === 'receita');
-      const expenseAccounts = chartAccounts.filter(a => a.type === 'despesa');
+      const accountMap = new Map(chartAccounts.map(a => [a.id, a]));
 
-      const revenueByAccount = revenueAccounts.map(account => {
-        const items = receivables.filter(r => r.chartAccountId === account.id);
-        const total = items.reduce((sum, r) => sum + parseFloat(r.amount), 0);
-        const received = items.reduce((sum, r) => sum + parseFloat(r.amountPaid || '0'), 0);
-        return {
-          accountId: account.id,
-          accountCode: account.code,
-          accountName: account.name,
-          total,
-          received,
-          count: items.length,
-        };
-      });
+      const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-      const expenseByAccount = expenseAccounts.map(account => {
-        const items = payables.filter(p => p.chartAccountId === account.id);
-        const total = items.reduce((sum, p) => sum + parseFloat(p.amount), 0);
-        const paid = items.reduce((sum, p) => sum + parseFloat(p.amountPaid || '0'), 0);
-        return {
-          accountId: account.id,
-          accountCode: account.code,
-          accountName: account.name,
-          total,
-          paid,
-          count: items.length,
-        };
-      });
+      const getMonthIndex = (dateVal: any): number => {
+        const d = new Date(dateVal);
+        return d.getMonth();
+      };
 
-      const totalRevenue = revenueByAccount.reduce((sum, a) => sum + a.total, 0);
-      const totalExpenses = expenseByAccount.reduce((sum, a) => sum + a.total, 0);
-      const totalReceived = revenueByAccount.reduce((sum, a) => sum + a.received, 0);
-      const totalPaid = expenseByAccount.reduce((sum, a) => sum + a.paid, 0);
+      const buildAccountMonthly = (accountId: string, items: any[], amountField: string = 'amount'): number[] => {
+        const monthly = new Array(12).fill(0);
+        for (const item of items) {
+          if (item.chartAccountId === accountId) {
+            const m = getMonthIndex(item.issueDate);
+            if (m >= 0 && m < 12) {
+              monthly[m] += parseFloat(item[amountField] || '0');
+            }
+          }
+        }
+        return monthly;
+      }
 
-      const unclassifiedRevenue = receivables
-        .filter(r => !r.chartAccountId)
-        .reduce((sum, r) => sum + parseFloat(r.amount), 0);
-      const unclassifiedExpenses = payables
-        .filter(p => !p.chartAccountId)
-        .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+      const dreGroups = [
+        'receita_bruta', 'devolucoes', 'impostos_vendas',
+        'cpv',
+        'despesas_comerciais', 'despesas_administrativas', 'despesas_gerais',
+        'outras_receitas_despesas', 'depreciacao',
+        'receitas_financeiras', 'despesas_financeiras',
+        'irpj_csll',
+      ];
+
+      const lines: any[] = [];
+
+      for (const group of dreGroups) {
+        const groupAccounts = chartAccounts.filter(a => a.dreGroup === group).sort((a, b) => a.code.localeCompare(b.code));
+        if (groupAccounts.length === 0) continue;
+
+        const isGroupHeader = groupAccounts.find(a => !a.code.includes('.'));
+        const childAccounts = groupAccounts.filter(a => a.code.includes('.'));
+
+        for (const acc of childAccounts) {
+          let monthly: number[];
+          if (acc.type === 'receita') {
+            monthly = buildAccountMonthly(acc.id, receivables);
+          } else {
+            monthly = buildAccountMonthly(acc.id, payables);
+          }
+          const total = monthly.reduce((s, v) => s + v, 0);
+          lines.push({
+            code: acc.code,
+            name: acc.name,
+            dreGroup: group,
+            type: acc.type,
+            isHeader: false,
+            monthly,
+            total,
+            accountId: acc.id,
+          });
+        }
+      }
+
+      const unclassifiedRecMonthly = new Array(12).fill(0);
+      for (const r of receivables) {
+        if (!r.chartAccountId || !accountMap.has(r.chartAccountId)) {
+          const m = getMonthIndex(r.issueDate);
+          if (m >= 0 && m < 12) unclassifiedRecMonthly[m] += parseFloat(r.amount || '0');
+        }
+      }
+      const unclassifiedRecTotal = unclassifiedRecMonthly.reduce((s, v) => s + v, 0);
+
+      const unclassifiedPayMonthly = new Array(12).fill(0);
+      for (const p of payables) {
+        if (!p.chartAccountId || !accountMap.has(p.chartAccountId)) {
+          const m = getMonthIndex(p.issueDate);
+          if (m >= 0 && m < 12) unclassifiedPayMonthly[m] += parseFloat(p.amount || '0');
+        }
+      }
+      const unclassifiedPayTotal = unclassifiedPayMonthly.reduce((s, v) => s + v, 0);
+
+      const sumGroupMonthly = (group: string): number[] => {
+        const monthly = new Array(12).fill(0);
+        for (const line of lines) {
+          if (line.dreGroup === group) {
+            for (let i = 0; i < 12; i++) monthly[i] += line.monthly[i];
+          }
+        }
+        return monthly;
+      }
+
+      const receitaBruta = sumGroupMonthly('receita_bruta');
+      const devolucoes = sumGroupMonthly('devolucoes');
+      const impostos = sumGroupMonthly('impostos_vendas');
+      const cpvTotal = sumGroupMonthly('cpv');
+      const despCom = sumGroupMonthly('despesas_comerciais');
+      const despAdm = sumGroupMonthly('despesas_administrativas');
+      const despGer = sumGroupMonthly('despesas_gerais');
+      const outrasRD = sumGroupMonthly('outras_receitas_despesas');
+      const depreciacao = sumGroupMonthly('depreciacao');
+      const recFin = sumGroupMonthly('receitas_financeiras');
+      const despFin = sumGroupMonthly('despesas_financeiras');
+      const irpj = sumGroupMonthly('irpj_csll');
+
+      const receitaLiquida = receitaBruta.map((v, i) => v - devolucoes[i] - impostos[i]);
+      const lucroBruto = receitaLiquida.map((v, i) => v - cpvTotal[i]);
+      const despOpTotal = despCom.map((v, i) => v + despAdm[i] + despGer[i] + outrasRD[i]);
+      const ebitdaCalc = lucroBruto.map((v, i) => v - despCom[i] - despAdm[i] - despGer[i] - outrasRD[i]);
+      const ebitCalc = ebitdaCalc.map((v, i) => v - depreciacao[i]);
+      const resultadoFinanceiro = recFin.map((v, i) => v - despFin[i]);
+      const resultadoAntesIR = ebitCalc.map((v, i) => v - despFin[i] + recFin[i]);
+      const lucroLiquido = resultadoAntesIR.map((v, i) => v - irpj[i]);
+
+      const sumArr = (arr: number[]) => arr.reduce((s, v) => s + v, 0);
+
+      const computed = {
+        receitaBruta: { monthly: receitaBruta, total: sumArr(receitaBruta) },
+        devolucoes: { monthly: devolucoes, total: sumArr(devolucoes) },
+        impostos: { monthly: impostos, total: sumArr(impostos) },
+        receitaLiquida: { monthly: receitaLiquida, total: sumArr(receitaLiquida) },
+        cpvTotal: { monthly: cpvTotal, total: sumArr(cpvTotal) },
+        lucroBruto: { monthly: lucroBruto, total: sumArr(lucroBruto) },
+        despesasComerciais: { monthly: despCom, total: sumArr(despCom) },
+        despesasAdministrativas: { monthly: despAdm, total: sumArr(despAdm) },
+        despesasGerais: { monthly: despGer, total: sumArr(despGer) },
+        outrasReceitasDespesas: { monthly: outrasRD, total: sumArr(outrasRD) },
+        despesasOperacionaisTotal: { monthly: despOpTotal.map((v, i) => v + depreciacao[i]), total: sumArr(despOpTotal) + sumArr(depreciacao) },
+        depreciacao: { monthly: depreciacao, total: sumArr(depreciacao) },
+        ebitda: { monthly: ebitdaCalc, total: sumArr(ebitdaCalc) },
+        ebit: { monthly: ebitCalc, total: sumArr(ebitCalc) },
+        receitasFinanceiras: { monthly: recFin, total: sumArr(recFin) },
+        despesasFinanceiras: { monthly: despFin, total: sumArr(despFin) },
+        resultadoFinanceiro: { monthly: resultadoFinanceiro, total: sumArr(resultadoFinanceiro) },
+        resultadoAntesIR: { monthly: resultadoAntesIR, total: sumArr(resultadoAntesIR) },
+        irpjCsll: { monthly: irpj, total: sumArr(irpj) },
+        lucroLiquido: { monthly: lucroLiquido, total: sumArr(lucroLiquido) },
+        unclassifiedReceivables: { monthly: unclassifiedRecMonthly, total: unclassifiedRecTotal },
+        unclassifiedPayables: { monthly: unclassifiedPayMonthly, total: unclassifiedPayTotal },
+      };
 
       res.json({
-        revenue: revenueByAccount,
-        expenses: expenseByAccount,
-        summary: {
-          totalRevenue: totalRevenue + unclassifiedRevenue,
-          totalExpenses: totalExpenses + unclassifiedExpenses,
-          netResult: (totalRevenue + unclassifiedRevenue) - (totalExpenses + unclassifiedExpenses),
-          totalReceived,
-          totalPaid,
-          unclassifiedRevenue,
-          unclassifiedExpenses,
-        }
+        year,
+        months,
+        lines,
+        computed,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
