@@ -222,6 +222,13 @@ export function registerBillingPipelineRoutes(app: Express) {
         } catch (recError: any) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar conta a receber:`, recError.message);
         }
+
+        try {
+          await deductStockForBilling(item, user);
+          console.log(`📦 [BILLING-PIPELINE] Baixa de estoque realizada para item ${req.params.id}`);
+        } catch (stockError: any) {
+          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
+        }
       }
 
       const updateData: any = { stage, stageHistory: history };
@@ -311,6 +318,12 @@ export function registerBillingPipelineRoutes(app: Express) {
             } catch (recError: any) {
               console.error(`❌ [BATCH] Erro conta a receber para ${id}:`, recError.message);
             }
+
+            try {
+              await deductStockForBilling(item, user);
+            } catch (stockError: any) {
+              console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
+            }
           }
 
           const updateData: any = { stage, stageHistory: history };
@@ -356,6 +369,71 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.status(500).json({ message: error.message });
     }
   });
+}
+
+async function deductStockForBilling(item: any, user: any) {
+  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+  if (!products || products.length === 0) return;
+
+  const instanceId = item.omieInstanceId;
+  if (!instanceId) {
+    console.log(`⚠️ [STOCK] Item ${item.id} sem omieInstanceId, não é possível dar baixa no estoque`);
+    return;
+  }
+
+  for (const product of products) {
+    if (!product.id) continue;
+
+    const lots = await storage.getInventoryLots({
+      productId: product.id,
+      instanceId,
+      stockType: 'in_use',
+      isActive: true,
+    });
+
+    if (lots.length === 0) {
+      console.log(`⚠️ [STOCK] Produto ${product.name} (${product.id}) sem lotes disponíveis na instância ${instanceId}`);
+      continue;
+    }
+
+    let remaining = product.quantity;
+
+    for (const lot of lots) {
+      if (remaining <= 0) break;
+
+      const currentQty = parseFloat(lot.quantity?.toString() || '0');
+      if (currentQty <= 0) continue;
+
+      const deductQty = Math.min(remaining, currentQty);
+      const newQty = currentQty - deductQty;
+
+      await storage.updateInventoryLot(lot.id, {
+        quantity: newQty.toFixed(4),
+      });
+
+      await storage.createInventoryMovement({
+        lotId: lot.id,
+        productId: product.id,
+        instanceId,
+        movementType: 'consume',
+        quantity: deductQty.toFixed(4),
+        previousQuantity: currentQty.toFixed(4),
+        newQuantity: newQty.toFixed(4),
+        sourceType: 'invoice',
+        sourceId: item.id,
+        lotNumber: lot.lotNumber,
+        notes: `Baixa automática - Faturamento ${item.orderNumber || item.salesCardId} - ${product.name}`,
+        createdBy: user?.email || null,
+      });
+
+      remaining -= deductQty;
+      console.log(`📦 [STOCK] Baixa: ${deductQty} un de "${product.name}" do lote ${lot.lotNumber} (${currentQty} → ${newQty})`);
+    }
+
+    if (remaining > 0) {
+      console.log(`⚠️ [STOCK] Estoque insuficiente: faltam ${remaining} un de "${product.name}" na instância ${instanceId}`);
+    }
+  }
 }
 
 async function createInvoiceFromPipelineItem(item: any, user: any) {
@@ -444,11 +522,18 @@ async function createInvoiceFromPipelineItem(item: any, user: any) {
   if (products && products.length > 0) {
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
+      let productCode = `PROD-${i + 1}`;
+      if (p.id) {
+        const productData = await storage.getProduct(p.id);
+        if (productData) {
+          productCode = (productData as any).omieCode || (productData as any).omieCodigo || `PROD-${i + 1}`;
+        }
+      }
       await storage.createFiscalInvoiceItem({
         invoiceId: invoice.id,
         itemNumber: i + 1,
         productName: p.name,
-        productCode: p.id || `PROD-${i + 1}`,
+        productCode,
         productId: p.id || null,
         ncm: '22029000',
         cfop,

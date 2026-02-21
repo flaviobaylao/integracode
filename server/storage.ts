@@ -8010,10 +8010,10 @@ export class DatabaseStorage implements IStorage {
     if (conditions.length > 0) {
       return db.select().from(inventoryLots)
         .where(and(...conditions))
-        .orderBy(asc(inventoryLots.productId), asc(inventoryLots.instanceId), asc(inventoryLots.stockType));
+        .orderBy(asc(inventoryLots.createdAt), asc(inventoryLots.lotNumber));
     }
     return db.select().from(inventoryLots)
-      .orderBy(asc(inventoryLots.productId), asc(inventoryLots.instanceId), asc(inventoryLots.stockType));
+      .orderBy(asc(inventoryLots.createdAt), asc(inventoryLots.lotNumber));
   }
 
   async getInventoryLot(id: string): Promise<InventoryLot | undefined> {
