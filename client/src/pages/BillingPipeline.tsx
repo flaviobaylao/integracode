@@ -13,7 +13,7 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin,
-  Plus, Search
+  Power
 } from 'lucide-react';
 
 interface BillingPipelineItem {
@@ -80,8 +80,6 @@ function formatDate(dateStr: string) {
 export default function BillingPipeline() {
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [showBypassDialog, setShowBypassDialog] = useState(false);
-  const [bypassSearch, setBypassSearch] = useState('');
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -93,41 +91,32 @@ export default function BillingPipeline() {
     queryKey: ['/api/billing-pipeline'],
   });
 
-  const { data: salesCards = [] } = useQuery<any[]>({
-    queryKey: ['/api/sales-cards'],
-    enabled: showBypassDialog,
+  const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
+    queryKey: ['/api/billing-pipeline/mode'],
+    refetchInterval: 10000,
   });
 
-  const filteredSalesCards = useMemo(() => {
-    if (!bypassSearch.trim()) return salesCards.slice(0, 20);
-    const term = bypassSearch.toLowerCase();
-    return salesCards.filter((c: any) =>
-      (c.customerName || '').toLowerCase().includes(term) ||
-      (c.sellerName || '').toLowerCase().includes(term) ||
-      (c.id || '').toLowerCase().includes(term)
-    ).slice(0, 20);
-  }, [salesCards, bypassSearch]);
-
-  const bypassMutation = useMutation({
-    mutationFn: async (salesCardId: string) => {
-      const res = await apiRequest('POST', '/api/billing-pipeline/bypass', { salesCardId });
-      return res.json();
+  const toggleModeMutation = useMutation({
+    mutationFn: async (active: boolean) => {
+      return await apiRequest('POST', '/api/billing-pipeline/mode', { active });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
-      setShowBypassDialog(false);
-      setBypassSearch('');
-      toast({ title: 'Pedido enviado para faturamento interno' });
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline/mode'] });
+      toast({
+        title: data.active ? 'Faturamento interno ATIVADO' : 'Faturamento interno DESATIVADO',
+        description: data.active
+          ? 'Todos os novos pedidos serao encaminhados para o pipeline interno'
+          : 'Pedidos voltam ao fluxo normal pelo Omie',
+      });
     },
     onError: (error: any) => {
-      toast({ title: 'Erro ao enviar para faturamento', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao alterar modo', description: error.message, variant: 'destructive' });
     }
   });
 
   const moveStageMutation = useMutation({
     mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
-      const res = await apiRequest('PATCH', `/api/billing-pipeline/${id}/stage`, { stage });
-      return res.json();
+      return await apiRequest('PATCH', `/api/billing-pipeline/${id}/stage`, { stage });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
@@ -193,18 +182,30 @@ export default function BillingPipeline() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            {modeStatus?.active && (
+              <Badge className="bg-green-100 text-green-800 border-green-300 animate-pulse text-xs">
+                Modo Interno ATIVO
+              </Badge>
+            )}
             <Badge variant="outline" className="text-sm">
               {items.length} pedidos no pipeline
             </Badge>
             {isFlavio && (
               <Button
                 size="sm"
-                className="bg-purple-600 hover:bg-purple-700 text-white"
-                onClick={() => setShowBypassDialog(true)}
+                className={modeStatus?.active
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white'}
+                onClick={() => toggleModeMutation.mutate(!modeStatus?.active)}
+                disabled={toggleModeMutation.isPending}
                 data-testid="button-faturar-interno"
               >
-                <Plus className="h-4 w-4 mr-1" />
-                Faturar Interno
+                {toggleModeMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                ) : (
+                  <Power className="h-4 w-4 mr-1" />
+                )}
+                {modeStatus?.active ? 'Desativar Interno' : 'Faturar Interno'}
               </Button>
             )}
             <Button
@@ -411,90 +412,6 @@ export default function BillingPipeline() {
         </DialogContent>
       </Dialog>
 
-      {/* Bypass - Faturar Interno Dialog */}
-      <Dialog open={showBypassDialog} onOpenChange={(open) => { setShowBypassDialog(open); if (!open) setBypassSearch(''); }}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-purple-600" />
-              Faturar Interno
-            </DialogTitle>
-            <DialogDescription>
-              Selecione um pedido para enviar ao pipeline de faturamento interno
-            </DialogDescription>
-          </DialogHeader>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Buscar por cliente, vendedor ou ID..."
-              value={bypassSearch}
-              onChange={(e) => setBypassSearch(e.target.value)}
-              className="pl-9"
-              data-testid="bypass-search-input"
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-2 min-h-0 max-h-[50vh]">
-            {filteredSalesCards.length === 0 && (
-              <div className="text-center text-gray-400 text-sm py-8">
-                {salesCards.length === 0 ? 'Carregando pedidos...' : 'Nenhum pedido encontrado'}
-              </div>
-            )}
-            {filteredSalesCards.map((card: any) => {
-              const alreadyInPipeline = items.some(i => i.salesCardId === card.id);
-              return (
-                <div
-                  key={card.id}
-                  className={`border rounded-lg p-3 ${alreadyInPipeline ? 'opacity-50 bg-gray-50 dark:bg-gray-800' : 'hover:border-purple-300 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer'} transition-colors`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate">{card.customerName || 'Cliente sem nome'}</p>
-                      <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-                        {card.sellerName && (
-                          <span className="flex items-center gap-1">
-                            <User className="h-3 w-3" />
-                            {card.sellerName}
-                          </span>
-                        )}
-                        <span className="font-semibold text-green-700">
-                          {formatCurrency(card.totalValue || card.saleValue || 0)}
-                        </span>
-                        {card.omieInstanceName && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            {card.omieInstanceName}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    {alreadyInPipeline ? (
-                      <Badge variant="outline" className="text-[10px] text-gray-500 shrink-0">
-                        Ja no pipeline
-                      </Badge>
-                    ) : (
-                      <Button
-                        size="sm"
-                        className="bg-purple-600 hover:bg-purple-700 text-white shrink-0"
-                        onClick={() => bypassMutation.mutate(card.id)}
-                        disabled={bypassMutation.isPending}
-                        data-testid={`bypass-card-${card.id}`}
-                      >
-                        {bypassMutation.isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Plus className="h-3 w-3 mr-1" />
-                            Enviar
-                          </>
-                        )}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

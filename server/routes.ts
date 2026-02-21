@@ -4305,6 +4305,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const salesCard = await storage.createSalesCard(processedData);
       
+      // Auto-enviar para pipeline de faturamento interno se modo ativo
+      try {
+        const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+        await autoSendToBillingPipeline(salesCard, user.email);
+      } catch (e) {
+        console.error('Erro ao auto-enviar para billing pipeline:', e);
+      }
+      
       // Se coordenadas GPS foram capturadas durante a venda, atualizar o cliente
       if (req.body.customerLatitude && req.body.customerLongitude) {
         try {
@@ -4314,7 +4322,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         } catch (coordError) {
           console.error('Erro ao atualizar coordenadas do cliente:', coordError);
-          // Não falhar a criação da venda se a atualização de coordenadas falhar
         }
       }
       

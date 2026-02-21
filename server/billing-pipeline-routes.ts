@@ -5,6 +5,61 @@ import { authenticateUser } from './authMiddleware';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
+let internalBillingModeActive = false;
+let internalBillingActivatedBy: string | null = null;
+
+export function isInternalBillingModeActive() {
+  return internalBillingModeActive;
+}
+
+export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
+  if (!internalBillingModeActive) return null;
+
+  try {
+    const existing = await storage.getBillingPipelineItems();
+    if (existing.find(i => i.salesCardId === salesCard.id)) return null;
+
+    const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
+    const seller = salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null;
+
+    let omieInstanceName = '';
+    if (customer?.omieInstanceId) {
+      const instance = await storage.getOmieInstance(customer.omieInstanceId);
+      omieInstanceName = instance?.displayName || '';
+    }
+
+    const item = await storage.createBillingPipelineItem({
+      salesCardId: salesCard.id,
+      customerId: salesCard.customerId,
+      customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
+      customerDocument: customer?.cnpj || customer?.cpf || null,
+      sellerId: salesCard.sellerId || null,
+      sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
+      stage: 'pedido',
+      orderNumber: `INT-${salesCard.id.substring(0, 8)}`,
+      saleValue: salesCard.saleValue || null,
+      paymentMethod: salesCard.paymentMethod || null,
+      operationType: salesCard.operationType || null,
+      products: salesCard.products as any || null,
+      notes: salesCard.notes || null,
+      omieInstanceId: customer?.omieInstanceId || null,
+      omieInstanceName: omieInstanceName || null,
+      stageHistory: [{
+        stage: 'pedido',
+        changedAt: nowBrazil().toISOString(),
+        changedBy: `auto (${internalBillingActivatedBy || createdByEmail})`
+      }],
+      createdBy: `auto (${internalBillingActivatedBy || createdByEmail})`,
+    });
+
+    console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCard.id} auto-enviado para faturamento interno (modo ativo)`);
+    return item;
+  } catch (error) {
+    console.error(`❌ [BILLING-PIPELINE] Erro ao auto-enviar pedido:`, error);
+    return null;
+  }
+}
+
 function isAdminOnly(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
   if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
@@ -22,7 +77,22 @@ function isFlavioOnly(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
-  
+
+  // Get internal billing mode status
+  app.get('/api/billing-pipeline/mode', authenticateUser, isAdminOnly, async (req: any, res) => {
+    res.json({ active: internalBillingModeActive, activatedBy: internalBillingActivatedBy });
+  });
+
+  // FLAVIO-ONLY: Toggle internal billing mode ON/OFF
+  app.post('/api/billing-pipeline/mode', authenticateUser, isFlavioOnly, async (req: any, res) => {
+    const { active } = req.body;
+    const user = req.currentUser || req.user;
+    internalBillingModeActive = !!active;
+    internalBillingActivatedBy = active ? user.email : null;
+    console.log(`🔄 [BILLING-PIPELINE] Modo faturamento interno ${internalBillingModeActive ? 'ATIVADO' : 'DESATIVADO'} por ${user.email}`);
+    res.json({ active: internalBillingModeActive, activatedBy: internalBillingActivatedBy });
+  });
+
   // Get all billing pipeline items (optionally filter by stage)
   app.get('/api/billing-pipeline', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
