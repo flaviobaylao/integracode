@@ -477,73 +477,118 @@ export default function BillingPipeline() {
 
       {/* Detail Modal */}
       <Dialog open={!!detailItem} onOpenChange={() => setDetailItem(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Detalhes do Pedido</DialogTitle>
-            <DialogDescription>
-              Informacoes completas do pedido no pipeline
-            </DialogDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-lg">Detalhes do Pedido</DialogTitle>
+                <DialogDescription className="mt-1">
+                  {detailItem?.orderNumber ? `Pedido ${detailItem.orderNumber}` : detailItem?.salesCardId ? `Card ${detailItem.salesCardId.slice(0, 8)}` : 'Informações do pedido'}
+                </DialogDescription>
+              </div>
+              {detailItem && (
+                <Badge className={STAGES.find(s => s.key === detailItem.stage)?.badgeColor || 'bg-gray-100'}>
+                  {STAGES.find(s => s.key === detailItem.stage)?.label || detailItem.stage}
+                </Badge>
+              )}
+            </div>
           </DialogHeader>
           {detailItem && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-gray-500">Cliente</label>
-                  <p className="font-semibold text-sm">{detailItem.customerName}</p>
+            <div className="space-y-5">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <User className="h-4 w-4 text-gray-500" />
+                  <span className="font-semibold text-sm text-gray-700 dark:text-gray-300">Cliente</span>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-500">Documento</label>
-                  <p className="text-sm">{detailItem.customerDocument || '-'}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Nome / Razão Social</label>
+                    <p className="font-semibold text-sm">{detailItem.customerName}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">CPF / CNPJ</label>
+                    <p className="text-sm font-mono">{detailItem.customerDocument || '-'}</p>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-500">Vendedor</label>
-                  <p className="text-sm">{detailItem.sellerName || '-'}</p>
+              </div>
+
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <DollarSign className="h-4 w-4 text-gray-500" />
+                  <span className="font-semibold text-sm text-gray-700 dark:text-gray-300">Dados do Pedido</span>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-500">Valor</label>
-                  <p className="font-semibold text-sm text-green-700">{formatCurrency(detailItem.saleValue)}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Pagamento</label>
-                  <p className="text-sm">{PAYMENT_LABELS[detailItem.paymentMethod || ''] || detailItem.paymentMethod || '-'}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Operacao</label>
-                  <p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Instancia Omie</label>
-                  <p className="text-sm">{detailItem.omieInstanceName || '-'}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">Criado por</label>
-                  <p className="text-sm">{detailItem.createdBy || '-'}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Valor Total</label>
+                    <p className="font-bold text-lg text-green-700">{formatCurrency(detailItem.saleValue)}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Pagamento</label>
+                    <p className="text-sm">{PAYMENT_LABELS[detailItem.paymentMethod || ''] || detailItem.paymentMethod || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Operação</label>
+                    <p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
+                    <p className="text-sm">{detailItem.sellerName || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância Omie</label>
+                    <p className="text-sm">{detailItem.omieInstanceName || '-'}</p>
+                  </div>
+                  {detailItem.invoiceNumber && (
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Nota Fiscal</label>
+                      <p className="text-sm font-mono font-semibold text-orange-700">{detailItem.invoiceNumber}</p>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Criado por</label>
+                    <p className="text-sm">{detailItem.createdBy || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Data de Criação</label>
+                    <p className="text-sm">{formatDate(detailItem.createdAt)}</p>
+                  </div>
                 </div>
               </div>
 
               {detailItem.products && detailItem.products.length > 0 && (
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Produtos</label>
-                  <div className="border rounded-md overflow-hidden">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Package className="h-4 w-4 text-gray-500" />
+                    <span className="font-semibold text-sm text-gray-700 dark:text-gray-300">Produtos ({detailItem.products.length})</span>
+                  </div>
+                  <div className="border rounded-lg overflow-hidden">
                     <table className="w-full text-xs">
                       <thead className="bg-gray-100 dark:bg-gray-700">
                         <tr>
-                          <th className="text-left p-2">Produto</th>
-                          <th className="text-right p-2">Qtd</th>
-                          <th className="text-right p-2">Unit.</th>
-                          <th className="text-right p-2">Total</th>
+                          <th className="text-left p-2.5 font-semibold">#</th>
+                          <th className="text-left p-2.5 font-semibold">Produto</th>
+                          <th className="text-right p-2.5 font-semibold">Qtd</th>
+                          <th className="text-right p-2.5 font-semibold">Vlr Unit.</th>
+                          <th className="text-right p-2.5 font-semibold">Vlr Total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {detailItem.products.map((p, i) => (
-                          <tr key={i} className="border-t">
-                            <td className="p-2">{p.name}</td>
-                            <td className="text-right p-2">{p.quantity}</td>
-                            <td className="text-right p-2">{formatCurrency(p.unitPrice)}</td>
-                            <td className="text-right p-2">{formatCurrency(p.totalPrice)}</td>
+                          <tr key={i} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
+                            <td className="p-2.5 text-gray-400">{i + 1}</td>
+                            <td className="p-2.5 font-medium">{p.name}</td>
+                            <td className="text-right p-2.5">{p.quantity}</td>
+                            <td className="text-right p-2.5">{formatCurrency(p.unitPrice)}</td>
+                            <td className="text-right p-2.5 font-semibold">{formatCurrency(p.totalPrice)}</td>
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot className="bg-gray-50 dark:bg-gray-700">
+                        <tr className="border-t-2">
+                          <td colSpan={4} className="p-2.5 text-right font-bold">Total:</td>
+                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(detailItem.saleValue)}</td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 </div>
@@ -551,20 +596,22 @@ export default function BillingPipeline() {
 
               {detailItem.notes && (
                 <div>
-                  <label className="text-xs text-gray-500">Observacoes</label>
-                  <p className="text-sm bg-gray-50 dark:bg-gray-800 p-2 rounded">{detailItem.notes}</p>
+                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
+                  <p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>
                 </div>
               )}
 
-              {/* Stage History */}
               {detailItem.stageHistory && detailItem.stageHistory.length > 0 && (
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Historico de Etapas</label>
-                  <div className="space-y-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="h-4 w-4 text-gray-500" />
+                    <span className="font-semibold text-sm text-gray-700 dark:text-gray-300">Histórico de Etapas</span>
+                  </div>
+                  <div className="space-y-1.5">
                     {detailItem.stageHistory.map((h, i) => {
                       const stageInfo = STAGES.find(s => s.key === h.stage);
                       return (
-                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-gray-800 p-2.5 rounded-lg">
                           <Badge className={stageInfo?.badgeColor || 'bg-gray-100'}>{stageInfo?.label || h.stage}</Badge>
                           <span className="text-gray-500">{h.changedBy} - {formatDate(h.changedAt)}</span>
                         </div>
@@ -574,10 +621,9 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {/* Move to stage buttons */}
-              <div>
-                <label className="text-xs text-gray-500 mb-2 block">Mover para etapa:</label>
-                <div className="flex flex-wrap gap-1">
+              <div className="border-t pt-4">
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Mover para etapa</label>
+                <div className="flex flex-wrap gap-1.5">
                   {STAGES.filter(s => s.key !== detailItem.stage).map(s => {
                     const SIcon = s.icon;
                     return (
@@ -719,7 +765,11 @@ function KanbanCard({
   isMoving: boolean;
 }) {
   return (
-    <Card className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${selected ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`} style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}>
+    <Card
+      className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${selected ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+      style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}
+      onClick={onViewDetail}
+    >
       <CardContent className="p-3 space-y-2">
         <div className="flex items-start gap-2">
           <Checkbox
