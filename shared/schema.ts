@@ -2869,3 +2869,75 @@ export const insertInventoryMovementSchema = createInsertSchema(inventoryMovemen
 export type InventoryMovement = typeof inventoryMovements.$inferSelect;
 export type InsertInventoryMovement = z.infer<typeof insertInventoryMovementSchema>;
 
+// ============================================================================
+// BILLING PIPELINE (Kanban de Faturamento)
+// ============================================================================
+
+export const billingPipelineStageEnum = pgEnum("billing_pipeline_stage", [
+  "pedido",
+  "a_faturar",
+  "faturado",
+  "impresso",
+  "aguardando_rota",
+  "em_rota",
+  "entregue",
+]);
+
+export const billingPipeline = pgTable("billing_pipeline", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesCardId: varchar("sales_card_id").notNull(),
+  customerId: varchar("customer_id").notNull(),
+  customerName: varchar("customer_name").notNull(),
+  customerDocument: varchar("customer_document"),
+  sellerId: varchar("seller_id"),
+  sellerName: varchar("seller_name"),
+  stage: billingPipelineStageEnum("stage").notNull().default("pedido"),
+  orderNumber: varchar("order_number"),
+  invoiceNumber: varchar("invoice_number"),
+  saleValue: decimal("sale_value", { precision: 10, scale: 2 }),
+  paymentMethod: varchar("payment_method"),
+  operationType: varchar("operation_type"),
+  products: jsonb("products").$type<Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>>(),
+  notes: text("notes"),
+  omieInstanceId: varchar("omie_instance_id"),
+  omieInstanceName: varchar("omie_instance_name"),
+  stageHistory: jsonb("stage_history").$type<Array<{
+    stage: string;
+    changedAt: string;
+    changedBy: string;
+  }>>().default([]),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_billing_pipeline_stage").on(table.stage),
+  index("idx_billing_pipeline_sales_card").on(table.salesCardId),
+  index("idx_billing_pipeline_customer").on(table.customerId),
+]);
+
+export const billingPipelineRelations = relations(billingPipeline, ({ one }) => ({
+  salesCard: one(salesCards, {
+    fields: [billingPipeline.salesCardId],
+    references: [salesCards.id],
+  }),
+  customer: one(customers, {
+    fields: [billingPipeline.customerId],
+    references: [customers.id],
+  }),
+}));
+
+export const insertBillingPipelineSchema = createInsertSchema(billingPipeline).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type BillingPipeline = typeof billingPipeline.$inferSelect;
+export type InsertBillingPipeline = z.infer<typeof insertBillingPipelineSchema>;
+

@@ -147,6 +147,9 @@ import {
   type InsertInventoryLot,
   type InventoryMovement,
   type InsertInventoryMovement,
+  billingPipeline,
+  type BillingPipeline,
+  type InsertBillingPipeline,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
@@ -568,6 +571,13 @@ export interface IStorage {
   // Inventory Movements
   getInventoryMovements(filters?: { lotId?: string; productId?: string; instanceId?: string; sourceType?: string; sourceId?: string }): Promise<InventoryMovement[]>;
   createInventoryMovement(data: InsertInventoryMovement): Promise<InventoryMovement>;
+
+  // Billing Pipeline
+  getBillingPipelineItems(filters?: { stage?: string }): Promise<BillingPipeline[]>;
+  getBillingPipelineItem(id: string): Promise<BillingPipeline | undefined>;
+  createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline>;
+  updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline>;
+  deleteBillingPipelineItem(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -7990,6 +8000,35 @@ export class DatabaseStorage implements IStorage {
   async createInventoryMovement(data: InsertInventoryMovement): Promise<InventoryMovement> {
     const [movement] = await db.insert(inventoryMovements).values(data).returning();
     return movement;
+  }
+
+  // Billing Pipeline
+  async getBillingPipelineItems(filters?: { stage?: string }): Promise<BillingPipeline[]> {
+    const conditions = [];
+    if (filters?.stage) conditions.push(eq(billingPipeline.stage, filters.stage as any));
+    if (conditions.length > 0) {
+      return db.select().from(billingPipeline).where(and(...conditions)).orderBy(desc(billingPipeline.createdAt));
+    }
+    return db.select().from(billingPipeline).orderBy(desc(billingPipeline.createdAt));
+  }
+
+  async getBillingPipelineItem(id: string): Promise<BillingPipeline | undefined> {
+    const [item] = await db.select().from(billingPipeline).where(eq(billingPipeline.id, id));
+    return item;
+  }
+
+  async createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline> {
+    const [item] = await db.insert(billingPipeline).values(data).returning();
+    return item;
+  }
+
+  async updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline> {
+    const [item] = await db.update(billingPipeline).set({ ...data, updatedAt: new Date() }).where(eq(billingPipeline.id, id)).returning();
+    return item;
+  }
+
+  async deleteBillingPipelineItem(id: string): Promise<void> {
+    await db.delete(billingPipeline).where(eq(billingPipeline.id, id));
   }
 }
 

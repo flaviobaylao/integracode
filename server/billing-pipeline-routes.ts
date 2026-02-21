@@ -1,0 +1,166 @@
+import { Express } from 'express';
+import { storage } from './storage';
+import { nowBrazil } from './brazilTimezone';
+import { authenticateUser } from './authMiddleware';
+
+const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
+
+function isAdminOnly(req: any, res: any, next: any) {
+  const user = req.currentUser || req.user;
+  if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+    return res.status(403).json({ message: 'Access denied' });
+  }
+  next();
+}
+
+function isFlavioOnly(req: any, res: any, next: any) {
+  const user = req.currentUser || req.user;
+  if (!user || user.email !== 'flavio@bebahonest.com.br') {
+    return res.status(403).json({ message: 'Apenas FLAVIO pode realizar esta ação' });
+  }
+  next();
+}
+
+export function registerBillingPipelineRoutes(app: Express) {
+  
+  // Get all billing pipeline items (optionally filter by stage)
+  app.get('/api/billing-pipeline', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const stage = req.query.stage as string | undefined;
+      const items = await storage.getBillingPipelineItems(stage ? { stage } : undefined);
+      res.json(items);
+    } catch (error: any) {
+      console.error('❌ [BILLING-PIPELINE] Error fetching items:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get single billing pipeline item
+  app.get('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (!item) return res.status(404).json({ message: 'Item não encontrado' });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // FLAVIO-ONLY: Bypass order from Omie to internal billing pipeline
+  app.post('/api/billing-pipeline/bypass', authenticateUser, isFlavioOnly, async (req: any, res) => {
+    try {
+      const { salesCardId } = req.body;
+      if (!salesCardId) {
+        return res.status(400).json({ message: 'salesCardId é obrigatório' });
+      }
+
+      const card = await storage.getSalesCard(salesCardId);
+      if (!card) {
+        return res.status(404).json({ message: 'Pedido não encontrado' });
+      }
+
+      const existing = await storage.getBillingPipelineItems();
+      const alreadyExists = existing.find(i => i.salesCardId === salesCardId);
+      if (alreadyExists) {
+        return res.status(409).json({ message: 'Pedido já está no pipeline de faturamento', item: alreadyExists });
+      }
+
+      const user = req.currentUser || req.user;
+      const customer = card.customerId ? await storage.getCustomer(card.customerId) : null;
+      const seller = card.sellerId ? await storage.getUser(card.sellerId) : null;
+
+      let omieInstanceName = '';
+      if (customer?.omieInstanceId) {
+        const instance = await storage.getOmieInstance(customer.omieInstanceId);
+        omieInstanceName = instance?.displayName || '';
+      }
+
+      const item = await storage.createBillingPipelineItem({
+        salesCardId,
+        customerId: card.customerId,
+        customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
+        customerDocument: customer?.cnpj || customer?.cpf || null,
+        sellerId: card.sellerId || null,
+        sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
+        stage: 'pedido',
+        orderNumber: card.omieOrderId ? `WEB-${card.id.substring(0, 8)}` : null,
+        saleValue: card.saleValue || null,
+        paymentMethod: card.paymentMethod || null,
+        operationType: card.operationType || null,
+        products: card.products as any || null,
+        notes: card.notes || null,
+        omieInstanceId: customer?.omieInstanceId || null,
+        omieInstanceName: omieInstanceName || null,
+        stageHistory: [{
+          stage: 'pedido',
+          changedAt: nowBrazil().toISOString(),
+          changedBy: user.email
+        }],
+        createdBy: user.email,
+      });
+
+      console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCardId} bypassed para faturamento interno por ${user.email}`);
+
+      res.json({ success: true, item });
+    } catch (error: any) {
+      console.error('❌ [BILLING-PIPELINE] Bypass error:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Move item to next/specific stage
+  app.patch('/api/billing-pipeline/:id/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const { stage } = req.body;
+      if (!stage || !BILLING_STAGES.includes(stage)) {
+        return res.status(400).json({ message: `Stage inválido. Valores aceitos: ${BILLING_STAGES.join(', ')}` });
+      }
+
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (!item) return res.status(404).json({ message: 'Item não encontrado' });
+
+      const user = req.currentUser || req.user;
+      const history = (item.stageHistory as any[]) || [];
+      history.push({
+        stage,
+        changedAt: nowBrazil().toISOString(),
+        changedBy: user.email
+      });
+
+      const updated = await storage.updateBillingPipelineItem(req.params.id, {
+        stage,
+        stageHistory: history,
+      });
+
+      console.log(`📦 [BILLING-PIPELINE] Item ${req.params.id} movido para ${stage} por ${user.email}`);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Update item details (notes, invoice number, etc.)
+  app.patch('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const { notes, invoiceNumber } = req.body;
+      const updates: any = {};
+      if (notes !== undefined) updates.notes = notes;
+      if (invoiceNumber !== undefined) updates.invoiceNumber = invoiceNumber;
+
+      const updated = await storage.updateBillingPipelineItem(req.params.id, updates);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Delete item from pipeline
+  app.delete('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      await storage.deleteBillingPipelineItem(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+}

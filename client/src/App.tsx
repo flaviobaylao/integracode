@@ -65,6 +65,7 @@ import OmieInstances from "@/pages/OmieInstances";
 import OmieStageLogs from "@/pages/OmieStageLogs";
 import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
+import BillingPipeline from "@/pages/BillingPipeline";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error, refetch } = useAuth();
@@ -228,6 +229,7 @@ function Router() {
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
           <Route path="/estoque" component={Inventory} />
+          <Route path="/billing-pipeline" component={BillingPipeline} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}

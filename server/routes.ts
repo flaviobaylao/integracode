@@ -23741,6 +23741,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerInventoryRoutes } = await import('./inventory-routes.js');
   registerInventoryRoutes(app);
 
+  // Registrar rotas do Pipeline de Faturamento (Kanban)
+  const { registerBillingPipelineRoutes } = await import('./billing-pipeline-routes.js');
+  registerBillingPipelineRoutes(app);
+
   const httpServer = createServer(app);
 
   return httpServer;

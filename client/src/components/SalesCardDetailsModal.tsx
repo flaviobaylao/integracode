@@ -95,6 +95,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
+  const isFlavio = (currentUser as any)?.email === 'flavio@bebahonest.com.br';
   
   // Sincronizar estado local com o card quando ele mudar
   useEffect(() => {
@@ -188,6 +189,28 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     onError: (error) => {
       toast({
         title: "Erro ao Enviar para Omie",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bypassToInternalMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      const res = await apiRequest('POST', '/api/billing-pipeline/bypass', { salesCardId: cardId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({
+        title: "Sucesso",
+        description: "Pedido enviado para faturamento interno!",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao enviar para faturamento interno",
         description: error.message,
         variant: "destructive",
       });
@@ -766,7 +789,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                     </Badge>
                   </div>
                 ) : (
-                  <div className="flex items-center space-x-3">
+                  <div className="flex items-center space-x-3 flex-wrap gap-2">
                     <div className="flex items-center space-x-2 text-orange-600">
                       <AlertCircle className="h-5 w-5" />
                       <span>Pendente de envio para Omie</span>
@@ -789,6 +812,26 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                         </>
                       )}
                     </Button>
+                    {isFlavio && (
+                      <Button
+                        onClick={() => card?.id && bypassToInternalMutation.mutate(card.id)}
+                        disabled={bypassToInternalMutation.isPending}
+                        className="bg-purple-600 hover:bg-purple-700"
+                        data-testid="button-bypass-internal"
+                      >
+                        {bypassToInternalMutation.isPending ? (
+                          <>
+                            <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                            Enviando...
+                          </>
+                        ) : (
+                          <>
+                            <Package className="h-4 w-4 mr-2" />
+                            Faturar Interno
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
                 )}
               </CardContent>

@@ -62,6 +62,12 @@
   - **Database Tables**: `fiscal_scenarios`, `digital_certificates`, `fiscal_invoices`, `fiscal_invoice_items`, `fiscal_invoice_events`, `fiscal_backups` with proper indexes.
   - **API Routes**: Separate route file (`server/nfe-routes.ts`) with admin-only access for sensitive operations.
   - **Architecture**: Designed as future replacement for Omie invoicing. All dates use Brasília timezone (America/Sao_Paulo, UTC-3).
+- **Billing Pipeline (Kanban)**: Internal billing kanban system at `/billing-pipeline` with 7 stages: Pedido, A Faturar, Faturado, Impresso, Aguardando Rota, Em Rota, Entregue. Features include:
+  - **FLAVIO-only Bypass**: Only flavio@bebahonest.com.br can redirect orders from Omie to internal billing via "Faturar Interno" button in SalesCardDetailsModal.
+  - **Kanban Board**: Visual board with color-coded stage columns, card move forward/backward, detail modal with products/history, and stage history audit trail.
+  - **Access Control**: Admin/coordinator/administrative can view and manage the pipeline. Server-side enforcement via `authenticateUser` + role checks.
+  - **Database Table**: `billing_pipeline` with stage enum, stage history JSONB, product details, and customer/seller/instance metadata.
+  - **API Routes**: Separate route file (`server/billing-pipeline-routes.ts`) with CRUD, stage transitions, and bypass endpoint.
 
 # External Dependencies
 
