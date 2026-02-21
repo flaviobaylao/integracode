@@ -118,9 +118,16 @@ export default function BillingPipeline() {
     mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
       return await apiRequest('PATCH', `/api/billing-pipeline/${id}/stage`, { stage });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
-      toast({ title: 'Stage atualizado com sucesso' });
+      if (data?.fiscalInvoiceId) {
+        toast({
+          title: 'NF-e criada automaticamente',
+          description: `Pedido faturado e NF-e ${data.invoiceNumber || ''} gerada com sucesso`,
+        });
+      } else {
+        toast({ title: 'Stage atualizado com sucesso' });
+      }
     },
     onError: (error: any) => {
       toast({ title: 'Erro ao mover item', description: error.message, variant: 'destructive' });

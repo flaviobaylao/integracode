@@ -2,6 +2,7 @@ import { Express } from 'express';
 import { storage } from './storage';
 import { nowBrazil } from './brazilTimezone';
 import { authenticateUser } from './authMiddleware';
+import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -197,13 +198,30 @@ export function registerBillingPipelineRoutes(app: Express) {
         changedBy: user.email
       });
 
-      const updated = await storage.updateBillingPipelineItem(req.params.id, {
-        stage,
-        stageHistory: history,
-      });
+      let invoiceNumber = item.invoiceNumber;
+      let fiscalInvoiceId: string | null = null;
+
+      // AUTO-FATURAMENTO: ao mover para "faturado", criar NF-e automaticamente
+      if (stage === 'faturado' && item.stage !== 'faturado') {
+        try {
+          const invoiceResult = await createInvoiceFromPipelineItem(item, user);
+          if (invoiceResult) {
+            invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
+            fiscalInvoiceId = invoiceResult.id;
+            console.log(`📄 [BILLING-PIPELINE] NF-e #${invoiceResult.invoiceNumber} criada automaticamente para item ${req.params.id}`);
+          }
+        } catch (invoiceError: any) {
+          console.error(`❌ [BILLING-PIPELINE] Erro ao criar NF-e automática:`, invoiceError.message);
+        }
+      }
+
+      const updateData: any = { stage, stageHistory: history };
+      if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
+
+      const updated = await storage.updateBillingPipelineItem(req.params.id, updateData);
 
       console.log(`📦 [BILLING-PIPELINE] Item ${req.params.id} movido para ${stage} por ${user.email}`);
-      res.json(updated);
+      res.json({ ...updated, fiscalInvoiceId });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -233,4 +251,118 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.status(500).json({ message: error.message });
     }
   });
+}
+
+async function createInvoiceFromPipelineItem(item: any, user: any) {
+  const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
+
+  let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
+
+  if (item.omieInstanceId) {
+    const instance = await storage.getOmieInstance(item.omieInstanceId);
+    if (instance && INSTANCE_COMPANY_DATA[instance.name]) {
+      const cd = INSTANCE_COMPANY_DATA[instance.name];
+      issuerName = cd.name;
+      issuerCnpj = cd.cnpj;
+      issuerIe = cd.ie;
+      issuerAddress = cd.address;
+      issuerUf = cd.uf;
+      issuerCityCode = cd.cityCode;
+      issuerCity = cd.city;
+      issuerPhone = cd.phone;
+    }
+  }
+
+  if (!issuerName) {
+    const cd = INSTANCE_COMPANY_DATA['GYN'];
+    issuerName = cd.name;
+    issuerCnpj = cd.cnpj;
+    issuerIe = cd.ie;
+    issuerAddress = cd.address;
+    issuerUf = cd.uf;
+    issuerCityCode = cd.cityCode;
+    issuerCity = cd.city;
+    issuerPhone = cd.phone;
+  }
+
+  const customerUf = customer?.state || 'GO';
+  const isWithinState = issuerUf === customerUf;
+  const operationType = item.operationType || 'venda';
+
+  let cfop = isWithinState ? '5102' : '6102';
+  let natureOfOperation = 'Venda de mercadoria';
+  if (operationType === 'bonificacao') {
+    cfop = isWithinState ? '5910' : '6910';
+    natureOfOperation = 'Bonificação';
+  } else if (operationType === 'troca') {
+    cfop = isWithinState ? '5949' : '6949';
+    natureOfOperation = 'Troca de mercadoria';
+  } else if (operationType === 'amostra') {
+    cfop = isWithinState ? '5911' : '6911';
+    natureOfOperation = 'Amostra grátis';
+  }
+
+  const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
+  const nextNumber = await storage.getNextInvoiceNumber('1');
+
+  const invoice = await storage.createFiscalInvoice({
+    invoiceNumber: nextNumber,
+    series: '1',
+    status: 'draft',
+    operationType: 'saida',
+    issuerName,
+    issuerCnpj,
+    issuerIe,
+    issuerAddress,
+    issuerUf,
+    issuerCityCode,
+    issuerCity,
+    issuerPhone,
+    customerId: item.customerId || null,
+    customerName: item.customerName || '',
+    customerCnpjCpf: item.customerDocument || customer?.cnpj || customer?.cpf || '',
+    customerIe: (customer as any)?.ie || '',
+    customerAddress: [customer?.address, customer?.city, customer?.state].filter(Boolean).join(', ') || '',
+    natureOfOperation,
+    cfop,
+    totalProducts: totalValue.toFixed(2),
+    totalInvoice: totalValue.toFixed(2),
+    paymentMethod: item.paymentMethod || 'a_vista',
+    notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
+    emissionDate: nowBrazil(),
+    environment: 'homologacao',
+    omieInstanceId: item.omieInstanceId || null,
+    createdBy: user?.email || null,
+  });
+
+  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+  if (products && products.length > 0) {
+    for (let i = 0; i < products.length; i++) {
+      const p = products[i];
+      await storage.createFiscalInvoiceItem({
+        invoiceId: invoice.id,
+        itemNumber: i + 1,
+        productName: p.name,
+        productCode: p.id || `PROD-${i + 1}`,
+        productId: p.id || null,
+        ncm: '22029000',
+        cfop,
+        unit: 'UN',
+        quantity: p.quantity.toString(),
+        unitPrice: p.unitPrice.toString(),
+        totalPrice: p.totalPrice.toString(),
+        discount: '0',
+      });
+    }
+  }
+
+  await storage.createFiscalInvoiceEvent({
+    invoiceId: invoice.id,
+    eventType: 'criacao',
+    status: 'success',
+    description: `NF-e #${nextNumber} criada automaticamente via pipeline de faturamento interno`,
+    createdBy: user?.email || null,
+  });
+
+  return invoice;
 }
