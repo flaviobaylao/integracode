@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -7,13 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin,
-  Power
+  Power, CheckSquare, X, ArrowRightCircle
 } from 'lucide-react';
 
 interface BillingPipelineItem {
@@ -80,6 +81,9 @@ function formatDate(dateStr: string) {
 export default function BillingPipeline() {
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -148,6 +152,39 @@ export default function BillingPipeline() {
     }
   });
 
+  const batchStageMutation = useMutation({
+    mutationFn: async ({ ids, stage }: { ids: string[]; stage: string }) => {
+      return await apiRequest('POST', '/api/billing-pipeline/batch/stage', { ids, stage });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      setSelectedIds(new Set());
+      setBatchStageTarget(null);
+      const nfeCount = data.results?.filter((r: any) => r.fiscalInvoiceId).length || 0;
+      let desc = `${data.successCount}/${data.totalCount} pedidos movidos com sucesso`;
+      if (nfeCount > 0) desc += ` (${nfeCount} NF-e criadas)`;
+      toast({ title: 'Ação em lote concluída', description: desc });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Erro na ação em lote', description: error.message, variant: 'destructive' });
+    }
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      return await apiRequest('POST', '/api/billing-pipeline/batch/delete', { ids });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      setSelectedIds(new Set());
+      setBatchDeleteConfirm(false);
+      toast({ title: 'Itens removidos', description: `${data.successCount}/${data.totalCount} removidos com sucesso` });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Erro ao remover em lote', description: error.message, variant: 'destructive' });
+    }
+  });
+
   const groupedByStage = useMemo(() => {
     const groups: Record<string, BillingPipelineItem[]> = {};
     STAGES.forEach(s => { groups[s.key] = []; });
@@ -158,6 +195,42 @@ export default function BillingPipeline() {
     });
     return groups;
   }, [items]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllInStage = useCallback((stageKey: string) => {
+    const stageItems = groupedByStage[stageKey] || [];
+    const stageIds = stageItems.map(i => i.id);
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = stageIds.every(id => next.has(id));
+      if (allSelected) {
+        stageIds.forEach(id => next.delete(id));
+      } else {
+        stageIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }, [groupedByStage]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const selectedItems = useMemo(() => {
+    return items.filter(i => selectedIds.has(i.id));
+  }, [items, selectedIds]);
+
+  const selectedTotal = useMemo(() => {
+    return selectedItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
+  }, [selectedItems]);
 
   const moveItem = (item: BillingPipelineItem, direction: 'forward' | 'backward') => {
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
@@ -226,15 +299,78 @@ export default function BillingPipeline() {
           </div>
         </div>
 
+        {/* Bulk Action Toolbar */}
+        {selectedIds.size > 0 && (
+          <div className="mb-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3 animate-in slide-in-from-top-2">
+            <div className="flex items-center gap-3">
+              <CheckSquare className="h-5 w-5 text-blue-600" />
+              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
+                {selectedIds.size} {selectedIds.size === 1 ? 'pedido selecionado' : 'pedidos selecionados'}
+              </span>
+              <Badge variant="outline" className="text-xs font-bold text-green-700 border-green-300">
+                Total: {formatCurrency(selectedTotal)}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {STAGES.map(s => {
+                const SIcon = s.icon;
+                return (
+                  <Button
+                    key={s.key}
+                    size="sm"
+                    variant="outline"
+                    className="text-xs h-7"
+                    onClick={() => setBatchStageTarget(s.key)}
+                    disabled={batchStageMutation.isPending}
+                  >
+                    <SIcon className="h-3 w-3 mr-1" />
+                    {s.label}
+                  </Button>
+                );
+              })}
+              <div className="w-px h-6 bg-gray-300 mx-1" />
+              <Button
+                size="sm"
+                variant="destructive"
+                className="text-xs h-7"
+                onClick={() => setBatchDeleteConfirm(true)}
+                disabled={batchDeleteMutation.isPending}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Remover
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs h-7"
+                onClick={clearSelection}
+              >
+                <X className="h-3 w-3 mr-1" />
+                Limpar
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Kanban Board */}
         <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 120px)' }}>
           {STAGES.map((stage) => {
             const stageItems = groupedByStage[stage.key] || [];
             const StageIcon = stage.icon;
+            const stageIds = stageItems.map(i => i.id);
+            const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
+            const someStageSelected = stageIds.some(id => selectedIds.has(id));
             return (
               <div key={stage.key} className="flex-shrink-0 w-72">
                 <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between`}>
                   <div className="flex items-center gap-2">
+                    {stageItems.length > 0 && (
+                      <Checkbox
+                        checked={allStageSelected}
+                        className="border-white data-[state=checked]:bg-white data-[state=checked]:text-gray-900 h-4 w-4"
+                        onCheckedChange={() => toggleSelectAllInStage(stage.key)}
+                      />
+                    )}
                     <StageIcon className="h-4 w-4" />
                     <span className="font-semibold text-sm">{stage.label}</span>
                   </div>
@@ -251,6 +387,8 @@ export default function BillingPipeline() {
                       key={item.id}
                       item={item}
                       stage={stage}
+                      selected={selectedIds.has(item.id)}
+                      onToggleSelect={() => toggleSelect(item.id)}
                       onMoveForward={() => moveItem(item, 'forward')}
                       onMoveBackward={() => moveItem(item, 'backward')}
                       onViewDetail={() => setDetailItem(item)}
@@ -419,6 +557,68 @@ export default function BillingPipeline() {
         </DialogContent>
       </Dialog>
 
+      {/* Batch Stage Confirm */}
+      <Dialog open={!!batchStageTarget} onOpenChange={() => setBatchStageTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mover em Lote</DialogTitle>
+            <DialogDescription>
+              Mover {selectedIds.size} {selectedIds.size === 1 ? 'pedido' : 'pedidos'} para{' '}
+              <strong>{STAGES.find(s => s.key === batchStageTarget)?.label}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1 max-h-40 overflow-y-auto">
+            {selectedItems.map(item => (
+              <div key={item.id} className="flex items-center justify-between py-1 border-b last:border-0">
+                <span className="truncate flex-1">{item.customerName}</span>
+                <span className="text-green-700 font-semibold ml-2">{formatCurrency(item.saleValue)}</span>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchStageTarget(null)}>Cancelar</Button>
+            <Button
+              onClick={() => batchStageTarget && batchStageMutation.mutate({ ids: Array.from(selectedIds), stage: batchStageTarget })}
+              disabled={batchStageMutation.isPending}
+            >
+              {batchStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <ArrowRightCircle className="h-4 w-4 mr-1" />}
+              Mover {selectedIds.size} pedidos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Delete Confirm */}
+      <Dialog open={batchDeleteConfirm} onOpenChange={() => setBatchDeleteConfirm(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remover em Lote</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja remover {selectedIds.size} {selectedIds.size === 1 ? 'pedido' : 'pedidos'} do pipeline?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1 max-h-40 overflow-y-auto">
+            {selectedItems.map(item => (
+              <div key={item.id} className="flex items-center justify-between py-1 border-b last:border-0">
+                <span className="truncate flex-1">{item.customerName}</span>
+                <span className="text-green-700 font-semibold ml-2">{formatCurrency(item.saleValue)}</span>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchDeleteConfirm(false)}>Cancelar</Button>
+            <Button
+              variant="destructive"
+              onClick={() => batchDeleteMutation.mutate(Array.from(selectedIds))}
+              disabled={batchDeleteMutation.isPending}
+            >
+              {batchDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
+              Remover {selectedIds.size} pedidos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
@@ -426,6 +626,8 @@ export default function BillingPipeline() {
 function KanbanCard({
   item,
   stage,
+  selected,
+  onToggleSelect,
   onMoveForward,
   onMoveBackward,
   onViewDetail,
@@ -436,6 +638,8 @@ function KanbanCard({
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
+  selected: boolean;
+  onToggleSelect: () => void;
   onMoveForward: () => void;
   onMoveBackward: () => void;
   onViewDetail: () => void;
@@ -445,9 +649,15 @@ function KanbanCard({
   isMoving: boolean;
 }) {
   return (
-    <Card className="shadow-sm hover:shadow-md transition-shadow cursor-pointer border-l-4" style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}>
+    <Card className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${selected ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`} style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}>
       <CardContent className="p-3 space-y-2">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start gap-2">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onToggleSelect()}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-0.5 h-4 w-4 flex-shrink-0"
+          />
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm truncate">{item.customerName}</p>
             {item.sellerName && (

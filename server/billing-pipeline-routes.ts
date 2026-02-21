@@ -251,6 +251,94 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.status(500).json({ message: error.message });
     }
   });
+
+  // Batch move items to a stage
+  app.post('/api/billing-pipeline/batch/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const { ids, stage } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'ids é obrigatório (array)' });
+      }
+      if (!stage || !BILLING_STAGES.includes(stage)) {
+        return res.status(400).json({ message: `Stage inválido. Valores aceitos: ${BILLING_STAGES.join(', ')}` });
+      }
+
+      const user = req.currentUser || req.user;
+      const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string }> = [];
+
+      for (const id of ids) {
+        try {
+          const item = await storage.getBillingPipelineItem(id);
+          if (!item) {
+            results.push({ id, success: false, error: 'Item não encontrado' });
+            continue;
+          }
+
+          const history = (item.stageHistory as any[]) || [];
+          history.push({
+            stage,
+            changedAt: nowBrazil().toISOString(),
+            changedBy: user.email
+          });
+
+          let invoiceNumber = item.invoiceNumber;
+          let fiscalInvoiceId: string | undefined;
+
+          if (stage === 'faturado' && item.stage !== 'faturado') {
+            try {
+              const invoiceResult = await createInvoiceFromPipelineItem(item, user);
+              if (invoiceResult) {
+                invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
+                fiscalInvoiceId = invoiceResult.id;
+              }
+            } catch (invoiceError: any) {
+              console.error(`❌ [BATCH] Erro NF-e para ${id}:`, invoiceError.message);
+            }
+          }
+
+          const updateData: any = { stage, stageHistory: history };
+          if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
+
+          await storage.updateBillingPipelineItem(id, updateData);
+          results.push({ id, success: true, fiscalInvoiceId });
+        } catch (err: any) {
+          results.push({ id, success: false, error: err.message });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`📦 [BATCH] ${successCount}/${ids.length} itens movidos para ${stage} por ${user.email}`);
+      res.json({ results, successCount, totalCount: ids.length });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Batch delete items
+  app.post('/api/billing-pipeline/batch/delete', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const { ids } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'ids é obrigatório (array)' });
+      }
+
+      let successCount = 0;
+      for (const id of ids) {
+        try {
+          await storage.deleteBillingPipelineItem(id);
+          successCount++;
+        } catch (err: any) {
+          console.error(`❌ [BATCH-DELETE] Erro ao remover ${id}:`, err.message);
+        }
+      }
+
+      const user = req.currentUser || req.user;
+      console.log(`🗑️ [BATCH] ${successCount}/${ids.length} itens removidos por ${user?.email}`);
+      res.json({ successCount, totalCount: ids.length });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
 }
 
 async function createInvoiceFromPipelineItem(item: any, user: any) {
