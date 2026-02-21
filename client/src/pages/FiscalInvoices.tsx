@@ -884,18 +884,21 @@ export default function FiscalInvoices() {
                               key={customer.id}
                               value={customer.id}
                               onSelect={() => {
-                                const address = [customer.address, customer.addressNumber, customer.addressComplement].filter(Boolean).join(', ');
+                                const rawCity = customer.city || '';
+                                const cleanCity = rawCity.replace(/\s*\([A-Z]{2}\)\s*$/, '').trim();
+                                const rawPhone = customer.phone || customer.phoneMain || '';
+                                const cleanPhone = rawPhone === '(00) 00000-0000' || rawPhone === '00000000000' ? '' : rawPhone;
                                 setNewInvoice(p => ({
                                   ...p,
                                   customerName: displayName,
                                   customerCnpjCpf: doc,
                                   customerIe: customer.ie || customer.stateRegistration || '',
-                                  customerAddress: address || '',
+                                  customerAddress: customer.address || '',
                                   customerBairro: customer.neighborhood || customer.bairro || '',
                                   customerCep: customer.zipCode || customer.cep || '',
-                                  customerCity: customer.city || '',
+                                  customerCity: cleanCity,
                                   customerUf: customer.state || customer.uf || '',
-                                  customerPhone: customer.phone || customer.phoneMain || '',
+                                  customerPhone: cleanPhone,
                                 }));
                                 setCustomerSearchOpen(false);
                                 setCustomerSearch('');
@@ -928,6 +931,32 @@ export default function FiscalInvoices() {
                 <Label>CPF/CNPJ</Label>
                 <Input value={newInvoice.customerCnpjCpf} onChange={e => setNewInvoice(p => ({ ...p, customerCnpjCpf: e.target.value }))} placeholder="Preenchido ao selecionar cliente" />
               </div>
+            </div>
+            <div>
+              <Label>Endereço (Logradouro)</Label>
+              <Input value={newInvoice.customerAddress} onChange={e => setNewInvoice(p => ({ ...p, customerAddress: e.target.value }))} placeholder="Rua, Avenida..." />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <Label>Bairro</Label>
+                <Input value={newInvoice.customerBairro} onChange={e => setNewInvoice(p => ({ ...p, customerBairro: e.target.value }))} placeholder="Bairro" />
+              </div>
+              <div>
+                <Label>CEP</Label>
+                <Input value={newInvoice.customerCep} onChange={e => setNewInvoice(p => ({ ...p, customerCep: e.target.value }))} placeholder="00000000" />
+              </div>
+              <div>
+                <Label>Município</Label>
+                <Input value={newInvoice.customerCity} onChange={e => setNewInvoice(p => ({ ...p, customerCity: e.target.value }))} placeholder="Cidade" />
+              </div>
+              <div>
+                <Label>UF</Label>
+                <Input value={newInvoice.customerUf} onChange={e => setNewInvoice(p => ({ ...p, customerUf: e.target.value }))} placeholder="GO" />
+              </div>
+            </div>
+            <div>
+              <Label>Telefone</Label>
+              <Input value={newInvoice.customerPhone} onChange={e => setNewInvoice(p => ({ ...p, customerPhone: e.target.value }))} placeholder="(00) 00000-0000" />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -1121,6 +1150,13 @@ export default function FiscalInvoices() {
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="font-medium">{invoiceDetail.customerName}</p>
                   <p className="text-xs text-muted-foreground">{invoiceDetail.customerCnpjCpf}</p>
+                  {invoiceDetail.customerAddress && <p className="text-xs text-muted-foreground">{invoiceDetail.customerAddress}{invoiceDetail.customerBairro ? ` - ${invoiceDetail.customerBairro}` : ''}</p>}
+                  {(invoiceDetail.customerCity || invoiceDetail.customerUf || invoiceDetail.customerCep) && (
+                    <p className="text-xs text-muted-foreground">
+                      {[invoiceDetail.customerCity, invoiceDetail.customerUf].filter(Boolean).join('/')}{invoiceDetail.customerCep ? ` - CEP: ${invoiceDetail.customerCep}` : ''}
+                    </p>
+                  )}
+                  {invoiceDetail.customerPhone && <p className="text-xs text-muted-foreground">Tel: {invoiceDetail.customerPhone}</p>}
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">CFOP</p>
