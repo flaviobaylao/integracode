@@ -201,10 +201,17 @@ export function registerBillingPipelineRoutes(app: Express) {
       let invoiceNumber = item.invoiceNumber;
       let fiscalInvoiceId: string | null = null;
 
-      // AUTO-FATURAMENTO: ao mover para "faturado", criar NF-e automaticamente
       if (stage === 'faturado' && item.stage !== 'faturado') {
+        let lotMap: Record<string, string[]> = {};
         try {
-          const invoiceResult = await createInvoiceFromPipelineItem(item, user);
+          lotMap = await deductStockForBilling(item, user);
+          console.log(`📦 [BILLING-PIPELINE] Baixa de estoque realizada para item ${req.params.id}`);
+        } catch (stockError: any) {
+          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
+        }
+
+        try {
+          const invoiceResult = await createInvoiceFromPipelineItem(item, user, lotMap);
           if (invoiceResult) {
             invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
             fiscalInvoiceId = invoiceResult.id;
@@ -213,21 +220,12 @@ export function registerBillingPipelineRoutes(app: Express) {
         } catch (invoiceError: any) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar NF-e automática:`, invoiceError.message);
         }
-      }
 
-      if (stage === 'faturado' && item.stage !== 'faturado') {
         try {
           await createReceivableFromPipelineItem(item, fiscalInvoiceId, user);
           console.log(`💰 [BILLING-PIPELINE] Conta a receber criada para item ${req.params.id}`);
         } catch (recError: any) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar conta a receber:`, recError.message);
-        }
-
-        try {
-          await deductStockForBilling(item, user);
-          console.log(`📦 [BILLING-PIPELINE] Baixa de estoque realizada para item ${req.params.id}`);
-        } catch (stockError: any) {
-          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
         }
       }
 
@@ -301,8 +299,15 @@ export function registerBillingPipelineRoutes(app: Express) {
           let fiscalInvoiceId: string | undefined;
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
+            let lotMap: Record<string, string[]> = {};
             try {
-              const invoiceResult = await createInvoiceFromPipelineItem(item, user);
+              lotMap = await deductStockForBilling(item, user);
+            } catch (stockError: any) {
+              console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
+            }
+
+            try {
+              const invoiceResult = await createInvoiceFromPipelineItem(item, user, lotMap);
               if (invoiceResult) {
                 invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
                 fiscalInvoiceId = invoiceResult.id;
@@ -310,19 +315,11 @@ export function registerBillingPipelineRoutes(app: Express) {
             } catch (invoiceError: any) {
               console.error(`❌ [BATCH] Erro NF-e para ${id}:`, invoiceError.message);
             }
-          }
 
-          if (stage === 'faturado' && item.stage !== 'faturado') {
             try {
               await createReceivableFromPipelineItem(item, fiscalInvoiceId || null, user);
             } catch (recError: any) {
               console.error(`❌ [BATCH] Erro conta a receber para ${id}:`, recError.message);
-            }
-
-            try {
-              await deductStockForBilling(item, user);
-            } catch (stockError: any) {
-              console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
             }
           }
 
@@ -371,14 +368,15 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
-async function deductStockForBilling(item: any, user: any) {
+async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
+  const lotMap: Record<string, string[]> = {};
   const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
-  if (!products || products.length === 0) return;
+  if (!products || products.length === 0) return lotMap;
 
   const instanceId = item.omieInstanceId;
   if (!instanceId) {
     console.log(`⚠️ [STOCK] Item ${item.id} sem omieInstanceId, não é possível dar baixa no estoque`);
-    return;
+    return lotMap;
   }
 
   for (const product of products) {
@@ -397,6 +395,7 @@ async function deductStockForBilling(item: any, user: any) {
     }
 
     let remaining = product.quantity;
+    const consumedLots: string[] = [];
 
     for (const lot of lots) {
       if (remaining <= 0) break;
@@ -426,17 +425,27 @@ async function deductStockForBilling(item: any, user: any) {
         createdBy: user?.email || null,
       });
 
+      if (lot.lotNumber) {
+        consumedLots.push(lot.lotNumber);
+      }
+
       remaining -= deductQty;
       console.log(`📦 [STOCK] Baixa: ${deductQty} un de "${product.name}" do lote ${lot.lotNumber} (${currentQty} → ${newQty})`);
+    }
+
+    if (consumedLots.length > 0) {
+      lotMap[product.id] = consumedLots;
     }
 
     if (remaining > 0) {
       console.log(`⚠️ [STOCK] Estoque insuficiente: faltam ${remaining} un de "${product.name}" na instância ${instanceId}`);
     }
   }
+
+  return lotMap;
 }
 
-async function createInvoiceFromPipelineItem(item: any, user: any) {
+async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>) {
   const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
 
   let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
@@ -529,10 +538,15 @@ async function createInvoiceFromPipelineItem(item: any, user: any) {
           productCode = (productData as any).omieCode || (productData as any).omieCodigo || `PROD-${i + 1}`;
         }
       }
+      let productName = p.name;
+      if (lotMap && p.id && lotMap[p.id] && lotMap[p.id].length > 0) {
+        const lotNumbers = lotMap[p.id].join(', ');
+        productName = `${p.name} - Lote: ${lotNumbers}`;
+      }
       await storage.createFiscalInvoiceItem({
         invoiceId: invoice.id,
         itemNumber: i + 1,
-        productName: p.name,
+        productName,
         productCode,
         productId: p.id || null,
         ncm: '22029000',
