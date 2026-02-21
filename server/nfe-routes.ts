@@ -30,16 +30,16 @@ export interface CompanyData {
 
 export const INSTANCE_COMPANY_DATA: Record<string, CompanyData> = {
   'BSB': {
-    name: 'PURO INDÚSTRIA E COMÉRCIO LTDA - BSB',
-    cnpj: '26.975.835/0002-80',
-    ie: '07.668.149/001-08',
-    address: 'SIA Trecho 5A, Lote 180/200, Sala 2 - SIA, Brasília/DF',
+    name: 'PURO INDUSTRIA E COMERCIO DE PRODUTOS NATURAIS LTDA',
+    cnpj: '28.295.493/0003-15',
+    ie: '0846917100165',
+    address: 'SHCS CR 516, BLOCO B 69 PAVMTO1',
     city: 'Brasília',
     cityCode: '5300108',
     uf: 'DF',
-    cep: '71200-055',
-    phone: '(61) 3333-5050',
-    crt: '3',
+    cep: '70381525',
+    phone: '(62) 96353860',
+    crt: '1',
   },
   'GYN': {
     name: 'PURO INDUSTRIA E COMERCIO DE PRODUTOS NATURAIS LTDA',
