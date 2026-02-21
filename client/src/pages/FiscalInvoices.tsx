@@ -1061,7 +1061,7 @@ export default function FiscalInvoices() {
                                 setNewItem(p => ({
                                   ...p,
                                   productName: product.name,
-                                  productCode: product.omieCode || product.omieCodigo || '',
+                                  productCode: product.omieCode || product.omieCodigo || product.omieCodigoProduto || '',
                                   unitPrice: product.price || '0',
                                   cfop: newInvoice.cfop || p.cfop,
                                 }));

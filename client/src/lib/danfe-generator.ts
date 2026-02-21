@@ -399,9 +399,10 @@ export function generateDanfePdf(invoice: DanfeInvoice) {
 
   const items = invoice.items || [];
   const tableHead = [['CÓDIGO\nPRODUTO', 'DESCRIÇÃO DO PRODUTO / SERVIÇO', 'NCM/SH', 'O/CSOSN', 'CFOP', 'UN', 'QUANT', 'VALOR\nUNIT', 'VALOR\nTOTAL', 'B.CÁLC\nICMS', 'VALOR\nICMS', 'VALOR\nIPI', 'ALÍQ.\nICMS', 'ALÍQ.\nIPI']];
+  const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) || /^p-[0-9a-f]{8}-/.test(s);
   const tableBody = items.map((item: DanfeInvoiceItem) => [
-    item.productCode || '',
-    isHomologacao ? 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL' : (item.productName || ''),
+    (item.productCode && !isUuid(item.productCode)) ? item.productCode : String(item.itemNumber || ''),
+    item.productName || '',
     item.ncm || '',
     item.csosn || item.cstIcms || '0102',
     item.cfop || invoice.cfop || '',
