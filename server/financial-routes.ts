@@ -2,6 +2,7 @@ import { Express } from 'express';
 import { storage } from './storage';
 import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
+import * as interPixService from './inter-pix-service';
 
 function isFinancialAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -146,11 +147,21 @@ export function registerFinancialRoutes(app: Express) {
   // FINANCIAL ACCOUNTS (bank/cash)
   // ============================================================================
 
+  const maskAccountSecrets = (account: any) => {
+    if (!account) return account;
+    const masked = { ...account };
+    if (masked.interClientSecret) masked.interClientSecret = '***';
+    if (masked.interCertificateCrt) masked.interCertificateCrt = '[CERTIFICADO CONFIGURADO]';
+    if (masked.interCertificateKey) masked.interCertificateKey = '[CHAVE CONFIGURADA]';
+    if (masked.bbClientSecret) masked.bbClientSecret = '***';
+    return masked;
+  };
+
   app.get('/api/financial/accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const instanceId = req.query.instanceId as string | undefined;
       const accounts = await storage.getFinancialAccounts(instanceId);
-      res.json(accounts);
+      res.json(accounts.map(maskAccountSecrets));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -160,7 +171,7 @@ export function registerFinancialRoutes(app: Express) {
     try {
       const account = await storage.getFinancialAccount(req.params.id);
       if (!account) return res.status(404).json({ message: 'Conta financeira não encontrada' });
-      res.json(account);
+      res.json(maskAccountSecrets(account));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -188,6 +199,148 @@ export function registerFinancialRoutes(app: Express) {
     try {
       await storage.deleteFinancialAccount(req.params.id);
       res.json({ message: 'Conta financeira removida' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/accounts/:id/test-inter', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const result = await interPixService.testConnection(req.params.id);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // ============================================================================
+  // ACCOUNT MOVEMENTS (immutable history - read only)
+  // ============================================================================
+
+  app.get('/api/financial/accounts/:id/movements', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const filters: any = {};
+      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
+      if (req.query.limit) filters.limit = parseInt(req.query.limit as string);
+      if (req.query.offset) filters.offset = parseInt(req.query.offset as string);
+      const movements = await storage.getAccountMovements(req.params.id, filters);
+      res.json(movements);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============================================================================
+  // PIX CHARGES (Cobranças PIX)
+  // ============================================================================
+
+  app.get('/api/financial/pix-charges', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const filters: any = {};
+      if (req.query.financialAccountId) filters.financialAccountId = req.query.financialAccountId;
+      if (req.query.status) filters.status = req.query.status;
+      if (req.query.instanceId) filters.instanceId = req.query.instanceId;
+      if (req.query.receivableId) filters.receivableId = req.query.receivableId;
+      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
+      const charges = await storage.getPixCharges(filters);
+      res.json(charges);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get('/api/financial/pix-charges/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const charge = await storage.getPixCharge(req.params.id);
+      if (!charge) return res.status(404).json({ message: 'Cobrança PIX não encontrada' });
+      res.json(charge);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/pix-charges/immediate', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { accountId, amount, debtorName, debtorDocument, description, expirationSeconds, receivableId, customerId } = req.body;
+      
+      if (!accountId || !amount) {
+        return res.status(400).json({ message: 'accountId e amount são obrigatórios' });
+      }
+
+      const charge = await interPixService.createImmediateCharge(accountId, {
+        amount: parseFloat(amount),
+        debtorName,
+        debtorDocument,
+        description,
+        expirationSeconds: expirationSeconds ? parseInt(expirationSeconds) : undefined,
+        receivableId,
+        customerId,
+        createdBy: user?.email || null,
+      });
+
+      res.status(201).json(charge);
+    } catch (error: any) {
+      console.error('❌ [PIX-ROUTE] Erro ao criar cobrança imediata:', error.message);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/pix-charges/due-date', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { accountId, amount, dueDate, validityAfterDue, debtorName, debtorDocument, description, receivableId, customerId } = req.body;
+      
+      if (!accountId || !amount || !dueDate || !debtorName || !debtorDocument) {
+        return res.status(400).json({ message: 'accountId, amount, dueDate, debtorName e debtorDocument são obrigatórios' });
+      }
+
+      const charge = await interPixService.createDueDateCharge(accountId, {
+        amount: parseFloat(amount),
+        dueDate,
+        validityAfterDue: validityAfterDue ? parseInt(validityAfterDue) : undefined,
+        debtorName,
+        debtorDocument,
+        description,
+        receivableId,
+        customerId,
+        createdBy: user?.email || null,
+      });
+
+      res.status(201).json(charge);
+    } catch (error: any) {
+      console.error('❌ [PIX-ROUTE] Erro ao criar cobrança com vencimento:', error.message);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/pix-charges/:id/check-status', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const charge = await interPixService.checkChargeStatus(req.params.id);
+      res.json(charge);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/pix-webhook', async (req, res) => {
+    try {
+      await interPixService.handleWebhookNotification(req.body);
+      res.status(200).json({ message: 'OK' });
+    } catch (error: any) {
+      console.error('❌ [PIX-WEBHOOK] Erro:', error.message);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/accounts/:id/configure-webhook', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const { webhookUrl } = req.body;
+      if (!webhookUrl) return res.status(400).json({ message: 'webhookUrl é obrigatório' });
+      await interPixService.configureWebhook(req.params.id, webhookUrl);
+      res.json({ message: 'Webhook configurado com sucesso' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

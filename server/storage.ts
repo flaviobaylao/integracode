@@ -157,10 +157,16 @@ import {
   payables,
   payablePayments,
   spedExports,
+  accountMovements,
+  pixCharges,
   type ChartOfAccount,
   type InsertChartOfAccount,
   type FinancialAccount,
   type InsertFinancialAccount,
+  type AccountMovement,
+  type InsertAccountMovement,
+  type PixCharge,
+  type InsertPixCharge,
   type Receivable,
   type InsertReceivable,
   type ReceivablePayment,
@@ -613,6 +619,17 @@ export interface IStorage {
   createFinancialAccount(data: InsertFinancialAccount): Promise<FinancialAccount>;
   updateFinancialAccount(id: string, data: Partial<InsertFinancialAccount>): Promise<FinancialAccount>;
   deleteFinancialAccount(id: string): Promise<void>;
+
+  // Financial Module - Account Movements (immutable)
+  getAccountMovements(accountId: string, filters?: { startDate?: Date; endDate?: Date; limit?: number; offset?: number }): Promise<AccountMovement[]>;
+  createAccountMovement(data: InsertAccountMovement): Promise<AccountMovement>;
+
+  // Financial Module - PIX Charges
+  getPixCharges(filters?: { financialAccountId?: string; status?: string; instanceId?: string; receivableId?: string; startDate?: Date; endDate?: Date }): Promise<PixCharge[]>;
+  getPixCharge(id: string): Promise<PixCharge | undefined>;
+  getPixChargeByTxid(txid: string): Promise<PixCharge | undefined>;
+  createPixCharge(data: InsertPixCharge): Promise<PixCharge>;
+  updatePixCharge(id: string, data: Partial<InsertPixCharge>): Promise<PixCharge>;
 
   // Financial Module - Receivables
   getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]>;
@@ -8152,6 +8169,65 @@ export class DatabaseStorage implements IStorage {
 
   async deleteFinancialAccount(id: string): Promise<void> {
     await db.delete(financialAccounts).where(eq(financialAccounts.id, id));
+  }
+
+  // ============================================================================
+  // Financial Module - Account Movements (immutable)
+  // ============================================================================
+
+  async getAccountMovements(accountId: string, filters?: { startDate?: Date; endDate?: Date; limit?: number; offset?: number }): Promise<AccountMovement[]> {
+    const conditions = [eq(accountMovements.financialAccountId, accountId)];
+    if (filters?.startDate) conditions.push(gte(accountMovements.createdAt, filters.startDate));
+    if (filters?.endDate) conditions.push(lte(accountMovements.createdAt, filters.endDate));
+    
+    let query = db.select().from(accountMovements).where(and(...conditions)).orderBy(desc(accountMovements.createdAt));
+    if (filters?.limit) query = (query as any).limit(filters.limit);
+    if (filters?.offset) query = (query as any).offset(filters.offset);
+    return query;
+  }
+
+  async createAccountMovement(data: InsertAccountMovement): Promise<AccountMovement> {
+    const [item] = await db.insert(accountMovements).values(data).returning();
+    return item;
+  }
+
+  // ============================================================================
+  // Financial Module - PIX Charges
+  // ============================================================================
+
+  async getPixCharges(filters?: { financialAccountId?: string; status?: string; instanceId?: string; receivableId?: string; startDate?: Date; endDate?: Date }): Promise<PixCharge[]> {
+    const conditions = [];
+    if (filters?.financialAccountId) conditions.push(eq(pixCharges.financialAccountId, filters.financialAccountId));
+    if (filters?.status) conditions.push(eq(pixCharges.status, filters.status as any));
+    if (filters?.instanceId) conditions.push(eq(pixCharges.omieInstanceId, filters.instanceId));
+    if (filters?.receivableId) conditions.push(eq(pixCharges.receivableId, filters.receivableId));
+    if (filters?.startDate) conditions.push(gte(pixCharges.createdAt, filters.startDate));
+    if (filters?.endDate) conditions.push(lte(pixCharges.createdAt, filters.endDate));
+
+    if (conditions.length > 0) {
+      return db.select().from(pixCharges).where(and(...conditions)).orderBy(desc(pixCharges.createdAt));
+    }
+    return db.select().from(pixCharges).orderBy(desc(pixCharges.createdAt));
+  }
+
+  async getPixCharge(id: string): Promise<PixCharge | undefined> {
+    const [item] = await db.select().from(pixCharges).where(eq(pixCharges.id, id));
+    return item;
+  }
+
+  async getPixChargeByTxid(txid: string): Promise<PixCharge | undefined> {
+    const [item] = await db.select().from(pixCharges).where(eq(pixCharges.txid, txid));
+    return item;
+  }
+
+  async createPixCharge(data: InsertPixCharge): Promise<PixCharge> {
+    const [item] = await db.insert(pixCharges).values(data).returning();
+    return item;
+  }
+
+  async updatePixCharge(id: string, data: Partial<InsertPixCharge>): Promise<PixCharge> {
+    const [item] = await db.update(pixCharges).set({ ...data, updatedAt: new Date() }).where(eq(pixCharges.id, id)).returning();
+    return item;
   }
 
   // ============================================================================

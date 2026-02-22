@@ -3010,6 +3010,17 @@ export const financialAccounts = pgTable("financial_accounts", {
   pixKey: varchar("pix_key"),
   omieInstanceId: varchar("omie_instance_id"),
   isActive: boolean("is_active").default(true).notNull(),
+  balance: decimal("balance", { precision: 14, scale: 2 }).default('0').notNull(),
+  interClientId: varchar("inter_client_id"),
+  interClientSecret: varchar("inter_client_secret"),
+  interCertificateCrt: text("inter_certificate_crt"),
+  interCertificateKey: text("inter_certificate_key"),
+  interPixEnabled: boolean("inter_pix_enabled").default(false).notNull(),
+  interWebhookConfigured: boolean("inter_webhook_configured").default(false).notNull(),
+  bbClientId: varchar("bb_client_id"),
+  bbClientSecret: varchar("bb_client_secret"),
+  bbDevAppKey: varchar("bb_dev_app_key"),
+  bbBoletoEnabled: boolean("bb_boleto_enabled").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   index("idx_financial_accounts_instance").on(table.omieInstanceId),
@@ -3023,6 +3034,120 @@ export const insertFinancialAccountSchema = createInsertSchema(financialAccounts
 
 export type FinancialAccount = typeof financialAccounts.$inferSelect;
 export type InsertFinancialAccount = z.infer<typeof insertFinancialAccountSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - ACCOUNT MOVEMENTS (immutable history)
+// ============================================================================
+
+export const accountMovementTypeEnum = pgEnum("account_movement_type", [
+  "credito",
+  "debito",
+]);
+
+export const accountMovements = pgTable("account_movements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  financialAccountId: varchar("financial_account_id").notNull(),
+  type: accountMovementTypeEnum("type").notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  balanceAfter: decimal("balance_after", { precision: 14, scale: 2 }).notNull(),
+  description: text("description").notNull(),
+  sourceType: varchar("source_type"),
+  sourceId: varchar("source_id"),
+  reference: varchar("reference"),
+  omieInstanceId: varchar("omie_instance_id"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_account_movements_account").on(table.financialAccountId),
+  index("idx_account_movements_date").on(table.createdAt),
+  index("idx_account_movements_source").on(table.sourceType, table.sourceId),
+]);
+
+export const accountMovementsRelations = relations(accountMovements, ({ one }) => ({
+  financialAccount: one(financialAccounts, {
+    fields: [accountMovements.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+}));
+
+export const insertAccountMovementSchema = createInsertSchema(accountMovements).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type AccountMovement = typeof accountMovements.$inferSelect;
+export type InsertAccountMovement = z.infer<typeof insertAccountMovementSchema>;
+
+// ============================================================================
+// FINANCIAL MODULE - PIX CHARGES
+// ============================================================================
+
+export const pixChargeStatusEnum = pgEnum("pix_charge_status", [
+  "ATIVA",
+  "CONCLUIDA",
+  "REMOVIDA_PELO_USUARIO_RECEBEDOR",
+  "REMOVIDA_PELO_PSP",
+  "EXPIRADA",
+]);
+
+export const pixChargeTypeEnum = pgEnum("pix_charge_type", [
+  "imediata",
+  "com_vencimento",
+]);
+
+export const pixCharges = pgTable("pix_charges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  txid: varchar("txid").notNull().unique(),
+  chargeType: pixChargeTypeEnum("charge_type").notNull().default("imediata"),
+  status: pixChargeStatusEnum("status").notNull().default("ATIVA"),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  amountPaid: decimal("amount_paid", { precision: 12, scale: 2 }).default('0'),
+  pixKey: varchar("pix_key").notNull(),
+  pixCopiaECola: text("pix_copia_e_cola"),
+  qrCodeBase64: text("qr_code_base64"),
+  location: varchar("location"),
+  expiresAt: timestamp("expires_at"),
+  dueDate: timestamp("due_date"),
+  debtorName: varchar("debtor_name"),
+  debtorDocument: varchar("debtor_document"),
+  description: text("description"),
+  financialAccountId: varchar("financial_account_id").notNull(),
+  receivableId: varchar("receivable_id"),
+  customerId: varchar("customer_id"),
+  omieInstanceId: varchar("omie_instance_id"),
+  endToEndId: varchar("end_to_end_id"),
+  paidAt: timestamp("paid_at"),
+  interResponse: text("inter_response"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_pix_charges_txid").on(table.txid),
+  index("idx_pix_charges_status").on(table.status),
+  index("idx_pix_charges_account").on(table.financialAccountId),
+  index("idx_pix_charges_receivable").on(table.receivableId),
+  index("idx_pix_charges_instance").on(table.omieInstanceId),
+]);
+
+export const pixChargesRelations = relations(pixCharges, ({ one }) => ({
+  financialAccount: one(financialAccounts, {
+    fields: [pixCharges.financialAccountId],
+    references: [financialAccounts.id],
+  }),
+  receivable: one(receivables, {
+    fields: [pixCharges.receivableId],
+    references: [receivables.id],
+  }),
+}));
+
+export const insertPixChargeSchema = createInsertSchema(pixCharges).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type PixCharge = typeof pixCharges.$inferSelect;
+export type InsertPixCharge = z.infer<typeof insertPixChargeSchema>;
 
 // ============================================================================
 // FINANCIAL MODULE - ACCOUNTS RECEIVABLE (Contas a Receber)

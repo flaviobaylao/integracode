@@ -16,7 +16,9 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   DollarSign, Plus, Eye, Trash2, Edit, Download, FileText, Loader2,
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
-  CheckCircle2, Clock, XCircle, AlertTriangle, Banknote
+  CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
+  History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
+  Shield, Key, Upload
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -1042,11 +1044,32 @@ function FinancialAccountsTab() {
   const [instanceId, setInstanceId] = useState('');
   const [showDialog, setShowDialog] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
-  const [form, setForm] = useState<any>({ name: '', type: 'banco', bankName: '', agency: '', accountNumber: '', pixKey: '', instanceId: '', isActive: true });
+  const [selectedAccount, setSelectedAccount] = useState<any>(null);
+  const [activeSubTab, setActiveSubTab] = useState('list');
+  const [showPixDialog, setShowPixDialog] = useState(false);
+  const [pixForm, setPixForm] = useState<any>({ accountId: '', amount: '', debtorName: '', debtorDocument: '', description: '', chargeType: 'imediata', dueDate: '', expirationSeconds: '3600' });
+  const [form, setForm] = useState<any>({
+    name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
+    omieInstanceId: '', isActive: true,
+    interClientId: '', interClientSecret: '', interCertificateCrt: '', interCertificateKey: '',
+    interPixEnabled: false, bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbBoletoEnabled: false,
+  });
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/financial/accounts', instanceId],
     queryFn: () => fetch(`/api/financial/accounts${instanceId ? `?instanceId=${instanceId}` : ''}`, { credentials: 'include' }).then(r => r.json()),
+  });
+
+  const { data: movements = [] } = useQuery<any[]>({
+    queryKey: ['/api/financial/accounts', selectedAccount?.id, 'movements'],
+    queryFn: () => fetch(`/api/financial/accounts/${selectedAccount?.id}/movements?limit=100`, { credentials: 'include' }).then(r => r.json()),
+    enabled: !!selectedAccount?.id && activeSubTab === 'movements',
+  });
+
+  const { data: pixCharges = [] } = useQuery<any[]>({
+    queryKey: ['/api/financial/pix-charges', selectedAccount?.id],
+    queryFn: () => fetch(`/api/financial/pix-charges?financialAccountId=${selectedAccount?.id}`, { credentials: 'include' }).then(r => r.json()),
+    enabled: !!selectedAccount?.id && activeSubTab === 'pix',
   });
 
   const createMutation = useMutation({
@@ -1079,9 +1102,371 @@ function FinancialAccountsTab() {
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
+  const testInterMutation = useMutation({
+    mutationFn: (id: string) => apiRequest('POST', `/api/financial/accounts/${id}/test-inter`),
+    onSuccess: (data: any) => {
+      if (data.success) toast({ title: 'Conexão OK', description: data.message });
+      else toast({ title: 'Falha na conexão', description: data.message, variant: 'destructive' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+
+  const createPixMutation = useMutation({
+    mutationFn: (data: any) => {
+      const endpoint = data.chargeType === 'com_vencimento' ? '/api/financial/pix-charges/due-date' : '/api/financial/pix-charges/immediate';
+      return apiRequest('POST', endpoint, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/pix-charges'] });
+      setShowPixDialog(false);
+      toast({ title: 'Cobrança PIX criada com sucesso' });
+    },
+    onError: (e: any) => toast({ title: 'Erro ao criar cobrança PIX', description: e.message, variant: 'destructive' }),
+  });
+
+  const checkPixStatusMutation = useMutation({
+    mutationFn: (id: string) => apiRequest('POST', `/api/financial/pix-charges/${id}/check-status`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/pix-charges'] });
+      toast({ title: 'Status atualizado' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+
   const typeLabels: Record<string, string> = { caixa: 'Caixa', banco: 'Banco', carteira_digital: 'Carteira Digital' };
-  const openCreate = () => { setEditItem(null); setForm({ name: '', type: 'banco', bankName: '', agency: '', accountNumber: '', pixKey: '', instanceId: '', isActive: true }); setShowDialog(true); };
-  const openEdit = (item: any) => { setEditItem(item); setForm({ ...item }); setShowDialog(true); };
+  const typeIcons: Record<string, any> = { caixa: Banknote, banco: Landmark, carteira_digital: CreditCard };
+
+  const openCreate = () => {
+    setEditItem(null);
+    setForm({
+      name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
+      omieInstanceId: '', isActive: true,
+      interClientId: '', interClientSecret: '', interCertificateCrt: '', interCertificateKey: '',
+      interPixEnabled: false, bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbBoletoEnabled: false,
+    });
+    setShowDialog(true);
+  };
+
+  const openEdit = (item: any) => {
+    setEditItem(item);
+    setForm({ ...item, omieInstanceId: item.omieInstanceId || '' });
+    setShowDialog(true);
+  };
+
+  const handleSave = () => {
+    const saveData = { ...form };
+    if (saveData.omieInstanceId === '' || saveData.omieInstanceId === 'none') saveData.omieInstanceId = null;
+    if (editItem) {
+      if (saveData.interClientSecret === '***') delete saveData.interClientSecret;
+      if (saveData.interCertificateCrt === '[CERTIFICADO CONFIGURADO]') delete saveData.interCertificateCrt;
+      if (saveData.interCertificateKey === '[CHAVE CONFIGURADA]') delete saveData.interCertificateKey;
+      if (saveData.bbClientSecret === '***') delete saveData.bbClientSecret;
+      updateMutation.mutate(saveData);
+    } else {
+      createMutation.mutate(saveData);
+    }
+  };
+
+  const handleFileUpload = (field: string) => (e: any) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setForm({ ...form, [field]: reader.result as string });
+    reader.readAsText(file);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: 'Copiado!' });
+  };
+
+  const pixStatusColors: Record<string, string> = {
+    'ATIVA': 'bg-blue-100 text-blue-800',
+    'CONCLUIDA': 'bg-green-100 text-green-800',
+    'EXPIRADA': 'bg-gray-100 text-gray-800',
+    'REMOVIDA_PELO_USUARIO_RECEBEDOR': 'bg-orange-100 text-orange-800',
+    'REMOVIDA_PELO_PSP': 'bg-red-100 text-red-800',
+  };
+
+  const pixStatusLabels: Record<string, string> = {
+    'ATIVA': 'Ativa',
+    'CONCLUIDA': 'Paga',
+    'EXPIRADA': 'Expirada',
+    'REMOVIDA_PELO_USUARIO_RECEBEDOR': 'Cancelada',
+    'REMOVIDA_PELO_PSP': 'Removida PSP',
+  };
+
+  if (selectedAccount) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => { setSelectedAccount(null); setActiveSubTab('list'); }}>Voltar</Button>
+          <div>
+            <h3 className="text-lg font-bold flex items-center gap-2">
+              {(() => { const Icon = typeIcons[selectedAccount.type] || Landmark; return <Icon className="h-5 w-5" />; })()}
+              {selectedAccount.name}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {selectedAccount.bankName ? `${selectedAccount.bankName} - ` : ''}{selectedAccount.agency ? `Ag: ${selectedAccount.agency} ` : ''}{selectedAccount.accountNumber ? `CC: ${selectedAccount.accountNumber}` : ''}
+              {selectedAccount.omieInstanceId ? ` | ${selectedAccount.omieInstanceId}` : ''}
+            </p>
+          </div>
+          <div className="ml-auto text-right">
+            <p className="text-xs text-muted-foreground">Saldo</p>
+            <p className="text-xl font-bold">{formatCurrency(selectedAccount.balance)}</p>
+          </div>
+        </div>
+
+        <Tabs value={activeSubTab} onValueChange={setActiveSubTab}>
+          <TabsList>
+            <TabsTrigger value="movements" className="gap-1"><History className="h-4 w-4" />Movimentações</TabsTrigger>
+            <TabsTrigger value="pix" className="gap-1"><QrCode className="h-4 w-4" />Cobranças PIX</TabsTrigger>
+            <TabsTrigger value="config" className="gap-1"><Shield className="h-4 w-4" />Configuração</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="movements">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Histórico de Movimentações</CardTitle>
+                <p className="text-xs text-muted-foreground">Registro imutável de todas as movimentações desta conta</p>
+              </CardHeader>
+              <CardContent>
+                {movements.length === 0 ? (
+                  <p className="text-center py-8 text-muted-foreground">Nenhuma movimentação registrada</p>
+                ) : (
+                  <div className="border rounded-lg overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Tipo</TableHead>
+                          <TableHead>Descrição</TableHead>
+                          <TableHead>Referência</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                          <TableHead className="text-right">Saldo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {movements.map((m: any) => (
+                          <TableRow key={m.id}>
+                            <TableCell className="text-xs whitespace-nowrap">{new Date(m.createdAt).toLocaleString('pt-BR')}</TableCell>
+                            <TableCell>
+                              {m.type === 'credito'
+                                ? <Badge className="bg-green-100 text-green-800 gap-1"><ArrowUpCircle className="h-3 w-3" />Crédito</Badge>
+                                : <Badge className="bg-red-100 text-red-800 gap-1"><ArrowDownCircle className="h-3 w-3" />Débito</Badge>}
+                            </TableCell>
+                            <TableCell className="text-xs max-w-[300px]">{m.description}</TableCell>
+                            <TableCell className="text-xs">{m.reference || '-'}</TableCell>
+                            <TableCell className={`text-right font-medium ${m.type === 'credito' ? 'text-green-600' : 'text-red-600'}`}>
+                              {m.type === 'credito' ? '+' : '-'}{formatCurrency(m.amount)}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">{formatCurrency(m.balanceAfter)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="pix">
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Cobranças PIX</CardTitle>
+                  <p className="text-xs text-muted-foreground">QR Codes dinâmicos gerados via Banco Inter</p>
+                </div>
+                <Button size="sm" onClick={() => {
+                  setPixForm({ accountId: selectedAccount.id, amount: '', debtorName: '', debtorDocument: '', description: '', chargeType: 'imediata', dueDate: '', expirationSeconds: '3600' });
+                  setShowPixDialog(true);
+                }} disabled={!selectedAccount.interPixEnabled}>
+                  <QrCode className="h-4 w-4 mr-2" />Nova Cobrança PIX
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {!selectedAccount.interPixEnabled && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-yellow-800">PIX Inter não configurado</p>
+                      <p className="text-sm text-yellow-700">Configure as credenciais do Banco Inter na aba Configuração para habilitar cobranças PIX.</p>
+                    </div>
+                  </div>
+                )}
+                {pixCharges.length === 0 ? (
+                  <p className="text-center py-8 text-muted-foreground">Nenhuma cobrança PIX encontrada</p>
+                ) : (
+                  <div className="space-y-3">
+                    {pixCharges.map((ch: any) => (
+                      <div key={ch.id} className="border rounded-lg p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Badge className={pixStatusColors[ch.status] || 'bg-gray-100'}>{pixStatusLabels[ch.status] || ch.status}</Badge>
+                              <span className="text-xs text-muted-foreground">{ch.chargeType === 'com_vencimento' ? 'Com vencimento' : 'Imediata'}</span>
+                            </div>
+                            <p className="font-bold text-lg">{formatCurrency(ch.amount)}</p>
+                            {ch.debtorName && <p className="text-sm">{ch.debtorName} {ch.debtorDocument ? `(${ch.debtorDocument})` : ''}</p>}
+                            {ch.description && <p className="text-xs text-muted-foreground">{ch.description}</p>}
+                            <p className="text-xs text-muted-foreground">Criado: {new Date(ch.createdAt).toLocaleString('pt-BR')}</p>
+                            {ch.paidAt && <p className="text-xs text-green-600 font-medium">Pago em: {new Date(ch.paidAt).toLocaleString('pt-BR')} | e2e: {ch.endToEndId}</p>}
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            {ch.qrCodeBase64 && ch.status === 'ATIVA' && (
+                              <img src={ch.qrCodeBase64} alt="QR Code PIX" className="w-32 h-32 border rounded" />
+                            )}
+                            <div className="flex gap-1">
+                              {ch.pixCopiaECola && ch.status === 'ATIVA' && (
+                                <Button variant="outline" size="sm" onClick={() => copyToClipboard(ch.pixCopiaECola)}>
+                                  <Copy className="h-3 w-3 mr-1" />Copia e Cola
+                                </Button>
+                              )}
+                              {ch.status === 'ATIVA' && (
+                                <Button variant="outline" size="sm" onClick={() => checkPixStatusMutation.mutate(ch.id)} disabled={checkPixStatusMutation.isPending}>
+                                  <RefreshCw className="h-3 w-3 mr-1" />Verificar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="config">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Landmark className="h-5 w-5 text-orange-600" />Banco Inter - PIX
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">Credenciais para geração de cobranças PIX via API</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Status:</span>
+                    {selectedAccount.interPixEnabled
+                      ? <Badge className="bg-green-100 text-green-800 gap-1"><Wifi className="h-3 w-3" />Habilitado</Badge>
+                      : <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" />Desabilitado</Badge>}
+                  </div>
+                  {selectedAccount.interClientId && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Client ID:</span>
+                        <span className="text-xs font-mono">{selectedAccount.interClientId.substring(0, 8)}...</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Certificado:</span>
+                        {selectedAccount.interCertificateCrt
+                          ? <Badge className="bg-green-100 text-green-800 gap-1"><Shield className="h-3 w-3" />OK</Badge>
+                          : <Badge variant="outline">Pendente</Badge>}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Webhook:</span>
+                        {selectedAccount.interWebhookConfigured
+                          ? <Badge className="bg-green-100 text-green-800">Configurado</Badge>
+                          : <Badge variant="outline">Pendente</Badge>}
+                      </div>
+                    </>
+                  )}
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => openEdit(selectedAccount)}>
+                    <Key className="h-4 w-4 mr-2" />Configurar Credenciais
+                  </Button>
+                  {selectedAccount.interPixEnabled && (
+                    <Button variant="outline" size="sm" className="w-full" onClick={() => testInterMutation.mutate(selectedAccount.id)} disabled={testInterMutation.isPending}>
+                      {testInterMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                      Testar Conexão
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Landmark className="h-5 w-5 text-yellow-600" />Banco do Brasil - Boletos
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">Credenciais para emissão de boletos via API</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Status:</span>
+                    {selectedAccount.bbBoletoEnabled
+                      ? <Badge className="bg-green-100 text-green-800 gap-1"><Wifi className="h-3 w-3" />Habilitado</Badge>
+                      : <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" />Desabilitado</Badge>}
+                  </div>
+                  {selectedAccount.bbClientId && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Client ID:</span>
+                      <span className="text-xs font-mono">{selectedAccount.bbClientId.substring(0, 8)}...</span>
+                    </div>
+                  )}
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => openEdit(selectedAccount)}>
+                    <Key className="h-4 w-4 mr-2" />Configurar Credenciais
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        <Dialog open={showPixDialog} onOpenChange={setShowPixDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Nova Cobrança PIX</DialogTitle>
+              <DialogDescription>Gere um QR Code dinâmico para recebimento via PIX</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <Label>Tipo</Label>
+                <Select value={pixForm.chargeType} onValueChange={v => setPixForm({ ...pixForm, chargeType: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="imediata">Imediata (taxa 0,9%)</SelectItem>
+                    <SelectItem value="com_vencimento">Com Vencimento (taxa 0,99%)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label>Valor (R$)</Label><Input type="number" step="0.01" value={pixForm.amount} onChange={e => setPixForm({ ...pixForm, amount: e.target.value })} placeholder="0.00" /></div>
+              <div><Label>Nome do Pagador</Label><Input value={pixForm.debtorName} onChange={e => setPixForm({ ...pixForm, debtorName: e.target.value })} /></div>
+              <div><Label>CPF/CNPJ do Pagador</Label><Input value={pixForm.debtorDocument} onChange={e => setPixForm({ ...pixForm, debtorDocument: e.target.value })} /></div>
+              <div><Label>Descrição</Label><Input value={pixForm.description} onChange={e => setPixForm({ ...pixForm, description: e.target.value })} placeholder="Descrição da cobrança" /></div>
+              {pixForm.chargeType === 'imediata' && (
+                <div>
+                  <Label>Validade (segundos)</Label>
+                  <Select value={pixForm.expirationSeconds} onValueChange={v => setPixForm({ ...pixForm, expirationSeconds: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1800">30 minutos</SelectItem>
+                      <SelectItem value="3600">1 hora</SelectItem>
+                      <SelectItem value="7200">2 horas</SelectItem>
+                      <SelectItem value="86400">24 horas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {pixForm.chargeType === 'com_vencimento' && (
+                <div><Label>Data de Vencimento</Label><Input type="date" value={pixForm.dueDate} onChange={e => setPixForm({ ...pixForm, dueDate: e.target.value })} /></div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowPixDialog(false)}>Cancelar</Button>
+              <Button onClick={() => createPixMutation.mutate(pixForm)} disabled={createPixMutation.isPending || !pixForm.amount}>
+                {createPixMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Gerar QR Code
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1093,89 +1478,154 @@ function FinancialAccountsTab() {
       {isLoading ? (
         <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin" /></div>
       ) : (
-        <div className="border rounded-lg overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Banco</TableHead>
-                <TableHead>Agência</TableHead>
-                <TableHead>Conta</TableHead>
-                <TableHead>Chave PIX</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {accounts.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhuma conta financeira encontrada</TableCell></TableRow>
-              ) : accounts.map((a: any) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium">{a.name}</TableCell>
-                  <TableCell><Badge variant="outline">{typeLabels[a.type] || a.type}</Badge></TableCell>
-                  <TableCell>{a.bankName || '-'}</TableCell>
-                  <TableCell>{a.agency || '-'}</TableCell>
-                  <TableCell>{a.accountNumber || '-'}</TableCell>
-                  <TableCell className="text-xs max-w-[150px] truncate">{a.pixKey || '-'}</TableCell>
-                  <TableCell>{a.isActive !== false ? <Badge className="bg-green-100 text-green-800">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(a)}><Edit className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta?')) deleteMutation.mutate(a.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+        <>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {accounts.length === 0 ? (
+              <div className="col-span-full text-center py-8 text-muted-foreground">Nenhuma conta financeira encontrada</div>
+            ) : accounts.map((a: any) => {
+              const Icon = typeIcons[a.type] || Landmark;
+              return (
+                <Card key={a.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => { setSelectedAccount(a); setActiveSubTab('movements'); }}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${a.type === 'caixa' ? 'bg-green-100' : a.type === 'banco' ? 'bg-blue-100' : 'bg-purple-100'}`}>
+                          <Icon className={`h-5 w-5 ${a.type === 'caixa' ? 'text-green-600' : a.type === 'banco' ? 'text-blue-600' : 'text-purple-600'}`} />
+                        </div>
+                        <div>
+                          <p className="font-medium">{a.name}</p>
+                          <p className="text-xs text-muted-foreground">{typeLabels[a.type] || a.type}{a.bankName ? ` - ${a.bankName}` : ''}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); openEdit(a); }}><Edit className="h-3 w-3" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); if (confirm('Remover esta conta?')) deleteMutation.mutate(a.id); }}><Trash2 className="h-3 w-3 text-red-500" /></Button>
+                      </div>
                     </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+                    <div className="mt-3 flex items-end justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Saldo</p>
+                        <p className="text-xl font-bold">{formatCurrency(a.balance)}</p>
+                      </div>
+                      <div className="flex gap-1">
+                        {a.interPixEnabled && <Badge className="bg-orange-100 text-orange-800 text-[10px]">PIX Inter</Badge>}
+                        {a.bbBoletoEnabled && <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">BB Boleto</Badge>}
+                        {a.omieInstanceId && <Badge variant="outline" className="text-[10px]">{a.omieInstanceId}</Badge>}
+                      </div>
+                    </div>
+                    {a.pixKey && <p className="text-xs text-muted-foreground mt-1 truncate">PIX: {a.pixKey}</p>}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
       )}
 
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editItem ? 'Editar Conta Financeira' : 'Nova Conta Financeira'}</DialogTitle>
-            <DialogDescription>Preencha os dados da conta financeira</DialogDescription>
+            <DialogDescription>Preencha os dados da conta financeira e configurações bancárias</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Nome</Label><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div>
-              <Label>Tipo</Label>
-              <Select value={form.type || 'banco'} onValueChange={v => setForm({ ...form, type: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="caixa">Caixa</SelectItem>
-                  <SelectItem value="banco">Banco</SelectItem>
-                  <SelectItem value="carteira_digital">Carteira Digital</SelectItem>
-                </SelectContent>
-              </Select>
+          <div className="space-y-4">
+            <div className="border-b pb-3">
+              <h4 className="font-medium text-sm mb-3">Dados Gerais</h4>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Nome</Label><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+                  <div>
+                    <Label>Tipo</Label>
+                    <Select value={form.type || 'banco'} onValueChange={v => setForm({ ...form, type: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="caixa">Caixa</SelectItem>
+                        <SelectItem value="banco">Banco</SelectItem>
+                        <SelectItem value="carteira_digital">Carteira Digital</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div><Label>Banco</Label><Input value={form.bankName || ''} onChange={e => setForm({ ...form, bankName: e.target.value })} /></div>
+                  <div><Label>Agência</Label><Input value={form.agency || ''} onChange={e => setForm({ ...form, agency: e.target.value })} /></div>
+                  <div><Label>Conta</Label><Input value={form.accountNumber || ''} onChange={e => setForm({ ...form, accountNumber: e.target.value })} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Chave PIX</Label><Input value={form.pixKey || ''} onChange={e => setForm({ ...form, pixKey: e.target.value })} /></div>
+                  <div>
+                    <Label>Instância</Label>
+                    <Select value={form.omieInstanceId || 'none'} onValueChange={v => setForm({ ...form, omieInstanceId: v === 'none' ? '' : v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Nenhuma</SelectItem>
+                        <SelectItem value="BSB">BSB</SelectItem>
+                        <SelectItem value="GYN">GYN</SelectItem>
+                        <SelectItem value="IND">IND</SelectItem>
+                        <SelectItem value="SERV">SERV</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Banco</Label><Input value={form.bankName || ''} onChange={e => setForm({ ...form, bankName: e.target.value })} /></div>
-              <div><Label>Agência</Label><Input value={form.agency || ''} onChange={e => setForm({ ...form, agency: e.target.value })} /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Conta</Label><Input value={form.accountNumber || ''} onChange={e => setForm({ ...form, accountNumber: e.target.value })} /></div>
-              <div><Label>Chave PIX</Label><Input value={form.pixKey || ''} onChange={e => setForm({ ...form, pixKey: e.target.value })} /></div>
-            </div>
-            <div>
-              <Label>Instância</Label>
-              <Select value={form.instanceId || 'none'} onValueChange={v => setForm({ ...form, instanceId: v === 'none' ? '' : v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Todas</SelectItem>
-                  <SelectItem value="BSB">BSB</SelectItem>
-                  <SelectItem value="GYN">GYN</SelectItem>
-                  <SelectItem value="IND">IND</SelectItem>
-                  <SelectItem value="SERV">SERV</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+
+            {form.type === 'banco' && (
+              <>
+                <div className="border-b pb-3">
+                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-orange-600" />Banco Inter - Configuração PIX</h4>
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.interPixEnabled || false} onChange={e => setForm({ ...form, interPixEnabled: e.target.checked })} className="rounded" />
+                      <span className="text-sm">Habilitar PIX via Banco Inter</span>
+                    </label>
+                    {form.interPixEnabled && (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><Label>Client ID</Label><Input value={form.interClientId || ''} onChange={e => setForm({ ...form, interClientId: e.target.value })} placeholder="Client ID da aplicação Inter" /></div>
+                          <div><Label>Client Secret</Label><Input type="password" value={form.interClientSecret || ''} onChange={e => setForm({ ...form, interClientSecret: e.target.value })} placeholder="Client Secret" /></div>
+                        </div>
+                        <div>
+                          <Label>Certificado (.crt)</Label>
+                          <div className="flex gap-2">
+                            <Input type="file" accept=".crt,.pem" onChange={handleFileUpload('interCertificateCrt')} className="text-xs" />
+                            {form.interCertificateCrt && <Badge className="bg-green-100 text-green-800"><Shield className="h-3 w-3 mr-1" />OK</Badge>}
+                          </div>
+                        </div>
+                        <div>
+                          <Label>Chave Privada (.key)</Label>
+                          <div className="flex gap-2">
+                            <Input type="file" accept=".key,.pem" onChange={handleFileUpload('interCertificateKey')} className="text-xs" />
+                            {form.interCertificateKey && <Badge className="bg-green-100 text-green-800"><Key className="h-3 w-3 mr-1" />OK</Badge>}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-yellow-600" />Banco do Brasil - Configuração Boletos</h4>
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.bbBoletoEnabled || false} onChange={e => setForm({ ...form, bbBoletoEnabled: e.target.checked })} className="rounded" />
+                      <span className="text-sm">Habilitar Boletos via Banco do Brasil</span>
+                    </label>
+                    {form.bbBoletoEnabled && (
+                      <div className="grid grid-cols-3 gap-3">
+                        <div><Label>Client ID</Label><Input value={form.bbClientId || ''} onChange={e => setForm({ ...form, bbClientId: e.target.value })} placeholder="Client ID BB" /></div>
+                        <div><Label>Client Secret</Label><Input type="password" value={form.bbClientSecret || ''} onChange={e => setForm({ ...form, bbClientSecret: e.target.value })} placeholder="Secret BB" /></div>
+                        <div><Label>Dev App Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key" /></div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancelar</Button>
-            <Button onClick={() => editItem ? updateMutation.mutate(form) : createMutation.mutate(form)} disabled={createMutation.isPending || updateMutation.isPending}>
+            <Button onClick={handleSave} disabled={createMutation.isPending || updateMutation.isPending}>
               {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {editItem ? 'Salvar' : 'Criar'}
             </Button>
