@@ -67,6 +67,7 @@ import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
 import Financial from "@/pages/Financial";
+import Industry from "@/pages/Industry";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error, refetch } = useAuth();
@@ -232,6 +233,7 @@ function Router() {
           <Route path="/estoque" component={Inventory} />
           <Route path="/billing-pipeline" component={BillingPipeline} />
           <Route path="/financeiro" component={Financial} />
+          <Route path="/industria" component={Industry} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}

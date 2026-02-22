@@ -213,6 +213,16 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
     {
+      groupLabel: 'Indústria',
+      color: 'bg-emerald-500',
+      bgColor: 'bg-emerald-50',
+      textColor: 'text-emerald-700',
+      icon: 'fas fa-industry',
+      items: [
+        { id: 'industria', label: 'Módulo Indústria', icon: 'fas fa-industry', available: canAccessReports, badge: null },
+      ],
+    },
+    {
       groupLabel: 'Administração',
       color: 'bg-indigo-500',
       bgColor: 'bg-indigo-50',
@@ -270,7 +280,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     
     // Rotas que têm páginas próprias devem navegar diretamente
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
     
     // Rotas admin especiais
     if (itemId === 'omie-instances') {
