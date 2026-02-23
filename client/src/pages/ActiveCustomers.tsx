@@ -202,6 +202,8 @@ export default function ActiveCustomers() {
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedPhone, setSelectedPhone] = useState<string>("");
+  const [selectedCity, setSelectedCity] = useState<string>("");
+  const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>("");
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showCardModal, setShowCardModal] = useState(false);
@@ -679,6 +681,23 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
+  const cities = Array.from(
+    new Set(
+      activeCustomers
+        .map(ac => ac.customer?.city?.trim())
+        .filter(Boolean) as string[]
+    )
+  ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  const neighborhoods = Array.from(
+    new Set(
+      activeCustomers
+        .filter(ac => !selectedCity || ac.customer?.city?.trim() === selectedCity)
+        .map(ac => ac.customer?.neighborhood?.trim())
+        .filter(Boolean) as string[]
+    )
+  ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
   // Função para calcular variação percentual
   const calcVariation = (prev: number, curr: number): number => {
     if (prev === 0 && curr === 0) return -Infinity; // Sem atividade = último na ordenação
@@ -730,7 +749,10 @@ export default function ActiveCustomers() {
       const customerPhone = (ac.customer?.phone || '').replace(/\D/g, '');
       const matchesPhone = !phoneDigits || customerPhone.includes(phoneDigits);
       
-      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone;
+      const matchesCity = !selectedCity || ac.customer?.city?.trim() === selectedCity;
+      const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
+      
+      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -1011,6 +1033,32 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
+              <Select value={selectedCity} onValueChange={(val) => { setSelectedCity(val); setSelectedNeighborhood(""); }}>
+                <SelectTrigger className="w-[130px] h-9" data-testid="select-city-filter">
+                  <SelectValue placeholder="Cidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {cities.map((city) => (
+                    <SelectItem key={city} value={city}>
+                      {city}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
+                <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
+                  <SelectValue placeholder="Bairro" />
+                </SelectTrigger>
+                <SelectContent>
+                  {neighborhoods.map((nb) => (
+                    <SelectItem key={nb} value={nb}>
+                      {nb}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <div className="relative">
                 <Phone className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -1042,6 +1090,8 @@ export default function ActiveCustomers() {
                   setSelectedDate("");
                   setSelectedPositivation("");
                   setSelectedPhone("");
+                  setSelectedCity("");
+                  setSelectedNeighborhood("");
                 }}
                 className="h-9"
                 data-testid="button-clear-all-filters"
@@ -1054,7 +1104,7 @@ export default function ActiveCustomers() {
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone) && (
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || selectedCity || selectedNeighborhood) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1167,7 +1217,7 @@ export default function ActiveCustomers() {
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
-                            {searchTerm || selectedSeller || selectedPhone ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                            {searchTerm || selectedSeller || selectedPhone || selectedCity || selectedNeighborhood ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
