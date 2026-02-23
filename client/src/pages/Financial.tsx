@@ -1054,8 +1054,12 @@ function FinancialAccountsTab() {
   const [form, setForm] = useState<any>({
     name: '', type: 'banco', accountSubtype: 'conta_corrente', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
     omieInstanceId: '', isActive: true,
-    bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
+    bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '', bbContrato: '',
     bbPixEnabled: false, bbBoletoEnabled: false,
+    bbCarteira: '', bbVariacaoCarteira: '',
+    bbJurosPercentual: '', bbMultaPercentual: '',
+    bbDiasCompensacao: 'nenhum', bbSenhaBoletos: 'nenhuma',
+    bbInstrucaoLinha1: '', bbInstrucaoLinha2: '', bbInstrucaoLinha3: '', bbInstrucaoLinha4: '',
   });
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
@@ -1205,6 +1209,17 @@ function FinancialAccountsTab() {
       bbPagamentosClientSecret: item.bbPagamentosClientSecret || '',
       bbExtratoClientId: item.bbExtratoClientId || '',
       bbExtratoClientSecret: item.bbExtratoClientSecret || '',
+      bbContrato: item.bbContrato || '',
+      bbCarteira: item.bbCarteira || '',
+      bbVariacaoCarteira: item.bbVariacaoCarteira || '',
+      bbJurosPercentual: item.bbJurosPercentual || '',
+      bbMultaPercentual: item.bbMultaPercentual || '',
+      bbDiasCompensacao: item.bbDiasCompensacao || 'nenhum',
+      bbSenhaBoletos: item.bbSenhaBoletos || 'nenhuma',
+      bbInstrucaoLinha1: item.bbInstrucaoLinha1 || '',
+      bbInstrucaoLinha2: item.bbInstrucaoLinha2 || '',
+      bbInstrucaoLinha3: item.bbInstrucaoLinha3 || '',
+      bbInstrucaoLinha4: item.bbInstrucaoLinha4 || '',
     });
     setShowDialog(true);
   };
@@ -1439,20 +1454,51 @@ function FinancialAccountsTab() {
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Landmark className="h-5 w-5 text-yellow-600" />Banco do Brasil - Boletos
+                    <FileText className="h-5 w-5 text-green-600" />Boletos de Cobrança
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground">Credenciais para emissão de boletos via API BB</p>
+                  <p className="text-xs text-muted-foreground">Configuração para emissão de boletos via API BB</p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm">Status Boletos:</span>
+                    <span className="text-sm">Emissão de Boletos:</span>
                     {selectedAccount.bbBoletoEnabled
                       ? <Badge className="bg-green-100 text-green-800 gap-1"><Wifi className="h-3 w-3" />Habilitado</Badge>
                       : <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" />Desabilitado</Badge>}
                   </div>
-                  <p className="text-xs text-muted-foreground">As credenciais do BB (Client ID, Secret, App Key) são compartilhadas entre PIX e Boletos.</p>
+                  {selectedAccount.bbBoletoEnabled && (
+                    <>
+                      {selectedAccount.bbCarteira && (
+                        <div className="text-sm"><span className="text-muted-foreground">Carteira:</span> {selectedAccount.bbCarteira}</div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        {selectedAccount.bbConvenio && (
+                          <div><span className="text-muted-foreground">Convênio:</span> {selectedAccount.bbConvenio}</div>
+                        )}
+                        {selectedAccount.bbContrato && (
+                          <div><span className="text-muted-foreground">Contrato:</span> {selectedAccount.bbContrato}</div>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        {selectedAccount.bbJurosPercentual && (
+                          <div><span className="text-muted-foreground">Juros:</span> {selectedAccount.bbJurosPercentual}% a.m.</div>
+                        )}
+                        {selectedAccount.bbMultaPercentual && (
+                          <div><span className="text-muted-foreground">Multa:</span> {selectedAccount.bbMultaPercentual}%</div>
+                        )}
+                      </div>
+                      {(selectedAccount.bbInstrucaoLinha1 || selectedAccount.bbInstrucaoLinha2) && (
+                        <div className="text-xs text-muted-foreground border-t pt-2 mt-1">
+                          <p className="font-medium text-foreground mb-1">Instruções:</p>
+                          {selectedAccount.bbInstrucaoLinha1 && <p>{selectedAccount.bbInstrucaoLinha1}</p>}
+                          {selectedAccount.bbInstrucaoLinha2 && <p>{selectedAccount.bbInstrucaoLinha2}</p>}
+                          {selectedAccount.bbInstrucaoLinha3 && <p>{selectedAccount.bbInstrucaoLinha3}</p>}
+                          {selectedAccount.bbInstrucaoLinha4 && <p>{selectedAccount.bbInstrucaoLinha4}</p>}
+                        </div>
+                      )}
+                    </>
+                  )}
                   <Button variant="outline" size="sm" className="w-full" onClick={() => openEdit(selectedAccount)}>
-                    <Key className="h-4 w-4 mr-2" />Configurar Credenciais
+                    <Key className="h-4 w-4 mr-2" />Configurar Boletos
                   </Button>
                 </CardContent>
               </Card>
@@ -1710,10 +1756,110 @@ function FinancialAccountsTab() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div><Label>Developer Application Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key" /></div>
-                      <div><Label>Convênio (opcional)</Label><Input value={form.bbConvenio || ''} onChange={e => setForm({ ...form, bbConvenio: e.target.value })} placeholder="Número do convênio BB" /></div>
+                      <div><Label>Convênio</Label><Input value={form.bbConvenio || ''} onChange={e => setForm({ ...form, bbConvenio: e.target.value })} placeholder="Número do convênio BB" /></div>
                     </div>
                   </div>
                 </div>
+
+                {form.bbBoletoEnabled && (
+                  <div className="border-b pb-3">
+                    <h4 className="font-medium text-sm mb-3 flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-green-600" />
+                      Boletos de Cobrança
+                    </h4>
+
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+                      <div className="grid grid-cols-3 gap-3 text-sm">
+                        <div>
+                          <Label className="text-xs text-green-700 font-medium">Carteira</Label>
+                          <Select value={form.bbCarteira || ''} onValueChange={v => setForm({ ...form, bbCarteira: v })}>
+                            <SelectTrigger className="bg-white"><SelectValue placeholder="Selecione a carteira" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="17">17 - Cobrança Direta Especial - Com Registro (019)</SelectItem>
+                              <SelectItem value="11">11 - Cobrança Simples</SelectItem>
+                              <SelectItem value="12">12 - Cobrança Indexada</SelectItem>
+                              <SelectItem value="31">31 - Cobrança Caucionada</SelectItem>
+                              <SelectItem value="51">51 - Cobrança Descontada</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-green-700 font-medium">Convênio</Label>
+                          <Input value={form.bbConvenio || ''} readOnly className="bg-gray-50 text-sm" placeholder="Definido acima" />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-green-700 font-medium">Contrato</Label>
+                          <Input value={form.bbContrato || ''} onChange={e => setForm({ ...form, bbContrato: e.target.value })} placeholder="Número do contrato" className="text-sm" />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-green-600 mt-1">Obrigatórias para a cobrança bancária deste banco</p>
+                    </div>
+
+                    <div className="mb-4">
+                      <p className="text-sm font-medium mb-2">Juros e Multa para o Boleto <span className="text-xs text-muted-foreground font-normal">e para a integração bancária</span></p>
+                      <div className="grid grid-cols-4 gap-3">
+                        <div>
+                          <Label className="text-xs">% de Juros (ao mês)</Label>
+                          <Input type="number" step="0.01" value={form.bbJurosPercentual || ''} onChange={e => setForm({ ...form, bbJurosPercentual: e.target.value })} placeholder="3,00" className="text-sm" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">% de Multa</Label>
+                          <Input type="number" step="0.01" value={form.bbMultaPercentual || ''} onChange={e => setForm({ ...form, bbMultaPercentual: e.target.value })} placeholder="2,00" className="text-sm" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Dias para Compensação</Label>
+                          <Select value={form.bbDiasCompensacao || 'nenhum'} onValueChange={v => setForm({ ...form, bbDiasCompensacao: v })}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="nenhum">Nenhum</SelectItem>
+                              <SelectItem value="1">1 dia</SelectItem>
+                              <SelectItem value="2">2 dias</SelectItem>
+                              <SelectItem value="3">3 dias</SelectItem>
+                              <SelectItem value="5">5 dias</SelectItem>
+                              <SelectItem value="10">10 dias</SelectItem>
+                              <SelectItem value="15">15 dias</SelectItem>
+                              <SelectItem value="29">29 dias</SelectItem>
+                              <SelectItem value="30">30 dias</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Senha nos Boletos</Label>
+                          <Select value={form.bbSenhaBoletos || 'nenhuma'} onValueChange={v => setForm({ ...form, bbSenhaBoletos: v })}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="nenhuma">Nenhuma Senha</SelectItem>
+                              <SelectItem value="cpf_cnpj">CPF/CNPJ do Pagador</SelectItem>
+                              <SelectItem value="nosso_numero">Nosso Número</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-medium mb-2">Instruções para o Boleto <span className="text-xs text-muted-foreground font-normal">e para a integração bancária</span></p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Linha 1</Label>
+                          <Input value={form.bbInstrucaoLinha1 || ''} onChange={e => setForm({ ...form, bbInstrucaoLinha1: e.target.value })} placeholder="Sr. Caixa, receber até 29 dias após o vencimento." className="text-sm" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Linha 2</Label>
+                          <Input value={form.bbInstrucaoLinha2 || ''} onChange={e => setForm({ ...form, bbInstrucaoLinha2: e.target.value })} placeholder="Após o vencimento multa de 2%, juros de 3%a.m." className="text-sm" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Linha 3</Label>
+                          <Input value={form.bbInstrucaoLinha3 || ''} onChange={e => setForm({ ...form, bbInstrucaoLinha3: e.target.value })} className="text-sm" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Linha 4</Label>
+                          <Input value={form.bbInstrucaoLinha4 || ''} onChange={e => setForm({ ...form, bbInstrucaoLinha4: e.target.value })} className="text-sm" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
