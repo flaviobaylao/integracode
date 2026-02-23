@@ -161,7 +161,7 @@ export type InsertOmieInstance = z.infer<typeof insertOmieInstanceSchema>;
 export type OmieInstance = typeof omieInstances.$inferSelect;
 
 // User roles enum
-export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']);
+export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria']);
 
 // User storage table.
 export const users = pgTable("users", {

@@ -28,6 +28,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
   const isMotorista = user?.role === 'motorista';
+  const canAccessIndustria = user?.role && ['admin', 'industria'].includes(user.role);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -219,7 +220,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       textColor: 'text-emerald-700',
       icon: 'fas fa-industry',
       items: [
-        { id: 'industria', label: 'Módulo Indústria', icon: 'fas fa-industry', available: canAccessReports, badge: null },
+        { id: 'industria', label: 'Módulo Indústria', icon: 'fas fa-industry', available: canAccessIndustria, badge: null },
       ],
     },
     {

@@ -18,7 +18,7 @@
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, TanStack Query for state management, React Hook Form with Zod for form handling.
 - **Backend**: Node.js, Express.js, TypeScript.
 - **Database**: PostgreSQL with Drizzle ORM.
-- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista).
+- **Authentication & Authorization**: Email/Password and Replit Auth (Passport.js OIDC) with role-based access control (admin, coordinator, administrative, vendedor, telemarketing, motorista, industria). The "industria" role has exclusive access (alongside admin) to the Industry/NF-e module.
 - **WhatsApp Integration**: Evolution API for message sending, real-time conversation tracking, and webhook support with automatic URL validation. Supports media message downloading and features a comprehensive chat center with intelligent round-robin agent distribution, quick templates, status tracking, and optional ChatGPT standby.
 - **Data Handling**: ISO UTC for dates, CPF/CNPJ validation, bulk data imports, customer display prioritization, and strict abbreviated weekday format throughout the system.
 - **Sales & Financial Management**: Sales card tracking, overdue debt monitoring, credit analysis, "Contas a Receber" view, automatic order blocking based on Omie data, and a sales goals dashboard. Includes a daily sales metrics dashboard with detailed vendor and monthly performance breakdowns.

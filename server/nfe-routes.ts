@@ -200,7 +200,7 @@ export function registerNfeRoutes(app: Express) {
   // COMPANY DATA PER INSTANCE
   // ============================================================================
 
-  app.get('/api/nfe/company-data', authenticateUser, async (req: any, res) => {
+  app.get('/api/nfe/company-data', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const instances = await storage.getOmieInstances();
       const result = instances
@@ -225,7 +225,7 @@ export function registerNfeRoutes(app: Express) {
   // FISCAL SCENARIOS
   // ============================================================================
 
-  app.get('/api/fiscal-scenarios', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-scenarios', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const scenarios = await storage.getFiscalScenarios();
       res.json(scenarios);
@@ -234,7 +234,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-scenarios', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/fiscal-scenarios', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = insertFiscalScenarioSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -247,7 +247,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.put('/api/fiscal-scenarios/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.put('/api/fiscal-scenarios/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = insertFiscalScenarioSchema.partial().safeParse(req.body);
       if (!parsed.success) {
@@ -260,7 +260,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.delete('/api/fiscal-scenarios/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.delete('/api/fiscal-scenarios/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       await storage.deleteFiscalScenario(req.params.id);
       res.json({ success: true });
@@ -273,7 +273,7 @@ export function registerNfeRoutes(app: Express) {
   // DIGITAL CERTIFICATES
   // ============================================================================
 
-  app.get('/api/digital-certificates', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.get('/api/digital-certificates', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const certs = await storage.getDigitalCertificates();
       const safeCerts = certs.map(c => stripSensitiveFields(c));
@@ -283,7 +283,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/digital-certificates', authenticateUser, requireRole(['admin']), pfxUpload.single('pfxFile'), async (req: any, res) => {
+  app.post('/api/digital-certificates', authenticateUser, requireRole(['admin', 'industria']), pfxUpload.single('pfxFile'), async (req: any, res) => {
     try {
       const file = req.file;
       if (!file) {
@@ -445,7 +445,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.put('/api/digital-certificates/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.put('/api/digital-certificates/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = createCertificateSchema.partial().extend({
         isActive: z.boolean().optional(),
@@ -471,7 +471,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.delete('/api/digital-certificates/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.delete('/api/digital-certificates/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       await storage.deleteDigitalCertificate(req.params.id);
       res.json({ success: true });
@@ -484,7 +484,7 @@ export function registerNfeRoutes(app: Express) {
   // FISCAL INVOICES (NF-e)
   // ============================================================================
 
-  app.get('/api/fiscal-invoices', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-invoices', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const { status, customerId, environment } = req.query;
       const invoices = await storage.getFiscalInvoices({
@@ -498,7 +498,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-invoices/batch', authenticateUser, async (req: any, res) => {
+  app.post('/api/fiscal-invoices/batch', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const { invoiceNumbers } = req.body;
       if (!invoiceNumbers || !Array.isArray(invoiceNumbers) || invoiceNumbers.length === 0) {
@@ -526,7 +526,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.get('/api/fiscal-invoices/:id', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-invoices/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const invoice = await storage.getFiscalInvoice(req.params.id);
       if (!invoice) return res.status(404).json({ message: 'Nota fiscal não encontrada' });
@@ -540,7 +540,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-invoices', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/fiscal-invoices', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = createInvoiceSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -619,7 +619,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.put('/api/fiscal-invoices/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.put('/api/fiscal-invoices/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const existing = await storage.getFiscalInvoice(req.params.id);
       if (!existing) return res.status(404).json({ message: 'Nota fiscal não encontrada' });
@@ -648,7 +648,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.delete('/api/fiscal-invoices/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.delete('/api/fiscal-invoices/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const existing = await storage.getFiscalInvoice(req.params.id);
       if (!existing) return res.status(404).json({ message: 'Nota fiscal não encontrada' });
@@ -667,7 +667,7 @@ export function registerNfeRoutes(app: Express) {
   // SEFAZ OPERATIONS
   // ============================================================================
 
-  app.post('/api/fiscal-invoices/:id/emit', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+  app.post('/api/fiscal-invoices/:id/emit', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const result = await sefazService.emitNfe(req.params.id);
 
@@ -707,7 +707,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-invoices/:id/cancel', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/fiscal-invoices/:id/cancel', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = cancelInvoiceSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -753,7 +753,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.get('/api/sefaz/status', authenticateUser, async (req: any, res) => {
+  app.get('/api/sefaz/status', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const { uf, environment } = req.query;
       const result = await sefazService.checkServiceStatus(
@@ -766,7 +766,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/sefaz/consult', authenticateUser, async (req: any, res) => {
+  app.post('/api/sefaz/consult', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = z.object({ accessKey: z.string().length(44, "Chave de acesso deve ter 44 dígitos") }).safeParse(req.body);
       if (!parsed.success) {
@@ -783,7 +783,7 @@ export function registerNfeRoutes(app: Express) {
   // FISCAL INVOICE ITEMS
   // ============================================================================
 
-  app.get('/api/fiscal-invoices/:invoiceId/items', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-invoices/:invoiceId/items', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const items = await storage.getFiscalInvoiceItems(req.params.invoiceId);
       res.json(items);
@@ -792,7 +792,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-invoices/:invoiceId/items', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/fiscal-invoices/:invoiceId/items', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const existingItems = await storage.getFiscalInvoiceItems(req.params.invoiceId);
       const nextItemNumber = existingItems.length + 1;
@@ -817,7 +817,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.delete('/api/fiscal-invoice-items/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.delete('/api/fiscal-invoice-items/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       await storage.deleteFiscalInvoiceItem(req.params.id);
       res.json({ success: true });
@@ -830,7 +830,7 @@ export function registerNfeRoutes(app: Express) {
   // FISCAL INVOICE EVENTS (HISTORY)
   // ============================================================================
 
-  app.get('/api/fiscal-invoices/:invoiceId/events', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-invoices/:invoiceId/events', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const events = await storage.getFiscalInvoiceEvents(req.params.invoiceId);
       res.json(events);
@@ -843,7 +843,7 @@ export function registerNfeRoutes(app: Express) {
   // FISCAL BACKUPS
   // ============================================================================
 
-  app.get('/api/fiscal-backups', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.get('/api/fiscal-backups', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const { backupType, referenceId } = req.query;
       const backups = await storage.getFiscalBackups({
@@ -856,7 +856,7 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
-  app.post('/api/fiscal-backups/create', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/fiscal-backups/create', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const { invoiceId } = req.body;
       const invoice = await storage.getFiscalInvoice(invoiceId);
@@ -895,7 +895,7 @@ export function registerNfeRoutes(app: Express) {
   // DASHBOARD/STATS
   // ============================================================================
 
-  app.get('/api/fiscal-dashboard', authenticateUser, async (req: any, res) => {
+  app.get('/api/fiscal-dashboard', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const invoices = await storage.getFiscalInvoices();
       const scenarios = await storage.getFiscalScenarios();
