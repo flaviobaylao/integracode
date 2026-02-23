@@ -46,6 +46,7 @@ import {
   type ChatAiSettings,
   insertLeadSchema,
   omieStageLogs,
+  orderHistory,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -6099,6 +6100,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching sales cards by date:", error);
       res.status(500).json({ message: "Failed to fetch sales cards" });
+    }
+  });
+
+  // Listar pedidos pendentes de envio ao Omie
+  app.get('/api/sales-cards/pending-omie', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const pendingCards = await db.select({
+        id: salesCards.id,
+        customerId: salesCards.customerId,
+        sellerId: salesCards.sellerId,
+        status: salesCards.status,
+        saleValue: salesCards.saleValue,
+        omieOrderId: salesCards.omieOrderId,
+        paymentMethod: salesCards.paymentMethod,
+        operationType: salesCards.operationType,
+        source: salesCards.source,
+        createdAt: salesCards.createdAt,
+        completedDate: salesCards.completedDate,
+        products: salesCards.products,
+      }).from(salesCards).where(
+        and(
+          eq(salesCards.status, 'completed'),
+          isNotNull(salesCards.saleValue),
+          isNull(salesCards.omieOrderId),
+          sql`CAST(${salesCards.saleValue} AS numeric) > 0`
+        )
+      ).orderBy(desc(salesCards.createdAt));
+
+      const pendingHistory = await db.select({
+        id: orderHistory.id,
+        salesCardId: orderHistory.salesCardId,
+        totalValue: orderHistory.totalValue,
+        omieOrderId: orderHistory.omieOrderId,
+        status: orderHistory.status,
+        orderDate: orderHistory.orderDate,
+        products: orderHistory.products,
+        sellerId: orderHistory.sellerId,
+        sellerName: orderHistory.sellerName,
+      }).from(orderHistory).where(
+        and(
+          inArray(orderHistory.status, ['completed', 'pending']),
+          isNull(orderHistory.omieOrderId),
+          sql`CAST(${orderHistory.totalValue} AS numeric) > 0`
+        )
+      ).orderBy(desc(orderHistory.orderDate));
+
+      const customerIds = [...new Set([
+        ...pendingCards.map(c => c.customerId),
+      ])].filter(Boolean);
+
+      const sellerIds = [...new Set([
+        ...pendingCards.map(c => c.sellerId),
+        ...pendingHistory.map(h => h.sellerId),
+      ])].filter(Boolean) as string[];
+
+      let customerMap = new Map<string, any>();
+      if (customerIds.length > 0) {
+        const custs = await db.select({
+          id: customers.id,
+          name: customers.name,
+          fantasyName: customers.fantasyName,
+          cnpj: customers.cnpj,
+        }).from(customers).where(inArray(customers.id, customerIds));
+        custs.forEach(c => customerMap.set(c.id, c));
+      }
+
+      let sellerMap = new Map<string, any>();
+      if (sellerIds.length > 0) {
+        const sellers = await db.select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        }).from(users).where(inArray(users.id, sellerIds));
+        sellers.forEach(s => sellerMap.set(s.id, s));
+      }
+
+      const cardResults = pendingCards.map(card => {
+        const customer = customerMap.get(card.customerId);
+        const seller = sellerMap.get(card.sellerId);
+        return {
+          ...card,
+          type: 'sales_card' as const,
+          customerName: customer?.fantasyName || customer?.name || 'Desconhecido',
+          customerCnpj: customer?.cnpj || '',
+          sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : 'Desconhecido',
+        };
+      });
+
+      const historyResults = pendingHistory.map(h => {
+        const seller = h.sellerId ? sellerMap.get(h.sellerId) : null;
+        return {
+          id: h.id,
+          salesCardId: h.salesCardId,
+          saleValue: h.totalValue,
+          omieOrderId: h.omieOrderId,
+          status: h.status,
+          createdAt: h.orderDate,
+          products: h.products,
+          type: 'order_history' as const,
+          sellerName: h.sellerName || (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : 'Desconhecido'),
+        };
+      });
+
+      res.json({
+        pendingCards: cardResults,
+        pendingHistory: historyResults,
+        totalPending: cardResults.length + historyResults.length,
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar pedidos pendentes Omie:', error);
+      res.status(500).json({ message: error.message });
     }
   });
 
