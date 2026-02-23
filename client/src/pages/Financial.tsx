@@ -13,12 +13,15 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import OverdueDebtsManagement from '@/components/OverdueDebtsManagement';
+import BlockedOrdersManagement from '@/components/BlockedOrdersManagement';
+import { useAuth } from '@/hooks/useAuth';
 import {
   DollarSign, Plus, Eye, Trash2, Edit, Download, FileText, Loader2,
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
   CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
   History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
-  Key
+  Key, Ban
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -2078,7 +2081,9 @@ function SPEDTab() {
 // MAIN PAGE COMPONENT
 // ============================================================================
 export default function Financial() {
-  const [activeTab, setActiveTab] = useState('receivables');
+  const { user } = useAuth();
+  const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const [activeTab, setActiveTab] = useState(isFullAccess ? 'receivables' : 'overdue');
 
   return (
     <div className="p-6 space-y-6">
@@ -2094,22 +2099,26 @@ export default function Financial() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="receivables" className="gap-1"><CreditCard className="h-4 w-4" />Contas a Receber</TabsTrigger>
-          <TabsTrigger value="payables" className="gap-1"><Banknote className="h-4 w-4" />Contas a Pagar</TabsTrigger>
-          <TabsTrigger value="chart" className="gap-1"><BarChart3 className="h-4 w-4" />Plano de Contas</TabsTrigger>
-          <TabsTrigger value="accounts" className="gap-1"><CreditCard className="h-4 w-4" />Contas Financeiras</TabsTrigger>
-          <TabsTrigger value="dre" className="gap-1"><TrendingUp className="h-4 w-4" />DRE</TabsTrigger>
-          <TabsTrigger value="xml" className="gap-1"><FileCode className="h-4 w-4" />XMLs</TabsTrigger>
-          <TabsTrigger value="sped" className="gap-1"><Database className="h-4 w-4" />SPED Fiscal</TabsTrigger>
+          {isFullAccess && <TabsTrigger value="receivables" className="gap-1"><CreditCard className="h-4 w-4" />Contas a Receber</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="payables" className="gap-1"><Banknote className="h-4 w-4" />Contas a Pagar</TabsTrigger>}
+          <TabsTrigger value="overdue" className="gap-1"><AlertTriangle className="h-4 w-4" />Débitos Vencidos</TabsTrigger>
+          <TabsTrigger value="blocked" className="gap-1"><Ban className="h-4 w-4" />Pedidos Bloqueados</TabsTrigger>
+          {isFullAccess && <TabsTrigger value="chart" className="gap-1"><BarChart3 className="h-4 w-4" />Plano de Contas</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="accounts" className="gap-1"><CreditCard className="h-4 w-4" />Contas Financeiras</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="dre" className="gap-1"><TrendingUp className="h-4 w-4" />DRE</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="xml" className="gap-1"><FileCode className="h-4 w-4" />XMLs</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="sped" className="gap-1"><Database className="h-4 w-4" />SPED Fiscal</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="receivables"><ReceivablesTab /></TabsContent>
-        <TabsContent value="payables"><PayablesTab /></TabsContent>
-        <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>
-        <TabsContent value="accounts"><FinancialAccountsTab /></TabsContent>
-        <TabsContent value="dre"><DRETab /></TabsContent>
-        <TabsContent value="xml"><XMLsTab /></TabsContent>
-        <TabsContent value="sped"><SPEDTab /></TabsContent>
+        {isFullAccess && <TabsContent value="receivables"><ReceivablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="payables"><PayablesTab /></TabsContent>}
+        <TabsContent value="overdue"><OverdueDebtsManagement /></TabsContent>
+        <TabsContent value="blocked"><BlockedOrdersManagement user={user as any} /></TabsContent>
+        {isFullAccess && <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="accounts"><FinancialAccountsTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="dre"><DRETab /></TabsContent>}
+        {isFullAccess && <TabsContent value="xml"><XMLsTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="sped"><SPEDTab /></TabsContent>}
       </Tabs>
     </div>
   );

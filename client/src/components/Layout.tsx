@@ -170,9 +170,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#f43f5e',
       icon: 'fas fa-dollar-sign',
       items: [
-        { id: 'financeiro', label: 'Módulo Financeiro', icon: 'fas fa-dollar-sign', available: canAccessReports, badge: null },
-        { id: 'overdue-debts', label: isVendedor ? 'Meus Débitos Vencidos' : 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
-        { id: 'blocked-orders', label: isVendedor ? 'Meus Pedidos Bloqueados' : 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports || isVendedor, badge: blockedOrdersCount > 0 ? blockedOrdersCount : null },
+        { id: 'financeiro', label: 'Módulo Financeiro', icon: 'fas fa-dollar-sign', available: canAccessReports || isVendedor || isTelemarketing, badge: blockedOrdersCount > 0 ? blockedOrdersCount : null },
       ],
     },
     {
@@ -237,7 +235,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return items
       .filter(item => item.available)
       .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
+      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
   };
 
   const visibleGroups = useMemo(() => {
