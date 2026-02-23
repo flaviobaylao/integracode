@@ -134,15 +134,17 @@ export default function ClientsMap() {
   const [selectedDay, setSelectedDay] = useState<string>("all");
   const [selectedSeller, setSelectedSeller] = useState<string>("all");
 
-  // Controle de acesso: apenas administrativos
-  const canAccess = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const isVendedor = user?.role === 'vendedor';
+  const isTelemarketing = user?.role === 'telemarketing';
+  const canAccess = user && ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(user.role);
+  const canEditCustomer = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   // Query para buscar clientes mapeados (sincroniza Clientes Ativos com coordenadas)
   const { data: customers = [], isLoading } = useQuery<Customer[]>({
     queryKey: ['/api/customers/map-data'],
     queryFn: () => apiRequest('GET', '/api/customers/map-data'),
     enabled: !!canAccess,
-    refetchInterval: 30000, // Atualizar a cada 30 segundos
+    refetchInterval: 30000,
   });
 
   // Filtrar apenas clientes ativos com coordenadas válidas
@@ -154,6 +156,13 @@ export default function ClientsMap() {
       Number(customer.latitude) !== 0 &&
       Number(customer.longitude) !== 0
   );
+
+  // Vendedores veem apenas seus próprios clientes
+  if (isVendedor && user) {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => c.sellerId === user.id
+    );
+  }
 
   // Aplicar filtro de busca por nome/telefone
   if (searchTerm.trim()) {
@@ -269,22 +278,24 @@ export default function ClientsMap() {
                 data-testid="input-search-customers"
               />
             </div>
-            <div className="flex-1 min-w-[150px]">
-              <label className="text-sm font-medium mb-2 block">Vendedor</label>
-              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger data-testid="select-seller-map">
-                  <SelectValue placeholder="Todos os vendedores" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os vendedores</SelectItem>
-                  {uniqueSellers.map((seller) => (
-                    <SelectItem key={seller} value={seller}>
-                      {seller}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {!isVendedor && (
+              <div className="flex-1 min-w-[150px]">
+                <label className="text-sm font-medium mb-2 block">Vendedor</label>
+                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                  <SelectTrigger data-testid="select-seller-map">
+                    <SelectValue placeholder="Todos os vendedores" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os vendedores</SelectItem>
+                    {uniqueSellers.map((seller) => (
+                      <SelectItem key={seller} value={seller}>
+                        {seller}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex-1 min-w-[150px]">
               <label className="text-sm font-medium mb-2 block">Dia da Semana</label>
               <Select value={selectedDay} onValueChange={setSelectedDay}>
@@ -419,15 +430,17 @@ export default function ClientsMap() {
                             </p>
                           )}
                         </div>
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          onClick={() => handleEditCustomer(customer)}
-                          data-testid={`button-edit-customer-${customer.id}`}
-                        >
-                          <Pencil className="h-3 w-3 mr-2" />
-                          Editar Cliente
-                        </Button>
+                        {canEditCustomer && (
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handleEditCustomer(customer)}
+                            data-testid={`button-edit-customer-${customer.id}`}
+                          >
+                            <Pencil className="h-3 w-3 mr-2" />
+                            Editar Cliente
+                          </Button>
+                        )}
                       </div>
                     </Popup>
                   </Marker>
