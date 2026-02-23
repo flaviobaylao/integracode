@@ -16,7 +16,7 @@ interface VersionInfo {
   }>;
 }
 
-export function VersionDisplay() {
+export function VersionDisplay({ compact }: { compact?: boolean } = {}) {
   const { data: versionInfo } = useQuery<VersionInfo>({
     queryKey: ['/api/version'],
     staleTime: 1000 * 60 * 60, // 1 hora - versão não muda com frequência
@@ -31,15 +31,15 @@ export function VersionDisplay() {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center gap-2 cursor-help">
+          <div className={`flex items-center ${compact ? 'justify-center' : 'gap-2'} cursor-help`}>
             <Badge 
               variant="outline" 
-              className="font-mono text-xs bg-honest-blue/10 text-honest-blue border-honest-blue/30 hover:bg-honest-blue/20"
+              className={`font-mono bg-honest-blue/10 text-honest-blue border-honest-blue/30 hover:bg-honest-blue/20 ${compact ? 'text-[8px] px-1 py-0' : 'text-xs'}`}
               data-testid="badge-version"
             >
               v{versionInfo.version}
             </Badge>
-            <Info className="h-3 w-3 text-gray-400" />
+            {!compact && <Info className="h-3 w-3 text-gray-400" />}
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-sm p-4">

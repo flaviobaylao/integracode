@@ -1,10 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { ChevronDown, ChevronRight, Menu } from "lucide-react";
-import { useState, useEffect } from "react";
+import { ChevronRight, Menu, ArrowLeft } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
@@ -31,6 +30,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const canAccessIndustria = user?.role && ['admin', 'industria'].includes(user.role);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedSection, setSelectedSection] = useState<string | null>(null);
+  const [showingSectionOptions, setShowingSectionOptions] = useState(false);
 
   useEffect(() => {
     const handleSessionExpired = (event: CustomEvent) => {
@@ -47,7 +48,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     };
   }, [toast]);
 
-  // Buscar contagem de pedidos bloqueados (atualiza a cada 30 segundos)
   const { data: blockedOrdersData } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
     enabled: canAccessReports || isVendedor,
@@ -55,7 +55,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   });
   const blockedOrdersCount = blockedOrdersData?.filter(order => order.status === 'blocked').length || 0;
 
-  // Buscar contagem de pedidos do hotsite (atualiza a cada 30 segundos)
   const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
     queryKey: ['/api/hotsite-orders'],
     enabled: canAccessReports,
@@ -64,7 +63,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
 
   type MenuItem = { id: string; label: string; icon: string; available: boolean | string | null | undefined; badge: number | null };
-  type MenuGroup = { groupLabel: string; color: string; bgColor: string; textColor: string; icon: string; items: MenuItem[]; subGroups?: { label: string; icon: string; items: MenuItem[]; stateKey: string }[] };
+  type MenuGroup = { groupLabel: string; color: string; bgColor: string; textColor: string; icon: string; hexColor: string; items: MenuItem[]; subGroups?: { label: string; icon: string; items: MenuItem[]; stateKey: string }[] };
 
   const menuGroups: MenuGroup[] = [
     {
@@ -72,6 +71,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-slate-500',
       bgColor: 'bg-slate-50',
       textColor: 'text-slate-700',
+      hexColor: '#64748b',
       icon: 'fas fa-home',
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-tachometer-alt', available: true, badge: null },
@@ -82,6 +82,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-blue-500',
       bgColor: 'bg-blue-50',
       textColor: 'text-blue-700',
+      hexColor: '#3b82f6',
       icon: 'fas fa-shopping-cart',
       items: [
         { id: 'sales-cards', label: user?.role === 'vendedor' ? 'Meus Cards de Venda' : 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true, badge: null },
@@ -99,6 +100,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-emerald-500',
       bgColor: 'bg-emerald-50',
       textColor: 'text-emerald-700',
+      hexColor: '#10b981',
       icon: 'fas fa-users',
       items: [
         { id: 'customers', label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes', icon: 'fas fa-users', available: true, badge: null },
@@ -113,27 +115,19 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-orange-500',
       bgColor: 'bg-orange-50',
       textColor: 'text-orange-700',
+      hexColor: '#f97316',
       icon: 'fas fa-truck',
       items: [
         { id: 'rota-entrega', label: 'Minhas Entregas', icon: 'fas fa-truck', available: isMotorista, badge: null },
         { id: 'entregas-do-dia', label: 'Entregas do Dia', icon: 'fas fa-clipboard-list', available: true, badge: null },
         { id: 'validacao-rotas', label: 'Validação de Rotas', icon: 'fas fa-check-double', available: user?.role && ['admin', 'coordinator'].includes(user.role), badge: null },
         { id: 'check-in-audit', label: isVendedor ? 'Meus Check-ins' : 'Auditoria de Check-ins', icon: 'fas fa-clipboard-check', available: true, badge: null },
-      ],
-      subGroups: [
-        {
-          label: isVendedor ? 'Minhas Entregas' : 'Sistema de Entregas',
-          icon: 'fas fa-shipping-fast',
-          stateKey: 'delivery',
-          items: [
-            { id: 'delivery-dashboard', label: 'Dashboard de Entregas', icon: 'fas fa-tachometer-alt', available: canAccessReports || isVendedor, badge: null },
-            { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast', available: canAccessReports || isVendedor, badge: null },
-            { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route', available: canAccessReports, badge: null },
-            { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
-            { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
-            { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
-          ],
-        },
+        { id: 'delivery-dashboard', label: 'Dashboard de Entregas', icon: 'fas fa-tachometer-alt', available: canAccessReports || isVendedor, badge: null },
+        { id: 'delivery-management', label: 'Gestão de Entregas', icon: 'fas fa-shipping-fast', available: canAccessReports || isVendedor, badge: null },
+        { id: 'delivery-routes', label: 'Resumo das Rotas', icon: 'fas fa-route', available: canAccessReports, badge: null },
+        { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
+        { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
+        { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -141,6 +135,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-amber-500',
       bgColor: 'bg-amber-50',
       textColor: 'text-amber-700',
+      hexColor: '#f59e0b',
       icon: 'fas fa-box',
       items: [
         { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
@@ -154,25 +149,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-purple-500',
       bgColor: 'bg-purple-50',
       textColor: 'text-purple-700',
+      hexColor: '#a855f7',
       icon: 'fas fa-file-invoice',
       items: [
         { id: 'billings', label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', icon: 'fas fa-file-invoice-dollar', available: canAccessReports || isVendedor, badge: null },
         { id: 'fiscal-invoices', label: 'Faturamento NF-e', icon: 'fas fa-file-alt', available: canAccessReports, badge: null },
         { id: 'billing-pipeline', label: 'Pipeline Faturamento', icon: 'fas fa-columns', available: canAccessReports, badge: null },
-      ],
-      subGroups: [
-        {
-          label: 'Etapas dos Pedidos',
-          icon: 'fas fa-list-ol',
-          stateKey: 'orderSteps',
-          items: [
-            { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart', available: canAccessReports, badge: null },
-            { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
-            { id: 'order-billed', label: 'Faturado', icon: 'fas fa-check-circle', available: canAccessReports, badge: null },
-            { id: 'order-awaiting-route', label: 'Aguardando Rota', icon: 'fas fa-clock', available: canAccessReports, badge: null },
-            { id: 'order-in-route', label: 'Em Rota', icon: 'fas fa-truck', available: canAccessReports, badge: null },
-          ],
-        },
+        { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart', available: canAccessReports, badge: null },
+        { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
+        { id: 'order-billed', label: 'Faturado', icon: 'fas fa-check-circle', available: canAccessReports, badge: null },
+        { id: 'order-awaiting-route', label: 'Aguardando Rota', icon: 'fas fa-clock', available: canAccessReports, badge: null },
+        { id: 'order-in-route', label: 'Em Rota', icon: 'fas fa-truck', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -180,6 +167,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-rose-500',
       bgColor: 'bg-rose-50',
       textColor: 'text-rose-700',
+      hexColor: '#f43f5e',
       icon: 'fas fa-dollar-sign',
       items: [
         { id: 'financeiro', label: 'Módulo Financeiro', icon: 'fas fa-dollar-sign', available: canAccessReports, badge: null },
@@ -192,32 +180,25 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-teal-500',
       bgColor: 'bg-teal-50',
       textColor: 'text-teal-700',
+      hexColor: '#14b8a6',
       icon: 'fas fa-comments',
       items: [
         { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
         { id: 'central-atendimento', label: 'Central de Atendimento', icon: 'fas fa-headset', available: isTelemarketing, badge: null },
         { id: 'telemarketing', label: 'Central de Telemarketing', icon: 'fas fa-comments', available: canAccessReports, badge: null },
-      ],
-      subGroups: [
-        {
-          label: 'Central de Telemarketing',
-          icon: 'fas fa-phone',
-          stateKey: 'telemarketing',
-          items: [
-            { id: 'telemarketing-dashboard', label: 'Central de Atendimento', icon: 'fas fa-comments', available: canAccessReports, badge: null },
-            { id: 'telemarketing-analysis', label: 'Dashboard de Conversas', icon: 'fas fa-chart-bar', available: canAccessReports, badge: null },
-            { id: 'telemarketing-whatsapp', label: 'Templates Rápidos', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
-            { id: 'telemarketing-telegram', label: 'Análises', icon: 'fab fa-telegram', available: canAccessReports, badge: null },
-            { id: 'telemarketing-deliveries', label: 'Entregas Chat', icon: 'fas fa-truck', available: canAccessReports, badge: null },
-          ],
-        },
+        { id: 'telemarketing-dashboard', label: 'Central de Atendimento', icon: 'fas fa-comments', available: canAccessReports, badge: null },
+        { id: 'telemarketing-analysis', label: 'Dashboard de Conversas', icon: 'fas fa-chart-bar', available: canAccessReports, badge: null },
+        { id: 'telemarketing-whatsapp', label: 'Templates Rápidos', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
+        { id: 'telemarketing-telegram', label: 'Análises', icon: 'fab fa-telegram', available: canAccessReports, badge: null },
+        { id: 'telemarketing-deliveries', label: 'Entregas Chat', icon: 'fas fa-truck', available: canAccessReports, badge: null },
       ],
     },
     {
       groupLabel: 'Indústria',
-      color: 'bg-emerald-500',
+      color: 'bg-emerald-600',
       bgColor: 'bg-emerald-50',
       textColor: 'text-emerald-700',
+      hexColor: '#059669',
       icon: 'fas fa-industry',
       items: [
         { id: 'industria', label: 'Módulo Indústria', icon: 'fas fa-industry', available: canAccessIndustria, badge: null },
@@ -228,6 +209,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       color: 'bg-indigo-500',
       bgColor: 'bg-indigo-50',
       textColor: 'text-indigo-700',
+      hexColor: '#6366f1',
       icon: 'fas fa-cog',
       items: [
         { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
@@ -238,13 +220,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
   ];
-
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    const initial: Record<string, boolean> = {};
-    menuGroups.forEach(g => { initial[g.groupLabel] = true; });
-    return initial;
-  });
-  const [subGroupOpen, setSubGroupOpen] = useState<Record<string, boolean>>({});
 
   const getRoleLabel = (role: string) => {
     const roleLabels = {
@@ -258,10 +233,24 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
+  const roleFilterItems = (items: MenuItem[]) => {
+    return items
+      .filter(item => item.available)
+      .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
+      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
+  };
+
+  const visibleGroups = useMemo(() => {
+    return menuGroups.filter(group => {
+      const visibleItems = roleFilterItems(group.items);
+      return visibleItems.length > 0;
+    });
+  }, [menuGroups]);
+
   const handleMenuItemClick = (itemId: string) => {
-    console.log('🖱️ Menu item clicado:', itemId);
-    
-    // Mapeamento específico para itens de telemarketing
+    setShowingSectionOptions(false);
+    setMobileMenuOpen(false);
+
     const telemarketingRoutes: Record<string, string> = {
       'telemarketing': '/telemarketing',
       'telemarketing-dashboard': '/telemarketing/atendimento',
@@ -272,142 +261,175 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       'central-atendimento': '/telemarketing/atendimento',
       'sdr-digital': '/telemarketing/sdr-digital',
     };
-    
+
     if (telemarketingRoutes[itemId]) {
-      console.log('🔗 Navegando para rota de telemarketing:', telemarketingRoutes[itemId]);
       navigate(telemarketingRoutes[itemId]);
-      setMobileMenuOpen(false);
       return;
     }
-    
-    // Rotas que têm páginas próprias devem navegar diretamente
+
     const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital'];
-    
-    // Rotas admin especiais
+
     if (itemId === 'omie-instances') {
-      console.log('🔗 Navegando para admin/omie-instances');
       navigate('/admin/omie-instances');
-      setMobileMenuOpen(false);
       return;
     }
-    
+
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
-      setMobileMenuOpen(false);
       return;
     }
-    
+
     if (routePages.includes(itemId)) {
-      // Navega para a rota correspondente
       const route = '/' + itemId.replace(/_/g, '-');
-      console.log('🔗 Navegando para rota:', route);
       navigate(route);
     } else {
-      console.log('📋 Mudando activeView para:', itemId);
       setActiveView(itemId);
     }
-    setMobileMenuOpen(false);
   };
 
-  const toggleGroup = (label: string) => {
-    setOpenGroups(prev => ({ ...prev, [label]: !prev[label] }));
+  const handleSectionClick = (groupLabel: string) => {
+    const group = visibleGroups.find(g => g.groupLabel === groupLabel);
+    if (!group) return;
+
+    const items = roleFilterItems(group.items);
+    if (items.length === 1) {
+      handleMenuItemClick(items[0].id);
+      return;
+    }
+
+    setSelectedSection(groupLabel);
+    setShowingSectionOptions(true);
   };
 
-  const toggleSubGroup = (key: string) => {
-    setSubGroupOpen(prev => ({ ...prev, [key]: !prev[key] }));
+  const selectedGroup = visibleGroups.find(g => g.groupLabel === selectedSection);
+
+  const findGroupForActiveView = () => {
+    for (const group of visibleGroups) {
+      const items = roleFilterItems(group.items);
+      if (items.some(item => item.id === activeView)) {
+        return group.groupLabel;
+      }
+    }
+    return null;
   };
 
-  const roleFilterItems = (items: MenuItem[]) => {
-    return items
-      .filter(item => item.available)
-      .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'overdue-debts', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
+  const activeGroup = findGroupForActiveView();
+
+  const renderSectionCards = (group: MenuGroup) => {
+    const items = roleFilterItems(group.items);
+    return (
+      <div className="p-4 md:p-6">
+        <div className="mb-6">
+          <button
+            onClick={() => setShowingSectionOptions(false)}
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-3 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Voltar
+          </button>
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-white"
+              style={{ backgroundColor: group.hexColor }}
+            >
+              <i className={`${group.icon} text-lg`}></i>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">{group.groupLabel}</h2>
+              <p className="text-sm text-gray-500">Selecione uma opção</p>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {items.map(item => (
+            <button
+              key={item.id}
+              onClick={() => handleMenuItemClick(item.id)}
+              className="group relative flex flex-col items-center justify-center p-5 rounded-xl border-2 border-gray-100 bg-white hover:border-opacity-50 hover:shadow-lg transition-all duration-200 min-h-[120px]"
+              style={{ '--hover-color': group.hexColor } as any}
+              data-testid={`menu-${item.id}`}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = group.hexColor;
+                (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${group.hexColor}30`;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = '#f3f4f6';
+                (e.currentTarget as HTMLElement).style.boxShadow = '';
+              }}
+            >
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center mb-3 transition-transform group-hover:scale-110"
+                style={{ backgroundColor: `${group.hexColor}15`, color: group.hexColor }}
+              >
+                <i className={`${item.icon} text-xl`}></i>
+              </div>
+              <span className="text-sm font-medium text-gray-700 text-center leading-tight">{item.label}</span>
+              {item.badge && item.badge > 0 && (
+                <Badge className="absolute top-2 right-2 bg-red-500 text-white text-[10px] h-5 min-w-[20px] flex items-center justify-center">
+                  {item.badge}
+                </Badge>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   };
 
-  const renderGroupedMenu = () => {
-    return menuGroups.map(group => {
-      const visibleItems = roleFilterItems(group.items);
-      const visibleSubGroups = (group.subGroups || []).filter(sg => roleFilterItems(sg.items).length > 0);
-      if (visibleItems.length === 0 && visibleSubGroups.length === 0) return null;
-      const isOpen = openGroups[group.groupLabel] !== false;
+  const renderMobileMenu = () => {
+    return visibleGroups.map(group => {
+      const items = roleFilterItems(group.items);
+      if (items.length === 0) return null;
 
       return (
         <div key={group.groupLabel} className="mb-1">
           <button
-            onClick={() => toggleGroup(group.groupLabel)}
-            className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-md transition-colors ${group.bgColor} ${group.textColor} hover:opacity-80`}
+            onClick={() => {
+              if (items.length === 1) {
+                handleMenuItemClick(items[0].id);
+              } else {
+                setSelectedSection(group.groupLabel);
+              }
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+              selectedSection === group.groupLabel || activeGroup === group.groupLabel
+                ? 'bg-gray-100 font-semibold'
+                : 'hover:bg-gray-50'
+            }`}
           >
-            <span className={`w-2 h-2 rounded-full ${group.color} flex-shrink-0`} />
-            <i className={`${group.icon} text-[10px]`}></i>
-            <span className="flex-1 text-left">{group.groupLabel}</span>
-            {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-white flex-shrink-0"
+              style={{ backgroundColor: group.hexColor }}
+            >
+              <i className={`${group.icon} text-sm`}></i>
+            </div>
+            <span className="text-sm font-medium text-gray-700 flex-1 text-left">{group.groupLabel}</span>
+            {items.length > 1 && <ChevronRight className="h-4 w-4 text-gray-400" />}
           </button>
-          {isOpen && (
-            <ul className="mt-0.5 space-y-0.5 ml-1 border-l-2 border-opacity-30" style={{ borderColor: `var(--group-${group.groupLabel.toLowerCase().replace(/[^a-z]/g, '')})` }}>
-              {visibleItems.map(item => (
-                <li key={item.id}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={`w-full justify-start space-x-2 h-8 text-[13px] ${
-                      activeView === item.id
-                        ? `${group.textColor} ${group.bgColor} font-semibold`
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}
-                    onClick={() => handleMenuItemClick(item.id)}
-                    data-testid={`menu-${item.id}`}
-                  >
-                    <i className={`${item.icon} w-4 text-center text-xs`}></i>
-                    <span className="truncate">{item.label}</span>
-                    {item.badge && item.badge > 0 && (
-                      <Badge className="ml-auto bg-red-500 text-white text-[10px] h-5 min-w-[20px] flex items-center justify-center">
-                        {item.badge}
-                      </Badge>
-                    )}
-                  </Button>
-                </li>
+          {selectedSection === group.groupLabel && items.length > 1 && (
+            <div className="ml-4 mt-1 space-y-0.5 border-l-2 pl-3" style={{ borderColor: group.hexColor }}>
+              {items.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => handleMenuItemClick(item.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors ${
+                    activeView === item.id
+                      ? `font-semibold`
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                  style={activeView === item.id ? { color: group.hexColor, backgroundColor: `${group.hexColor}10` } : {}}
+                  data-testid={`menu-${item.id}`}
+                >
+                  <i className={`${item.icon} w-4 text-center text-xs`}></i>
+                  <span className="truncate">{item.label}</span>
+                  {item.badge && item.badge > 0 && (
+                    <Badge className="ml-auto bg-red-500 text-white text-[10px] h-5 min-w-[20px] flex items-center justify-center">
+                      {item.badge}
+                    </Badge>
+                  )}
+                </button>
               ))}
-              {visibleSubGroups.map(sg => {
-                const sgItems = roleFilterItems(sg.items);
-                const sgOpen = subGroupOpen[sg.stateKey] || false;
-                return (
-                  <li key={sg.stateKey}>
-                    <Collapsible open={sgOpen} onOpenChange={() => toggleSubGroup(sg.stateKey)}>
-                      <CollapsibleTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={`w-full justify-start space-x-2 h-8 text-[13px] ${group.textColor} hover:${group.bgColor}`}
-                        >
-                          <i className={`${sg.icon} w-4 text-center text-xs`}></i>
-                          <span className="truncate font-medium">{sg.label}</span>
-                          {sgOpen ? <ChevronDown className="ml-auto h-3 w-3" /> : <ChevronRight className="ml-auto h-3 w-3" />}
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="ml-4 space-y-0.5">
-                        {sgItems.map(item => (
-                          <Button
-                            key={item.id}
-                            variant="ghost"
-                            size="sm"
-                            className={`w-full justify-start space-x-2 h-7 text-xs ${
-                              activeView === item.id
-                                ? `${group.textColor} ${group.bgColor} font-semibold`
-                                : 'text-gray-600 hover:bg-gray-50'
-                            }`}
-                            onClick={() => handleMenuItemClick(item.id)}
-                            data-testid={`menu-${item.id}`}
-                          >
-                            <i className={`${item.icon} w-4 text-center`}></i>
-                            <span className="truncate">{item.label}</span>
-                          </Button>
-                        ))}
-                      </CollapsibleContent>
-                    </Collapsible>
-                  </li>
-                );
-              })}
-            </ul>
+            </div>
           )}
         </div>
       );
@@ -428,31 +450,28 @@ export default function Layout({ children, activeView, setActiveView, user }: La
           <SheetContent side="left" className="w-72 p-0">
             <div className="h-full flex flex-col">
               <div className="p-4 flex-1 overflow-y-auto">
-                {/* User Info */}
                 <div className="flex items-center space-x-3 pb-4 border-b border-gray-200">
-                <Avatar>
-                  <AvatarImage src={user?.profileImageUrl || ''} />
-                  <AvatarFallback>
-                    <i className="fas fa-user text-gray-600"></i>
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-sm font-medium text-gray-800">
-                    {user?.firstName} {user?.lastName}
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    {user?.role && getRoleLabel(user.role)}
-                  </p>
+                  <Avatar>
+                    <AvatarImage src={user?.profileImageUrl || ''} />
+                    <AvatarFallback>
+                      <i className="fas fa-user text-gray-600"></i>
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">
+                      {user?.firstName} {user?.lastName}
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {user?.role && getRoleLabel(user.role)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1 mt-4">
+                  {renderMobileMenu()}
                 </div>
               </div>
 
-              {/* Menu Items - Grouped */}
-              <div className="space-y-1 mt-4">
-                {renderGroupedMenu()}
-              </div>
-              </div>
-              
-              {/* Versão do Sistema - Rodapé do Menu Mobile */}
               <div className="p-4 border-t border-gray-200 flex-shrink-0">
                 <VersionDisplay />
               </div>
@@ -461,9 +480,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </Sheet>
 
         <div className="flex items-center space-x-4">
-          <img 
-            src={integraLogo} 
-            alt="Honest Sucos - Sistema Integra" 
+          <img
+            src={integraLogo}
+            alt="Honest Sucos - Sistema Integra"
             className="w-10 h-10"
           />
           <div>
@@ -473,9 +492,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             )}
           </div>
         </div>
-        
+
         <div className="flex items-center space-x-4">
-          {/* User Menu */}
           <div className="flex items-center space-x-3">
             <div className="text-right">
               <p className="text-sm font-medium text-gray-800">
@@ -512,27 +530,67 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       </header>
 
       <div className="flex">
-        {/* Sidebar Navigation - Hidden on mobile */}
-        <nav className="hidden md:block w-64 bg-white shadow-sm h-screen sticky top-0 border-r border-gray-200 flex flex-col">
-          <div className="p-3 flex-1 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
-            <div className="space-y-1">
-              {renderGroupedMenu()}
-            </div>
+        {/* Sidebar - Seções (Desktop) */}
+        <nav className="hidden md:flex flex-col w-[72px] bg-white shadow-sm h-[calc(100vh-73px)] sticky top-0 border-r border-gray-200">
+          <div className="flex-1 overflow-y-auto py-2 px-1.5 space-y-1">
+            {visibleGroups.map(group => {
+              const isActive = selectedSection === group.groupLabel && showingSectionOptions;
+              const isCurrentGroup = activeGroup === group.groupLabel && !showingSectionOptions;
+              return (
+                <button
+                  key={group.groupLabel}
+                  onClick={() => handleSectionClick(group.groupLabel)}
+                  className={`w-full flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all duration-200 group ${
+                    isActive
+                      ? 'shadow-md scale-105'
+                      : isCurrentGroup
+                      ? 'bg-gray-100'
+                      : 'hover:bg-gray-50'
+                  }`}
+                  style={isActive ? { backgroundColor: group.hexColor } : {}}
+                  title={group.groupLabel}
+                  data-testid={`section-${group.groupLabel.toLowerCase().replace(/[^a-z]/g, '-')}`}
+                >
+                  <div
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center mb-1 transition-all ${
+                      isActive
+                        ? 'bg-white/20 text-white'
+                        : isCurrentGroup
+                        ? 'text-white'
+                        : 'text-white'
+                    }`}
+                    style={!isActive ? { backgroundColor: group.hexColor } : {}}
+                  >
+                    <i className={`${group.icon} text-sm`}></i>
+                  </div>
+                  <span
+                    className={`text-[10px] font-medium leading-tight text-center line-clamp-2 ${
+                      isActive ? 'text-white' : 'text-gray-600'
+                    }`}
+                  >
+                    {group.groupLabel}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          
-          {/* Versão do Sistema - Rodapé do Sidebar Desktop */}
-          <div className="p-4 border-t border-gray-200">
-            <VersionDisplay />
+          <div className="p-1.5 border-t border-gray-200 flex-shrink-0">
+            <VersionDisplay compact />
           </div>
         </nav>
 
         {/* Main Content Area */}
-        <main className="flex-1 p-4 md:p-6">
-          {children}
+        <main className="flex-1 min-h-[calc(100vh-73px)]">
+          {showingSectionOptions && selectedGroup ? (
+            renderSectionCards(selectedGroup)
+          ) : (
+            <div className="p-4 md:p-6">
+              {children}
+            </div>
+          )}
         </main>
       </div>
 
-      {/* User Profile Modal */}
       {showProfileModal && user && (
         <UserProfileModal
           isOpen={showProfileModal}
