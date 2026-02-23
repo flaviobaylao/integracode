@@ -1052,7 +1052,7 @@ function FinancialAccountsTab() {
   const [showPixDialog, setShowPixDialog] = useState(false);
   const [pixForm, setPixForm] = useState<any>({ accountId: '', amount: '', debtorName: '', debtorDocument: '', description: '', chargeType: 'imediata', dueDate: '', expirationSeconds: '3600' });
   const [form, setForm] = useState<any>({
-    name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
+    name: '', type: 'banco', accountSubtype: 'conta_corrente', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
     omieInstanceId: '', isActive: true,
     bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
     bbPixEnabled: false, bbBoletoEnabled: false,
@@ -1138,6 +1138,41 @@ function FinancialAccountsTab() {
 
   const typeLabels: Record<string, string> = { caixa: 'Caixa', banco: 'Banco', carteira_digital: 'Carteira Digital' };
   const typeIcons: Record<string, any> = { caixa: Banknote, banco: Landmark, carteira_digital: CreditCard };
+
+  const BANK_LIST = [
+    { code: '001', name: 'Banco do Brasil' },
+    { code: '033', name: 'Santander' },
+    { code: '104', name: 'Caixa Econômica Federal' },
+    { code: '237', name: 'Bradesco' },
+    { code: '341', name: 'Itaú Unibanco' },
+    { code: '260', name: 'Nu Pagamentos (Nubank)' },
+    { code: '077', name: 'Banco Inter' },
+    { code: '756', name: 'Sicoob' },
+    { code: '748', name: 'Sicredi' },
+    { code: '422', name: 'Safra' },
+    { code: '212', name: 'Banco Original' },
+    { code: '336', name: 'C6 Bank' },
+    { code: '290', name: 'PagSeguro' },
+    { code: '380', name: 'PicPay' },
+    { code: '403', name: 'Cora' },
+    { code: '197', name: 'Stone Pagamentos' },
+    { code: '655', name: 'Neon' },
+    { code: '070', name: 'BRB' },
+    { code: '085', name: 'AILOS' },
+    { code: '136', name: 'Unicred' },
+    { code: '318', name: 'BMG' },
+    { code: '389', name: 'Mercantil do Brasil' },
+    { code: '634', name: 'Triângulo' },
+    { code: '741', name: 'BRP' },
+    { code: '999', name: 'Outro' },
+  ];
+
+  const ACCOUNT_SUBTYPES = [
+    { value: 'conta_corrente', label: 'Conta Corrente' },
+    { value: 'poupanca', label: 'Poupança' },
+    { value: 'conta_pagamento', label: 'Conta Pagamento' },
+    { value: 'conta_salario', label: 'Conta Salário' },
+  ];
 
   const openCreate = () => {
     setEditItem(null);
