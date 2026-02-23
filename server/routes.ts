@@ -13103,23 +13103,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`🔄 [DRIVER-CHECKOUT] Alterando pedido ${stopOrderNumber || orderId} para "Entregue" (${OmieService.STAGE_ENTREGUE})...`);
               const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
               console.log(`📋 [DRIVER-CHECKOUT] Resultado: success=${result.success}, message=${result.message}`);
-              await logOmieStageChange({
-                omieOrderId: orderId,
-                orderNumber: stopOrderNumber || undefined,
-                customerName: stop[0].customerName || undefined,
-                previousStage: OmieService.STAGE_EM_ROTA,
-                newStage: OmieService.STAGE_ENTREGUE,
-                trigger: 'driver_checkout',
-                triggerDetail: `Motorista confirmou entrega - Pedido ${stopOrderNumber || orderId}`,
-                routeId: stop[0].routeId,
-                stopId,
-                billingId: stop[0].billingId || undefined,
-                driverEmail: userEmail,
-                triggeredBy: userEmail,
-                success: result.success,
-                errorMessage: result.success ? undefined : result.message,
-                omieResponse: result.data || null,
-              });
+              try {
+                await logOmieStageChange({
+                  omieOrderId: orderId,
+                  orderNumber: stopOrderNumber || undefined,
+                  customerName: stop[0].customerName || undefined,
+                  previousStage: OmieService.STAGE_EM_ROTA,
+                  newStage: OmieService.STAGE_ENTREGUE,
+                  trigger: 'driver_checkout',
+                  triggerDetail: `Motorista confirmou entrega - Pedido ${stopOrderNumber || orderId}`,
+                  routeId: stop[0].routeId,
+                  stopId,
+                  billingId: stop[0].billingId || undefined,
+                  driverEmail: userEmail,
+                  triggeredBy: userEmail,
+                  success: result.success,
+                  errorMessage: result.success ? undefined : result.message,
+                  omieResponse: result.data || null,
+                });
+              } catch (logErr: any) {
+                console.error(`⚠️ [DRIVER-CHECKOUT] Erro ao gravar log (não afeta entrega):`, logErr?.message);
+              }
               if (result.success) {
                 console.log(`✅ [DRIVER-CHECKOUT] Etapa alterada para "Entregue" no Omie`);
               } else {
@@ -13128,21 +13132,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           } catch (error: any) {
             console.error(`❌ [DRIVER-CHECKOUT] Erro ao alterar etapa no Omie:`, error?.message || error);
-            await logOmieStageChange({
-              omieOrderId: orderId,
-              orderNumber: stopOrderNumber || undefined,
-              customerName: stop[0].customerName || undefined,
-              newStage: OmieService.STAGE_ENTREGUE,
-              trigger: 'driver_checkout',
-              triggerDetail: `Erro na tentativa de alterar etapa`,
-              routeId: stop[0].routeId,
-              stopId,
-              billingId: stop[0].billingId || undefined,
-              driverEmail: userEmail,
-              triggeredBy: userEmail,
-              success: false,
-              errorMessage: error?.message || 'Erro desconhecido',
-            });
+            try {
+              await logOmieStageChange({
+                omieOrderId: orderId,
+                orderNumber: stopOrderNumber || undefined,
+                customerName: stop[0].customerName || undefined,
+                newStage: OmieService.STAGE_ENTREGUE,
+                trigger: 'driver_checkout',
+                triggerDetail: `Erro na tentativa de alterar etapa`,
+                routeId: stop[0].routeId,
+                stopId,
+                billingId: stop[0].billingId || undefined,
+                driverEmail: userEmail,
+                triggeredBy: userEmail,
+                success: false,
+                errorMessage: error?.message || 'Erro desconhecido',
+              });
+            } catch (logErr: any) {
+              console.error(`⚠️ [DRIVER-CHECKOUT] Erro ao gravar log de erro:`, logErr?.message);
+            }
           }
         }
       } else {
@@ -13250,11 +13258,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .returning();
       
       // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO
+      // Estratégia: tentar via billingId primeiro, depois via omieOrderId direto da parada
+      let omieStageChanged = false;
+      
+      // Estratégia 1: Via billingId (quando a parada tem um billing associado)
       if (stop[0].billingId) {
         try {
           const omieService = await getOmieServiceForBilling(storage, stop[0].billingId!);
           if (!omieService) {
-            console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado');
+            console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado via billingId');
           } else {
             const billing = await db.select().from(billingsTable)
               .where(eq(billingsTable.id, stop[0].billingId!))
@@ -13263,32 +13275,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (billing.length > 0 && billing[0].omieOrderId) {
               const orderId = parseInt(billing[0].omieOrderId);
               if (!isNaN(orderId)) {
-                console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${orderId} para "Entregue" no Omie...`);
+                console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${orderId} para "Entregue" no Omie (via billingId)...`);
                 const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
                 console.log(`📋 [COMPLETE-DELIVERY] Resultado: success=${result.success}, message=${result.message}`);
+                if (result.success) {
+                  omieStageChanged = true;
+                }
+                try {
+                  await logOmieStageChange({
+                    omieOrderId: orderId,
+                    orderNumber: billing[0].invoiceNumber || stop[0].orderNumber || undefined,
+                    customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
+                    previousStage: OmieService.STAGE_EM_ROTA,
+                    newStage: OmieService.STAGE_ENTREGUE,
+                    trigger: 'complete_delivery',
+                    triggerDetail: `Entrega direta confirmada pelo motorista (via billingId)`,
+                    routeId: stop[0].routeId,
+                    stopId,
+                    billingId: stop[0].billingId!,
+                    driverEmail: userEmail,
+                    triggeredBy: userEmail,
+                    success: result.success,
+                    errorMessage: result.success ? undefined : result.message,
+                    omieResponse: result.data || null,
+                  });
+                } catch (logErr: any) {
+                  console.error(`⚠️ [COMPLETE-DELIVERY] Erro ao gravar log (não afeta entrega):`, logErr?.message);
+                }
+              }
+            }
+          }
+        } catch (error: any) {
+          console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa via billingId:`, error?.message || error);
+        }
+      }
+      
+      // Estratégia 2: Fallback via omieOrderId direto da parada (quando não tem billingId ou falhou)
+      if (!omieStageChanged && stop[0].omieOrderId) {
+        const orderId = parseInt(stop[0].omieOrderId);
+        if (!isNaN(orderId)) {
+          try {
+            const omieService = stop[0].billingId 
+              ? await getOmieServiceForBilling(storage, stop[0].billingId)
+              : getOmieService(storage);
+            if (!omieService) {
+              console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado (fallback)');
+            } else {
+              console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${stop[0].orderNumber || orderId} para "Entregue" no Omie (via omieOrderId direto)...`);
+              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
+              console.log(`📋 [COMPLETE-DELIVERY] Resultado fallback: success=${result.success}, message=${result.message}`);
+              try {
                 await logOmieStageChange({
                   omieOrderId: orderId,
-                  orderNumber: billing[0].invoiceNumber || undefined,
-                  customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
+                  orderNumber: stop[0].orderNumber || undefined,
+                  customerName: stop[0].customerName || undefined,
                   previousStage: OmieService.STAGE_EM_ROTA,
                   newStage: OmieService.STAGE_ENTREGUE,
                   trigger: 'complete_delivery',
-                  triggerDetail: `Entrega direta confirmada pelo motorista`,
+                  triggerDetail: `Entrega direta confirmada pelo motorista (via omieOrderId direto)`,
                   routeId: stop[0].routeId,
                   stopId,
-                  billingId: stop[0].billingId!,
+                  billingId: stop[0].billingId || undefined,
                   driverEmail: userEmail,
                   triggeredBy: userEmail,
                   success: result.success,
                   errorMessage: result.success ? undefined : result.message,
                   omieResponse: result.data || null,
                 });
+              } catch (logErr: any) {
+                console.error(`⚠️ [COMPLETE-DELIVERY] Erro ao gravar log (não afeta entrega):`, logErr?.message);
               }
             }
+          } catch (error: any) {
+            console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa via omieOrderId direto:`, error?.message || error);
           }
-        } catch (error: any) {
-          console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa no Omie:`, error?.message || error);
         }
+      }
+      
+      if (!omieStageChanged && !stop[0].omieOrderId && !stop[0].billingId) {
+        console.log(`⚠️ [COMPLETE-DELIVERY] Parada ${stopId} sem billingId e sem omieOrderId - etapa Omie NÃO será alterada`);
       }
       
       // Verificar se rota foi totalmente concluída
