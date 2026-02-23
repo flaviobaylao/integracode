@@ -3162,54 +3162,124 @@ export class OmieService {
     errors: string[];
   }> {
     try {
-      const result = {
+      const result: {
+        totalProcessed: number;
+        imported: number;
+        updated: number;
+        errors: string[];
+      } = {
         totalProcessed: 0,
         imported: 0,
         updated: 0,
         errors: []
       };
 
-      console.log('Iniciando sincronização COMPLETA de clientes (ativos + inativos)...');
-
-      // PRIMEIRA PASSADA: Clientes ATIVOS (padrão)
-      console.log('Sincronizando clientes ATIVOS...');
-      let currentPage = 1;
-      let hasMorePages = true;
-
-      while (hasMorePages) {
-        const pageData = await this.getAllClients(currentPage, 100, false); // false = apenas ativos
-        
-        for (const client of pageData.clients) {
-          result.totalProcessed++;
-          // Este método retorna apenas os dados formatados
-          // A lógica de salvamento será feita na rota
-        }
-
-        currentPage++;
-        hasMorePages = currentPage <= pageData.totalPages;
+      if (!this.storage) {
+        console.error('❌ [SYNC] Storage não disponível para sincronização de clientes');
+        return result;
       }
 
-      console.log(`Clientes ativos processados: ${result.totalProcessed}`);
+      console.log('🔄 Iniciando sincronização COMPLETA de clientes com atualização de vendedores...');
 
-      // SEGUNDA PASSADA: Clientes INATIVOS 
-      console.log('Sincronizando clientes INATIVOS...');
-      currentPage = 1;
-      hasMorePages = true;
+      await this.preloadAllSellersCache();
 
-      while (hasMorePages) {
-        const pageData = await this.getAllClients(currentPage, 100, true); // true = apenas inativos
-        
-        for (const client of pageData.clients) {
-          result.totalProcessed++;
-          // Este método retorna apenas os dados formatados
-          // A lógica de salvamento será feita na rota
+      const processClients = async (onlyInactive: boolean) => {
+        let currentPage = 1;
+        let hasMorePages = true;
+        const label = onlyInactive ? 'INATIVOS' : 'ATIVOS';
+
+        while (hasMorePages) {
+          try {
+            const pageData = await this.getAllClients(currentPage, 100, onlyInactive);
+            const clients = pageData.clients || [];
+
+            if (clients.length === 0) break;
+
+            for (const omieClient of clients) {
+              result.totalProcessed++;
+              try {
+                const converted = this.convertClientToSystemFormat(omieClient);
+
+                let resolvedSellerId = converted.sellerId;
+                if (resolvedSellerId && resolvedSellerId.startsWith('omie-vendor-')) {
+                  const omieCode = resolvedSellerId.replace('omie-vendor-', '');
+                  const realUserId = await this.resolveOmieVendorIdToRealUserId(omieCode);
+                  if (realUserId && !realUserId.startsWith('omie-vendor-')) {
+                    resolvedSellerId = realUserId;
+                  }
+                }
+
+                const existingCustomer = await this.storage.getCustomer(converted.id);
+
+                if (existingCustomer) {
+                  const hasValidExistingPhone = existingCustomer.phone && 
+                    existingCustomer.phone !== '(00) 00000-0000' && 
+                    !existingCustomer.phone.includes('00000') &&
+                    existingCustomer.phone.length >= 10;
+                  const finalPhone = hasValidExistingPhone ? existingCustomer.phone : converted.phone;
+
+                  const finalSellerId = resolvedSellerId || existingCustomer.sellerId;
+                  if (resolvedSellerId && resolvedSellerId !== existingCustomer.sellerId) {
+                    console.log(`🔄 [SYNC] Vendedor atualizado para ${converted.name}: ${existingCustomer.sellerId} → ${resolvedSellerId}`);
+                  }
+
+                  await this.storage.updateCustomer(existingCustomer.id, {
+                    name: converted.name,
+                    customerType: converted.customerType,
+                    cpf: converted.cpf,
+                    cnpj: converted.cnpj,
+                    companyName: converted.companyName,
+                    fantasyName: converted.fantasyName,
+                    phone: finalPhone,
+                    email: converted.email,
+                    address: converted.address,
+                    city: converted.city,
+                    state: converted.state,
+                    zipCode: converted.zipCode,
+                    sellerId: finalSellerId,
+                    isActive: converted.isActive,
+                    omieStatus: converted.omieStatus,
+                    situacao: converted.situacao,
+                    omieInstanceId: existingCustomer.omieInstanceId || this.omieInstanceId || undefined
+                  });
+                  result.updated++;
+                } else {
+                  const systemClient = {
+                    ...converted,
+                    sellerId: resolvedSellerId || '',
+                    weekdays: JSON.stringify([]),
+                    deliveryWeekdays: [],
+                    isLead: false,
+                    omieInstanceId: this.omieInstanceId || undefined
+                  };
+                  await this.storage.createCustomer(systemClient as any);
+                  result.imported++;
+                }
+              } catch (clientError: any) {
+                const errorMsg = clientError instanceof Error ? clientError.message : 'Erro desconhecido';
+                result.errors.push(`Cliente ${omieClient.codigo_cliente_omie}: ${errorMsg}`);
+              }
+            }
+
+            currentPage++;
+            hasMorePages = currentPage <= pageData.totalPages;
+
+            if (result.totalProcessed % 200 === 0) {
+              console.log(`⏳ [SYNC-${label}] ${result.totalProcessed} clientes processados...`);
+            }
+          } catch (pageError: any) {
+            result.errors.push(`Erro na página ${currentPage} (${label}): ${pageError instanceof Error ? pageError.message : 'Erro desconhecido'}`);
+            break;
+          }
         }
+      };
 
-        currentPage++;
-        hasMorePages = currentPage <= pageData.totalPages;
-      }
+      await processClients(false);
+      console.log(`✅ Clientes ativos processados: ${result.totalProcessed}`);
 
-      console.log(`Total de clientes processados (ativos + inativos): ${result.totalProcessed}`);
+      await processClients(true);
+      console.log(`✅ Total de clientes processados (ativos + inativos): ${result.totalProcessed}`);
+      console.log(`📥 Importados: ${result.imported} | 🔄 Atualizados: ${result.updated} | ❌ Erros: ${result.errors.length}`);
 
       return result;
     } catch (error) {
