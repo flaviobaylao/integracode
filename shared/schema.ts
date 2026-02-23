@@ -3021,6 +3021,9 @@ export const financialAccounts = pgTable("financial_accounts", {
   bbClientSecret: varchar("bb_client_secret"),
   bbDevAppKey: varchar("bb_dev_app_key"),
   bbBoletoEnabled: boolean("bb_boleto_enabled").default(false).notNull(),
+  bbPixEnabled: boolean("bb_pix_enabled").default(false).notNull(),
+  bbWebhookConfigured: boolean("bb_webhook_configured").default(false).notNull(),
+  bbConvenio: varchar("bb_convenio"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   index("idx_financial_accounts_instance").on(table.omieInstanceId),

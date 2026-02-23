@@ -18,7 +18,7 @@ import {
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
   CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
   History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
-  Shield, Key, Upload
+  Key
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -1051,8 +1051,8 @@ function FinancialAccountsTab() {
   const [form, setForm] = useState<any>({
     name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
     omieInstanceId: '', isActive: true,
-    interClientId: '', interClientSecret: '', interCertificateCrt: '', interCertificateKey: '',
-    interPixEnabled: false, bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbBoletoEnabled: false,
+    bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
+    bbPixEnabled: false, bbBoletoEnabled: false,
   });
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
@@ -1102,8 +1102,8 @@ function FinancialAccountsTab() {
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
-  const testInterMutation = useMutation({
-    mutationFn: (id: string) => apiRequest('POST', `/api/financial/accounts/${id}/test-inter`),
+  const testBBMutation = useMutation({
+    mutationFn: (id: string) => apiRequest('POST', `/api/financial/accounts/${id}/test-bb-pix`),
     onSuccess: (data: any) => {
       if (data.success) toast({ title: 'Conexão OK', description: data.message });
       else toast({ title: 'Falha na conexão', description: data.message, variant: 'destructive' });
@@ -1141,8 +1141,8 @@ function FinancialAccountsTab() {
     setForm({
       name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
       omieInstanceId: '', isActive: true,
-      interClientId: '', interClientSecret: '', interCertificateCrt: '', interCertificateKey: '',
-      interPixEnabled: false, bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbBoletoEnabled: false,
+      bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
+      bbPixEnabled: false, bbBoletoEnabled: false,
     });
     setShowDialog(true);
   };
@@ -1157,22 +1157,12 @@ function FinancialAccountsTab() {
     const saveData = { ...form };
     if (saveData.omieInstanceId === '' || saveData.omieInstanceId === 'none') saveData.omieInstanceId = null;
     if (editItem) {
-      if (saveData.interClientSecret === '***') delete saveData.interClientSecret;
-      if (saveData.interCertificateCrt === '[CERTIFICADO CONFIGURADO]') delete saveData.interCertificateCrt;
-      if (saveData.interCertificateKey === '[CHAVE CONFIGURADA]') delete saveData.interCertificateKey;
       if (saveData.bbClientSecret === '***') delete saveData.bbClientSecret;
+      if (saveData.bbDevAppKey && saveData.bbDevAppKey.endsWith('***')) delete saveData.bbDevAppKey;
       updateMutation.mutate(saveData);
     } else {
       createMutation.mutate(saveData);
     }
-  };
-
-  const handleFileUpload = (field: string) => (e: any) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setForm({ ...form, [field]: reader.result as string });
-    reader.readAsText(file);
   };
 
   const copyToClipboard = (text: string) => {
@@ -1221,7 +1211,7 @@ function FinancialAccountsTab() {
           <TabsList>
             <TabsTrigger value="movements" className="gap-1"><History className="h-4 w-4" />Movimentações</TabsTrigger>
             <TabsTrigger value="pix" className="gap-1"><QrCode className="h-4 w-4" />Cobranças PIX</TabsTrigger>
-            <TabsTrigger value="config" className="gap-1"><Shield className="h-4 w-4" />Configuração</TabsTrigger>
+            <TabsTrigger value="config" className="gap-1"><Key className="h-4 w-4" />Configuração</TabsTrigger>
           </TabsList>
 
           <TabsContent value="movements">
@@ -1276,22 +1266,22 @@ function FinancialAccountsTab() {
               <CardHeader className="pb-3 flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-base">Cobranças PIX</CardTitle>
-                  <p className="text-xs text-muted-foreground">QR Codes dinâmicos gerados via Banco Inter</p>
+                  <p className="text-xs text-muted-foreground">QR Codes dinâmicos gerados via Banco do Brasil</p>
                 </div>
                 <Button size="sm" onClick={() => {
                   setPixForm({ accountId: selectedAccount.id, amount: '', debtorName: '', debtorDocument: '', description: '', chargeType: 'imediata', dueDate: '', expirationSeconds: '3600' });
                   setShowPixDialog(true);
-                }} disabled={!selectedAccount.interPixEnabled}>
+                }} disabled={!selectedAccount.bbPixEnabled}>
                   <QrCode className="h-4 w-4 mr-2" />Nova Cobrança PIX
                 </Button>
               </CardHeader>
               <CardContent>
-                {!selectedAccount.interPixEnabled && (
+                {!selectedAccount.bbPixEnabled && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 flex items-start gap-3">
                     <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
                     <div>
-                      <p className="font-medium text-yellow-800">PIX Inter não configurado</p>
-                      <p className="text-sm text-yellow-700">Configure as credenciais do Banco Inter na aba Configuração para habilitar cobranças PIX.</p>
+                      <p className="font-medium text-yellow-800">PIX BB não configurado</p>
+                      <p className="text-sm text-yellow-700">Configure as credenciais do Banco do Brasil na aba Configuração para habilitar cobranças PIX.</p>
                     </div>
                   </div>
                 )}
@@ -1344,32 +1334,32 @@ function FinancialAccountsTab() {
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Landmark className="h-5 w-5 text-orange-600" />Banco Inter - PIX
+                    <Landmark className="h-5 w-5 text-yellow-600" />Banco do Brasil - PIX
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground">Credenciais para geração de cobranças PIX via API</p>
+                  <p className="text-xs text-muted-foreground">Credenciais para geração de cobranças PIX via API BB</p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm">Status:</span>
-                    {selectedAccount.interPixEnabled
+                    <span className="text-sm">Status PIX:</span>
+                    {selectedAccount.bbPixEnabled
                       ? <Badge className="bg-green-100 text-green-800 gap-1"><Wifi className="h-3 w-3" />Habilitado</Badge>
                       : <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" />Desabilitado</Badge>}
                   </div>
-                  {selectedAccount.interClientId && (
+                  {selectedAccount.bbClientId && (
                     <>
                       <div className="flex items-center justify-between">
                         <span className="text-sm">Client ID:</span>
-                        <span className="text-xs font-mono">{selectedAccount.interClientId.substring(0, 8)}...</span>
+                        <span className="text-xs font-mono">{selectedAccount.bbClientId.substring(0, 8)}...</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Certificado:</span>
-                        {selectedAccount.interCertificateCrt
-                          ? <Badge className="bg-green-100 text-green-800 gap-1"><Shield className="h-3 w-3" />OK</Badge>
-                          : <Badge variant="outline">Pendente</Badge>}
-                      </div>
+                      {selectedAccount.bbConvenio && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm">Convênio:</span>
+                          <span className="text-xs font-mono">{selectedAccount.bbConvenio}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between">
                         <span className="text-sm">Webhook:</span>
-                        {selectedAccount.interWebhookConfigured
+                        {selectedAccount.bbWebhookConfigured
                           ? <Badge className="bg-green-100 text-green-800">Configurado</Badge>
                           : <Badge variant="outline">Pendente</Badge>}
                       </div>
@@ -1378,10 +1368,10 @@ function FinancialAccountsTab() {
                   <Button variant="outline" size="sm" className="w-full" onClick={() => openEdit(selectedAccount)}>
                     <Key className="h-4 w-4 mr-2" />Configurar Credenciais
                   </Button>
-                  {selectedAccount.interPixEnabled && (
-                    <Button variant="outline" size="sm" className="w-full" onClick={() => testInterMutation.mutate(selectedAccount.id)} disabled={testInterMutation.isPending}>
-                      {testInterMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
-                      Testar Conexão
+                  {selectedAccount.bbPixEnabled && (
+                    <Button variant="outline" size="sm" className="w-full" onClick={() => testBBMutation.mutate(selectedAccount.id)} disabled={testBBMutation.isPending}>
+                      {testBBMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                      Testar Conexão BB
                     </Button>
                   )}
                 </CardContent>
@@ -1392,21 +1382,16 @@ function FinancialAccountsTab() {
                   <CardTitle className="text-base flex items-center gap-2">
                     <Landmark className="h-5 w-5 text-yellow-600" />Banco do Brasil - Boletos
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground">Credenciais para emissão de boletos via API</p>
+                  <p className="text-xs text-muted-foreground">Credenciais para emissão de boletos via API BB</p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm">Status:</span>
+                    <span className="text-sm">Status Boletos:</span>
                     {selectedAccount.bbBoletoEnabled
                       ? <Badge className="bg-green-100 text-green-800 gap-1"><Wifi className="h-3 w-3" />Habilitado</Badge>
                       : <Badge variant="outline" className="gap-1"><WifiOff className="h-3 w-3" />Desabilitado</Badge>}
                   </div>
-                  {selectedAccount.bbClientId && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">Client ID:</span>
-                      <span className="text-xs font-mono">{selectedAccount.bbClientId.substring(0, 8)}...</span>
-                    </div>
-                  )}
+                  <p className="text-xs text-muted-foreground">As credenciais do BB (Client ID, Secret, App Key) são compartilhadas entre PIX e Boletos.</p>
                   <Button variant="outline" size="sm" className="w-full" onClick={() => openEdit(selectedAccount)}>
                     <Key className="h-4 w-4 mr-2" />Configurar Credenciais
                   </Button>
@@ -1420,7 +1405,7 @@ function FinancialAccountsTab() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Nova Cobrança PIX</DialogTitle>
-              <DialogDescription>Gere um QR Code dinâmico para recebimento via PIX</DialogDescription>
+              <DialogDescription>Gere um QR Code dinâmico para recebimento via PIX (Banco do Brasil)</DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
               <div>
@@ -1428,8 +1413,8 @@ function FinancialAccountsTab() {
                 <Select value={pixForm.chargeType} onValueChange={v => setPixForm({ ...pixForm, chargeType: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="imediata">Imediata (taxa 0,9%)</SelectItem>
-                    <SelectItem value="com_vencimento">Com Vencimento (taxa 0,99%)</SelectItem>
+                    <SelectItem value="imediata">Imediata</SelectItem>
+                    <SelectItem value="com_vencimento">Com Vencimento</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1508,8 +1493,8 @@ function FinancialAccountsTab() {
                         <p className="text-xl font-bold">{formatCurrency(a.balance)}</p>
                       </div>
                       <div className="flex gap-1">
-                        {a.interPixEnabled && <Badge className="bg-orange-100 text-orange-800 text-[10px]">PIX Inter</Badge>}
-                        {a.bbBoletoEnabled && <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">BB Boleto</Badge>}
+                        {a.bbPixEnabled && <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">PIX BB</Badge>}
+                        {a.bbBoletoEnabled && <Badge className="bg-yellow-100 text-yellow-800 text-[10px]">Boleto BB</Badge>}
                         {a.omieInstanceId && <Badge variant="outline" className="text-[10px]">{a.omieInstanceId}</Badge>}
                       </div>
                     </div>
@@ -1573,51 +1558,31 @@ function FinancialAccountsTab() {
             {form.type === 'banco' && (
               <>
                 <div className="border-b pb-3">
-                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-orange-600" />Banco Inter - Configuração PIX</h4>
+                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-yellow-600" />Banco do Brasil - Credenciais API</h4>
+                  <p className="text-xs text-muted-foreground mb-3">Obtenha as credenciais no Portal Developers BB (app.developers.bb.com.br)</p>
                   <div className="space-y-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.interPixEnabled || false} onChange={e => setForm({ ...form, interPixEnabled: e.target.checked })} className="rounded" />
-                      <span className="text-sm">Habilitar PIX via Banco Inter</span>
-                    </label>
-                    {form.interPixEnabled && (
-                      <>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div><Label>Client ID</Label><Input value={form.interClientId || ''} onChange={e => setForm({ ...form, interClientId: e.target.value })} placeholder="Client ID da aplicação Inter" /></div>
-                          <div><Label>Client Secret</Label><Input type="password" value={form.interClientSecret || ''} onChange={e => setForm({ ...form, interClientSecret: e.target.value })} placeholder="Client Secret" /></div>
-                        </div>
-                        <div>
-                          <Label>Certificado (.crt)</Label>
-                          <div className="flex gap-2">
-                            <Input type="file" accept=".crt,.pem" onChange={handleFileUpload('interCertificateCrt')} className="text-xs" />
-                            {form.interCertificateCrt && <Badge className="bg-green-100 text-green-800"><Shield className="h-3 w-3 mr-1" />OK</Badge>}
-                          </div>
-                        </div>
-                        <div>
-                          <Label>Chave Privada (.key)</Label>
-                          <div className="flex gap-2">
-                            <Input type="file" accept=".key,.pem" onChange={handleFileUpload('interCertificateKey')} className="text-xs" />
-                            {form.interCertificateKey && <Badge className="bg-green-100 text-green-800"><Key className="h-3 w-3 mr-1" />OK</Badge>}
-                          </div>
-                        </div>
-                      </>
-                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><Label>Client ID</Label><Input value={form.bbClientId || ''} onChange={e => setForm({ ...form, bbClientId: e.target.value })} placeholder="Client ID da aplicação BB" /></div>
+                      <div><Label>Client Secret</Label><Input type="password" value={form.bbClientSecret || ''} onChange={e => setForm({ ...form, bbClientSecret: e.target.value })} placeholder="Client Secret BB" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><Label>Developer Application Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key (sandbox) / gw-app-key (prod)" /></div>
+                      <div><Label>Convênio (opcional)</Label><Input value={form.bbConvenio || ''} onChange={e => setForm({ ...form, bbConvenio: e.target.value })} placeholder="Número do convênio BB" /></div>
+                    </div>
                   </div>
                 </div>
 
                 <div>
-                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-yellow-600" />Banco do Brasil - Configuração Boletos</h4>
+                  <h4 className="font-medium text-sm mb-3">Serviços Habilitados</h4>
                   <div className="space-y-3">
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.bbBoletoEnabled || false} onChange={e => setForm({ ...form, bbBoletoEnabled: e.target.checked })} className="rounded" />
-                      <span className="text-sm">Habilitar Boletos via Banco do Brasil</span>
+                      <input type="checkbox" checked={form.bbPixEnabled || false} onChange={e => setForm({ ...form, bbPixEnabled: e.target.checked })} className="rounded" />
+                      <span className="text-sm">Habilitar cobranças PIX (QR Code dinâmico)</span>
                     </label>
-                    {form.bbBoletoEnabled && (
-                      <div className="grid grid-cols-3 gap-3">
-                        <div><Label>Client ID</Label><Input value={form.bbClientId || ''} onChange={e => setForm({ ...form, bbClientId: e.target.value })} placeholder="Client ID BB" /></div>
-                        <div><Label>Client Secret</Label><Input type="password" value={form.bbClientSecret || ''} onChange={e => setForm({ ...form, bbClientSecret: e.target.value })} placeholder="Secret BB" /></div>
-                        <div><Label>Dev App Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key" /></div>
-                      </div>
-                    )}
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.bbBoletoEnabled || false} onChange={e => setForm({ ...form, bbBoletoEnabled: e.target.checked })} className="rounded" />
+                      <span className="text-sm">Habilitar emissão de Boletos</span>
+                    </label>
                   </div>
                 </div>
               </>

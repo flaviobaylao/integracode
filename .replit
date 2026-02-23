@@ -46,3 +46,8 @@ externalPort = 80
 [[ports]]
 localPort = 9876
 externalPort = 3002
+
+[userenv]
+
+[userenv.shared]
+BB_PIX_SANDBOX = "false"

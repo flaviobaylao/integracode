@@ -2,7 +2,7 @@ import { Express } from 'express';
 import { storage } from './storage';
 import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
-import * as interPixService from './inter-pix-service';
+import * as bbPixService from './bb-pix-service';
 
 function isFinancialAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -154,6 +154,7 @@ export function registerFinancialRoutes(app: Express) {
     if (masked.interCertificateCrt) masked.interCertificateCrt = '[CERTIFICADO CONFIGURADO]';
     if (masked.interCertificateKey) masked.interCertificateKey = '[CHAVE CONFIGURADA]';
     if (masked.bbClientSecret) masked.bbClientSecret = '***';
+    if (masked.bbDevAppKey) masked.bbDevAppKey = masked.bbDevAppKey.substring(0, 6) + '***';
     return masked;
   };
 
@@ -204,9 +205,9 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
-  app.post('/api/financial/accounts/:id/test-inter', authenticateUser, isFinancialAuthorized, async (req, res) => {
+  app.post('/api/financial/accounts/:id/test-bb-pix', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const result = await interPixService.testConnection(req.params.id);
+      const result = await bbPixService.testConnection(req.params.id);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
@@ -270,7 +271,7 @@ export function registerFinancialRoutes(app: Express) {
         return res.status(400).json({ message: 'accountId e amount são obrigatórios' });
       }
 
-      const charge = await interPixService.createImmediateCharge(accountId, {
+      const charge = await bbPixService.createImmediateCharge(accountId, {
         amount: parseFloat(amount),
         debtorName,
         debtorDocument,
@@ -297,7 +298,7 @@ export function registerFinancialRoutes(app: Express) {
         return res.status(400).json({ message: 'accountId, amount, dueDate, debtorName e debtorDocument são obrigatórios' });
       }
 
-      const charge = await interPixService.createDueDateCharge(accountId, {
+      const charge = await bbPixService.createDueDateCharge(accountId, {
         amount: parseFloat(amount),
         dueDate,
         validityAfterDue: validityAfterDue ? parseInt(validityAfterDue) : undefined,
@@ -318,7 +319,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/pix-charges/:id/check-status', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const charge = await interPixService.checkChargeStatus(req.params.id);
+      const charge = await bbPixService.checkChargeStatus(req.params.id);
       res.json(charge);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -327,7 +328,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/pix-webhook', async (req, res) => {
     try {
-      await interPixService.handleWebhookNotification(req.body);
+      await bbPixService.handleWebhookNotification(req.body);
       res.status(200).json({ message: 'OK' });
     } catch (error: any) {
       console.error('❌ [PIX-WEBHOOK] Erro:', error.message);
@@ -339,7 +340,7 @@ export function registerFinancialRoutes(app: Express) {
     try {
       const { webhookUrl } = req.body;
       if (!webhookUrl) return res.status(400).json({ message: 'webhookUrl é obrigatório' });
-      await interPixService.configureWebhook(req.params.id, webhookUrl);
+      await bbPixService.configureWebhook(req.params.id, webhookUrl);
       res.json({ message: 'Webhook configurado com sucesso' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
