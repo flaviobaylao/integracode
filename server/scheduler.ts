@@ -142,6 +142,17 @@ async function syncComplete(horario: string) {
         continue;
       }
 
+      // 0. Sincronizar vendedores PRIMEIRO (necessário para resolver seller IDs corretamente)
+      try {
+        console.log(`👤 [${horario}] [${label}] Sincronizando vendedores...`);
+        const vendorResult = await svc.syncVendors();
+        console.log(`✅ [${horario}] [${label}] Vendedores: ${vendorResult.totalProcessed || 0} processados, ${vendorResult.imported || 0} novos, ${vendorResult.updated || 0} atualizados`);
+      } catch (error: any) {
+        const errorMsg = `[${label}] Erro ao sincronizar vendedores: ${error.message}`;
+        globalResults.errors.push(errorMsg);
+        console.error(`❌ [${horario}] ${errorMsg}`);
+      }
+
       // 1. Sincronizar clientes ativos
       try {
         console.log(`📋 [${horario}] [${label}] Sincronizando clientes ativos...`);
