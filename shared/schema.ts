@@ -3009,6 +3009,7 @@ export const financialAccounts = pgTable("financial_accounts", {
   accountNumber: varchar("account_number"),
   pixKey: varchar("pix_key"),
   omieInstanceId: varchar("omie_instance_id"),
+  description: text("description"),
   isActive: boolean("is_active").default(true).notNull(),
   balance: decimal("balance", { precision: 14, scale: 2 }).default('0').notNull(),
   interClientId: varchar("inter_client_id"),

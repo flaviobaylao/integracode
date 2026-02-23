@@ -1182,12 +1182,16 @@ function FinancialAccountsTab() {
     setEditItem(null);
     setForm({
       name: '', type: 'banco', accountSubtype: 'conta_corrente', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
-      omieInstanceId: '', isActive: true,
-      bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
+      omieInstanceId: '', isActive: true, balance: '0',
+      bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '', bbContrato: '',
       bbPixEnabled: false, bbBoletoEnabled: false,
       bbPixClientId: '', bbPixClientSecret: '',
       bbPagamentosClientId: '', bbPagamentosClientSecret: '',
       bbExtratoClientId: '', bbExtratoClientSecret: '',
+      bbCarteira: '', bbVariacaoCarteira: '',
+      bbJurosPercentual: '', bbMultaPercentual: '',
+      bbDiasCompensacao: 'nenhum', bbSenhaBoletos: 'nenhuma',
+      bbInstrucaoLinha1: '', bbInstrucaoLinha2: '', bbInstrucaoLinha3: '', bbInstrucaoLinha4: '',
     });
     setShowDialog(true);
   };
@@ -1202,6 +1206,8 @@ function FinancialAccountsTab() {
     setForm({
       ...item,
       omieInstanceId: item.omieInstanceId || '',
+      description: item.description || '',
+      balance: item.balance ?? '0',
       accountSubtype: item.accountSubtype || 'conta_corrente',
       bbPixClientId: item.bbPixClientId || '',
       bbPixClientSecret: item.bbPixClientSecret || '',
@@ -1679,6 +1685,22 @@ function FinancialAccountsTab() {
                         <SelectItem value="carteira_digital">Carteira Digital</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label>Saldo Inicial (R$)</Label>
+                    <Input type="number" step="0.01" value={form.balance ?? ''} onChange={e => setForm({ ...form, balance: e.target.value })} placeholder="0,00" />
+                  </div>
+                  <div>
+                    <Label>Descrição / Observações</Label>
+                    <Input value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Observações sobre a conta" />
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 cursor-pointer pb-2">
+                      <input type="checkbox" checked={form.isActive !== false} onChange={e => setForm({ ...form, isActive: e.target.checked })} className="rounded" />
+                      <span className="text-sm">Conta Ativa</span>
+                    </label>
                   </div>
                 </div>
               </div>
