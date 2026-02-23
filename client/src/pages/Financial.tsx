@@ -1177,17 +1177,35 @@ function FinancialAccountsTab() {
   const openCreate = () => {
     setEditItem(null);
     setForm({
-      name: '', type: 'banco', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
+      name: '', type: 'banco', accountSubtype: 'conta_corrente', bankName: '', bankCode: '', agency: '', accountNumber: '', pixKey: '',
       omieInstanceId: '', isActive: true,
       bbClientId: '', bbClientSecret: '', bbDevAppKey: '', bbConvenio: '',
       bbPixEnabled: false, bbBoletoEnabled: false,
+      bbPixClientId: '', bbPixClientSecret: '',
+      bbPagamentosClientId: '', bbPagamentosClientSecret: '',
+      bbExtratoClientId: '', bbExtratoClientSecret: '',
     });
     setShowDialog(true);
   };
 
+  const handleBankSelect = (code: string) => {
+    const bank = BANK_LIST.find(b => b.code === code);
+    setForm({ ...form, bankCode: code, bankName: bank ? bank.name : '' });
+  };
+
   const openEdit = (item: any) => {
     setEditItem(item);
-    setForm({ ...item, omieInstanceId: item.omieInstanceId || '' });
+    setForm({
+      ...item,
+      omieInstanceId: item.omieInstanceId || '',
+      accountSubtype: item.accountSubtype || 'conta_corrente',
+      bbPixClientId: item.bbPixClientId || '',
+      bbPixClientSecret: item.bbPixClientSecret || '',
+      bbPagamentosClientId: item.bbPagamentosClientId || '',
+      bbPagamentosClientSecret: item.bbPagamentosClientSecret || '',
+      bbExtratoClientId: item.bbExtratoClientId || '',
+      bbExtratoClientSecret: item.bbExtratoClientSecret || '',
+    });
     setShowDialog(true);
   };
 
@@ -1197,6 +1215,9 @@ function FinancialAccountsTab() {
     if (editItem) {
       if (saveData.bbClientSecret === '***') delete saveData.bbClientSecret;
       if (saveData.bbDevAppKey && saveData.bbDevAppKey.endsWith('***')) delete saveData.bbDevAppKey;
+      if (saveData.bbPixClientSecret === '***') delete saveData.bbPixClientSecret;
+      if (saveData.bbPagamentosClientSecret === '***') delete saveData.bbPagamentosClientSecret;
+      if (saveData.bbExtratoClientSecret === '***') delete saveData.bbExtratoClientSecret;
       updateMutation.mutate(saveData);
     } else {
       createMutation.mutate(saveData);
@@ -1517,7 +1538,10 @@ function FinancialAccountsTab() {
                         </div>
                         <div>
                           <p className="font-medium">{a.name}</p>
-                          <p className="text-xs text-muted-foreground">{typeLabels[a.type] || a.type}{a.bankName ? ` - ${a.bankName}` : ''}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {a.bankCode ? `${a.bankCode} - ` : ''}{a.bankName || typeLabels[a.type] || a.type}
+                            {a.agency ? ` | Ag: ${a.agency}` : ''}{a.accountNumber ? ` | CC: ${a.accountNumber}` : ''}
+                          </p>
                         </div>
                       </div>
                       <div className="flex gap-1">
@@ -1549,35 +1573,45 @@ function FinancialAccountsTab() {
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editItem ? 'Editar Conta Financeira' : 'Nova Conta Financeira'}</DialogTitle>
-            <DialogDescription>Preencha os dados da conta financeira e configurações bancárias</DialogDescription>
+            <DialogDescription>Preencha os dados da conta corrente e configurações de integração bancária</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="border-b pb-3">
-              <h4 className="font-medium text-sm mb-3">Dados Gerais</h4>
+              <h4 className="font-medium text-sm mb-3">Conta Corrente</h4>
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label>Nome</Label><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
                   <div>
-                    <Label>Tipo</Label>
-                    <Select value={form.type || 'banco'} onValueChange={v => setForm({ ...form, type: v })}>
+                    <Label>Tipo de Conta</Label>
+                    <Select value={form.accountSubtype || 'conta_corrente'} onValueChange={v => setForm({ ...form, accountSubtype: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="caixa">Caixa</SelectItem>
-                        <SelectItem value="banco">Banco</SelectItem>
-                        <SelectItem value="carteira_digital">Carteira Digital</SelectItem>
+                        {ACCOUNT_SUBTYPES.map(st => (
+                          <SelectItem key={st.value} value={st.value}>{st.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Instituição</Label>
+                    <Select value={form.bankCode || ''} onValueChange={handleBankSelect}>
+                      <SelectTrigger><SelectValue placeholder="Selecione o banco" /></SelectTrigger>
+                      <SelectContent>
+                        {BANK_LIST.map(bank => (
+                          <SelectItem key={bank.code} value={bank.code}>{bank.code} - {bank.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <div><Label>Banco</Label><Input value={form.bankName || ''} onChange={e => setForm({ ...form, bankName: e.target.value })} /></div>
-                  <div><Label>Agência</Label><Input value={form.agency || ''} onChange={e => setForm({ ...form, agency: e.target.value })} /></div>
-                  <div><Label>Conta</Label><Input value={form.accountNumber || ''} onChange={e => setForm({ ...form, accountNumber: e.target.value })} /></div>
+                  <div><Label>Nome da Conta</Label><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: BB - FILIAL" /></div>
+                  <div><Label>Agência</Label><Input value={form.agency || ''} onChange={e => setForm({ ...form, agency: e.target.value })} placeholder="Ex: 4148-3" /></div>
+                  <div><Label>Conta Corrente (com dígito)</Label><Input value={form.accountNumber || ''} onChange={e => setForm({ ...form, accountNumber: e.target.value })} placeholder="Ex: 24925-4" /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><Label>Chave PIX</Label><Input value={form.pixKey || ''} onChange={e => setForm({ ...form, pixKey: e.target.value })} /></div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div><Label>Chave PIX</Label><Input value={form.pixKey || ''} onChange={e => setForm({ ...form, pixKey: e.target.value })} placeholder="CPF, CNPJ, e-mail ou telefone" /></div>
                   <div>
-                    <Label>Instância</Label>
+                    <Label>Instância Omie</Label>
                     <Select value={form.omieInstanceId || 'none'} onValueChange={v => setForm({ ...form, omieInstanceId: v === 'none' ? '' : v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -1589,38 +1623,95 @@ function FinancialAccountsTab() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div>
+                    <Label>Classificação</Label>
+                    <Select value={form.type || 'banco'} onValueChange={v => setForm({ ...form, type: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="caixa">Caixa</SelectItem>
+                        <SelectItem value="banco">Banco</SelectItem>
+                        <SelectItem value="carteira_digital">Carteira Digital</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {form.type === 'banco' && (
+            {form.type === 'banco' && form.bankCode === '001' && (
               <>
                 <div className="border-b pb-3">
-                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2"><Landmark className="h-4 w-4 text-yellow-600" />Banco do Brasil - Credenciais API</h4>
-                  <p className="text-xs text-muted-foreground mb-3">Obtenha as credenciais no Portal Developers BB (app.developers.bb.com.br)</p>
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><Label>Client ID</Label><Input value={form.bbClientId || ''} onChange={e => setForm({ ...form, bbClientId: e.target.value })} placeholder="Client ID da aplicação BB" /></div>
-                      <div><Label>Client Secret</Label><Input type="password" value={form.bbClientSecret || ''} onChange={e => setForm({ ...form, bbClientSecret: e.target.value })} placeholder="Client Secret BB" /></div>
+                  <h4 className="font-medium text-sm mb-3 flex items-center gap-2">
+                    <Landmark className="h-4 w-4 text-yellow-600" />
+                    Credenciais para integração bancária (API)
+                  </h4>
+                  <p className="text-xs text-muted-foreground mb-4">Obtenha as credenciais no Portal Developers BB (app.developers.bb.com.br). Cada serviço possui seu par de Client ID / Client Secret.</p>
+
+                  <div className="space-y-4">
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={form.bbBoletoEnabled || false} onChange={e => setForm({ ...form, bbBoletoEnabled: e.target.checked })} className="rounded" />
+                          <span className="text-sm font-medium">Credenciais da API para integração de <strong>Boletos</strong></span>
+                        </label>
+                      </div>
+                      {form.bbBoletoEnabled && (
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          <div><Label className="text-xs">Client ID</Label><Input value={form.bbClientId || ''} onChange={e => setForm({ ...form, bbClientId: e.target.value })} placeholder="Client ID Boletos" /></div>
+                          <div><Label className="text-xs">Client Secret</Label><Input type="password" value={form.bbClientSecret || ''} onChange={e => setForm({ ...form, bbClientSecret: e.target.value })} placeholder="Client Secret Boletos" /></div>
+                        </div>
+                      )}
                     </div>
+
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={form.bbPixEnabled || false} onChange={e => setForm({ ...form, bbPixEnabled: e.target.checked })} className="rounded" />
+                          <span className="text-sm font-medium">Credenciais da API para integração de <strong>Pix</strong></span>
+                        </label>
+                      </div>
+                      {form.bbPixEnabled && (
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          <div><Label className="text-xs">Client ID</Label><Input value={form.bbPixClientId || ''} onChange={e => setForm({ ...form, bbPixClientId: e.target.value })} placeholder="Client ID Pix" /></div>
+                          <div><Label className="text-xs">Client Secret</Label><Input type="password" value={form.bbPixClientSecret || ''} onChange={e => setForm({ ...form, bbPixClientSecret: e.target.value })} placeholder="Client Secret Pix" /></div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={!!form.bbPagamentosClientId} onChange={e => { if (!e.target.checked) setForm({ ...form, bbPagamentosClientId: '', bbPagamentosClientSecret: '' }); else setForm({ ...form, bbPagamentosClientId: form.bbPagamentosClientId || ' ' }); }} className="rounded" />
+                          <span className="text-sm font-medium">Credenciais da API para integração de <strong>Pagamentos</strong></span>
+                        </label>
+                      </div>
+                      {!!form.bbPagamentosClientId && (
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          <div><Label className="text-xs">Client ID</Label><Input value={form.bbPagamentosClientId?.trim() || ''} onChange={e => setForm({ ...form, bbPagamentosClientId: e.target.value })} placeholder="Client ID Pagamentos" /></div>
+                          <div><Label className="text-xs">Client Secret</Label><Input type="password" value={form.bbPagamentosClientSecret || ''} onChange={e => setForm({ ...form, bbPagamentosClientSecret: e.target.value })} placeholder="Client Secret Pagamentos" /></div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={!!form.bbExtratoClientId} onChange={e => { if (!e.target.checked) setForm({ ...form, bbExtratoClientId: '', bbExtratoClientSecret: '' }); else setForm({ ...form, bbExtratoClientId: form.bbExtratoClientId || ' ' }); }} className="rounded" />
+                          <span className="text-sm font-medium">Credenciais da API para integração de <strong>Extrato</strong></span>
+                        </label>
+                      </div>
+                      {!!form.bbExtratoClientId && (
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          <div><Label className="text-xs">Client ID</Label><Input value={form.bbExtratoClientId?.trim() || ''} onChange={e => setForm({ ...form, bbExtratoClientId: e.target.value })} placeholder="Client ID Extrato" /></div>
+                          <div><Label className="text-xs">Client Secret</Label><Input type="password" value={form.bbExtratoClientSecret || ''} onChange={e => setForm({ ...form, bbExtratoClientSecret: e.target.value })} placeholder="Client Secret Extrato" /></div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
-                      <div><Label>Developer Application Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key (sandbox) / gw-app-key (prod)" /></div>
+                      <div><Label>Developer Application Key</Label><Input value={form.bbDevAppKey || ''} onChange={e => setForm({ ...form, bbDevAppKey: e.target.value })} placeholder="gw-dev-app-key" /></div>
                       <div><Label>Convênio (opcional)</Label><Input value={form.bbConvenio || ''} onChange={e => setForm({ ...form, bbConvenio: e.target.value })} placeholder="Número do convênio BB" /></div>
                     </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-sm mb-3">Serviços Habilitados</h4>
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.bbPixEnabled || false} onChange={e => setForm({ ...form, bbPixEnabled: e.target.checked })} className="rounded" />
-                      <span className="text-sm">Habilitar cobranças PIX (QR Code dinâmico)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.bbBoletoEnabled || false} onChange={e => setForm({ ...form, bbBoletoEnabled: e.target.checked })} className="rounded" />
-                      <span className="text-sm">Habilitar emissão de Boletos</span>
-                    </label>
                   </div>
                 </div>
               </>
@@ -1630,7 +1721,7 @@ function FinancialAccountsTab() {
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={createMutation.isPending || updateMutation.isPending}>
               {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {editItem ? 'Salvar' : 'Criar'}
+              {editItem ? 'Salvar Credenciais' : 'Criar Conta'}
             </Button>
           </DialogFooter>
         </DialogContent>

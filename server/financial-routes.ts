@@ -155,6 +155,9 @@ export function registerFinancialRoutes(app: Express) {
     if (masked.interCertificateKey) masked.interCertificateKey = '[CHAVE CONFIGURADA]';
     if (masked.bbClientSecret) masked.bbClientSecret = '***';
     if (masked.bbDevAppKey) masked.bbDevAppKey = masked.bbDevAppKey.substring(0, 6) + '***';
+    if (masked.bbPixClientSecret) masked.bbPixClientSecret = '***';
+    if (masked.bbPagamentosClientSecret) masked.bbPagamentosClientSecret = '***';
+    if (masked.bbExtratoClientSecret) masked.bbExtratoClientSecret = '***';
     return masked;
   };
 
