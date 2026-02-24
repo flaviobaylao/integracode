@@ -488,7 +488,7 @@ export default function ActiveCustomers() {
   });
 
   // Query para vendedores ativos (filtro) - endpoint dedicado server-side
-  const { data: activeSellers = [] } = useQuery<Array<{ id: string; name: string }>>({
+  const { data: activeSellers = [] } = useQuery<Array<{ id: string; name: string; allIds?: string[] }>>({
     queryKey: ["/api/sellers/active"],
     staleTime: 30000,
   });
@@ -722,8 +722,13 @@ export default function ActiveCustomers() {
       // Filtro de busca
       const matchesSearch = name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
       
-      // Filtro de vendedor
-      const matchesSeller = !selectedSeller || ac.customer?.sellerId === selectedSeller;
+      // Filtro de vendedor (verifica todos os IDs equivalentes entre instâncias)
+      let matchesSeller = !selectedSeller;
+      if (selectedSeller && ac.customer?.sellerId) {
+        const sellerEntry = activeSellers.find(s => s.id === selectedSeller);
+        const sellerIds = sellerEntry?.allIds || [selectedSeller];
+        matchesSeller = sellerIds.includes(ac.customer.sellerId);
+      }
       
       // Filtro de dia de rota
       const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays).includes(selectedDayOfRoute) : false);

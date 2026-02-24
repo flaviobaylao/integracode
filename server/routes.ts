@@ -940,26 +940,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           omieVendorCodes: u.omieVendorCodes,
         }));
       
-      const deduped = new Map<string, typeof activeSellersRaw[0]>();
+      const dedupGroups = new Map<string, typeof activeSellersRaw>();
       for (const seller of activeSellersRaw) {
         const normName = seller.name.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
-        const existing = deduped.get(normName);
-        if (!existing) {
-          deduped.set(normName, seller);
-        } else {
-          const existingHasCodes = existing.omieVendorCodes && Object.keys(existing.omieVendorCodes as Record<string, string>).length > 0;
-          const newHasCodes = seller.omieVendorCodes && Object.keys(seller.omieVendorCodes as Record<string, string>).length > 0;
-          if (newHasCodes && !existingHasCodes) {
-            deduped.set(normName, seller);
-          } else if (!existing.email.includes('@omie.com') && seller.email.includes('@omie.com')) {
-          } else if (existing.email.includes('@omie.com') && !seller.email.includes('@omie.com')) {
-            deduped.set(normName, seller);
-          }
-        }
+        if (!dedupGroups.has(normName)) dedupGroups.set(normName, []);
+        dedupGroups.get(normName)!.push(seller);
       }
       
-      const activeSellers = Array.from(deduped.values())
-        .map(s => ({ id: s.id, name: s.name }))
+      const activeSellers = Array.from(dedupGroups.values())
+        .map(group => {
+          const primary = group.sort((a, b) => {
+            const aHasCodes = a.omieVendorCodes && Object.keys(a.omieVendorCodes as Record<string, string>).length > 0 ? 1 : 0;
+            const bHasCodes = b.omieVendorCodes && Object.keys(b.omieVendorCodes as Record<string, string>).length > 0 ? 1 : 0;
+            if (bHasCodes !== aHasCodes) return bHasCodes - aHasCodes;
+            const aReal = a.email && !a.email.includes('@omie.com') && !a.email.includes('vendor-') ? 1 : 0;
+            const bReal = b.email && !b.email.includes('@omie.com') && !b.email.includes('vendor-') ? 1 : 0;
+            return bReal - aReal;
+          })[0];
+          
+          const allIds = [...new Set(group.map(s => s.id))];
+          return { id: primary.id, name: primary.name, allIds };
+        })
         .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       
       console.log(`📋 [SELLERS] Retornando ${activeSellers.length} vendedores ativos (de ${activeSellersRaw.length} antes de dedup)`);
