@@ -800,15 +800,27 @@ export class OmieService {
             const isRealEmail = vendorEmail && !vendorEmail.includes('vendor-') && !vendorEmail.includes('@omie.com');
 
             // DEDUPLICATION: Find existing user across all instances
-            // Priority: 1) Same vendor code already mapped, 2) Same real email, 3) Same normalized name
+            // Priority: 1) Same vendor code already mapped, 2) Same real email, 3) Same normalized name (with guardrails)
             let existingUser = vendorCodeIndex.get(vendorCode) || null;
             
             if (!existingUser && isRealEmail) {
               existingUser = emailIndex.get(vendorEmail.toLowerCase()) || null;
             }
             
+            // Name-based matching ONLY when both have no real email (to avoid merging unrelated vendors with common names)
             if (!existingUser && normName) {
-              existingUser = nameIndex.get(normName) || null;
+              const nameCandidate = nameIndex.get(normName);
+              if (nameCandidate) {
+                const candidateHasRealEmail = nameCandidate.email && !nameCandidate.email.includes('vendor-') && !nameCandidate.email.includes('@omie.com');
+                // Only merge by name if: candidate also has no real email (both are Omie-generated),
+                // OR if one has a real email and the other matches it
+                if (!candidateHasRealEmail && !isRealEmail) {
+                  existingUser = nameCandidate;
+                  console.log(`🔗 [${instanceLabel}] Vendedor mesclado por nome: "${normName}" -> user ${nameCandidate.id}`);
+                } else if (isRealEmail && candidateHasRealEmail && vendorEmail.toLowerCase() === nameCandidate.email?.toLowerCase()) {
+                  existingUser = nameCandidate;
+                }
+              }
             }
 
             // Build the merged omieVendorCodes map
@@ -819,10 +831,14 @@ export class OmieService {
 
             if (existingUser) {
               const protectedRoles = ['admin', 'coordinator', 'administrative', 'telemarketing', 'motorista'];
+              const isMultiInstance = Object.keys(currentCodes).length > 1;
               const updateData: any = {
-                omieVendorCode: vendorCode,
                 omieVendorCodes: currentCodes,
               };
+              // Only set legacy omieVendorCode for single-instance vendors to avoid cross-instance misassignment
+              if (!isMultiInstance) {
+                updateData.omieVendorCode = vendorCode;
+              }
 
               if (!protectedRoles.includes(existingUser.role)) {
                 // Update name/email only if vendor has real email or existing has fake email

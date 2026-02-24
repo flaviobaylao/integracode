@@ -24024,36 +24024,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
 
         if (!dryRun) {
-          // Update primary user with merged codes
-          await storage.updateUser(primary.id, {
-            omieVendorCodes: mergedCodes,
-            isActive: group.some(g => g.isActive) || false,
+          // Run all merge operations for this group in a transaction
+          await db.transaction(async (tx) => {
+            // Update primary user with merged codes
+            await tx.update(users).set({
+              omieVendorCodes: mergedCodes,
+              isActive: group.some(g => g.isActive) || false,
+            }).where(eq(users.id, primary.id));
+
+            // Reassign all references from duplicates to primary
+            for (const dup of duplicates) {
+              const custResult = await tx.update(customers).set({ sellerId: primary.id }).where(eq(customers.sellerId, dup.id)).returning();
+              entry.customersReassigned += custResult.length;
+              reassignedCustomers += custResult.length;
+
+              const routeResult = await tx.update(dailyRoutes).set({ sellerId: primary.id }).where(eq(dailyRoutes.sellerId, dup.id)).returning();
+              entry.routesReassigned += routeResult.length;
+              reassignedRoutes += routeResult.length;
+
+              const scResult = await tx.update(salesCards).set({ sellerId: primary.id }).where(eq(salesCards.sellerId, dup.id)).returning();
+              entry.salesCardsReassigned += scResult.length;
+              reassignedSalesCards += scResult.length;
+
+              await tx.update(leads).set({ sellerId: primary.id }).where(eq(leads.sellerId, dup.id));
+
+              await tx.delete(users).where(eq(users.id, dup.id));
+              deletedUsers++;
+            }
           });
-
-          // Reassign all references from duplicates to primary
-          for (const dup of duplicates) {
-            // Reassign customers
-            const custResult = await db.update(customers).set({ sellerId: primary.id }).where(eq(customers.sellerId, dup.id)).returning();
-            entry.customersReassigned += custResult.length;
-            reassignedCustomers += custResult.length;
-
-            // Reassign daily routes
-            const routeResult = await db.update(dailyRoutes).set({ sellerId: primary.id }).where(eq(dailyRoutes.sellerId, dup.id)).returning();
-            entry.routesReassigned += routeResult.length;
-            reassignedRoutes += routeResult.length;
-
-            // Reassign sales cards
-            const scResult = await db.update(salesCards).set({ sellerId: primary.id }).where(eq(salesCards.sellerId, dup.id)).returning();
-            entry.salesCardsReassigned += scResult.length;
-            reassignedSalesCards += scResult.length;
-
-            // Reassign leads
-            await db.update(leads).set({ sellerId: primary.id }).where(eq(leads.sellerId, dup.id));
-
-            // Delete duplicate user
-            await db.delete(users).where(eq(users.id, dup.id));
-            deletedUsers++;
-          }
         }
 
         mergeLog.push(entry);
