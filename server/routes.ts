@@ -919,14 +919,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.set('Pragma', 'no-cache');
       const allUsers = await storage.getUsers();
-      const activeSellers = allUsers
-        .filter(u => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))
+      
+      const systemNames = new Set(['pdd', 'sistema', 'serasa innove', 'solut cobranças', 'solut cobrancas', 
+        'dm cred cobranca', 'dm cred cobrança', 'mw trading', 'loja honest', 'enviado via api', 
+        'mercasa', 'velis crm', 'devi 1', 'devi 2']);
+      
+      const activeSellersRaw = allUsers
+        .filter(u => {
+          if (!u.isActive || (u.role !== 'vendedor' && u.role !== 'telemarketing')) return false;
+          const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
+          if (systemNames.has(fullName)) return false;
+          if (u.firstName && u.firstName.includes('@')) return false;
+          if (!u.firstName || u.firstName.trim().length === 0) return false;
+          return true;
+        })
         .map(u => ({
           id: u.id,
           name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}`,
-        }))
+          email: u.email || '',
+          omieVendorCodes: u.omieVendorCodes,
+        }));
+      
+      const deduped = new Map<string, typeof activeSellersRaw[0]>();
+      for (const seller of activeSellersRaw) {
+        const normName = seller.name.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+        const existing = deduped.get(normName);
+        if (!existing) {
+          deduped.set(normName, seller);
+        } else {
+          const existingHasCodes = existing.omieVendorCodes && Object.keys(existing.omieVendorCodes as Record<string, string>).length > 0;
+          const newHasCodes = seller.omieVendorCodes && Object.keys(seller.omieVendorCodes as Record<string, string>).length > 0;
+          if (newHasCodes && !existingHasCodes) {
+            deduped.set(normName, seller);
+          } else if (!existing.email.includes('@omie.com') && seller.email.includes('@omie.com')) {
+          } else if (existing.email.includes('@omie.com') && !seller.email.includes('@omie.com')) {
+            deduped.set(normName, seller);
+          }
+        }
+      }
+      
+      const activeSellers = Array.from(deduped.values())
+        .map(s => ({ id: s.id, name: s.name }))
         .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-      console.log(`📋 [SELLERS] Retornando ${activeSellers.length} vendedores ativos`);
+      
+      console.log(`📋 [SELLERS] Retornando ${activeSellers.length} vendedores ativos (de ${activeSellersRaw.length} antes de dedup)`);
       res.json(activeSellers);
     } catch (error) {
       console.error("Error fetching active sellers:", error);

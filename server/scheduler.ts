@@ -152,6 +152,64 @@ async function syncComplete(horario: string) {
         globalResults.errors.push(errorMsg);
         console.error(`❌ [${horario}] ${errorMsg}`);
       }
+    }
+
+    // 0.1 Mesclar códigos de vendedores duplicados entre instâncias (sem desativar)
+    try {
+      const allUsers = await storage.getUsers();
+      const vendorsByName = new Map<string, any[]>();
+      
+      for (const u of allUsers) {
+        if (u.role !== 'vendedor' && u.role !== 'telemarketing') continue;
+        if (!u.id?.startsWith('omie-vendor-')) continue;
+        const normName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+        if (!normName || normName.length < 3) continue;
+        if (!vendorsByName.has(normName)) vendorsByName.set(normName, []);
+        vendorsByName.get(normName)!.push(u);
+      }
+      
+      let mergedCount = 0;
+      for (const [name, dupes] of vendorsByName) {
+        if (dupes.length <= 1) continue;
+        
+        // Apenas logar e mesclar códigos - NÃO desativar registros
+        const allCodes: Record<string, string> = {};
+        for (const d of dupes) {
+          if (d.omieVendorCodes && typeof d.omieVendorCodes === 'object') {
+            Object.assign(allCodes, d.omieVendorCodes as Record<string, string>);
+          }
+        }
+        
+        if (Object.keys(allCodes).length > 0) {
+          for (const d of dupes) {
+            const currentCodes = d.omieVendorCodes && typeof d.omieVendorCodes === 'object' 
+              ? Object.keys(d.omieVendorCodes).length : 0;
+            if (currentCodes < Object.keys(allCodes).length) {
+              await storage.updateUser(d.id, { omieVendorCodes: allCodes });
+              mergedCount++;
+            }
+          }
+        }
+        
+        console.log(`📋 [DEDUP] Vendedor duplicado detectado: "${name}" (${dupes.length}x): ${dupes.map((d: any) => d.id).join(', ')}`);
+      }
+      
+      if (mergedCount > 0) {
+        console.log(`✅ [${horario}] Códigos mesclados em ${mergedCount} vendedores`);
+      }
+    } catch (error: any) {
+      console.error(`❌ [${horario}] Erro ao mesclar códigos de vendedores:`, error.message);
+    }
+
+    for (const inst of activeInstances) {
+      const label = inst.name || inst.id;
+      let svc: any;
+      try {
+        svc = await getOmieServiceForInstance(storage, inst.id);
+        if (!svc) continue;
+      } catch (e: any) {
+        continue;
+      }
 
       // 1. Sincronizar clientes ativos
       try {
