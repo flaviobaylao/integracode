@@ -3033,9 +3033,26 @@ export class OmieService {
       console.log('Total de itens:', products.length);
       console.log('Valor total:', totalValue);
       
-      console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido (sem codigo_vendedor):', JSON.stringify(orderPayload, null, 2));
+      console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido:', JSON.stringify(orderPayload, null, 2));
       
-      const response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+      let response: any;
+      try {
+        response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+      } catch (firstError: any) {
+        const errorMsg = firstError?.message || '';
+        if (errorMsg.includes('Vendedor não cadastrado') && omieVendorCode) {
+          console.log(`⚠️ [OMIE-RETRY] Vendedor ${omieVendorCode} não cadastrado no Omie - removendo vendedor e tentando novamente...`);
+          delete orderPayload.informacoes_adicionais.codVend;
+          
+          const retryIntegrationCode = `CRM-${salesCard.id}-R${Date.now()}`;
+          orderPayload.cabecalho.codigo_pedido_integracao = retryIntegrationCode;
+          
+          response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+          console.log(`✅ [OMIE-RETRY] Pedido criado com sucesso sem vendedor específico`);
+        } else {
+          throw firstError;
+        }
+      }
 
       if (response && response.codigo_pedido) {
         console.log('✅ Pedido criado com sucesso no Omie:', response.codigo_pedido);
