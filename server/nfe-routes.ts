@@ -715,10 +715,26 @@ export function registerNfeRoutes(app: Express) {
       }
       const { justification } = parsed.data;
 
+      const invoice = await storage.getFiscalInvoice(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: 'NF-e não encontrada' });
+      }
+
+      const authDate = invoice.authorizationDate || invoice.emissionDate || invoice.createdAt;
+      if (authDate) {
+        const hoursSinceAuth = (Date.now() - new Date(authDate).getTime()) / (1000 * 60 * 60);
+        if (hoursSinceAuth > 24) {
+          return res.status(400).json({
+            message: 'Prazo de cancelamento expirado',
+            details: 'O cancelamento de NF-e só é permitido até 24 horas após a emissão. Após este prazo, utilize a devolução com emissão de nota fiscal de devolução.',
+            expired: true,
+          });
+        }
+      }
+
       const result = await sefazService.cancelNfe(req.params.id, justification);
 
       if (result.success) {
-        const invoice = await storage.getFiscalInvoice(req.params.id);
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
 
@@ -744,10 +760,194 @@ export function registerNfeRoutes(app: Express) {
           console.warn('⚠️ Erro ao reverter estoque após cancelamento NF-e:', stockErr.message);
         }
 
-        res.json({ ...result, invoice: { ...invoice, events } });
+        // Cancel associated receivables
+        try {
+          const allReceivables = await storage.getReceivables({});
+          const linkedReceivables = allReceivables.filter(r => r.fiscalInvoiceId === req.params.id);
+          for (const rec of linkedReceivables) {
+            await storage.updateReceivable(rec.id, {
+              status: 'cancelada',
+              notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Cancelamento NF-e: ${justification}`,
+            });
+            console.log(`💰 [NF-e CANCEL] Conta a receber ${rec.id} cancelada (NF-e ${req.params.id})`);
+          }
+        } catch (recErr: any) {
+          console.warn('⚠️ Erro ao cancelar contas a receber após cancelamento NF-e:', recErr.message);
+        }
+
+        const updatedInvoice = await storage.getFiscalInvoice(req.params.id);
+        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true });
       } else {
         res.status(400).json(result);
       }
+    } catch (error: any) {
+      res.status(500).json({ success: false, errorMessage: error.message });
+    }
+  });
+
+  // Return invoice (NF-e devolução) for invoices past 24h cancellation window
+  app.post('/api/fiscal-invoices/:id/return', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
+    try {
+      const { justification } = req.body;
+      if (!justification || justification.length < 15) {
+        return res.status(400).json({ message: 'Justificativa deve ter pelo menos 15 caracteres' });
+      }
+
+      const originalInvoice = await storage.getFiscalInvoice(req.params.id);
+      if (!originalInvoice) {
+        return res.status(404).json({ message: 'NF-e original não encontrada' });
+      }
+      if (originalInvoice.status !== 'authorized') {
+        return res.status(400).json({ message: 'Somente NF-e autorizadas podem ser devolvidas' });
+      }
+
+      const authDate = originalInvoice.authorizationDate || originalInvoice.emissionDate || originalInvoice.createdAt;
+      if (authDate) {
+        const hoursSinceAuth = (Date.now() - new Date(authDate).getTime()) / (1000 * 60 * 60);
+        if (hoursSinceAuth <= 24) {
+          return res.status(400).json({
+            message: 'NF-e ainda dentro do prazo de cancelamento',
+            details: 'Esta NF-e ainda está dentro do prazo de 24 horas. Utilize a opção de cancelamento ao invés de devolução.',
+          });
+        }
+      }
+
+      const originalItems = await storage.getFiscalInvoiceItems(req.params.id);
+      const user = req.currentUser || req.user;
+
+      const returnInvoice = await storage.createFiscalInvoice({
+        series: originalInvoice.series || '1',
+        operationType: 'entrada',
+        fiscalScenarioId: originalInvoice.fiscalScenarioId,
+        certificateId: originalInvoice.certificateId,
+        issuerName: originalInvoice.issuerName,
+        issuerCnpj: originalInvoice.issuerCnpj,
+        issuerIe: originalInvoice.issuerIe,
+        issuerAddress: originalInvoice.issuerAddress,
+        issuerUf: originalInvoice.issuerUf,
+        issuerCityCode: originalInvoice.issuerCityCode,
+        issuerCity: originalInvoice.issuerCity,
+        issuerPhone: originalInvoice.issuerPhone,
+        customerId: originalInvoice.customerId,
+        customerName: originalInvoice.customerName,
+        customerCnpjCpf: originalInvoice.customerCnpjCpf,
+        customerIe: originalInvoice.customerIe,
+        customerAddress: originalInvoice.customerAddress,
+        customerBairro: originalInvoice.customerBairro,
+        customerCep: originalInvoice.customerCep,
+        customerCity: originalInvoice.customerCity,
+        customerUf: originalInvoice.customerUf,
+        customerPhone: originalInvoice.customerPhone,
+        natureOfOperation: 'DEVOLUÇAO DE VENDA',
+        cfop: '1.202',
+        totalProducts: originalInvoice.totalProducts,
+        totalDiscount: originalInvoice.totalDiscount || '0',
+        totalFreight: originalInvoice.totalFreight || '0',
+        totalInsurance: originalInvoice.totalInsurance || '0',
+        totalOtherExpenses: originalInvoice.totalOtherExpenses || '0',
+        totalIcms: originalInvoice.totalIcms || '0',
+        totalPis: originalInvoice.totalPis || '0',
+        totalCofins: originalInvoice.totalCofins || '0',
+        totalIpi: originalInvoice.totalIpi || '0',
+        totalInvoice: originalInvoice.totalInvoice,
+        paymentMethod: originalInvoice.paymentMethod || 'a_prazo',
+        notes: `NF-e de DEVOLUÇÃO referente à NF-e nº ${originalInvoice.invoiceNumber || 'N/A'} (chave: ${originalInvoice.accessKey || 'N/A'}). Motivo: ${justification}`,
+        environment: originalInvoice.environment || 'homologacao',
+        omieInstanceId: originalInvoice.omieInstanceId,
+        salesCardId: originalInvoice.salesCardId,
+        createdBy: user?.email || null,
+        status: 'draft',
+      });
+
+      for (const item of originalItems) {
+        await storage.createFiscalInvoiceItem({
+          invoiceId: returnInvoice.id,
+          itemNumber: item.itemNumber,
+          productId: item.productId,
+          productCode: item.productCode,
+          productName: item.productName,
+          ncm: item.ncm,
+          cest: item.cest,
+          cfop: '1202',
+          unit: item.unit,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          discount: item.discount,
+          csosn: item.csosn,
+          cstIcms: item.cstIcms,
+          baseIcms: item.baseIcms,
+          aliqIcms: item.aliqIcms,
+          valorIcms: item.valorIcms,
+          cstPis: item.cstPis,
+          basePis: item.basePis,
+          aliqPis: item.aliqPis,
+          valorPis: item.valorPis,
+          cstCofins: item.cstCofins,
+          baseCofins: item.baseCofins,
+          aliqCofins: item.aliqCofins,
+          valorCofins: item.valorCofins,
+          cstIpi: item.cstIpi,
+          baseIpi: item.baseIpi,
+          aliqIpi: item.aliqIpi,
+          valorIpi: item.valorIpi,
+          lotNumber: item.lotNumber,
+          lotId: item.lotId,
+        });
+      }
+
+      await storage.createFiscalInvoiceEvent({
+        invoiceId: returnInvoice.id,
+        eventType: 'created',
+        status: 'success',
+        description: `NF-e de devolução criada referente à NF-e original nº ${originalInvoice.invoiceNumber || 'N/A'}. Motivo: ${justification}`,
+        createdBy: user?.email || null,
+      });
+
+      // Cancel associated receivables from original invoice
+      try {
+        const allReceivables = await storage.getReceivables({});
+        const linkedReceivables = allReceivables.filter(r => r.fiscalInvoiceId === req.params.id);
+        for (const rec of linkedReceivables) {
+          await storage.updateReceivable(rec.id, {
+            status: 'cancelada',
+            notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Devolução de venda: ${justification}`,
+          });
+          console.log(`💰 [NF-e RETURN] Conta a receber ${rec.id} cancelada (Devolução NF-e ${req.params.id})`);
+        }
+      } catch (recErr: any) {
+        console.warn('⚠️ Erro ao cancelar contas a receber após devolução NF-e:', recErr.message);
+      }
+
+      // Reverse stock consumption for returned invoice
+      try {
+        const { reverseStockConsumption } = await import('./inventory-routes.js');
+        const userId = req.user?.id || req.userId || null;
+        for (const item of originalItems) {
+          if (item.productId) {
+            const product = await storage.getProduct(item.productId);
+            const instanceId = product?.omieInstanceId || 'default';
+            await reverseStockConsumption(
+              item.productId,
+              instanceId,
+              parseFloat(item.quantity),
+              'invoice',
+              req.params.id,
+              userId,
+            );
+          }
+        }
+      } catch (stockErr: any) {
+        console.warn('⚠️ Erro ao reverter estoque após devolução NF-e:', stockErr.message);
+      }
+
+      console.log(`📦 [NF-e RETURN] NF-e de devolução ${returnInvoice.id} criada para NF-e original ${req.params.id}`);
+      res.status(201).json({
+        success: true,
+        returnInvoice,
+        message: `NF-e de devolução criada com sucesso. Realize a emissão para finalizar o processo.`,
+        receivablesCancelled: true,
+      });
     } catch (error: any) {
       res.status(500).json({ success: false, errorMessage: error.message });
     }

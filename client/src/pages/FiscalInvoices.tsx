@@ -18,7 +18,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   FileText, Plus, Send, XCircle, Trash2, Eye, RefreshCw,
   CheckCircle2, Clock, AlertTriangle, ShieldCheck, Award,
-  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer
+  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer, RotateCcw
 } from 'lucide-react';
 import { generateDanfePdf } from '@/lib/danfe-generator';
 
@@ -189,9 +189,11 @@ export default function FiscalInvoices() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showReturnDialog, setShowReturnDialog] = useState(false);
   const [showCertDialog, setShowCertDialog] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [cancelJustification, setCancelJustification] = useState('');
+  const [returnJustification, setReturnJustification] = useState('');
   const [certFile, setCertFile] = useState<File | null>(null);
   const [certPassword, setCertPassword] = useState('');
   const [newInvoice, setNewInvoice] = useState({
@@ -332,12 +334,45 @@ export default function FiscalInvoices() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/fiscal-invoices'] });
       queryClient.invalidateQueries({ queryKey: ['/api/fiscal-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       setShowCancelDialog(false);
       setCancelJustification('');
-      toast({ title: 'NF-e cancelada', description: 'Nota fiscal cancelada com sucesso.' });
+      toast({ title: 'NF-e cancelada', description: 'Nota fiscal cancelada e cobranças vinculadas canceladas com sucesso.' });
     },
     onError: (err: any) => {
-      toast({ title: 'Erro ao cancelar NF-e', description: err.message, variant: 'destructive' });
+      if (err.expired) {
+        setShowCancelDialog(false);
+        setCancelJustification('');
+        toast({
+          title: 'Prazo de cancelamento expirado',
+          description: 'O cancelamento só é permitido até 24h após a emissão. Utilize a opção de devolução.',
+          variant: 'destructive',
+        });
+        if (selectedInvoiceId) {
+          setShowReturnDialog(true);
+        }
+      } else {
+        toast({ title: 'Erro ao cancelar NF-e', description: err.message, variant: 'destructive' });
+      }
+    },
+  });
+
+  const returnMutation = useMutation({
+    mutationFn: ({ id, justification }: { id: string; justification: string }) =>
+      apiRequest('POST', `/api/fiscal-invoices/${id}/return`, { justification }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/fiscal-invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/fiscal-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+      setShowReturnDialog(false);
+      setReturnJustification('');
+      toast({
+        title: 'NF-e de devolução criada',
+        description: 'Nota fiscal de devolução gerada e cobranças da venda original canceladas. Realize a emissão da NF-e de devolução para finalizar.',
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao criar NF-e de devolução', description: err.message, variant: 'destructive' });
     },
   });
 
@@ -495,9 +530,26 @@ export default function FiscalInvoices() {
     setShowDetailDialog(true);
   }
 
+  function isWithin24h(inv: any): boolean {
+    const authDate = inv.authorizationDate || inv.emissionDate || inv.createdAt;
+    if (!authDate) return true;
+    const hoursSince = (Date.now() - new Date(authDate).getTime()) / (1000 * 60 * 60);
+    return hoursSince <= 24;
+  }
+
   function openCancel(id: string) {
+    const inv = invoices?.find((i: any) => i.id === id);
     setSelectedInvoiceId(id);
-    setShowCancelDialog(true);
+    if (inv && !isWithin24h(inv)) {
+      setShowReturnDialog(true);
+    } else {
+      setShowCancelDialog(true);
+    }
+  }
+
+  function openReturn(id: string) {
+    setSelectedInvoiceId(id);
+    setShowReturnDialog(true);
   }
 
   function isCertificateExpired(validUntil: string) {
@@ -680,9 +732,14 @@ export default function FiscalInvoices() {
                                 <Printer className="h-4 w-4 text-green-600" />
                               </Button>
                             )}
-                            {inv.status === 'authorized' && (
-                              <Button variant="ghost" size="icon" title="Cancelar NF-e" onClick={() => openCancel(inv.id)}>
+                            {inv.status === 'authorized' && isWithin24h(inv) && (
+                              <Button variant="ghost" size="icon" title="Cancelar NF-e (dentro de 24h)" onClick={() => openCancel(inv.id)}>
                                 <XCircle className="h-4 w-4 text-red-600" />
+                              </Button>
+                            )}
+                            {inv.status === 'authorized' && !isWithin24h(inv) && (
+                              <Button variant="ghost" size="icon" title="Devolver NF-e (prazo de cancelamento expirado)" onClick={() => openReturn(inv.id)}>
+                                <RotateCcw className="h-4 w-4 text-orange-600" />
                               </Button>
                             )}
                             {inv.status !== 'authorized' && (
@@ -1260,9 +1317,14 @@ export default function FiscalInvoices() {
                     Emitir NF-e
                   </Button>
                 )}
-                {invoiceDetail.status === 'authorized' && (
+                {invoiceDetail.status === 'authorized' && isWithin24h(invoiceDetail) && (
                   <Button variant="destructive" onClick={() => openCancel(invoiceDetail.id)}>
                     <XCircle className="h-4 w-4 mr-2" /> Cancelar NF-e
+                  </Button>
+                )}
+                {invoiceDetail.status === 'authorized' && !isWithin24h(invoiceDetail) && (
+                  <Button variant="outline" className="border-orange-300 text-orange-700 hover:bg-orange-50" onClick={() => openReturn(invoiceDetail.id)}>
+                    <RotateCcw className="h-4 w-4 mr-2" /> Devolver NF-e
                   </Button>
                 )}
                 {invoiceDetail.status !== 'authorized' && (
@@ -1290,7 +1352,7 @@ export default function FiscalInvoices() {
             <DialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="h-5 w-5" /> Cancelar NF-e
             </DialogTitle>
-            <DialogDescription>Esta ação é irreversível. A NF-e autorizada será cancelada junto à SEFAZ.</DialogDescription>
+            <DialogDescription>Esta ação é irreversível. A NF-e autorizada será cancelada junto à SEFAZ e as cobranças vinculadas serão automaticamente canceladas. O cancelamento só é permitido até 24 horas após a emissão.</DialogDescription>
           </DialogHeader>
           <div>
             <Label>Justificativa (mínimo 15 caracteres) *</Label>
@@ -1315,6 +1377,56 @@ export default function FiscalInvoices() {
             >
               {cancelMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirmar Cancelamento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Return (Devolução) Dialog */}
+      <Dialog open={showReturnDialog} onOpenChange={(open) => { setShowReturnDialog(open); if (!open) setReturnJustification(''); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <RotateCcw className="h-5 w-5" /> Devolução de NF-e
+            </DialogTitle>
+            <DialogDescription>
+              O prazo de cancelamento (24h) desta NF-e já expirou. Será criada uma NF-e de devolução e as cobranças vinculadas à venda original serão automaticamente canceladas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
+              <p className="text-sm text-orange-800 dark:text-orange-300 font-medium">O que acontecerá:</p>
+              <ul className="text-sm text-orange-700 dark:text-orange-400 mt-1 space-y-1 list-disc list-inside">
+                <li>Uma NF-e de devolução (entrada) será criada em rascunho</li>
+                <li>As contas a receber vinculadas serão canceladas</li>
+                <li>O estoque dos produtos será devolvido</li>
+                <li>Você precisará emitir a NF-e de devolução para finalizar</li>
+              </ul>
+            </div>
+            <div>
+              <Label>Justificativa da devolução (mínimo 15 caracteres) *</Label>
+              <Textarea
+                value={returnJustification}
+                onChange={e => setReturnJustification(e.target.value)}
+                placeholder="Informe o motivo da devolução..."
+                rows={3}
+              />
+              <p className="text-xs text-muted-foreground mt-1">{returnJustification.length}/15 caracteres mínimos</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReturnDialog(false)}>Voltar</Button>
+            <Button
+              className="bg-orange-600 hover:bg-orange-700 text-white"
+              disabled={returnJustification.length < 15 || returnMutation.isPending}
+              onClick={() => {
+                if (selectedInvoiceId) {
+                  returnMutation.mutate({ id: selectedInvoiceId, justification: returnJustification });
+                }
+              }}
+            >
+              {returnMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Criar NF-e de Devolução
             </Button>
           </DialogFooter>
         </DialogContent>
