@@ -181,9 +181,34 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  const cleanAccountData = (data: any) => {
+    const cleaned = { ...data };
+    const decimalFields = ['balance', 'bbJurosPercentual', 'bbMultaPercentual'];
+    for (const field of decimalFields) {
+      if (cleaned[field] === '' || cleaned[field] === null || cleaned[field] === undefined) {
+        cleaned[field] = field === 'balance' ? '0' : null;
+      } else if (typeof cleaned[field] === 'string') {
+        cleaned[field] = cleaned[field].replace(',', '.');
+      }
+    }
+    const nullableStringFields = ['bankName', 'bankCode', 'agency', 'accountNumber', 'pixKey',
+      'omieInstanceId', 'description', 'accountSubtype',
+      'bbClientId', 'bbClientSecret', 'bbDevAppKey', 'bbConvenio', 'bbContrato',
+      'bbCarteira', 'bbVariacaoCarteira', 'bbDiasCompensacao', 'bbSenhaBoletos',
+      'bbInstrucaoLinha1', 'bbInstrucaoLinha2', 'bbInstrucaoLinha3', 'bbInstrucaoLinha4',
+      'bbPixClientId', 'bbPixClientSecret',
+      'bbPagamentosClientId', 'bbPagamentosClientSecret',
+      'bbExtratoClientId', 'bbExtratoClientSecret',
+      'interClientId', 'interClientSecret', 'interCertificateCrt', 'interCertificateKey'];
+    for (const field of nullableStringFields) {
+      if (cleaned[field] === '') cleaned[field] = null;
+    }
+    return cleaned;
+  };
+
   app.post('/api/financial/accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const account = await storage.createFinancialAccount(req.body);
+      const account = await storage.createFinancialAccount(cleanAccountData(req.body));
       res.status(201).json(account);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -192,7 +217,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/accounts/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const account = await storage.updateFinancialAccount(req.params.id, req.body);
+      const account = await storage.updateFinancialAccount(req.params.id, cleanAccountData(req.body));
       res.json(account);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
