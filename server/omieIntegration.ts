@@ -840,7 +840,7 @@ export class OmieService {
                 }
                 updateData.firstName = firstName;
                 updateData.lastName = lastName;
-                updateData.isActive = existingUser.isActive || vendor.inativo === 'N';
+                updateData.isActive = vendor.inativo === 'N';
               }
               
               await this.storage.updateUser(existingUser.id, updateData);
