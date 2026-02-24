@@ -202,6 +202,20 @@ export function registerBillingPipelineRoutes(app: Express) {
       let fiscalInvoiceId: string | null = null;
 
       if (stage === 'faturado' && item.stage !== 'faturado') {
+        const stockCheck = await validateStockForBilling(item);
+        if (!stockCheck.valid) {
+          const shortageDetails = stockCheck.shortages.map(s =>
+            `• ${s.productName}: necessário ${s.required}, disponível ${s.available}`
+          ).join('\n');
+          console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - estoque insuficiente`);
+          return res.status(400).json({
+            message: 'Faturamento bloqueado: estoque insuficiente',
+            stockError: true,
+            shortages: stockCheck.shortages,
+            details: `Os seguintes produtos não possuem estoque suficiente para faturamento:\n${shortageDetails}`,
+          });
+        }
+
         let lotMap: Record<string, string[]> = {};
         try {
           lotMap = await deductStockForBilling(item, user);
@@ -366,6 +380,44 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.status(500).json({ message: error.message });
     }
   });
+}
+
+async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: Array<{ productId: string; productName: string; required: number; available: number }> }> {
+  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+  if (!products || products.length === 0) return { valid: true, shortages: [] };
+
+  const instanceId = item.omieInstanceId;
+  if (!instanceId) return { valid: true, shortages: [] };
+
+  const shortages: Array<{ productId: string; productName: string; required: number; available: number }> = [];
+
+  for (const product of products) {
+    if (!product.id) continue;
+
+    const lots = await storage.getInventoryLots({
+      productId: product.id,
+      instanceId,
+      stockType: 'in_use',
+      isActive: true,
+    });
+
+    let totalAvailable = 0;
+    for (const lot of lots) {
+      const qty = parseFloat(lot.quantity?.toString() || '0');
+      if (qty > 0) totalAvailable += qty;
+    }
+
+    if (totalAvailable < product.quantity) {
+      shortages.push({
+        productId: product.id,
+        productName: product.name,
+        required: product.quantity,
+        available: totalAvailable,
+      });
+    }
+  }
+
+  return { valid: shortages.length === 0, shortages };
 }
 
 async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
