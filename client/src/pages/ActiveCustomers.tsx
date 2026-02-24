@@ -490,6 +490,7 @@ export default function ActiveCustomers() {
   // Query para vendedores ativos (filtro) - endpoint dedicado server-side
   const { data: activeSellers = [] } = useQuery<Array<{ id: string; name: string }>>({
     queryKey: ["/api/sellers/active"],
+    staleTime: 30000,
   });
 
   const uploadMutation = useMutation({

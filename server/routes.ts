@@ -916,6 +916,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/sellers/active', authenticateUser, async (req: any, res) => {
     try {
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.set('Pragma', 'no-cache');
       const allUsers = await storage.getUsers();
       const activeSellers = allUsers
         .filter(u => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))
@@ -924,6 +926,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}`,
         }))
         .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      console.log(`📋 [SELLERS] Retornando ${activeSellers.length} vendedores ativos`);
       res.json(activeSellers);
     } catch (error) {
       console.error("Error fetching active sellers:", error);

@@ -268,14 +268,20 @@ async function syncOverdueDebts(horario: string) {
 
 // Sincronização completa automática de hora em hora a partir das 6h
 // Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
-cron.schedule('0 6-23 * * *', () => {
-  const now = nowBrazil();
-  const hour = now.getHours();
-  const horario = `${hour.toString().padStart(2, '0')}:00h`;
-  syncComplete(horario);
-}, {
-  timezone: "America/Sao_Paulo"
-});
+// IMPORTANTE: Só executa em produção para evitar race condition dev+prod no mesmo banco
+if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
+  cron.schedule('0 6-23 * * *', () => {
+    const now = nowBrazil();
+    const hour = now.getHours();
+    const horario = `${hour.toString().padStart(2, '0')}:00h`;
+    syncComplete(horario);
+  }, {
+    timezone: "America/Sao_Paulo"
+  });
+  console.log('✅ [SCHEDULER] Sincronização Omie horária ativada (ambiente de produção)');
+} else {
+  console.log('⚠️ [SCHEDULER] Sincronização Omie horária DESATIVADA (ambiente de desenvolvimento)');
+}
 
 // DESATIVADO: Sistema migrado para cards permanentes + order_history
 // Geração automática de agenda de visitas REMOVIDA após migração para cards permanentes
