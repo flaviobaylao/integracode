@@ -14628,7 +14628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== OMIE SALES ORDER INTEGRATION =====
 
   // Bulk send multiple cards to Omie
-  app.post('/api/sales-cards/bulk-send-to-omie', isAuthenticated, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/sales-cards/bulk-send-to-omie', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { cardIds } = req.body;
       if (!Array.isArray(cardIds) || cardIds.length === 0) {
@@ -14680,7 +14680,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Bulk cancel (clear sale data) for multiple cards
-  app.post('/api/sales-cards/bulk-cancel', isAuthenticated, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/sales-cards/bulk-cancel', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { cardIds } = req.body;
       if (!Array.isArray(cardIds) || cardIds.length === 0) {
