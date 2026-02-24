@@ -487,9 +487,9 @@ export default function ActiveCustomers() {
     queryKey: ["/api/service-logs/last/customer"],
   });
 
-  // Query para vendedores ativos (filtro)
-  const { data: activeUsers = [] } = useQuery<Array<{ id: string; firstName: string; lastName: string; role: string; isActive: boolean }>>({
-    queryKey: ["/api/users"],
+  // Query para vendedores ativos (filtro) - endpoint dedicado server-side
+  const { data: activeSellers = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/sellers/active"],
   });
 
   const uploadMutation = useMutation({
@@ -656,11 +656,8 @@ export default function ActiveCustomers() {
     });
   };
 
-  // Obter lista de vendedores e telemarketing ativos do sistema
-  const sellers = activeUsers
-    .filter(u => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))
-    .map(u => ({ id: u.id, name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}` }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Lista de vendedores ativos (filtrado no servidor)
+  const sellers = activeSellers;
 
   // Obter lista única de dias de rota
   const daysOfRoute = Array.from(

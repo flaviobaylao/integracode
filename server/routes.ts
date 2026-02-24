@@ -914,6 +914,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/sellers/active', authenticateUser, async (req: any, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      const activeSellers = allUsers
+        .filter(u => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))
+        .map(u => ({
+          id: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}`,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      res.json(activeSellers);
+    } catch (error) {
+      console.error("Error fetching active sellers:", error);
+      res.status(500).json({ message: "Failed to fetch active sellers" });
+    }
+  });
+
   app.put('/api/users/:id', authenticateUser, async (req: any, res) => {
     try {
       const userId = req.params.id;
