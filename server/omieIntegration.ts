@@ -719,6 +719,8 @@ export class OmieService {
   // Método para listar e sincronizar todos os vendedores do Omie
   async syncVendors(): Promise<{ totalProcessed: number; imported: number; updated: number; errors: any[] }> {
     console.log('🔄 Iniciando sincronização de vendedores do Omie...');
+    const instanceId = this.omieInstanceId || 'default';
+    const instanceLabel = this.omieInstanceName || instanceId;
     
     const results = {
       totalProcessed: 0,
@@ -728,35 +730,55 @@ export class OmieService {
     };
 
     try {
+      // Pre-load all existing users to enable cross-instance deduplication
+      const allUsers = await this.storage.getUsers();
+      const emailIndex = new Map<string, any>();
+      const nameIndex = new Map<string, any>();
+      const vendorCodeIndex = new Map<string, any>();
+
+      for (const user of allUsers) {
+        if (user.email) {
+          emailIndex.set(user.email.toLowerCase(), user);
+        }
+        // Build name index for fuzzy matching (normalize: lowercase, trim, remove trailing dots)
+        const normName = `${user.firstName || ''} ${user.lastName || ''}`.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+        if (normName && normName !== ' ') {
+          // Store first match only - prefer users that already have omieVendorCode
+          if (!nameIndex.has(normName) || user.omieVendorCode) {
+            nameIndex.set(normName, user);
+          }
+        }
+        // Index by all known vendor codes (from omieVendorCodes JSON)
+        if (user.omieVendorCodes && typeof user.omieVendorCodes === 'object') {
+          for (const code of Object.values(user.omieVendorCodes as Record<string, string>)) {
+            vendorCodeIndex.set(code, user);
+          }
+        }
+        // Also index by legacy omieVendorCode field
+        if (user.omieVendorCode) {
+          vendorCodeIndex.set(user.omieVendorCode, user);
+        }
+      }
+
       let page = 1;
       let hasMore = true;
       const registrosPerPage = 100;
       let totalPages = 1;
 
       while (hasMore && page <= totalPages) {
-        console.log(`📄 Buscando página ${page} de vendedores (total páginas: ${totalPages})...`);
+        console.log(`📄 [${instanceLabel}] Buscando página ${page} de vendedores (total páginas: ${totalPages})...`);
         
         const response = await this.makeRequest('/geral/vendedores/', 'ListarVendedores', {
           pagina: page,
           registros_por_pagina: registrosPerPage
         });
 
-        // Atualizar total de páginas com a resposta da API
         totalPages = response.total_de_paginas || totalPages;
-        const totalRecords = response.total_de_registros || 0;
-        
-        console.log(`📊 Página ${page}/${totalPages} - Total registros: ${totalRecords}`);
-
         const vendors = response.cadastro ?? response.cadastros ?? [];
         
-        console.log(`📋 Vendedores na página ${page}: ${vendors.length}`);
-        
-        if (vendors.length === 0) {
-          console.log(`⚠️ Página ${page} vazia - verificando se há mais páginas...`);
-          if (page >= totalPages) {
-            hasMore = false;
-            break;
-          }
+        if (vendors.length === 0 && page >= totalPages) {
+          hasMore = false;
+          break;
         }
 
         for (const vendor of vendors) {
@@ -769,65 +791,85 @@ export class OmieService {
               continue;
             }
 
-            // DEBUG: Log do valor do campo inativo
-            console.log(`🔍 DEBUG Vendedor: ${vendor.nome} - inativo: "${vendor.inativo}" (tipo: ${typeof vendor.inativo})`);
-
-            // IMPORTANTE: Sincronizar TODOS os vendedores (ativos E inativos)
-            // Mesmo vendedores inativos podem ter clientes atribuídos
-            const isInactive = vendor.inativo === 'S' || vendor.inativo === 'true' || vendor.inativo === true;
-            if (isInactive) {
-              console.log(`📋 Vendedor inativo será incluído: ${vendor.nome} (inativo: ${vendor.inativo})`);
-            }
-
-            // Parse o nome do vendedor
             const fullName = vendor.nome || '';
             const nameParts = fullName.trim().split(' ');
             const firstName = nameParts[0] || '';
             const lastName = nameParts.slice(1).join(' ') || '';
+            const normName = fullName.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+            const vendorEmail = vendor.email || '';
+            const isRealEmail = vendorEmail && !vendorEmail.includes('vendor-') && !vendorEmail.includes('@omie.com');
 
-            // Verificar se o vendedor já existe no banco
-            const existingUser = await this.storage.getUserByEmail(vendor.email || `vendor-${vendorCode}@omie.com`);
+            // DEDUPLICATION: Find existing user across all instances
+            // Priority: 1) Same vendor code already mapped, 2) Same real email, 3) Same normalized name
+            let existingUser = vendorCodeIndex.get(vendorCode) || null;
             
-            const userData = {
-              firstName,
-              lastName,
-              email: vendor.email || `vendor-${vendorCode}@omie.com`,
-              role: 'vendedor' as const,
-              isActive: vendor.inativo === 'N', // Vendedor ativo se inativo='N'
-              omieVendorCode: vendorCode, // CRÍTICO: Vincular código Omie ao usuário
-            };
-
-            if (existingUser) {
-              // CRITICAL: NÃO sobrescrever o role de usuários com funções especiais
-              // Apenas atualizar dados básicos e omieVendorCode, preservando o role atual
-              const protectedRoles = ['admin', 'coordinator', 'administrative', 'telemarketing', 'motorista'];
-              if (protectedRoles.includes(existingUser.role)) {
-                // Atualizar APENAS o omieVendorCode para usuários protegidos (NÃO alterar role)
-                await this.storage.updateUser(existingUser.id, { omieVendorCode: vendorCode });
-                console.log(`✅ Código Omie ${vendorCode} vinculado ao usuário protegido: ${fullName} (${existingUser.role}) - role PRESERVADO`);
-                results.updated++;
-                continue;
-              }
-              
-              // Atualizar vendedor existente (apenas se já for vendedor)
-              await this.storage.updateUser(existingUser.id, userData);
-              results.updated++;
-              console.log(`✅ Vendedor atualizado: ${fullName} (${vendorCode}) - omieVendorCode: ${vendorCode}`);
-            } else {
-              // Criar novo vendedor
-              await this.storage.createUser({
-                id: `omie-vendor-${vendorCode}`,
-                ...userData,
-                password: '', // Vai usar autenticação via Replit
-              });
-              results.imported++;
-              console.log(`✅ Vendedor importado: ${fullName} (${vendorCode})`);
+            if (!existingUser && isRealEmail) {
+              existingUser = emailIndex.get(vendorEmail.toLowerCase()) || null;
+            }
+            
+            if (!existingUser && normName) {
+              existingUser = nameIndex.get(normName) || null;
             }
 
-            // Armazenar no cache
+            // Build the merged omieVendorCodes map
+            const currentCodes: Record<string, string> = existingUser?.omieVendorCodes 
+              ? (typeof existingUser.omieVendorCodes === 'object' ? { ...existingUser.omieVendorCodes as Record<string, string> } : {})
+              : {};
+            currentCodes[instanceId] = vendorCode;
+
+            if (existingUser) {
+              const protectedRoles = ['admin', 'coordinator', 'administrative', 'telemarketing', 'motorista'];
+              const updateData: any = {
+                omieVendorCode: vendorCode,
+                omieVendorCodes: currentCodes,
+              };
+
+              if (!protectedRoles.includes(existingUser.role)) {
+                // Update name/email only if vendor has real email or existing has fake email
+                if (isRealEmail && (!existingUser.email || existingUser.email.includes('vendor-') || existingUser.email.includes('@omie.com'))) {
+                  updateData.email = vendorEmail;
+                }
+                updateData.firstName = firstName;
+                updateData.lastName = lastName;
+                updateData.isActive = existingUser.isActive || vendor.inativo === 'N';
+              }
+              
+              await this.storage.updateUser(existingUser.id, updateData);
+              results.updated++;
+              console.log(`✅ [${instanceLabel}] Vendedor unificado: ${fullName} (código ${vendorCode}) -> user ${existingUser.id} | códigos: ${JSON.stringify(currentCodes)}`);
+
+              // Update indexes for subsequent lookups in this batch
+              vendorCodeIndex.set(vendorCode, { ...existingUser, omieVendorCodes: currentCodes });
+              if (isRealEmail) emailIndex.set(vendorEmail.toLowerCase(), existingUser);
+            } else {
+              // Create new vendor - use first real email or generate placeholder
+              const newEmail = isRealEmail ? vendorEmail : `vendor-${vendorCode}@omie.com`;
+              const newUser = await this.storage.createUser({
+                id: `omie-vendor-${vendorCode}`,
+                firstName,
+                lastName,
+                email: newEmail,
+                role: 'vendedor' as const,
+                isActive: vendor.inativo === 'N',
+                omieVendorCode: vendorCode,
+                omieVendorCodes: currentCodes,
+                password: '',
+              });
+              results.imported++;
+              console.log(`✅ [${instanceLabel}] Vendedor importado: ${fullName} (código ${vendorCode}) | códigos: ${JSON.stringify(currentCodes)}`);
+
+              // Index the new user
+              const userObj = { id: `omie-vendor-${vendorCode}`, firstName, lastName, email: newEmail, omieVendorCode: vendorCode, omieVendorCodes: currentCodes, role: 'vendedor' };
+              vendorCodeIndex.set(vendorCode, userObj);
+              emailIndex.set(newEmail.toLowerCase(), userObj);
+              if (normName) nameIndex.set(normName, userObj);
+            }
+
+            // Store in cache with the unified user ID
+            const userId = existingUser?.id || `omie-vendor-${vendorCode}`;
             this.sellersCache.set(vendorCode, {
               name: fullName,
-              id: vendorCode
+              id: userId
             });
 
           } catch (error) {
@@ -836,18 +878,13 @@ export class OmieService {
           }
         }
 
-        // Avançar para a próxima página
         page++;
-        
-        // Verificar se há mais páginas usando o total de páginas da API
         if (page > totalPages) {
-          console.log(`✅ Todas as ${totalPages} páginas de vendedores processadas`);
           hasMore = false;
         }
       }
 
-      console.log('🎉 Sincronização de vendedores concluída:', results);
-      console.log(`📊 Total processado: ${results.totalProcessed}, Importados: ${results.imported}, Atualizados: ${results.updated}, Erros: ${results.errors.length}`);
+      console.log(`🎉 [${instanceLabel}] Sincronização de vendedores concluída: processados=${results.totalProcessed}, importados=${results.imported}, atualizados=${results.updated}, erros=${results.errors.length}`);
       return results;
 
     } catch (error) {
@@ -2724,13 +2761,22 @@ export class OmieService {
           });
           
           if (seller) {
-            // Prioridade 1: Usar omieVendorCode armazenado no usuário
-            if (seller.omieVendorCode) {
-              omieVendorCode = seller.omieVendorCode;
-              console.log(`✅ Código de vendedor Omie do usuário: ${seller.email} -> ${omieVendorCode}`);
+            // Prioridade 1: Usar código específico da instância em omieVendorCodes
+            const instanceId = this.omieInstanceId || 'default';
+            if (seller.omieVendorCodes && typeof seller.omieVendorCodes === 'object') {
+              const codes = seller.omieVendorCodes as Record<string, string>;
+              if (codes[instanceId]) {
+                omieVendorCode = parseInt(codes[instanceId], 10);
+                console.log(`✅ Código de vendedor Omie (instância ${instanceId}): ${seller.email} -> ${omieVendorCode}`);
+              }
             }
-            // Prioridade 2: Buscar pelo email no Omie
-            else if (seller.email) {
+            // Prioridade 2: Usar omieVendorCode legado
+            if (!omieVendorCode && seller.omieVendorCode) {
+              omieVendorCode = parseInt(seller.omieVendorCode, 10) || seller.omieVendorCode;
+              console.log(`✅ Código de vendedor Omie (legado): ${seller.email} -> ${omieVendorCode}`);
+            }
+            // Prioridade 3: Buscar pelo email no Omie
+            if (!omieVendorCode && seller.email) {
               const omieVendor = await this.getVendorByEmail(seller.email);
               if (omieVendor) {
                 omieVendorCode = omieVendor.codigo;

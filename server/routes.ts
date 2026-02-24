@@ -23947,6 +23947,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { registerNfeRoutes } = await import('./nfe-routes.js');
   registerNfeRoutes(app);
 
+  // ====== MERGE DUPLICATE VENDORS ENDPOINT ======
+  app.post('/api/admin/merge-duplicate-vendors', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Acesso negado. Apenas admin.' });
+      }
+
+      const { dryRun = true } = req.body;
+      console.log(`🔄 [VENDOR-MERGE] Iniciando mesclagem de vendedores duplicados (dryRun: ${dryRun})...`);
+
+      const allUsers = await storage.getUsers();
+      const vendorUsers = allUsers.filter(u => u.id.startsWith('omie-vendor-'));
+
+      // Group by normalized name
+      const nameGroups = new Map<string, typeof vendorUsers>();
+      for (const v of vendorUsers) {
+        const normName = `${v.firstName || ''} ${v.lastName || ''}`.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+        if (!normName) continue;
+        if (!nameGroups.has(normName)) nameGroups.set(normName, []);
+        nameGroups.get(normName)!.push(v);
+      }
+
+      const mergeLog: any[] = [];
+      let mergedCount = 0;
+      let reassignedCustomers = 0;
+      let reassignedRoutes = 0;
+      let reassignedSalesCards = 0;
+      let deletedUsers = 0;
+
+      for (const [normName, group] of nameGroups) {
+        if (group.length <= 1) continue;
+
+        // Pick primary: prefer user with real email, then most vendor codes, then first created
+        const sorted = group.sort((a, b) => {
+          const aReal = a.email && !a.email.includes('vendor-') && !a.email.includes('@omie.com') ? 1 : 0;
+          const bReal = b.email && !b.email.includes('vendor-') && !b.email.includes('@omie.com') ? 1 : 0;
+          if (aReal !== bReal) return bReal - aReal;
+          const aActive = a.isActive ? 1 : 0;
+          const bActive = b.isActive ? 1 : 0;
+          if (aActive !== bActive) return bActive - aActive;
+          return 0;
+        });
+
+        const primary = sorted[0];
+        const duplicates = sorted.slice(1);
+
+        // Merge vendor codes from all duplicates into primary
+        const mergedCodes: Record<string, string> = primary.omieVendorCodes 
+          ? { ...(primary.omieVendorCodes as Record<string, string>) }
+          : {};
+        
+        for (const dup of duplicates) {
+          if (dup.omieVendorCodes && typeof dup.omieVendorCodes === 'object') {
+            Object.assign(mergedCodes, dup.omieVendorCodes as Record<string, string>);
+          }
+          if (dup.omieVendorCode) {
+            // Store under a generic key if we don't know the instance
+            const existingValues = Object.values(mergedCodes);
+            if (!existingValues.includes(dup.omieVendorCode)) {
+              mergedCodes[`legacy_${dup.omieVendorCode}`] = dup.omieVendorCode;
+            }
+          }
+        }
+
+        const entry = {
+          primaryId: primary.id,
+          primaryName: `${primary.firstName} ${primary.lastName}`.trim(),
+          primaryEmail: primary.email,
+          duplicateIds: duplicates.map(d => d.id),
+          mergedCodes,
+          customersReassigned: 0,
+          routesReassigned: 0,
+          salesCardsReassigned: 0,
+        };
+
+        if (!dryRun) {
+          // Update primary user with merged codes
+          await storage.updateUser(primary.id, {
+            omieVendorCodes: mergedCodes,
+            isActive: group.some(g => g.isActive) || false,
+          });
+
+          // Reassign all references from duplicates to primary
+          for (const dup of duplicates) {
+            // Reassign customers
+            const custResult = await db.update(customers).set({ sellerId: primary.id }).where(eq(customers.sellerId, dup.id)).returning();
+            entry.customersReassigned += custResult.length;
+            reassignedCustomers += custResult.length;
+
+            // Reassign daily routes
+            const routeResult = await db.update(dailyRoutes).set({ sellerId: primary.id }).where(eq(dailyRoutes.sellerId, dup.id)).returning();
+            entry.routesReassigned += routeResult.length;
+            reassignedRoutes += routeResult.length;
+
+            // Reassign sales cards
+            const scResult = await db.update(salesCards).set({ sellerId: primary.id }).where(eq(salesCards.sellerId, dup.id)).returning();
+            entry.salesCardsReassigned += scResult.length;
+            reassignedSalesCards += scResult.length;
+
+            // Reassign leads
+            await db.update(leads).set({ sellerId: primary.id }).where(eq(leads.sellerId, dup.id));
+
+            // Delete duplicate user
+            await db.delete(users).where(eq(users.id, dup.id));
+            deletedUsers++;
+          }
+        }
+
+        mergeLog.push(entry);
+        mergedCount++;
+      }
+
+      console.log(`🎉 [VENDOR-MERGE] Concluído: ${mergedCount} grupos mesclados, ${deletedUsers} duplicatas removidas, ${reassignedCustomers} clientes reatribuídos`);
+
+      res.json({
+        success: true,
+        dryRun,
+        mergedGroups: mergedCount,
+        deletedUsers,
+        reassignedCustomers,
+        reassignedRoutes,
+        reassignedSalesCards,
+        details: mergeLog,
+      });
+    } catch (error: any) {
+      console.error('❌ Erro na mesclagem de vendedores:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Registrar rotas de Estoque (Inventário)
   const { registerInventoryRoutes } = await import('./inventory-routes.js');
   registerInventoryRoutes(app);

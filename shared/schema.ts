@@ -181,6 +181,8 @@ export const users = pgTable("users", {
   
   // Código do vendedor no Omie (para mapeamento correto de clientes)
   omieVendorCode: varchar("omie_vendor_code"),
+  // Mapeamento de códigos de vendedor por instância Omie: {"instanceId": "vendorCode", ...}
+  omieVendorCodes: jsonb("omie_vendor_codes").$type<Record<string, string>>(),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

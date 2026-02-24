@@ -671,8 +671,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByOmieVendorCode(omieVendorCode: string): Promise<User | undefined> {
+    // First try the legacy single-code field
     const [user] = await db.select().from(users).where(eq(users.omieVendorCode, omieVendorCode));
-    return user;
+    if (user) return user;
+    // Then search in the multi-instance JSON codes field
+    const allUsers = await db.select().from(users).where(sql`omie_vendor_codes IS NOT NULL`);
+    return allUsers.find(u => {
+      if (u.omieVendorCodes && typeof u.omieVendorCodes === 'object') {
+        return Object.values(u.omieVendorCodes as Record<string, string>).includes(omieVendorCode);
+      }
+      return false;
+    });
   }
 
   async getUsers(): Promise<User[]> {
