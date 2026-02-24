@@ -2750,54 +2750,65 @@ export class OmieService {
       
       console.log(`🔍 [OMIE-ORDER] sellerId recebido: "${sellerId}" (tipo: ${typeof sellerId})`);
       
-      // ✅ CORREÇÃO: Se sellerId começa com 'omie-vendor-', extrair o código do Omie
-      if (sellerId && sellerId.startsWith('omie-vendor-')) {
+      if (sellerId && this.storage) {
         try {
-          const extractedCode = sellerId.replace('omie-vendor-', '');
-          omieVendorCode = parseInt(extractedCode, 10);
-          console.log(`✅ Código de vendedor Omie extraído do ID: ${sellerId} -> ${omieVendorCode}`);
-        } catch (error) {
-          console.error('❌ Erro ao extrair código do vendedor:', error);
-        }
-      } 
-      // Caso 2: Se sellerId não começa com 'omie-vendor-', buscar o usuário e usar omieVendorCode
-      else if (sellerId && this.storage) {
-        try {
-          const seller = await this.storage.getUser(sellerId);
-          console.log(`🔍 Buscando vendedor: ${sellerId}`, { 
-            sellerName: seller?.name || seller?.email,
-            omieVendorCode: seller?.omieVendorCode 
-          });
+          let seller: any = null;
+          
+          if (sellerId.startsWith('omie-vendor-')) {
+            const extractedCode = sellerId.replace('omie-vendor-', '');
+            seller = await this.storage.getUserByOmieVendorCode(extractedCode);
+            console.log(`🔍 Buscando vendedor por omieVendorCode=${extractedCode}:`, {
+              found: !!seller,
+              sellerName: seller?.firstName || seller?.email,
+              omieVendorCodes: seller?.omieVendorCodes
+            });
+          } else {
+            seller = await this.storage.getUser(sellerId);
+            console.log(`🔍 Buscando vendedor por ID=${sellerId}:`, {
+              found: !!seller,
+              sellerName: seller?.firstName || seller?.email,
+              omieVendorCodes: seller?.omieVendorCodes
+            });
+          }
           
           if (seller) {
-            // Prioridade 1: Usar código específico da instância em omieVendorCodes
             const instanceId = this.omieInstanceId || 'default';
+            
             if (seller.omieVendorCodes && typeof seller.omieVendorCodes === 'object') {
               const codes = seller.omieVendorCodes as Record<string, string>;
               if (codes[instanceId]) {
                 omieVendorCode = parseInt(codes[instanceId], 10);
-                console.log(`✅ Código de vendedor Omie (instância ${instanceId}): ${seller.email} -> ${omieVendorCode}`);
+                console.log(`✅ Código de vendedor para instância ${instanceId}: ${omieVendorCode}`);
               }
             }
-            // Prioridade 2: Usar omieVendorCode legado
             if (!omieVendorCode && seller.omieVendorCode) {
               omieVendorCode = parseInt(seller.omieVendorCode, 10) || seller.omieVendorCode;
-              console.log(`✅ Código de vendedor Omie (legado): ${seller.email} -> ${omieVendorCode}`);
+              console.log(`✅ Código de vendedor (legado): ${omieVendorCode}`);
             }
-            // Prioridade 3: Buscar pelo email no Omie
             if (!omieVendorCode && seller.email) {
               const omieVendor = await this.getVendorByEmail(seller.email);
               if (omieVendor) {
                 omieVendorCode = omieVendor.codigo;
                 console.log('✅ Vendedor encontrado no Omie pelo email:', seller.email, 'Código:', omieVendorCode);
-              } else {
-                console.log('⚠️ Vendedor não encontrado no Omie pelo email:', seller.email);
               }
             }
+          } else if (sellerId.startsWith('omie-vendor-')) {
+            const extractedCode = sellerId.replace('omie-vendor-', '');
+            omieVendorCode = parseInt(extractedCode, 10);
+            console.log(`⚠️ Vendedor não encontrado no DB, usando código extraído do ID: ${omieVendorCode}`);
           }
         } catch (error) {
-          console.error('Erro ao buscar vendedor no Omie:', error);
+          console.error('Erro ao buscar vendedor:', error);
+          if (sellerId.startsWith('omie-vendor-')) {
+            const extractedCode = sellerId.replace('omie-vendor-', '');
+            omieVendorCode = parseInt(extractedCode, 10);
+            console.log(`⚠️ Fallback: usando código extraído do ID: ${omieVendorCode}`);
+          }
         }
+      } else if (sellerId && sellerId.startsWith('omie-vendor-')) {
+        const extractedCode = sellerId.replace('omie-vendor-', '');
+        omieVendorCode = parseInt(extractedCode, 10);
+        console.log(`⚠️ Storage indisponível, usando código extraído do ID: ${omieVendorCode}`);
       }
       
       // Se não encontrou vendedor pelo usuário, buscar das recomendações do cliente no Omie
@@ -5322,19 +5333,47 @@ export async function createOmieOrder(orderData: {
       }
     }
 
-    // Extrair código do vendedor do formato "omie-vendor-XXXXX"
     let vendorCode: number | null = null;
-    if (orderData.sellerId && orderData.sellerId.startsWith('omie-vendor-')) {
-      const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
-      const parsedCode = parseInt(extractedCode, 10);
-      if (!isNaN(parsedCode) && parsedCode > 0) {
-        vendorCode = parsedCode;
-        console.log(`📝 Vendedor extraído: ${orderData.sellerId} -> código Omie: ${vendorCode}`);
-      } else {
-        console.warn(`⚠️ Código de vendedor inválido após parse: ${extractedCode}`);
+    if (orderData.sellerId && this.storage) {
+      try {
+        let seller: any = null;
+        if (orderData.sellerId.startsWith('omie-vendor-')) {
+          const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
+          seller = await this.storage.getUserByOmieVendorCode(extractedCode);
+          console.log(`🔍 [HOTSITE] Buscando vendedor por omieVendorCode=${extractedCode}: found=${!!seller}`);
+        } else {
+          seller = await this.storage.getUser(orderData.sellerId);
+        }
+        
+        if (seller) {
+          const instanceId = this.omieInstanceId || 'default';
+          if (seller.omieVendorCodes && typeof seller.omieVendorCodes === 'object') {
+            const codes = seller.omieVendorCodes as Record<string, string>;
+            if (codes[instanceId]) {
+              vendorCode = parseInt(codes[instanceId], 10);
+              console.log(`✅ [HOTSITE] Código de vendedor para instância ${instanceId}: ${vendorCode}`);
+            }
+          }
+          if (!vendorCode && seller.omieVendorCode) {
+            vendorCode = parseInt(seller.omieVendorCode, 10);
+            console.log(`✅ [HOTSITE] Código de vendedor (legado): ${vendorCode}`);
+          }
+        } else if (orderData.sellerId.startsWith('omie-vendor-')) {
+          const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
+          const parsedCode = parseInt(extractedCode, 10);
+          if (!isNaN(parsedCode) && parsedCode > 0) {
+            vendorCode = parsedCode;
+            console.log(`⚠️ [HOTSITE] Vendedor não encontrado no DB, usando código extraído: ${vendorCode}`);
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao buscar vendedor para hotsite:', error);
+        if (orderData.sellerId.startsWith('omie-vendor-')) {
+          const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
+          const parsedCode = parseInt(extractedCode, 10);
+          if (!isNaN(parsedCode) && parsedCode > 0) vendorCode = parsedCode;
+        }
       }
-    } else {
-      console.warn(`⚠️ sellerId inválido ou não é do Omie: ${orderData.sellerId}`);
     }
 
     const hotsiteCabecalho: any = {
