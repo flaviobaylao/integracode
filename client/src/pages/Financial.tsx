@@ -2375,6 +2375,18 @@ function SPEDTab() {
 // ============================================================================
 // MAIN PAGE COMPONENT
 // ============================================================================
+const TAB_CONFIG: Record<string, { label: string; icon: any }> = {
+  receivables: { label: 'Contas a Receber', icon: CreditCard },
+  payables: { label: 'Contas a Pagar', icon: Banknote },
+  overdue: { label: 'Débitos Vencidos', icon: AlertTriangle },
+  blocked: { label: 'Pedidos Bloqueados', icon: Ban },
+  chart: { label: 'Plano de Contas', icon: BarChart3 },
+  accounts: { label: 'Contas Financeiras', icon: CreditCard },
+  dre: { label: 'DRE', icon: TrendingUp },
+  xml: { label: 'XMLs', icon: FileCode },
+  sped: { label: 'SPED Fiscal', icon: Database },
+};
+
 export default function Financial() {
   const { user } = useAuth();
   const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
@@ -2382,12 +2394,46 @@ export default function Financial() {
   const urlTab = new URLSearchParams(searchString).get('tab');
   const defaultTab = isFullAccess ? 'receivables' : 'overdue';
   const [activeTab, setActiveTab] = useState(urlTab || defaultTab);
+  const directTab = !!urlTab;
 
   useEffect(() => {
     if (urlTab && urlTab !== activeTab) {
       setActiveTab(urlTab);
     }
   }, [urlTab]);
+
+  const tabConfig = TAB_CONFIG[activeTab];
+  const TabIcon = tabConfig?.icon || DollarSign;
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'receivables': return isFullAccess ? <ReceivablesTab /> : null;
+      case 'payables': return isFullAccess ? <PayablesTab /> : null;
+      case 'overdue': return <OverdueDebtsManagement />;
+      case 'blocked': return <BlockedOrdersManagement user={user as any} />;
+      case 'chart': return isFullAccess ? <ChartOfAccountsTab /> : null;
+      case 'accounts': return isFullAccess ? <FinancialAccountsTab /> : null;
+      case 'dre': return isFullAccess ? <DRETab /> : null;
+      case 'xml': return isFullAccess ? <XMLsTab /> : null;
+      case 'sped': return isFullAccess ? <SPEDTab /> : null;
+      default: return null;
+    }
+  };
+
+  if (directTab) {
+    return (
+      <div className="p-6 space-y-6">
+        <BackToDashboardButton />
+        <div className="flex items-center gap-3">
+          <TabIcon className="h-8 w-8 text-green-600" />
+          <div>
+            <h1 className="text-3xl font-bold">{tabConfig?.label || 'Financeiro'}</h1>
+          </div>
+        </div>
+        {renderTabContent()}
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
