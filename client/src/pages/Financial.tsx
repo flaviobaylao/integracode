@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { useSearch } from 'wouter';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -2377,7 +2378,16 @@ function SPEDTab() {
 export default function Financial() {
   const { user } = useAuth();
   const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
-  const [activeTab, setActiveTab] = useState(isFullAccess ? 'receivables' : 'overdue');
+  const searchString = useSearch();
+  const urlTab = new URLSearchParams(searchString).get('tab');
+  const defaultTab = isFullAccess ? 'receivables' : 'overdue';
+  const [activeTab, setActiveTab] = useState(urlTab || defaultTab);
+
+  useEffect(() => {
+    if (urlTab && urlTab !== activeTab) {
+      setActiveTab(urlTab);
+    }
+  }, [urlTab]);
 
   return (
     <div className="p-6 space-y-6">

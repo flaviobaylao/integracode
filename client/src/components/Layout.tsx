@@ -170,7 +170,15 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#f43f5e',
       icon: 'fas fa-dollar-sign',
       items: [
-        { id: 'financeiro', label: 'Módulo Financeiro', icon: 'fas fa-dollar-sign', available: canAccessReports || isVendedor || isTelemarketing, badge: blockedOrdersCount > 0 ? blockedOrdersCount : null },
+        { id: 'fin-receivables', label: 'Contas a Receber', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+        { id: 'fin-payables', label: 'Contas a Pagar', icon: 'fas fa-money-check-alt', available: canAccessReports, badge: null },
+        { id: 'fin-overdue', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
+        { id: 'fin-blocked', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports || isVendedor || isTelemarketing, badge: blockedOrdersCount > 0 ? blockedOrdersCount : null },
+        { id: 'fin-chart', label: 'Plano de Contas', icon: 'fas fa-sitemap', available: canAccessReports, badge: null },
+        { id: 'fin-accounts', label: 'Contas Financeiras', icon: 'fas fa-university', available: canAccessReports, badge: null },
+        { id: 'fin-dre', label: 'DRE', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
+        { id: 'fin-xml', label: 'XMLs', icon: 'fas fa-file-code', available: canAccessReports, badge: null },
+        { id: 'fin-sped', label: 'SPED Fiscal', icon: 'fas fa-database', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -262,6 +270,23 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (telemarketingRoutes[itemId]) {
       navigate(telemarketingRoutes[itemId]);
+      return;
+    }
+
+    const finTabMap: Record<string, string> = {
+      'fin-receivables': 'receivables',
+      'fin-payables': 'payables',
+      'fin-overdue': 'overdue',
+      'fin-blocked': 'blocked',
+      'fin-chart': 'chart',
+      'fin-accounts': 'accounts',
+      'fin-dre': 'dre',
+      'fin-xml': 'xml',
+      'fin-sped': 'sped',
+    };
+    if (finTabMap[itemId]) {
+      navigate(`/financeiro?tab=${finTabMap[itemId]}`);
+      setShowingSectionOptions(false);
       return;
     }
 
