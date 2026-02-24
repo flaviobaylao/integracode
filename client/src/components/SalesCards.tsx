@@ -22,7 +22,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
-import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2 } from "lucide-react";
+import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2, AlertCircle, Send, Clock, Loader2 } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import SalesCardModal from "./SalesCardModal";
 import SalesCardFilters from "./SalesCardFilters";
 import SaleModal from "./SaleModal";
@@ -54,6 +56,7 @@ export default function SalesCards() {
   const [showBulkImportDialog, setShowBulkImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -70,6 +73,12 @@ export default function SalesCards() {
     queryKey: ['/api/sales-cards', routeFilter, statusFilter],
     queryFn: () => fetch(`/api/sales-cards${buildQueryString()}`, { credentials: 'include' }).then(r => r.json()),
     retry: false,
+  });
+
+  const { data: pendingOmieData, isLoading: isLoadingPendingOmie, refetch: refetchPendingOmie } = useQuery({
+    queryKey: ['/api/sales-cards/pending-omie'],
+    queryFn: () => fetch('/api/sales-cards/pending-omie', { credentials: 'include' }).then(r => r.json()),
+    enabled: showPendingOmieDialog,
   });
 
   const updateCardMutation = useMutation({
@@ -139,6 +148,7 @@ export default function SalesCards() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
       toast({
         title: "Sucesso",
         description: "Pedido enviado para Omie com sucesso!",
@@ -410,6 +420,17 @@ export default function SalesCards() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Cards de Venda</h2>
         <div className="flex gap-2">
+          {user && ['admin', 'coordinator', 'administrative'].includes(user.role || '') && (
+            <Button
+              variant="outline"
+              className="border-orange-300 text-orange-600 hover:bg-orange-50"
+              onClick={() => setShowPendingOmieDialog(true)}
+              data-testid="button-pending-omie"
+            >
+              <Clock className="w-4 h-4 mr-2" />
+              Pendentes Omie
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowBulkImportDialog(true)}
@@ -959,6 +980,121 @@ export default function SalesCards() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog Pedidos Pendentes Omie */}
+      <Dialog open={showPendingOmieDialog} onOpenChange={setShowPendingOmieDialog}>
+        <DialogContent className="max-w-4xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-orange-500" />
+              Pedidos Pendentes de Envio ao Omie
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            {isLoadingPendingOmie ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                <span>Verificando pedidos pendentes...</span>
+              </div>
+            ) : !pendingOmieData || (pendingOmieData.totalPending === 0) ? (
+              <div className="text-center py-12 text-gray-500">
+                <Send className="w-12 h-12 mx-auto mb-3 text-green-400" />
+                <p className="text-lg font-medium">Nenhum pedido pendente!</p>
+                <p className="text-sm">Todos os pedidos foram enviados ao Omie.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                  <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />
+                  <span className="text-sm text-orange-700 font-medium">
+                    {pendingOmieData.totalPending} pedido(s) pendente(s) de envio
+                  </span>
+                </div>
+
+                {pendingOmieData.pendingCards?.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Cards de Venda</h3>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Cliente</TableHead>
+                          <TableHead>Vendedor</TableHead>
+                          <TableHead>Valor</TableHead>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Ação</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pendingOmieData.pendingCards.map((card: any) => (
+                          <TableRow key={card.id}>
+                            <TableCell className="font-medium text-sm">{card.customerName}</TableCell>
+                            <TableCell className="text-sm">{card.sellerName}</TableCell>
+                            <TableCell className="text-sm font-medium text-green-600">
+                              R$ {parseFloat(card.saleValue || '0').toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-sm text-gray-500">
+                              {card.createdAt ? new Date(card.createdAt).toLocaleDateString('pt-BR') : '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                className="bg-blue-600 hover:bg-blue-700"
+                                onClick={() => sendToOmieMutation.mutate(card.id)}
+                                disabled={sendToOmieMutation.isPending}
+                              >
+                                {sendToOmieMutation.isPending ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Send className="w-3 h-3 mr-1" />
+                                    Enviar
+                                  </>
+                                )}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {pendingOmieData.pendingHistory?.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Histórico de Pedidos</h3>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Vendedor</TableHead>
+                          <TableHead>Valor</TableHead>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pendingOmieData.pendingHistory.map((h: any) => (
+                          <TableRow key={h.id}>
+                            <TableCell className="text-sm">{h.sellerName}</TableCell>
+                            <TableCell className="text-sm font-medium text-green-600">
+                              R$ {parseFloat(h.saleValue || '0').toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-sm text-gray-500">
+                              {h.createdAt ? new Date(h.createdAt).toLocaleDateString('pt-BR') : '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{h.status}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
