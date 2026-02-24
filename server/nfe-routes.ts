@@ -855,6 +855,8 @@ export function registerNfeRoutes(app: Express) {
         environment: originalInvoice.environment || 'homologacao',
         omieInstanceId: originalInvoice.omieInstanceId,
         salesCardId: originalInvoice.salesCardId,
+        referencedAccessKey: originalInvoice.accessKey || null,
+        finNFe: '4',
         createdBy: user?.email || null,
         status: 'draft',
       });
@@ -904,6 +906,30 @@ export function registerNfeRoutes(app: Express) {
         createdBy: user?.email || null,
       });
 
+      // Emit return invoice through SEFAZ
+      const sefazResult = await sefazService.emitNfe(returnInvoice.id);
+
+      if (!sefazResult.success) {
+        console.error(`❌ [SEFAZ] Falha ao emitir NF-e de devolução: ${sefazResult.errorMessage}`);
+        await storage.createFiscalInvoiceEvent({
+          invoiceId: returnInvoice.id,
+          eventType: 'emissao',
+          status: 'error',
+          description: `Falha na emissão SEFAZ da NF-e de devolução: ${sefazResult.errorMessage}`,
+          createdBy: user?.email || null,
+        });
+
+        return res.status(422).json({
+          success: false,
+          returnInvoice,
+          errorCode: sefazResult.errorCode,
+          message: `Falha ao transmitir NF-e de devolução à SEFAZ: ${sefazResult.errorMessage}. A NF-e de devolução foi criada em rascunho e pode ser emitida manualmente.`,
+        });
+      }
+
+      console.log(`✅ [SEFAZ] NF-e de devolução ${returnInvoice.id} autorizada - Protocolo: ${sefazResult.protocolNumber}`);
+
+      // Only proceed with cancellations and reversals after SEFAZ authorization
       // Cancel associated receivables from original invoice
       try {
         const allReceivables = await storage.getReceivables({});
@@ -941,11 +967,27 @@ export function registerNfeRoutes(app: Express) {
         console.warn('⚠️ Erro ao reverter estoque após devolução NF-e:', stockErr.message);
       }
 
-      console.log(`📦 [NF-e RETURN] NF-e de devolução ${returnInvoice.id} criada para NF-e original ${req.params.id}`);
+      // Update original invoice to mark it as returned (only after SEFAZ success)
+      await storage.updateFiscalInvoice(req.params.id, {
+        status: 'returned',
+      });
+      await storage.createFiscalInvoiceEvent({
+        invoiceId: req.params.id,
+        eventType: 'devolucao',
+        status: 'success',
+        description: `NF-e devolvida via SEFAZ. NF-e de devolução: ${returnInvoice.id} (Protocolo: ${sefazResult.protocolNumber}). Motivo: ${justification}`,
+        createdBy: user?.email || null,
+      });
+
+      // Get updated return invoice with SEFAZ data
+      const updatedReturnInvoice = await storage.getFiscalInvoice(returnInvoice.id);
+
+      console.log(`📦 [NF-e RETURN] NF-e de devolução ${returnInvoice.id} autorizada pela SEFAZ para NF-e original ${req.params.id}`);
       res.status(201).json({
         success: true,
-        returnInvoice,
-        message: `NF-e de devolução criada com sucesso. Realize a emissão para finalizar o processo.`,
+        returnInvoice: updatedReturnInvoice || returnInvoice,
+        sefazProtocol: sefazResult.protocolNumber,
+        message: `NF-e de devolução emitida e autorizada pela SEFAZ com sucesso. Protocolo: ${sefazResult.protocolNumber}`,
         receivablesCancelled: true,
       });
     } catch (error: any) {

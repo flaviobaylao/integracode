@@ -159,6 +159,7 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'second
   cancelled: { label: 'Cancelada', variant: 'destructive', className: 'bg-red-100 text-red-800 border-red-300' },
   rejected: { label: 'Rejeitada', variant: 'outline', className: 'bg-orange-100 text-orange-800 border-orange-300' },
   processing: { label: 'Processando', variant: 'default', className: 'bg-blue-100 text-blue-800 border-blue-300' },
+  returned: { label: 'Devolvida', variant: 'destructive', className: 'bg-purple-100 text-purple-800 border-purple-300' },
 };
 
 function getStatusBadge(status: string) {
@@ -644,6 +645,7 @@ export default function FiscalInvoices() {
                   <SelectItem value="draft">Rascunho</SelectItem>
                   <SelectItem value="authorized">Autorizada</SelectItem>
                   <SelectItem value="cancelled">Cancelada</SelectItem>
+                  <SelectItem value="returned">Devolvida</SelectItem>
                   <SelectItem value="rejected">Rejeitada</SelectItem>
                   <SelectItem value="processing">Processando</SelectItem>
                 </SelectContent>
@@ -1237,6 +1239,18 @@ export default function FiscalInvoices() {
                     <p className="font-mono text-xs break-all">{invoiceDetail.accessKey}</p>
                   </div>
                 )}
+                {(invoiceDetail as any).referencedAccessKey && (
+                  <div className="col-span-full">
+                    <p className="text-xs text-muted-foreground">NF-e Referenciada (Original)</p>
+                    <p className="font-mono text-xs break-all">{(invoiceDetail as any).referencedAccessKey}</p>
+                  </div>
+                )}
+                {(invoiceDetail as any).finNFe === '4' && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Finalidade</p>
+                    <Badge className="bg-orange-100 text-orange-800 border-orange-300">Devolução (finNFe=4)</Badge>
+                  </div>
+                )}
                 {invoiceDetail.protocolNumber && (
                   <div>
                     <p className="text-xs text-muted-foreground">Protocolo</p>
@@ -1397,10 +1411,11 @@ export default function FiscalInvoices() {
             <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
               <p className="text-sm text-orange-800 dark:text-orange-300 font-medium">O que acontecerá:</p>
               <ul className="text-sm text-orange-700 dark:text-orange-400 mt-1 space-y-1 list-disc list-inside">
-                <li>Uma NF-e de devolução (entrada) será criada em rascunho</li>
+                <li>Uma NF-e de devolução (entrada) será criada e transmitida à SEFAZ</li>
+                <li>A NF-e de devolução referenciará a NF-e original (finNFe=4)</li>
                 <li>As contas a receber vinculadas serão canceladas</li>
                 <li>O estoque dos produtos será devolvido</li>
-                <li>Você precisará emitir a NF-e de devolução para finalizar</li>
+                <li>A NF-e original será marcada como "Devolvida"</li>
               </ul>
             </div>
             <div>

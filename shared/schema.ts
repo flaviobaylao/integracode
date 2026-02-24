@@ -2630,6 +2630,8 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   omieInstanceId: varchar("omie_instance_id"),
   salesCardId: varchar("sales_card_id"),
   orderHistoryId: varchar("order_history_id"),
+  referencedAccessKey: varchar("referenced_access_key"),
+  finNFe: varchar("fin_nfe").default('1'),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

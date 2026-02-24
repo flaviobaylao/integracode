@@ -185,11 +185,16 @@ export class SefazService {
           tpEmis: '1',
           cDV: '0',
           tpAmb: SEFAZ_ENVIRONMENTS[invoice.environment as keyof typeof SEFAZ_ENVIRONMENTS] || 2,
-          finNFe: '1',
+          finNFe: invoice.finNFe || '1',
           indFinal: '1',
           indPres: '1',
           procEmi: '0',
           verProc: 'SistemaIntegra 1.0',
+          ...(invoice.referencedAccessKey ? {
+            NFref: {
+              refNFe: invoice.referencedAccessKey,
+            },
+          } : {}),
         },
         emit: {
           CNPJ: (this.config?.cnpj || '').replace(/\D/g, ''),
