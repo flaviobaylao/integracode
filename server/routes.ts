@@ -9878,6 +9878,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check customer overdue debt by document (for frontend pre-check)
+  app.get('/api/customers/:id/check-debt', authenticateUser, async (req: any, res) => {
+    try {
+      const customer = await storage.getCustomer(req.params.id);
+      if (!customer) {
+        return res.status(404).json({ message: 'Cliente não encontrado' });
+      }
+      const document = customer.cnpj || customer.cpf;
+      if (!document) {
+        return res.json({ hasDebt: false });
+      }
+      const overdueDebt = await storage.getOverdueDebtByDocument(document);
+      if (overdueDebt) {
+        const totalAmount = parseFloat(overdueDebt.totalAmount || '0');
+        return res.json({
+          hasDebt: true,
+          debtAmount: totalAmount,
+          daysOverdue: overdueDebt.maxDaysOverdue || 0,
+          message: `Cliente possui débito vencido de R$ ${totalAmount.toFixed(2)} há ${overdueDebt.maxDaysOverdue || 0} dias`
+        });
+      }
+      res.json({ hasDebt: false });
+    } catch (error) {
+      console.error('Error checking customer debt:', error);
+      res.json({ hasDebt: false });
+    }
+  });
+
   // Blocked orders routes
   app.get('/api/blocked-orders', authenticateUser, async (req: any, res) => {
     try {
@@ -15745,27 +15773,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🚫 [FINALIZE-SALE] Bloqueando: ${blockDetails}`);
       }
 
-      // Check if customer has overdue debt
+      // Check if customer has overdue debt (using local DB - works for ALL instances)
       if (!shouldBlockOrder) {
         try {
           const salesCard = await storage.getSalesCard(id);
           if (salesCard && salesCard.customer) {
             const customerDocument = salesCard.customer.cnpj || salesCard.customer.cpf;
             if (customerDocument) {
-              const omieService = getOmieService(storage);
-              if (omieService) {
-                const creditInfo = await omieService.getClientCreditInfo(customerDocument);
-                if (creditInfo && creditInfo.valor_em_aberto > 0 && creditInfo.dias_em_atraso > 0) {
-                  shouldBlockOrder = true;
-                  blockReason = 'overdue_debt';
-                  blockDetails = `Cliente possui débito vencido de R$ ${creditInfo.valor_em_aberto.toFixed(2)} há ${creditInfo.dias_em_atraso} dias`;
-                }
+              const overdueDebt = await storage.getOverdueDebtByDocument(customerDocument);
+              if (overdueDebt) {
+                shouldBlockOrder = true;
+                blockReason = 'overdue_debt';
+                const totalAmount = parseFloat(overdueDebt.totalAmount || '0');
+                blockDetails = `Cliente possui débito vencido de R$ ${totalAmount.toFixed(2)} há ${overdueDebt.maxDaysOverdue || 0} dias`;
+                console.log(`🚫 [FINALIZE-SALE] Bloqueando pedido: ${blockDetails} (documento: ${customerDocument})`);
               }
             }
           }
         } catch (error) {
           console.warn('Error checking customer debt:', error);
-          // Continue sem bloquear se não conseguir verificar débito
         }
       }
 

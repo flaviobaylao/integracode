@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import WhatsAppButton from "./WhatsAppButton";
 import jsPDF from 'jspdf';
@@ -89,6 +89,19 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   // Verificar se o usuário é administrativo
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
+  const customerId = salesCard?.customerId;
+  const { data: debtCheck } = useQuery<{ hasDebt: boolean; debtAmount?: number; daysOverdue?: number; message?: string }>({
+    queryKey: ['/api/customers', customerId, 'check-debt'],
+    queryFn: async () => {
+      if (!customerId) return { hasDebt: false };
+      const res = await fetch(`/api/customers/${customerId}/check-debt`, { credentials: 'include' });
+      if (!res.ok) return { hasDebt: false };
+      return res.json();
+    },
+    enabled: isOpen && !!customerId,
+    staleTime: 60000,
+  });
+
   // Valor mínimo de pedido
   const minimumOrderValue = useMemo(() => {
     if (!systemSettings || !Array.isArray(systemSettings)) return 0;
@@ -128,10 +141,13 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     return groups;
   }, [products]);
 
+  const hasOverdueDebt = debtCheck?.hasDebt === true;
+
   // Verificar se pedido deve ser bloqueado
   const shouldBlockOrder = useMemo(() => {
+    if (hasOverdueDebt) return true;
     return paymentMethod === 'boleto' && boletoDays !== 7;
-  }, [paymentMethod, boletoDays]);
+  }, [paymentMethod, boletoDays, hasOverdueDebt]);
 
   // Função para gerar PDF do orçamento
   const generateQuotePDF = () => {
@@ -791,7 +807,21 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                         <span>R$ {totalSale.toFixed(2)}</span>
                       </div>
 
-                      {shouldBlockOrder && (
+                      {hasOverdueDebt && (
+                        <div className="bg-red-50 border border-red-300 rounded-lg p-3">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-red-600" />
+                            <Badge variant="destructive">CLIENTE COM DÉBITO VENCIDO</Badge>
+                          </div>
+                          <p className="text-sm text-red-700 mt-1 font-medium">
+                            {debtCheck?.message || 'Cliente possui débitos vencidos'}
+                          </p>
+                          <p className="text-xs text-red-600 mt-1">
+                            Este pedido será enviado para aprovação manual. Regularize a situação financeira do cliente.
+                          </p>
+                        </div>
+                      )}
+                      {shouldBlockOrder && !hasOverdueDebt && (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                           <Badge variant="outline" className="bg-yellow-100">ATENÇÃO</Badge>
                           <p className="text-sm text-yellow-800 mt-1">
@@ -1385,7 +1415,18 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                 </div>
 
                 {/* Alerta de Bloqueio */}
-                {shouldBlockOrder && (
+                {hasOverdueDebt && (
+                  <div className="bg-red-50 border border-red-300 rounded-lg p-3">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                      <Badge variant="destructive">DÉBITO VENCIDO</Badge>
+                    </div>
+                    <p className="text-sm text-red-700 mt-1">
+                      {debtCheck?.message} - Pedido será enviado para aprovação.
+                    </p>
+                  </div>
+                )}
+                {shouldBlockOrder && !hasOverdueDebt && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                     <Badge variant="outline" className="bg-yellow-100">ATENÇÃO</Badge>
                     <p className="text-sm text-yellow-800 mt-1">
