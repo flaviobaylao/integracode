@@ -2794,21 +2794,15 @@ export class OmieService {
             }
           } else if (sellerId.startsWith('omie-vendor-')) {
             const extractedCode = sellerId.replace('omie-vendor-', '');
-            omieVendorCode = parseInt(extractedCode, 10);
-            console.log(`⚠️ Vendedor não encontrado no DB, usando código extraído do ID: ${omieVendorCode}`);
+            console.log(`⚠️ Vendedor omie-vendor-${extractedCode} não encontrado no DB - deixando omieVendorCode nulo para usar fallbacks (recomendações do cliente ou vendedor padrão)`);
           }
         } catch (error) {
           console.error('Erro ao buscar vendedor:', error);
-          if (sellerId.startsWith('omie-vendor-')) {
-            const extractedCode = sellerId.replace('omie-vendor-', '');
-            omieVendorCode = parseInt(extractedCode, 10);
-            console.log(`⚠️ Fallback: usando código extraído do ID: ${omieVendorCode}`);
-          }
+          console.log(`⚠️ Erro ao buscar vendedor - deixando omieVendorCode nulo para usar fallbacks`);
         }
       } else if (sellerId && sellerId.startsWith('omie-vendor-')) {
         const extractedCode = sellerId.replace('omie-vendor-', '');
-        omieVendorCode = parseInt(extractedCode, 10);
-        console.log(`⚠️ Storage indisponível, usando código extraído do ID: ${omieVendorCode}`);
+        console.log(`⚠️ Storage indisponível para vendedor omie-vendor-${extractedCode} - deixando omieVendorCode nulo para usar fallbacks`);
       }
       
       // Se não encontrou vendedor pelo usuário, buscar das recomendações do cliente no Omie
@@ -5360,19 +5354,11 @@ export async function createOmieOrder(orderData: {
           }
         } else if (orderData.sellerId.startsWith('omie-vendor-')) {
           const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
-          const parsedCode = parseInt(extractedCode, 10);
-          if (!isNaN(parsedCode) && parsedCode > 0) {
-            vendorCode = parsedCode;
-            console.log(`⚠️ [HOTSITE] Vendedor não encontrado no DB, usando código extraído: ${vendorCode}`);
-          }
+          console.log(`⚠️ [HOTSITE] Vendedor omie-vendor-${extractedCode} não encontrado no DB - deixando vendorCode nulo para usar fallbacks`);
         }
       } catch (error) {
         console.error('Erro ao buscar vendedor para hotsite:', error);
-        if (orderData.sellerId.startsWith('omie-vendor-')) {
-          const extractedCode = orderData.sellerId.replace('omie-vendor-', '');
-          const parsedCode = parseInt(extractedCode, 10);
-          if (!isNaN(parsedCode) && parsedCode > 0) vendorCode = parsedCode;
-        }
+        console.log(`⚠️ [HOTSITE] Erro ao buscar vendedor - deixando vendorCode nulo para usar fallbacks`);
       }
     }
 
