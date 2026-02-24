@@ -23964,7 +23964,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Group by normalized name
       const nameGroups = new Map<string, typeof vendorUsers>();
       for (const v of vendorUsers) {
-        const normName = `${v.firstName || ''} ${v.lastName || ''}`.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+        const normName = `${v.firstName || ''} ${v.lastName || ''}`.trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
         if (!normName) continue;
         if (!nameGroups.has(normName)) nameGroups.set(normName, []);
         nameGroups.get(normName)!.push(v);
@@ -24045,8 +24045,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const scResult = await tx.update(salesCards).set({ sellerId: primary.id }).where(eq(salesCards.sellerId, dup.id)).returning();
               entry.salesCardsReassigned += scResult.length;
               reassignedSalesCards += scResult.length;
-
-              await tx.update(leads).set({ sellerId: primary.id }).where(eq(leads.sellerId, dup.id));
 
               await tx.delete(users).where(eq(users.id, dup.id));
               deletedUsers++;

@@ -740,8 +740,8 @@ export class OmieService {
         if (user.email) {
           emailIndex.set(user.email.toLowerCase(), user);
         }
-        // Build name index for fuzzy matching (normalize: lowercase, trim, remove trailing dots)
-        const normName = `${user.firstName || ''} ${user.lastName || ''}`.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+        // Build name index for fuzzy matching (normalize: lowercase, trim, remove all periods)
+        const normName = `${user.firstName || ''} ${user.lastName || ''}`.trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
         if (normName && normName !== ' ') {
           // Store first match only - prefer users that already have omieVendorCode
           if (!nameIndex.has(normName) || user.omieVendorCode) {
@@ -795,7 +795,7 @@ export class OmieService {
             const nameParts = fullName.trim().split(' ');
             const firstName = nameParts[0] || '';
             const lastName = nameParts.slice(1).join(' ') || '';
-            const normName = fullName.trim().toLowerCase().replace(/\.+$/, '').replace(/\s+/g, ' ');
+            const normName = fullName.trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
             const vendorEmail = vendor.email || '';
             const isRealEmail = vendorEmail && !vendorEmail.includes('vendor-') && !vendorEmail.includes('@omie.com');
 
@@ -807,19 +807,12 @@ export class OmieService {
               existingUser = emailIndex.get(vendorEmail.toLowerCase()) || null;
             }
             
-            // Name-based matching ONLY when both have no real email (to avoid merging unrelated vendors with common names)
-            if (!existingUser && normName) {
+            // Name-based matching for omie-vendor-* users (vendor names with last initials are specific enough)
+            if (!existingUser && normName && normName.length >= 3) {
               const nameCandidate = nameIndex.get(normName);
-              if (nameCandidate) {
-                const candidateHasRealEmail = nameCandidate.email && !nameCandidate.email.includes('vendor-') && !nameCandidate.email.includes('@omie.com');
-                // Only merge by name if: candidate also has no real email (both are Omie-generated),
-                // OR if one has a real email and the other matches it
-                if (!candidateHasRealEmail && !isRealEmail) {
-                  existingUser = nameCandidate;
-                  console.log(`🔗 [${instanceLabel}] Vendedor mesclado por nome: "${normName}" -> user ${nameCandidate.id}`);
-                } else if (isRealEmail && candidateHasRealEmail && vendorEmail.toLowerCase() === nameCandidate.email?.toLowerCase()) {
-                  existingUser = nameCandidate;
-                }
+              if (nameCandidate && nameCandidate.id?.startsWith('omie-vendor-')) {
+                existingUser = nameCandidate;
+                console.log(`🔗 [${instanceLabel}] Vendedor mesclado por nome: "${normName}" -> user ${nameCandidate.id}`);
               }
             }
 
