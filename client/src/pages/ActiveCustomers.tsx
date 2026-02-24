@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -230,6 +231,7 @@ export default function ActiveCustomers() {
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -238,6 +240,27 @@ export default function ActiveCustomers() {
     queryFn: () => fetch('/api/sales-cards/pending-omie', { credentials: 'include' }).then(r => r.json()),
     enabled: showPendingOmieDialog,
   });
+
+  const allCardIds: string[] = pendingOmieData?.pendingCards?.map((c: any) => c.id) || [];
+  const allSelected = allCardIds.length > 0 && allCardIds.every(id => selectedCardIds.has(id));
+  const someSelected = allCardIds.some(id => selectedCardIds.has(id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedCardIds(new Set());
+    } else {
+      setSelectedCardIds(new Set(allCardIds));
+    }
+  };
+
+  const toggleCard = (id: string) => {
+    setSelectedCardIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
@@ -250,6 +273,38 @@ export default function ActiveCustomers() {
     },
     onError: (error: any) => {
       toast({ variant: "destructive", title: "Erro ao Enviar para Omie", description: error.message });
+    },
+  });
+
+  const bulkSendMutation = useMutation({
+    mutationFn: async (cardIds: string[]) => {
+      const res = await apiRequest('POST', '/api/sales-cards/bulk-send-to-omie', { cardIds });
+      return res as any;
+    },
+    onSuccess: (data: any) => {
+      setSelectedCardIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      toast({ title: "Envio em lote concluído", description: `${data.succeeded} enviado(s) com sucesso, ${data.failed} com falha.` });
+    },
+    onError: (error: any) => {
+      toast({ variant: "destructive", title: "Erro no envio em lote", description: error.message });
+    },
+  });
+
+  const bulkCancelMutation = useMutation({
+    mutationFn: async (cardIds: string[]) => {
+      const res = await apiRequest('POST', '/api/sales-cards/bulk-cancel', { cardIds });
+      return res as any;
+    },
+    onSuccess: (data: any) => {
+      setSelectedCardIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      toast({ title: "Cancelamento concluído", description: `${data.cancelled} pedido(s) cancelado(s).` });
+    },
+    onError: (error: any) => {
+      toast({ variant: "destructive", title: "Erro ao cancelar", description: error.message });
     },
   });
 
@@ -1905,15 +1960,16 @@ export default function ActiveCustomers() {
       </AlertDialog>
 
       {/* Dialog Pedidos Pendentes Omie */}
-      <Dialog open={showPendingOmieDialog} onOpenChange={setShowPendingOmieDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
+      <Dialog open={showPendingOmieDialog} onOpenChange={(open) => { setShowPendingOmieDialog(open); if (!open) setSelectedCardIds(new Set()); }}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-orange-500" />
               Pedidos Pendentes de Envio ao Omie
             </DialogTitle>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh]">
+
+          <ScrollArea className="flex-1 min-h-0">
             {isLoadingPendingOmie ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin mr-2" />
@@ -1926,20 +1982,34 @@ export default function ActiveCustomers() {
                 <p className="text-sm">Todos os pedidos foram enviados ao Omie.</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 p-3 bg-orange-50 rounded-lg border border-orange-200">
-                  <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />
-                  <span className="text-sm text-orange-700 font-medium">
-                    {pendingOmieData.totalPending} pedido(s) pendente(s) de envio
-                  </span>
+              <div className="space-y-4 pr-2">
+                <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-200">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />
+                    <span className="text-sm text-orange-700 font-medium">
+                      {pendingOmieData.totalPending} pedido(s) pendente(s) de envio
+                    </span>
+                  </div>
+                  {selectedCardIds.size > 0 && (
+                    <span className="text-sm font-semibold text-blue-700">
+                      {selectedCardIds.size} selecionado(s)
+                    </span>
+                  )}
                 </div>
 
                 {pendingOmieData.pendingCards?.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Cards de Venda</h3>
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={allSelected}
+                              onCheckedChange={toggleSelectAll}
+                              aria-label="Selecionar todos"
+                              className={someSelected && !allSelected ? "opacity-60" : ""}
+                            />
+                          </TableHead>
                           <TableHead>Cliente</TableHead>
                           <TableHead>Vendedor</TableHead>
                           <TableHead>Valor</TableHead>
@@ -1949,7 +2019,17 @@ export default function ActiveCustomers() {
                       </TableHeader>
                       <TableBody>
                         {pendingOmieData.pendingCards.map((card: any) => (
-                          <TableRow key={card.id}>
+                          <TableRow
+                            key={card.id}
+                            className={selectedCardIds.has(card.id) ? "bg-blue-50" : ""}
+                          >
+                            <TableCell>
+                              <Checkbox
+                                checked={selectedCardIds.has(card.id)}
+                                onCheckedChange={() => toggleCard(card.id)}
+                                aria-label={`Selecionar pedido de ${card.customerName}`}
+                              />
+                            </TableCell>
                             <TableCell className="font-medium text-sm">{card.customerName}</TableCell>
                             <TableCell className="text-sm">{card.sellerName}</TableCell>
                             <TableCell className="text-sm font-medium text-green-600">
@@ -1963,7 +2043,7 @@ export default function ActiveCustomers() {
                                 size="sm"
                                 className="bg-blue-600 hover:bg-blue-700"
                                 onClick={() => sendToOmieMutation.mutate(card.id)}
-                                disabled={sendToOmieMutation.isPending}
+                                disabled={sendToOmieMutation.isPending || bulkSendMutation.isPending}
                               >
                                 {sendToOmieMutation.isPending ? (
                                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -1981,41 +2061,45 @@ export default function ActiveCustomers() {
                     </Table>
                   </div>
                 )}
-
-                {pendingOmieData.pendingHistory?.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Histórico de Pedidos</h3>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Vendedor</TableHead>
-                          <TableHead>Valor</TableHead>
-                          <TableHead>Data</TableHead>
-                          <TableHead>Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pendingOmieData.pendingHistory.map((h: any) => (
-                          <TableRow key={h.id}>
-                            <TableCell className="text-sm">{h.sellerName}</TableCell>
-                            <TableCell className="text-sm font-medium text-green-600">
-                              R$ {parseFloat(h.saleValue || '0').toFixed(2)}
-                            </TableCell>
-                            <TableCell className="text-sm text-gray-500">
-                              {h.createdAt ? new Date(h.createdAt).toLocaleDateString('pt-BR') : '-'}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{h.status}</Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
               </div>
             )}
           </ScrollArea>
+
+          {/* Bulk action footer - only shown when items are selected */}
+          {selectedCardIds.size > 0 && (
+            <div className="border-t pt-3 flex items-center justify-between gap-3 flex-shrink-0">
+              <span className="text-sm text-gray-600 font-medium">
+                {selectedCardIds.size} pedido(s) selecionado(s)
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="border-red-300 text-red-600 hover:bg-red-50"
+                  onClick={() => bulkCancelMutation.mutate(Array.from(selectedCardIds))}
+                  disabled={bulkCancelMutation.isPending || bulkSendMutation.isPending}
+                >
+                  {bulkCancelMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <X className="w-4 h-4 mr-2" />
+                  )}
+                  Cancelar Selecionados
+                </Button>
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={() => bulkSendMutation.mutate(Array.from(selectedCardIds))}
+                  disabled={bulkSendMutation.isPending || bulkCancelMutation.isPending}
+                >
+                  {bulkSendMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-2" />
+                  )}
+                  Enviar Selecionados
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

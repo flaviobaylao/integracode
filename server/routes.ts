@@ -14627,6 +14627,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== OMIE SALES ORDER INTEGRATION =====
 
+  // Bulk send multiple cards to Omie
+  app.post('/api/sales-cards/bulk-send-to-omie', isAuthenticated, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { cardIds } = req.body;
+      if (!Array.isArray(cardIds) || cardIds.length === 0) {
+        return res.status(400).json({ message: 'cardIds deve ser um array não vazio' });
+      }
+
+      const results: { id: string; success: boolean; message: string }[] = [];
+
+      for (const cardId of cardIds) {
+        try {
+          const card = await storage.getSalesCard(cardId);
+          if (!card) { results.push({ id: cardId, success: false, message: 'Card não encontrado' }); continue; }
+          if (card.omieOrderId) { results.push({ id: cardId, success: false, message: 'Já enviado ao Omie' }); continue; }
+          if (!card.saleValue || parseFloat(card.saleValue) === 0) { results.push({ id: cardId, success: false, message: 'Sem valor de venda' }); continue; }
+
+          let omieService: OmieService | null = null;
+          if (card.customer?.omieInstanceId) {
+            const instance = await storage.getOmieInstance(card.customer.omieInstanceId);
+            if (instance?.isActive) omieService = OmieService.createFromInstance(instance, storage);
+          }
+          if (!omieService) omieService = getOmieService(storage);
+          if (!omieService) { results.push({ id: cardId, success: false, message: 'Omie não configurado' }); continue; }
+
+          let products: any[] = [];
+          if (card.products && Array.isArray(card.products) && card.products.length > 0) {
+            products = await Promise.all(card.products.map(async (cp: any) => {
+              const p = await storage.getProduct(cp.id) || await storage.getProductByOmieCode(cp.id);
+              return { id: p?.id || cp.id, omieCode: p?.omieCode || null, omieCodigo: p?.omieCodigo || null, omieCodigoProduto: p?.omieCodigoProduto || null, name: cp.name, unitPrice: cp.unitPrice || 0, quantity: cp.quantity || 1 };
+            }));
+          } else {
+            products = [{ id: 'crm-sale', omieCode: 'crm-sale', name: 'VENDA VIA CRM', unitPrice: parseFloat(card.saleValue), quantity: 1 }];
+          }
+
+          const omieResponse = await omieService.createSalesOrder(card, card.customer, products, card.paymentMethod || 'a_vista', card.operationType || 'venda', card.sellerId);
+          await storage.updateSalesCard(cardId, { omieOrderId: omieResponse.codigo_pedido?.toString() || `HS-${Date.now()}` });
+          results.push({ id: cardId, success: true, message: `Pedido ${omieResponse.codigo_pedido} criado` });
+        } catch (err: any) {
+          results.push({ id: cardId, success: false, message: err.message || 'Erro desconhecido' });
+        }
+      }
+
+      const succeeded = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      res.json({ results, succeeded, failed, total: cardIds.length });
+    } catch (error: any) {
+      console.error('Erro no bulk send to Omie:', error);
+      res.status(500).json({ message: error.message || 'Erro ao enviar pedidos' });
+    }
+  });
+
+  // Bulk cancel (clear sale data) for multiple cards
+  app.post('/api/sales-cards/bulk-cancel', isAuthenticated, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { cardIds } = req.body;
+      if (!Array.isArray(cardIds) || cardIds.length === 0) {
+        return res.status(400).json({ message: 'cardIds deve ser um array não vazio' });
+      }
+
+      let cancelled = 0;
+      for (const cardId of cardIds) {
+        try {
+          await storage.updateSalesCard(cardId, { saleValue: null, products: [], paymentMethod: null });
+          cancelled++;
+        } catch (err) {
+          console.error(`Erro ao cancelar card ${cardId}:`, err);
+        }
+      }
+
+      res.json({ cancelled, total: cardIds.length });
+    } catch (error: any) {
+      console.error('Erro no bulk cancel:', error);
+      res.status(500).json({ message: error.message || 'Erro ao cancelar pedidos' });
+    }
+  });
+
   // Send card to Omie endpoint
   app.post('/api/sales-cards/:id/send-to-omie', isAuthenticated, async (req, res) => {
     try {
