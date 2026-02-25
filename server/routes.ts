@@ -23577,6 +23577,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             documentType: info.documentType,
             fantasyNameImported: info.fantasyName || null,
             customerId: customer?.id || null,
+            omieInstanceId: (customer as any)?.omieInstanceId || null,
             uploadId: uploadRecord.id,
             matchStatus: customer ? 'matched' : 'unmatched',
             latitude: latitude && !isNaN(latitude) ? latitude : null,
@@ -23592,8 +23593,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         
-        // Fase 4: Desativar clientes que não estão na nova lista
-        const removed = await storage.deactivateRemovedCustomers(uploadRecord.id, documentsInFile);
+        // Coletar instâncias Omie presentes no upload para escopar a desativação
+        const uploadedInstanceIds = Array.from(
+          new Set(
+            allCustomers
+              .map((c: any) => c.omieInstanceId)
+              .filter(Boolean)
+          )
+        ) as string[];
+        
+        // Fase 4: Desativar clientes que não estão na nova lista (apenas da mesma instância)
+        const removed = await storage.deactivateRemovedCustomers(uploadRecord.id, documentsInFile, uploadedInstanceIds.length > 0 ? uploadedInstanceIds : undefined);
         
         // Fase 5: Upsert em lote
         const { added, updated } = await storage.bulkUpsertActiveCustomers(customersToAdd);

@@ -514,7 +514,7 @@ export interface IStorage {
   updateActiveCustomer(id: string, customer: Partial<InsertActiveCustomer>): Promise<ActiveCustomer>;
   deleteActiveCustomer(id: string): Promise<void>;
   bulkUpsertActiveCustomers(customers: InsertActiveCustomer[]): Promise<{ added: number; updated: number }>;
-  deactivateRemovedCustomers(uploadId: string, currentDocuments: string[]): Promise<number>;
+  deactivateRemovedCustomers(uploadId: string, currentDocuments: string[], scopedInstanceIds?: string[]): Promise<number>;
   getActiveCustomerUploads(): Promise<ActiveCustomerUpload[]>;
   createActiveCustomerUpload(upload: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload>;
   updateActiveCustomerUpload(id: string, upload: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload>;
@@ -7171,19 +7171,38 @@ export class DatabaseStorage implements IStorage {
     }
   }
   
-  async deactivateRemovedCustomers(uploadId: string, currentDocuments: string[]): Promise<number> {
+  async deactivateRemovedCustomers(uploadId: string, currentDocuments: string[], scopedInstanceIds?: string[]): Promise<number> {
     if (currentDocuments.length === 0) {
-      // Deactivate all
+      // Deactivate all (or only scoped instances)
+      let whereClause: any = eq(activeCustomers.isActive, true);
+      if (scopedInstanceIds && scopedInstanceIds.length > 0) {
+        whereClause = and(
+          eq(activeCustomers.isActive, true),
+          inArray(activeCustomers.omieInstanceId, scopedInstanceIds)
+        );
+      }
       const result = await db
         .update(activeCustomers)
         .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
-        .where(eq(activeCustomers.isActive, true))
+        .where(whereClause)
         .returning();
       return result.length;
     }
     
-    // Get all active that are NOT in the current list
-    const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
+    // Get all active within scope that are NOT in the current list
+    let queryWhere: any = eq(activeCustomers.isActive, true);
+    if (scopedInstanceIds && scopedInstanceIds.length > 0) {
+      // Only deactivate customers from the same instance(s) as the upload
+      queryWhere = and(
+        eq(activeCustomers.isActive, true),
+        or(
+          inArray(activeCustomers.omieInstanceId, scopedInstanceIds),
+          isNull(activeCustomers.omieInstanceId)
+        )
+      );
+    }
+    
+    const active = await db.select().from(activeCustomers).where(queryWhere);
     const toDeactivate = active.filter(a => !currentDocuments.includes(a.document));
     
     for (const ac of toDeactivate) {
