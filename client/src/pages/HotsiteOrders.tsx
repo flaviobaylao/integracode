@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail, Trash2, Send } from 'lucide-react';
+import { Home, Search, ShoppingCart, Package, DollarSign, Calendar, User, Eye, MapPin, Phone, Mail, Trash2, Send, CheckCircle } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
@@ -138,6 +138,29 @@ export default function HotsiteOrders() {
       toast({
         title: 'Erro ao enviar para Omie',
         description: error.message || 'Não foi possível enviar o pedido para o Omie.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Mutation para finalizar pedido
+  const finalizeMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await apiRequest('POST', `/api/hotsite-orders/${orderId}/finalize`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
+      setSelectedOrder(null);
+      toast({
+        title: 'Pedido finalizado',
+        description: 'O pedido foi marcado como concluído.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Erro ao finalizar',
+        description: error.message || 'Não foi possível finalizar o pedido.',
         variant: 'destructive',
       });
     },
@@ -485,17 +508,35 @@ export default function HotsiteOrders() {
                           <TableCell>{getPaymentMethodLabel(order.paymentMethod)}</TableCell>
                           <TableCell>{getStatusBadge(order.status)}</TableCell>
                           <TableCell className="text-center">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedOrder(order);
-                              }}
-                              data-testid={`button-view-details-${order.id}`}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center justify-center gap-1">
+                              {order.status !== 'completed' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    finalizeMutation.mutate(order.id);
+                                  }}
+                                  disabled={finalizeMutation.isPending}
+                                  data-testid={`button-finalize-${order.id}`}
+                                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  title="Finalizar pedido"
+                                >
+                                  <CheckCircle className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedOrder(order);
+                                }}
+                                data-testid={`button-view-details-${order.id}`}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -722,7 +763,18 @@ export default function HotsiteOrders() {
 
                   {/* Ações */}
                   <div className="flex justify-between gap-2 pt-4 border-t">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {selectedOrder.status !== 'completed' && (
+                        <Button
+                          onClick={() => finalizeMutation.mutate(selectedOrder.id)}
+                          disabled={finalizeMutation.isPending}
+                          data-testid="button-finalize-order"
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          {finalizeMutation.isPending ? 'Finalizando...' : 'Finalizar Pedido'}
+                        </Button>
+                      )}
                       <Button
                         variant="destructive"
                         onClick={() => handleDeleteOrder(selectedOrder.id)}

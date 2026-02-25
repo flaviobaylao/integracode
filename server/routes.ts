@@ -3945,6 +3945,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Finalizar pedido do hotsite (disponível para todos os usuários autenticados)
+  app.post('/api/hotsite-orders/:id/finalize', authenticateUser, async (req: any, res) => {
+    try {
+      const orderId = req.params.id;
+      const user = req.currentUser;
+
+      console.log('✅ [FINALIZE-HOTSITE-ORDER] User:', user.email, 'finalizing order:', orderId);
+
+      const order = await storage.getSalesCard(orderId);
+      if (!order) {
+        return res.status(404).json({ message: "Pedido não encontrado" });
+      }
+
+      if (order.source !== 'hotsite') {
+        return res.status(400).json({ message: "Este pedido não é do hotsite" });
+      }
+
+      if (order.status === 'completed') {
+        return res.status(400).json({ message: "Este pedido já está finalizado" });
+      }
+
+      const updated = await storage.updateSalesCard(orderId, { status: 'completed' } as any);
+
+      console.log('✅ [FINALIZE-HOTSITE-ORDER] Pedido finalizado:', orderId);
+      res.json({ success: true, order: updated });
+    } catch (error) {
+      console.error("❌ [FINALIZE-HOTSITE-ORDER] Error:", error);
+      res.status(500).json({ message: "Erro ao finalizar pedido" });
+    }
+  });
+
   // Enviar pedido do hotsite para Omie
   app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
     try {
