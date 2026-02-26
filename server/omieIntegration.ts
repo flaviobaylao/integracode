@@ -3001,7 +3001,7 @@ export class OmieService {
         informacoes_adicionais: {
           codigo_categoria: "1.01.03",
           codigo_conta_corrente: omieAccountCode,
-          consumidor_final: "S",
+          consumidor_final: "N",
           enviar_email: "S"
         }
       };
@@ -5406,7 +5406,7 @@ export async function createOmieOrder(orderData: {
       informacoes_adicionais: {
         codigo_categoria: "1.01.03",
         codigo_conta_corrente: omieAccountCode,
-        consumidor_final: "S",
+        consumidor_final: "N",
         enviar_email: "S",
         ...(vendorCode ? { codVend: vendorCode } : {}),
         observacoes: `Pedido ${orderData.operationType || 'venda'} via CRM - Pagamento: ${orderData.paymentMethod || 'a_vista'} - Vendedor: ${orderData.sellerId}`
