@@ -13505,6 +13505,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .where(eq(billingsTable.id, stop[0].billingId!))
               .limit(1);
             
+            if (billing.length === 0) {
+              console.warn(`⚠️ [COMPLETE-DELIVERY] billingId ${stop[0].billingId} não encontrado na tabela billings - motorista: ${userEmail}`);
+            } else if (!billing[0].omieOrderId) {
+              console.warn(`⚠️ [COMPLETE-DELIVERY] Billing ${stop[0].billingId} existe mas sem omieOrderId (NF sem pedido Omie?) - motorista: ${userEmail}, cliente: ${billing[0].customerFantasyName}, NF: ${billing[0].invoiceNumber}`);
+            }
             if (billing.length > 0 && billing[0].omieOrderId) {
               const orderId = parseInt(billing[0].omieOrderId);
               if (!isNaN(orderId)) {
@@ -13585,6 +13590,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      if (!omieStageChanged) {
+        console.warn(`⚠️ [COMPLETE-DELIVERY] Etapa Omie NÃO foi alterada para parada ${stopId} | motorista: ${userEmail} | billingId: ${stop[0].billingId || 'NENHUM'} | omieOrderId: ${stop[0].omieOrderId || 'NENHUM'}`);
+      }
       if (!omieStageChanged && !stop[0].omieOrderId && !stop[0].billingId) {
         console.log(`⚠️ [COMPLETE-DELIVERY] Parada ${stopId} sem billingId e sem omieOrderId - etapa Omie NÃO será alterada`);
       }

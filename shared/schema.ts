@@ -8,6 +8,7 @@ import {
   text,
   decimal,
   integer,
+  bigint,
   boolean,
   pgEnum,
   unique,
@@ -2482,7 +2483,7 @@ export type InsertVirtualAttendanceStat = z.infer<typeof insertVirtualAttendance
 
 export const omieStageLogs = pgTable("omie_stage_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  omieOrderId: integer("omie_order_id").notNull(),
+  omieOrderId: bigint("omie_order_id", { mode: "number" }).notNull(),
   orderNumber: varchar("order_number"),
   customerName: varchar("customer_name"),
   previousStage: varchar("previous_stage"),
