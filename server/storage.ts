@@ -6948,8 +6948,8 @@ export class DatabaseStorage implements IStorage {
           ...ac,
           customer: customer ? {
             ...customer,
-            // Fallback: se o cliente tem omieClientCode mas omieInstanceId nulo, usar instância padrão
-            omieInstanceId: customer.omieInstanceId || (customer.omieClientCode ? defaultOmieInstanceId : null),
+            // Fallback: se omieInstanceId nulo, usar instância padrão (todos os clientes ativos pertencem a alguma instância)
+            omieInstanceId: customer.omieInstanceId || ac.omieInstanceId || defaultOmieInstanceId,
             isPositivatedThisMonth: isPositivated,
             lastActivityDate: lastActivity?.toISOString() || null
           } : undefined,
