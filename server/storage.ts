@@ -6675,7 +6675,7 @@ export class DatabaseStorage implements IStorage {
   
   async getActiveCustomersWithVisits(): Promise<ActiveCustomerWithVisits[]> {
     try {
-      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true)).limit(1000);
+      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
       
       if (active.length === 0) return [];
       
