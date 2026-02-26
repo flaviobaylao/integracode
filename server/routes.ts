@@ -23751,15 +23751,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Multi-tenant: obter instância Omie do cliente
       const omieInstanceId = customer.omieInstanceId || null;
 
-      // Verificar se já existe na lista ativa para esta instância Omie específica
-      const existing = await storage.getActiveCustomerByDocumentAndInstance(document, omieInstanceId);
+      // Verificar se já existe na lista ativa (busca por documento, qualquer instância)
+      const existing = await storage.getActiveCustomerByDocument(document);
       
       if (existing) {
-        // Se existe mas está inativo, ativar
-        if (!existing.isActive) {
-          await storage.updateActiveCustomer(existing.id, { isActive: true });
-        }
-        return res.json({ message: 'Cliente já estava na lista ativa', activeCustomer: existing });
+        // Sempre atualizar com dados corretos (corrige registros antigos com customerId errado)
+        const updated = await storage.updateActiveCustomer(existing.id, {
+          isActive: true,
+          customerId: customerId,
+          matchStatus: 'matched',
+          fantasyNameImported: customer.fantasyName || customer.name,
+          omieInstanceId: omieInstanceId,
+          deactivatedAt: null,
+        });
+        return res.json({ message: existing.isActive ? 'Cliente já estava na lista ativa' : 'Cliente ativado com sucesso', activeCustomer: updated });
       }
 
       // Criar novo registro na lista ativa

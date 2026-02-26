@@ -7189,12 +7189,18 @@ export class DatabaseStorage implements IStorage {
   }
   
   async deactivateRemovedCustomers(uploadId: string, currentDocuments: string[], scopedInstanceIds?: string[]): Promise<number> {
+    const notManual = or(isNull(activeCustomers.uploadId), ne(activeCustomers.uploadId, 'manual-add'));
+
     if (currentDocuments.length === 0) {
-      // Deactivate all (or only scoped instances)
-      let whereClause: any = eq(activeCustomers.isActive, true);
+      // Deactivate all (or only scoped instances), but never manually-added customers
+      let whereClause: any = and(
+        eq(activeCustomers.isActive, true),
+        notManual
+      );
       if (scopedInstanceIds && scopedInstanceIds.length > 0) {
         whereClause = and(
           eq(activeCustomers.isActive, true),
+          notManual,
           inArray(activeCustomers.omieInstanceId, scopedInstanceIds)
         );
       }
@@ -7207,11 +7213,15 @@ export class DatabaseStorage implements IStorage {
     }
     
     // Get all active within scope that are NOT in the current list
-    let queryWhere: any = eq(activeCustomers.isActive, true);
+    let queryWhere: any = and(
+      eq(activeCustomers.isActive, true),
+      notManual // Nunca desativar clientes adicionados manualmente
+    );
     if (scopedInstanceIds && scopedInstanceIds.length > 0) {
       // Only deactivate customers from the same instance(s) as the upload
       queryWhere = and(
         eq(activeCustomers.isActive, true),
+        notManual,
         or(
           inArray(activeCustomers.omieInstanceId, scopedInstanceIds),
           isNull(activeCustomers.omieInstanceId)

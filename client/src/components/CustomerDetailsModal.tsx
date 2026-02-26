@@ -173,6 +173,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
       return await apiRequest("POST", `/api/active-customers/add/${customer.id}`, {});
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       toast({
         title: "Sucesso!",
         description: "Cliente adicionado à lista de clientes ativos.",
