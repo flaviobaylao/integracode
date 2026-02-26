@@ -6697,6 +6697,21 @@ export class DatabaseStorage implements IStorage {
       let positivationMap = new Map<string, boolean>();
       let lastActivityMap = new Map<string, Date>();
       let monthlyTotalsMap = new Map<string, { previousMonth: number; currentMonth: number }>();
+
+      // Buscar instância Omie padrão para fallback de clientes sem omieInstanceId
+      let defaultOmieInstanceId: string | null = null;
+      try {
+        const [defaultInstance] = await db.select().from(omieInstances).where(eq(omieInstances.isDefault, true));
+        if (defaultInstance) {
+          defaultOmieInstanceId = defaultInstance.id;
+        } else {
+          // Se não há padrão, pegar a primeira instância ativa
+          const [firstActive] = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
+          if (firstActive) defaultOmieInstanceId = firstActive.id;
+        }
+      } catch (e) {
+        // silently ignore
+      }
       
       if (customerIds.length > 0) {
         try {
@@ -6933,6 +6948,8 @@ export class DatabaseStorage implements IStorage {
           ...ac,
           customer: customer ? {
             ...customer,
+            // Fallback: se o cliente tem omieClientCode mas omieInstanceId nulo, usar instância padrão
+            omieInstanceId: customer.omieInstanceId || (customer.omieClientCode ? defaultOmieInstanceId : null),
             isPositivatedThisMonth: isPositivated,
             lastActivityDate: lastActivity?.toISOString() || null
           } : undefined,
