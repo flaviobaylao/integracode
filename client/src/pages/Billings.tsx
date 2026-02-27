@@ -6,10 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2 } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2, FileText } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OmieInstanceBadge from '@/components/OmieInstanceBadge';
+import FiscalScenariosTab from '@/components/FiscalScenariosTab';
 import {
   Select,
   SelectContent,
@@ -510,7 +512,7 @@ export default function Billings() {
         <div>
           <h1 className="text-3xl font-bold" data-testid="page-title">Faturamentos</h1>
           <p className="text-muted-foreground">
-            Sincronize e visualize notas fiscais dos últimos 60 dias do Omie ERP
+            Gerencie faturamentos e cenários fiscais
           </p>
         </div>
         
@@ -557,6 +559,22 @@ export default function Billings() {
           </div>
         </div>
       </div>
+
+      <Tabs defaultValue="faturamentos" className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="faturamentos" className="flex items-center gap-2">
+            <Download className="h-4 w-4" />Faturamentos
+          </TabsTrigger>
+          <TabsTrigger value="cenarios" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />Cenários Fiscais
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="cenarios" className="mt-4">
+          <FiscalScenariosTab />
+        </TabsContent>
+
+        <TabsContent value="faturamentos" className="space-y-6 mt-4">
 
       {isSyncing && (
         <Card className="border-green-500 bg-green-50 dark:bg-green-950/30">
@@ -964,6 +982,9 @@ export default function Billings() {
           )}
         </CardContent>
       </Card>
+
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

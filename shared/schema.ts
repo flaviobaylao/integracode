@@ -2526,13 +2526,33 @@ export const fiscalScenarios = pgTable("fiscal_scenarios", {
   operationType: varchar("operation_type").notNull(),
   stateScope: varchar("state_scope").notNull(),
   cfop: varchar("cfop").notNull(),
+  natureOfOperation: varchar("nature_of_operation"),
+  taxRegime: varchar("tax_regime").default("simples_nacional"),
+
   csosn: varchar("csosn"),
   cstIcms: varchar("cst_icms"),
-  cstPis: varchar("cst_pis"),
-  cstCofins: varchar("cst_cofins"),
   aliqIcms: decimal("aliq_icms", { precision: 5, scale: 2 }),
+  modalidadeBcIcms: varchar("modalidade_bc_icms"),
+  redBcIcms: decimal("red_bc_icms", { precision: 5, scale: 2 }),
+
+  cstIpi: varchar("cst_ipi"),
+  aliqIpi: decimal("aliq_ipi", { precision: 5, scale: 2 }),
+
+  aliqIcmsInterestadual: decimal("aliq_icms_interestadual", { precision: 5, scale: 2 }),
+  aliqIcmsInterna: decimal("aliq_icms_interna", { precision: 5, scale: 2 }),
+  aliqFcp: decimal("aliq_fcp", { precision: 5, scale: 2 }),
+
+  modalidadeBcIcmsSt: varchar("modalidade_bc_icms_st"),
+  mvaIcmsSt: decimal("mva_icms_st", { precision: 7, scale: 2 }),
+  redBcIcmsSt: decimal("red_bc_icms_st", { precision: 5, scale: 2 }),
+  aliqIcmsSt: decimal("aliq_icms_st", { precision: 5, scale: 2 }),
+  aliqFcpSt: decimal("aliq_fcp_st", { precision: 5, scale: 2 }),
+
+  cstPis: varchar("cst_pis"),
   aliqPis: decimal("aliq_pis", { precision: 5, scale: 4 }),
+  cstCofins: varchar("cst_cofins"),
   aliqCofins: decimal("aliq_cofins", { precision: 5, scale: 4 }),
+
   description: text("description"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
