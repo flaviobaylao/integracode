@@ -10432,6 +10432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               name: omieProduct.descricao || '',
               description: omieProduct.descricao || '',
               price: omieProduct.valor_unitario?.toString() || '0',
+              ncm: omieProduct.ncm || null,
               stock: 0,
               isActive: true,
               omieCode: omieProduct.codigo_produto_integracao || omieProduct.codigo || omieProduct.codigo_produto?.toString() || '',
@@ -10450,6 +10451,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Atualizar produto existente com TODOS os campos incluindo códigos Omie
               await storage.updateProduct(existingProduct.id, {
                 price: systemProduct.price,
+                ncm: systemProduct.ncm,
                 isActive: systemProduct.isActive,
                 omieCode: systemProduct.omieCode,
                 omieCodigo: systemProduct.omieCodigo,

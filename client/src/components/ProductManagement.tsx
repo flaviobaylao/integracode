@@ -2,15 +2,18 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { RefreshCw, Images, X, Upload } from "lucide-react";
+import { RefreshCw, Images, X, Upload, Check, Pencil } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
 
 export default function ProductManagement() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
+  const [editingNcm, setEditingNcm] = useState<string | null>(null);
+  const [ncmValue, setNcmValue] = useState("");
   
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
@@ -74,6 +77,21 @@ export default function ProductManagement() {
         description: error.message,
         variant: "destructive",
       });
+    },
+  });
+
+  const updateNcmMutation = useMutation({
+    mutationFn: async ({ productId, ncm }: { productId: string; ncm: string }) => {
+      const response = await apiRequest('PUT', `/api/products/${productId}`, { ncm });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      setEditingNcm(null);
+      toast({ title: "NCM atualizado", description: "Código NCM salvo com sucesso." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao salvar NCM", description: error.message, variant: "destructive" });
     },
   });
 
@@ -236,6 +254,46 @@ export default function ProductManagement() {
                       </div>
                     </div>
                   )}
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-medium text-gray-600">NCM:</span>
+                    {editingNcm === product.id ? (
+                      <div className="flex items-center gap-1 flex-1">
+                        <Input
+                          value={ncmValue}
+                          onChange={(e) => setNcmValue(e.target.value.replace(/[^0-9.]/g, '').slice(0, 10))}
+                          placeholder="00000000"
+                          className="h-6 text-xs px-2 flex-1"
+                          maxLength={10}
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') updateNcmMutation.mutate({ productId: product.id, ncm: ncmValue });
+                            if (e.key === 'Escape') setEditingNcm(null);
+                          }}
+                        />
+                        <button
+                          onClick={() => updateNcmMutation.mutate({ productId: product.id, ncm: ncmValue })}
+                          className="text-green-600 hover:text-green-700 p-0.5"
+                          disabled={updateNcmMutation.isPending}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => setEditingNcm(null)} className="text-gray-400 hover:text-gray-600 p-0.5">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 flex-1">
+                        <span className="text-xs text-gray-500">{product.ncm || '—'}</span>
+                        <button
+                          onClick={() => { setEditingNcm(product.id); setNcmValue(product.ncm || ''); }}
+                          className="text-gray-400 hover:text-blue-600 p-0.5"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Botão de gerenciar imagens */}
                   <Dialog>

@@ -335,6 +335,7 @@ export const products = pgTable("products", {
   resaleInteriorPrice: decimal("resale_interior_price", { precision: 10, scale: 2 }), // Revenda Interior Goiás
   resaleBrasiliaPrice: decimal("resale_brasilia_price", { precision: 10, scale: 2 }), // Revenda Brasília/Entorno
   
+  ncm: varchar("ncm"), // Nomenclatura Comum do Mercosul (código fiscal do produto)
   stock: integer("stock").notNull().default(0),
   imageUrl: varchar("image_url"), // Imagem principal (mantido para compatibilidade)
   images: text("images").array(), // Array de URLs de imagens (galeria)
