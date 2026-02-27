@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PAYMENT_METHOD_TO_OMIE_ACCOUNT, BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared/schema';
+import { BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared/schema';
 import { db } from './db';
 import { customers, users } from '@shared/schema';
 import { eq, sql, isNotNull } from 'drizzle-orm';
@@ -2924,30 +2924,33 @@ export class OmieService {
         };
       });
 
-      // Determinar conta do Omie baseada no método de pagamento
-      let omieAccountCode: number | undefined = paymentMethod 
-        ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
-        : undefined;
+      // Determinar conta do Omie dinamicamente para esta instância (evita uso de código de outra instância)
+      let omieAccountCode: number | undefined = undefined;
 
-      // Verificar se a conta existe nesta instância, senão buscar a melhor disponível
       try {
         const accounts = await this.listBankAccounts();
         if (accounts.length > 0) {
-          const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
-          if (!currentValid) {
-            // Preferir conta "OMIE CASH" (padrão para operações à vista/PIX/boleto)
-            const omieCash = accounts.find((a: any) => 
+          // Preferir conta "OMIE CASH" ou "CAIXINHA" (padrão para operações à vista/PIX)
+          // Para boleto, preferir conta "BOLETO" ou "BANCO"
+          const isBoleto = paymentMethod === 'boleto';
+          let selected = isBoleto
+            ? accounts.find((a: any) => (a.descricao || a.cDescricao || '').toUpperCase().includes('BOLETO') || (a.descricao || a.cDescricao || '').toUpperCase().includes('BANCO'))
+            : null;
+          if (!selected) {
+            selected = accounts.find((a: any) =>
               (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
               (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
             );
-            omieAccountCode = omieCash ? omieCash.nCodCC : accounts[0].nCodCC;
-            const accName = omieCash ? (omieCash.descricao || omieCash.cDescricao) : (accounts[0].descricao || accounts[0].cDescricao);
-            console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
           }
+          if (!selected) selected = accounts[0];
+          omieAccountCode = selected.nCodCC;
+          const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
+          console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+        } else {
+          console.warn(`⚠️ [CONTA] Nenhuma conta corrente encontrada para esta instância - pedido será enviado sem codigo_conta_corrente`);
         }
       } catch (err: any) {
         console.warn(`⚠️ [CONTA] Erro ao buscar contas correntes:`, err.message);
-        if (!omieAccountCode) omieAccountCode = 2425423833;
       }
 
       // Determinar código da parcela baseado no método de pagamento e prazo
@@ -2992,18 +2995,22 @@ export class OmieService {
         quantidade_itens: products.length
       };
       
+      const informacoesAdicionais: any = {
+        codigo_categoria: "1.01.03",
+        consumidor_final: "N",
+        enviar_email: "S"
+      };
+      if (omieAccountCode) {
+        informacoesAdicionais.codigo_conta_corrente = omieAccountCode;
+      }
+
       const orderPayload: any = {
         cabecalho,
         det: orderItems,
         frete: {
           modalidade: "9"
         },
-        informacoes_adicionais: {
-          codigo_categoria: "1.01.03",
-          codigo_conta_corrente: omieAccountCode,
-          consumidor_final: "N",
-          enviar_email: "S"
-        }
+        informacoes_adicionais: informacoesAdicionais
       };
 
       if (omieVendorCode) {
@@ -4886,11 +4893,14 @@ export class OmieService {
         registros_por_pagina: 100
       });
 
-      if (response && response.conta_corrente_lista) {
+      if (response && response.conta_corrente_lista && response.conta_corrente_lista.length > 0) {
         console.log(`✅ Encontradas ${response.conta_corrente_lista.length} contas correntes`);
         return response.conta_corrente_lista;
       } else {
-        console.log('❌ Nenhuma conta corrente encontrada');
+        console.log(`❌ Nenhuma conta corrente encontrada. Chaves da resposta: ${response ? Object.keys(response).join(', ') : 'null'}`);
+        if (response) {
+          console.log(`🔍 [CONTAS] Resposta completa: ${JSON.stringify(response).slice(0, 500)}`);
+        }
         return [];
       }
     } catch (error) {
@@ -5296,28 +5306,31 @@ export async function createOmieOrder(orderData: {
     }
 
     // 2. Criar pedido de venda no Omie
-    // Determinar conta do Omie baseada no método de pagamento
-    let omieAccountCode: number | undefined = orderData.paymentMethod 
-      ? PAYMENT_METHOD_TO_OMIE_ACCOUNT[orderData.paymentMethod as keyof typeof PAYMENT_METHOD_TO_OMIE_ACCOUNT]
-      : undefined;
+    // Determinar conta do Omie dinamicamente para esta instância
+    let omieAccountCode: number | undefined = undefined;
 
-    // Verificar se a conta existe nesta instância, senão buscar a melhor disponível
     try {
       const accounts = await this.listBankAccounts();
       if (accounts.length > 0) {
-        const currentValid = omieAccountCode && accounts.find((a: any) => a.nCodCC === omieAccountCode);
-        if (!currentValid) {
-          const omieCash = accounts.find((a: any) => 
+        const isBoleto = orderData.paymentMethod === 'boleto';
+        let selected = isBoleto
+          ? accounts.find((a: any) => (a.descricao || a.cDescricao || '').toUpperCase().includes('BOLETO') || (a.descricao || a.cDescricao || '').toUpperCase().includes('BANCO'))
+          : null;
+        if (!selected) {
+          selected = accounts.find((a: any) =>
             (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
             (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
           );
-          omieAccountCode = omieCash ? omieCash.nCodCC : accounts[0].nCodCC;
-          console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode}`);
         }
+        if (!selected) selected = accounts[0];
+        omieAccountCode = selected.nCodCC;
+        const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
+        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+      } else {
+        console.warn(`⚠️ [CONTA-HOTSITE] Nenhuma conta corrente encontrada para esta instância - pedido sem codigo_conta_corrente`);
       }
     } catch (err: any) {
       console.warn(`⚠️ [CONTA-HOTSITE] Erro ao buscar contas:`, err.message);
-      if (!omieAccountCode) omieAccountCode = 2425423833;
     }
 
     // Determinar código da parcela baseado no método de pagamento e prazo
@@ -5405,7 +5418,7 @@ export async function createOmieOrder(orderData: {
       },
       informacoes_adicionais: {
         codigo_categoria: "1.01.03",
-        codigo_conta_corrente: omieAccountCode,
+        ...(omieAccountCode ? { codigo_conta_corrente: omieAccountCode } : {}),
         consumidor_final: "N",
         enviar_email: "S",
         ...(vendorCode ? { codVend: vendorCode } : {}),
