@@ -101,7 +101,51 @@ function parseNFeXml(xmlString: string): any {
   }
 }
 
+async function ensurePurchaseInvoicesTable() {
+  try {
+    await db.execute(sql`
+      ALTER TABLE omie_instances ADD COLUMN IF NOT EXISTS cnpj varchar
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS purchase_invoices (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        access_key varchar(44) UNIQUE,
+        invoice_number varchar,
+        series varchar DEFAULT '1',
+        issue_date timestamp,
+        supplier_name varchar NOT NULL,
+        supplier_document varchar NOT NULL,
+        supplier_ie varchar,
+        total_value decimal(12,2) NOT NULL DEFAULT 0,
+        items jsonb DEFAULT '[]'::jsonb,
+        taxes jsonb DEFAULT '{}'::jsonb,
+        status varchar NOT NULL DEFAULT 'detected',
+        xml_content text,
+        omie_instance_id varchar,
+        chart_account_id varchar,
+        payable_id varchar,
+        is_stock_purchase boolean DEFAULT false,
+        stock_processed boolean DEFAULT false,
+        cfop varchar,
+        nature_of_operation varchar,
+        notes text,
+        detected_at timestamp DEFAULT NOW(),
+        imported_at timestamp,
+        classified_at timestamp,
+        created_by varchar,
+        created_at timestamp DEFAULT NOW(),
+        updated_at timestamp DEFAULT NOW()
+      )
+    `);
+    console.log("✅ purchase_invoices table ensured");
+  } catch (err: any) {
+    console.error("⚠️ Error ensuring purchase_invoices table:", err.message);
+  }
+}
+
 export function registerPurchaseRoutes(app: Express) {
+  ensurePurchaseInvoicesTable();
+
   app.get("/api/purchases", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
     try {
       const { status, omieInstanceId, search, limit = "100" } = req.query;
@@ -132,6 +176,53 @@ export function registerPurchaseRoutes(app: Express) {
       res.json(results);
     } catch (err: any) {
       console.error("[PURCHASES] List error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/purchases/stats/summary", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const [stats] = await db.execute(sql`
+        SELECT
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'detected') as detected,
+          COUNT(*) FILTER (WHERE status = 'imported') as imported,
+          COUNT(*) FILTER (WHERE status = 'classified') as classified,
+          COUNT(*) FILTER (WHERE status = 'linked') as linked,
+          COUNT(*) FILTER (WHERE status = 'paid') as paid,
+          COALESCE(SUM(CAST(total_value AS numeric)), 0) as total_value,
+          COALESCE(SUM(CAST(total_value AS numeric)) FILTER (WHERE status IN ('linked', 'paid')), 0) as linked_value,
+          COUNT(*) FILTER (WHERE is_stock_purchase = true) as stock_purchases
+        FROM purchase_invoices
+        WHERE status != 'cancelled'
+      `);
+      res.json(stats);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/purchases/radar/scan", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
+    try {
+      const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
+      const instancesWithCnpj = instances.filter(i => i.cnpj);
+
+      if (instancesWithCnpj.length === 0) {
+        return res.json({
+          message: "Nenhuma instância com CNPJ cadastrado. Configure o CNPJ das instâncias Omie para ativar o radar.",
+          scanned: 0,
+          found: 0,
+        });
+      }
+
+      res.json({
+        message: `Radar configurado para ${instancesWithCnpj.length} instância(s). A busca automática via DF-e/SEFAZ requer certificado digital A1 configurado. Use a importação manual de XML enquanto isso.`,
+        instances: instancesWithCnpj.map(i => ({ id: i.id, name: i.name, cnpj: i.cnpj })),
+        scanned: instancesWithCnpj.length,
+        found: 0,
+        tip: "Para ativar a busca automática, configure um certificado digital A1 válido para cada instância e o sistema consultará automaticamente o Web Service de Distribuição de DF-e da SEFAZ AN.",
+      });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -359,53 +450,6 @@ export function registerPurchaseRoutes(app: Express) {
     try {
       await db.delete(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
       res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/purchases/stats/summary", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
-    try {
-      const [stats] = await db.execute(sql`
-        SELECT
-          COUNT(*) as total,
-          COUNT(*) FILTER (WHERE status = 'detected') as detected,
-          COUNT(*) FILTER (WHERE status = 'imported') as imported,
-          COUNT(*) FILTER (WHERE status = 'classified') as classified,
-          COUNT(*) FILTER (WHERE status = 'linked') as linked,
-          COUNT(*) FILTER (WHERE status = 'paid') as paid,
-          COALESCE(SUM(CAST(total_value AS numeric)), 0) as total_value,
-          COALESCE(SUM(CAST(total_value AS numeric)) FILTER (WHERE status IN ('linked', 'paid')), 0) as linked_value,
-          COUNT(*) FILTER (WHERE is_stock_purchase = true) as stock_purchases
-        FROM purchase_invoices
-        WHERE status != 'cancelled'
-      `);
-      res.json(stats);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/purchases/radar/scan", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
-    try {
-      const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
-      const instancesWithCnpj = instances.filter(i => i.cnpj);
-
-      if (instancesWithCnpj.length === 0) {
-        return res.json({
-          message: "Nenhuma instância com CNPJ cadastrado. Configure o CNPJ das instâncias Omie para ativar o radar.",
-          scanned: 0,
-          found: 0,
-        });
-      }
-
-      res.json({
-        message: `Radar configurado para ${instancesWithCnpj.length} instância(s). A busca automática via DF-e/SEFAZ requer certificado digital A1 configurado. Use a importação manual de XML enquanto isso.`,
-        instances: instancesWithCnpj.map(i => ({ id: i.id, name: i.name, cnpj: i.cnpj })),
-        scanned: instancesWithCnpj.length,
-        found: 0,
-        tip: "Para ativar a busca automática, configure um certificado digital A1 válido para cada instância e o sistema consultará automaticamente o Web Service de Distribuição de DF-e da SEFAZ AN.",
-      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
