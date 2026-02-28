@@ -3458,3 +3458,24 @@ export const insertSpedExportSchema = createInsertSchema(spedExports).omit({
 export type SpedExport = typeof spedExports.$inferSelect;
 export type InsertSpedExport = z.infer<typeof insertSpedExportSchema>;
 
+export const savedReports = pgTable("saved_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  description: text("description"),
+  dataSource: varchar("data_source").notNull(),
+  config: jsonb("config").notNull(),
+  createdBy: varchar("created_by"),
+  isPublic: boolean("is_public").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSavedReportSchema = createInsertSchema(savedReports).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SavedReport = typeof savedReports.$inferSelect;
+export type InsertSavedReport = z.infer<typeof insertSavedReportSchema>;
+

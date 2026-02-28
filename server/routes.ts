@@ -10,6 +10,7 @@ import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimi
 import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
 import OpenAI from 'openai';
@@ -496,6 +497,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register Object Storage routes for file uploads
   registerObjectStorageRoutes(app);
   console.log('✅ Object Storage routes registered');
+
+  app.get('/api/reports/data-sources', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      res.json(getDataSources());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/reports/data-sources/:key/fields', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const fields = getDataSourceFields(req.params.key);
+      if (!fields) return res.status(404).json({ error: 'Fonte de dados não encontrada' });
+      res.json(fields);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/reports/execute', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const config: ReportConfig = req.body;
+      if (!config.dataSource) return res.status(400).json({ error: 'Fonte de dados obrigatória' });
+      const result = await executeReport(config);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[REPORTS] Execute error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/reports/saved', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const reports = await getSavedReports(req.userId);
+      res.json(reports);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/reports/saved/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const report = await getSavedReport(req.params.id);
+      if (!report) return res.status(404).json({ error: 'Relatório não encontrado' });
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/reports/saved', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const report = await createSavedReport({ ...req.body, createdBy: req.userId });
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/reports/saved/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const report = await updateSavedReport(req.params.id, req.body);
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/reports/saved/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      await deleteSavedReport(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  console.log('✅ Report engine routes registered');
 
   // Version endpoint
   app.get('/api/version', (req, res) => {
