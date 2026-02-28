@@ -3100,10 +3100,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let targetSellerId = undefined;
       
       if (user.role === 'vendedor') {
-        // Vendedores só podem ver suas próprias metas
         targetSellerId = user.id;
+      } else if (user.role === 'telemarketing') {
+        targetSellerId = sellerId || undefined;
       } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        // Admins, coordinators e administrativos podem ver todas ou filtrar por vendedor
         targetSellerId = sellerId || undefined;
       } else {
         return res.status(403).json({ message: "Access denied" });
@@ -3166,9 +3166,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verificar se já existe meta para este vendedor neste mês/ano
       const existingGoal = await storage.getSalesGoalBySeller(data.sellerId, data.month, data.year);
       if (existingGoal && existingGoal.isActive) {
-        return res.status(409).json({ 
-          message: "Sales goal already exists for this seller in this month/year" 
+        // Auto-update existing goal instead of rejecting
+        const updatedGoal = await storage.updateSalesGoal(existingGoal.id, {
+          revenueGoal: data.revenueGoal,
         });
+        return res.json(updatedGoal);
       }
       
       const goal = await storage.createSalesGoal(data);
@@ -3229,6 +3231,188 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting sales goal:", error);
       res.status(500).json({ message: "Failed to delete sales goal" });
+    }
+  });
+
+  // Commission dashboard - comprehensive endpoint for the new goals system
+  app.get('/api/sales-goals/commission-dashboard', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { month, year } = req.query;
+      const targetMonth = month ? parseInt(month as string) : getBrazilMonth();
+      const targetYear = year ? parseInt(year as string) : getBrazilYear();
+
+      // Commission tier definitions
+      const COMMISSION_TIERS: Record<string, { thresholds: number[]; rates: number[] }> = {
+        vendedor_clt: {
+          thresholds: [0, 85, 100, 110, 120],
+          rates: [0.80, 1.50, 2.50, 3.50, 4.50],
+        },
+        vendedor_pj: {
+          thresholds: [0, 85, 100, 110, 120],
+          rates: [3.50, 4.50, 6.00, 6.50, 7.50],
+        },
+        telemarketing: {
+          thresholds: [0, 90, 100, 110, 120],
+          rates: [1.50, 2.00, 3.00, 3.50, 4.00],
+        },
+      };
+
+      function getCommissionInfo(sellerType: string, achievementPct: number) {
+        const tiers = COMMISSION_TIERS[sellerType];
+        if (!tiers) return { tier: 0, rate: 0, tierLabel: 'N/A' };
+        let tier = 0;
+        for (let i = tiers.thresholds.length - 1; i >= 0; i--) {
+          if (achievementPct >= tiers.thresholds[i]) {
+            tier = i;
+            break;
+          }
+        }
+        const tierLabels = sellerType === 'telemarketing'
+          ? ['Até 89,99%', '90% a 99,99%', '100% a 109,99%', '110% a 119,99%', '120% ou mais']
+          : ['Até 84,99%', '85% a 99,99%', '100% a 109,99%', '110% a 119,99%', '120% ou mais'];
+        return { tier: tier + 1, rate: tiers.rates[tier], tierLabel: tierLabels[tier] };
+      }
+
+      // Fetch all active users with relevant roles
+      const allUsers = await db.select().from(users).where(eq(users.isActive, true));
+      const sellersWithType = allUsers.filter(u =>
+        u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType)
+      );
+
+      // Fetch goals for the month
+      const goals = await storage.getSalesGoals(undefined, targetMonth, targetYear);
+
+      // Working days calculation
+      const startDate = new Date(targetYear, targetMonth - 1, 1);
+      const endDate = new Date(targetYear, targetMonth, 0);
+      const holidays = [
+        `${targetYear}-01-01`, `${targetYear}-04-18`, `${targetYear}-04-21`,
+        `${targetYear}-05-01`, `${targetYear}-06-19`, `${targetYear}-09-07`,
+        `${targetYear}-10-12`, `${targetYear}-11-02`, `${targetYear}-11-15`,
+        `${targetYear}-11-20`, `${targetYear}-12-25`,
+      ];
+      let workingDaysInMonth = 0;
+      let workingDaysElapsed = 0;
+      const today = new Date();
+      for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+        const dow = d.getDay();
+        const dateStr = d.toISOString().slice(0, 10);
+        if (dow !== 0 && dow !== 6 && !holidays.includes(dateStr)) {
+          workingDaysInMonth++;
+          if (d <= today) workingDaysElapsed++;
+        }
+      }
+      if (workingDaysElapsed === 0) workingDaysElapsed = 1;
+
+      // Build results for individual sellers (CLT + PJ)
+      const individualSellers = sellersWithType.filter(u => u.sellerType !== 'telemarketing');
+      const telemarketingUsers = sellersWithType.filter(u => u.sellerType === 'telemarketing');
+
+      const results: any[] = [];
+
+      for (const seller of individualSellers) {
+        const goal = goals.find((g: any) => g.sellerId === seller.id);
+        const revenueGoal = goal ? parseFloat(goal.revenueGoal || '0') : 0;
+
+        const metrics = await storage.getSalesMetrics(seller.id, targetMonth, targetYear);
+        const totalRevenue = metrics.totalRevenue || 0;
+        const projection = workingDaysElapsed > 0
+          ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
+          : 0;
+        const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
+        const commission = getCommissionInfo(seller.sellerType!, achievementPct);
+
+        results.push({
+          sellerId: seller.id,
+          sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
+          sellerType: seller.sellerType,
+          revenueGoal,
+          revenueActual: totalRevenue,
+          revenueProjected: projection,
+          achievementPct: Math.round(achievementPct * 100) / 100,
+          commissionRate: commission.rate,
+          commissionTier: commission.tier,
+          commissionTierLabel: commission.tierLabel,
+        });
+      }
+
+      // Telemarketing (collective)
+      let telemarketingResult: any = null;
+      if (telemarketingUsers.length > 0) {
+        const tmGoal = goals.find((g: any) => g.sellerId === 'TELEMARKETING');
+        const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
+
+        let totalRevenue = 0;
+        for (const tmUser of telemarketingUsers) {
+          const metrics = await storage.getSalesMetrics(tmUser.id, targetMonth, targetYear);
+          totalRevenue += (metrics.totalRevenue || 0);
+        }
+        const projection = workingDaysElapsed > 0
+          ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
+          : 0;
+        const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
+        const commission = getCommissionInfo('telemarketing', achievementPct);
+
+        telemarketingResult = {
+          sellerId: 'TELEMARKETING',
+          sellerName: 'Vendas Internas (Telemarketing)',
+          sellerType: 'telemarketing',
+          members: telemarketingUsers.map(u => ({
+            id: u.id,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+          })),
+          revenueGoal,
+          revenueActual: totalRevenue,
+          revenueProjected: projection,
+          achievementPct: Math.round(achievementPct * 100) / 100,
+          commissionRate: commission.rate,
+          commissionTier: commission.tier,
+          commissionTierLabel: commission.tierLabel,
+        };
+      }
+
+      // Save/update history
+      const allResults = [...results, ...(telemarketingResult ? [telemarketingResult] : [])];
+      for (const r of allResults) {
+        try {
+          await db.execute(sql`
+            INSERT INTO sales_goal_history (id, seller_id, seller_type, month, year, revenue_goal, revenue_actual, revenue_projected, achievement_pct, commission_pct, commission_tier, working_days_total, working_days_elapsed, is_projected, updated_at)
+            VALUES (gen_random_uuid(), ${r.sellerId}, ${r.sellerType}, ${targetMonth}, ${targetYear}, ${r.revenueGoal}, ${r.revenueActual}, ${r.revenueProjected}, ${r.achievementPct}, ${r.commissionRate}, ${r.commissionTier}, ${workingDaysInMonth}, ${workingDaysElapsed}, ${workingDaysElapsed < workingDaysInMonth}, NOW())
+            ON CONFLICT (seller_id, month, year)
+            DO UPDATE SET revenue_actual = EXCLUDED.revenue_actual, revenue_projected = EXCLUDED.revenue_projected, achievement_pct = EXCLUDED.achievement_pct, commission_pct = EXCLUDED.commission_pct, commission_tier = EXCLUDED.commission_tier, working_days_total = EXCLUDED.working_days_total, working_days_elapsed = EXCLUDED.working_days_elapsed, is_projected = EXCLUDED.is_projected, updated_at = NOW()
+          `);
+        } catch (e) {
+          // ignore upsert errors
+        }
+      }
+
+      // Fetch history
+      let historyRows: any = { rows: [] };
+      if (allResults.length > 0) {
+        const sellerIds = allResults.map(r => r.sellerId);
+        historyRows = await db.execute(sql`
+          SELECT * FROM sales_goal_history
+          WHERE seller_id = ANY(${sellerIds})
+          ORDER BY year DESC, month DESC
+          LIMIT 120
+        `);
+      }
+
+      res.json({
+        month: targetMonth,
+        year: targetYear,
+        workingDaysInMonth,
+        workingDaysElapsed,
+        commissionTiers: COMMISSION_TIERS,
+        sellers: results,
+        telemarketing: telemarketingResult,
+        history: historyRows.rows || [],
+        currentUserId: user.id,
+      });
+    } catch (error: any) {
+      console.error("Error fetching commission dashboard:", error);
+      res.status(500).json({ message: error.message });
     }
   });
 

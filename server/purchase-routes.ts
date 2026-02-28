@@ -140,6 +140,30 @@ async function ensurePurchaseInvoicesTable() {
         updated_at timestamp DEFAULT NOW()
       )
     `);
+    await db.execute(sql`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS seller_type varchar
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sales_goal_history (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id varchar,
+        seller_type varchar NOT NULL,
+        month integer NOT NULL,
+        year integer NOT NULL,
+        revenue_goal decimal(12,2),
+        revenue_actual decimal(12,2),
+        revenue_projected decimal(12,2),
+        achievement_pct decimal(5,2),
+        commission_pct decimal(5,2),
+        commission_tier integer,
+        working_days_total integer,
+        working_days_elapsed integer,
+        is_projected boolean DEFAULT true,
+        created_at timestamp DEFAULT NOW(),
+        updated_at timestamp DEFAULT NOW(),
+        UNIQUE(seller_id, month, year)
+      )
+    `);
     console.log("✅ purchase_invoices table ensured");
   } catch (err: any) {
     console.error("⚠️ Error ensuring purchase_invoices table:", err.message);

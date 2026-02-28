@@ -187,6 +187,8 @@ export const users = pgTable("users", {
   // Mapeamento de códigos de vendedor por instância Omie: {"instanceId": "vendorCode", ...}
   omieVendorCodes: jsonb("omie_vendor_codes").$type<Record<string, string>>(),
   
+  sellerType: varchar("seller_type").$type<'telemarketing' | 'vendedor_clt' | 'vendedor_pj'>(),
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1093,6 +1095,27 @@ export const salesGoals = pgTable("sales_goals", {
 }, (table) => [
   index("idx_sales_goals_seller_month_year").on(table.sellerId, table.month, table.year),
 ]);
+
+export const salesGoalHistory = pgTable("sales_goal_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sellerId: varchar("seller_id"),
+  sellerType: varchar("seller_type").notNull(),
+  month: integer("month").notNull(),
+  year: integer("year").notNull(),
+  revenueGoal: decimal("revenue_goal", { precision: 12, scale: 2 }),
+  revenueActual: decimal("revenue_actual", { precision: 12, scale: 2 }),
+  revenueProjected: decimal("revenue_projected", { precision: 12, scale: 2 }),
+  achievementPct: decimal("achievement_pct", { precision: 5, scale: 2 }),
+  commissionPct: decimal("commission_pct", { precision: 5, scale: 2 }),
+  commissionTier: integer("commission_tier"),
+  workingDaysTotal: integer("working_days_total"),
+  workingDaysElapsed: integer("working_days_elapsed"),
+  isProjected: boolean("is_projected").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type SalesGoalHistory = typeof salesGoalHistory.$inferSelect;
 
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({

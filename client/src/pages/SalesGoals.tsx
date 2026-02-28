@@ -9,8 +9,6 @@ import BackToDashboardButton from "@/components/BackToDashboardButton";
 export default function SalesGoalsPage() {
   const { user } = useAuth();
 
-  console.log('🎯 SalesGoalsPage carregada!', { user: user?.email, role: user?.role });
-
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -19,44 +17,26 @@ export default function SalesGoalsPage() {
     );
   }
 
-  // Cast user for components that expect full schema type (password field is not used)
   const userForComponents = user as unknown as SchemaUser;
-  const canManageGoals = ['admin', 'coordinator'].includes(user.role);
+  const canManageGoals = ['admin', 'coordinator', 'administrative'].includes(user.role);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50">
       <div className="container mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900" data-testid="text-page-title">
+            <h1 className="text-3xl font-bold text-gray-900">
               Metas de Vendas
             </h1>
             <p className="text-gray-600 mt-2">
-              Acompanhe e gerencie as metas de vendas dos vendedores
+              Acompanhe as metas de faturamento e comissões projetadas
             </p>
           </div>
           <BackToDashboardButton />
         </div>
 
         {canManageGoals ? (
-          <Tabs defaultValue="dashboard" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="dashboard" data-testid="tab-dashboard">
-                Dashboard de Metas
-              </TabsTrigger>
-              <TabsTrigger value="management" data-testid="tab-management">
-                Gerenciar Metas
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="dashboard">
-              <SalesGoalsDashboard user={userForComponents} />
-            </TabsContent>
-
-            <TabsContent value="management">
-              <SalesGoalsManagement user={userForComponents} />
-            </TabsContent>
-          </Tabs>
+          <SalesGoalsManagement user={userForComponents} />
         ) : (
           <Card>
             <CardContent className="p-6">

@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Users, Mail, MapPin, Plus, UserCheck, Edit, Home, RefreshCw } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Users, Mail, MapPin, UserCheck, Edit, Home, RefreshCw, Briefcase } from "lucide-react";
 import { formatDate } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -23,12 +24,26 @@ interface Seller {
   createdAt: string;
   homeLatitude?: string;
   homeLongitude?: string;
+  sellerType?: string;
 }
+
+const SELLER_TYPE_LABELS: Record<string, string> = {
+  vendedor_clt: 'Externo CLT',
+  vendedor_pj: 'Externo PJ',
+  telemarketing: 'Telemarketing',
+};
+
+const SELLER_TYPE_COLORS: Record<string, string> = {
+  vendedor_clt: 'bg-blue-100 text-blue-800',
+  vendedor_pj: 'bg-purple-100 text-purple-800',
+  telemarketing: 'bg-amber-100 text-amber-800',
+};
 
 export default function Sellers() {
   const [editingSeller, setEditingSeller] = useState<Seller | null>(null);
   const [homeLatitude, setHomeLatitude] = useState("");
   const [homeLongitude, setHomeLongitude] = useState("");
+  const [sellerType, setSellerType] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -45,15 +60,16 @@ export default function Sellers() {
       setEditingSeller(null);
       setHomeLatitude("");
       setHomeLongitude("");
+      setSellerType("");
       toast({
         title: "Sucesso",
-        description: "Coordenadas da casa atualizadas com sucesso!",
+        description: "Vendedor atualizado com sucesso!",
       });
     },
     onError: (error: any) => {
       toast({
         title: "Erro",
-        description: error.message || "Erro ao atualizar coordenadas",
+        description: error.message || "Erro ao atualizar vendedor",
         variant: "destructive",
       });
     },
@@ -83,34 +99,50 @@ export default function Sellers() {
     setEditingSeller(seller);
     setHomeLatitude(seller.homeLatitude || "");
     setHomeLongitude(seller.homeLongitude || "");
+    setSellerType(seller.sellerType || "");
   };
 
-  const handleSaveCoordinates = () => {
+  const handleSave = () => {
     if (!editingSeller) return;
 
-    const lat = parseFloat(homeLatitude);
-    const lng = parseFloat(homeLongitude);
+    const data: any = {};
 
-    if (isNaN(lat) || isNaN(lng)) {
-      toast({
-        title: "Erro",
-        description: "Por favor, insira coordenadas válidas",
-        variant: "destructive",
-      });
+    if (homeLatitude && homeLongitude) {
+      const lat = parseFloat(homeLatitude);
+      const lng = parseFloat(homeLongitude);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        data.homeLatitude = homeLatitude;
+        data.homeLongitude = homeLongitude;
+      }
+    }
+
+    if (sellerType) {
+      data.sellerType = sellerType;
+    }
+
+    if (Object.keys(data).length === 0) {
+      toast({ title: "Nada para salvar", variant: "destructive" });
       return;
     }
 
+    updateSellerMutation.mutate({ id: editingSeller.id, data });
+  };
+
+  const handleQuickSetType = (seller: Seller, type: string) => {
     updateSellerMutation.mutate({
-      id: editingSeller.id,
-      data: {
-        homeLatitude: homeLatitude,
-        homeLongitude: homeLongitude
-      }
+      id: seller.id,
+      data: { sellerType: type },
     });
   };
 
-  // Filtrar apenas vendedores ativos
-  const activeSellers = sellers.filter(user => user.role === 'vendedor' && user.isActive);
+  const activeSellers = sellers.filter(user => 
+    (user.role === 'vendedor' || user.role === 'telemarketing') && user.isActive
+  );
+
+  const cltCount = activeSellers.filter(s => s.sellerType === 'vendedor_clt').length;
+  const pjCount = activeSellers.filter(s => s.sellerType === 'vendedor_pj').length;
+  const tmkCount = activeSellers.filter(s => s.sellerType === 'telemarketing').length;
+  const unclassified = activeSellers.filter(s => !s.sellerType).length;
 
   if (isLoading) {
     return (
@@ -124,7 +156,6 @@ export default function Sellers() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Vendedores Ativos</h1>
@@ -138,7 +169,6 @@ export default function Sellers() {
             disabled={syncVendorsMutation.isPending}
             variant="outline"
             size="sm"
-            data-testid="button-sync-vendors"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${syncVendorsMutation.isPending ? 'animate-spin' : ''}`} />
             {syncVendorsMutation.isPending ? 'Sincronizando...' : 'Sincronizar Omie'}
@@ -151,47 +181,39 @@ export default function Sellers() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total de Vendedores</CardTitle>
-            <UserCheck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-honest-blue">{activeSellers.length}</div>
-            <p className="text-xs text-muted-foreground">Vendedores ativos</p>
+          <CardContent className="pt-4 pb-3">
+            <div className="text-sm text-muted-foreground">Total</div>
+            <div className="text-2xl font-bold">{activeSellers.length}</div>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Rotas Cobertas</CardTitle>
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-honest-blue">
-              {new Set(activeSellers.map(s => s.route)).size}
-            </div>
-            <p className="text-xs text-muted-foreground">Rotas diferentes</p>
+          <CardContent className="pt-4 pb-3">
+            <div className="text-sm text-muted-foreground">Externo CLT</div>
+            <div className="text-2xl font-bold text-blue-600">{cltCount}</div>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Com Email</CardTitle>
-            <Mail className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-honest-blue">
-              {activeSellers.filter(s => s.email && s.email.trim() !== '').length}
-            </div>
-            <p className="text-xs text-muted-foreground">Vendedores com email</p>
+          <CardContent className="pt-4 pb-3">
+            <div className="text-sm text-muted-foreground">Externo PJ</div>
+            <div className="text-2xl font-bold text-purple-600">{pjCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="text-sm text-muted-foreground">Telemarketing</div>
+            <div className="text-2xl font-bold text-amber-600">{tmkCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="text-sm text-muted-foreground">Sem Tipo</div>
+            <div className="text-2xl font-bold text-red-500">{unclassified}</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Sellers List */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold">Lista de Vendedores</h2>
         
@@ -214,9 +236,17 @@ export default function Sellers() {
                     <CardTitle className="text-lg">
                       {seller.firstName} {seller.lastName}
                     </CardTitle>
-                    <Badge variant="outline" className="text-xs">
-                      Ativo
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      {seller.sellerType ? (
+                        <Badge className={SELLER_TYPE_COLORS[seller.sellerType] || ''}>
+                          {SELLER_TYPE_LABELS[seller.sellerType] || seller.sellerType}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-red-500 border-red-200">
+                          Sem Tipo
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -226,9 +256,9 @@ export default function Sellers() {
                       <span className="truncate">{seller.email}</span>
                     </div>
                   ) : (
-                    <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                    <div className="flex items-center space-x-2 text-sm text-orange-600">
                       <Mail className="h-4 w-4" />
-                      <span className="text-orange-600">Email não informado</span>
+                      <span>Email não informado</span>
                     </div>
                   )}
                   
@@ -248,20 +278,29 @@ export default function Sellers() {
                       <span>Sem coordenadas da casa</span>
                     </div>
                   )}
-                  
-                  <div className="text-xs text-muted-foreground">
-                    Cadastrado em: {formatDate(new Date(seller.createdAt), "dd/MM/yyyy")}
-                  </div>
+
+                  {!seller.sellerType && (
+                    <div className="flex gap-1 pt-1">
+                      <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => handleQuickSetType(seller, 'vendedor_clt')}>
+                        CLT
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => handleQuickSetType(seller, 'vendedor_pj')}>
+                        PJ
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => handleQuickSetType(seller, 'telemarketing')}>
+                        TMK
+                      </Button>
+                    </div>
+                  )}
                   
                   <Button
                     variant="outline"
                     size="sm"
                     className="w-full mt-2"
                     onClick={() => handleEditClick(seller)}
-                    data-testid={`button-edit-seller-${seller.id}`}
                   >
                     <Edit className="h-4 w-4 mr-2" />
-                    Editar Coordenadas
+                    Editar
                   </Button>
                 </CardContent>
               </Card>
@@ -270,16 +309,47 @@ export default function Sellers() {
         )}
       </div>
 
-      {/* Edit Coordinates Modal */}
       <Dialog open={!!editingSeller} onOpenChange={() => setEditingSeller(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Editar Coordenadas da Casa - {editingSeller?.firstName} {editingSeller?.lastName}
+              Editar — {editingSeller?.firstName} {editingSeller?.lastName}
             </DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Tipo do Vendedor</Label>
+              <Select value={sellerType} onValueChange={setSellerType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vendedor_clt">
+                    <div className="flex items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      Vendedor Externo CLT
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="vendedor_pj">
+                    <div className="flex items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      Vendedor Externo PJ
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="telemarketing">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Telemarketing
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Define a tabela de comissão aplicável ao vendedor.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="homeLatitude">Latitude</Label>
               <Input
@@ -289,11 +359,7 @@ export default function Sellers() {
                 placeholder="-23.5505"
                 value={homeLatitude}
                 onChange={(e) => setHomeLatitude(e.target.value)}
-                data-testid="input-home-latitude"
               />
-              <p className="text-xs text-muted-foreground">
-                Exemplo: -23.5505 (use ponto como separador decimal)
-              </p>
             </div>
             
             <div className="space-y-2">
@@ -305,47 +371,18 @@ export default function Sellers() {
                 placeholder="-46.6333"
                 value={homeLongitude}
                 onChange={(e) => setHomeLongitude(e.target.value)}
-                data-testid="input-home-longitude"
               />
-              <p className="text-xs text-muted-foreground">
-                Exemplo: -46.6333 (use ponto como separador decimal)
-              </p>
-            </div>
-            
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-              <p className="text-sm text-blue-800">
-                💡 <strong>Dica:</strong> Você pode obter as coordenadas abrindo o Google Maps,
-                clicando no local da casa do vendedor, e copiando os valores de latitude e longitude
-                que aparecem.
-              </p>
             </div>
           </div>
           
           <div className="flex justify-end space-x-2">
-            <Button
-              variant="outline"
-              onClick={() => setEditingSeller(null)}
-              data-testid="button-cancel-edit"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSaveCoordinates}
-              disabled={updateSellerMutation.isPending}
-              data-testid="button-save-coordinates"
-            >
-              {updateSellerMutation.isPending ? "Salvando..." : "Salvar Coordenadas"}
+            <Button variant="outline" onClick={() => setEditingSeller(null)}>Cancelar</Button>
+            <Button onClick={handleSave} disabled={updateSellerMutation.isPending}>
+              {updateSellerMutation.isPending ? "Salvando..." : "Salvar"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Action */}
-      <div className="flex justify-center pt-6">
-        <p className="text-sm text-muted-foreground">
-          Para sincronizar mais vendedores, use a funcionalidade de sincronização do Omie
-        </p>
-      </div>
     </div>
   );
 }
