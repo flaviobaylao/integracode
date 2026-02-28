@@ -2930,8 +2930,6 @@ export class OmieService {
       try {
         const accounts = await this.listBankAccounts();
         if (accounts.length > 0) {
-          // Preferir conta "OMIE CASH" ou "CAIXINHA" (padrão para operações à vista/PIX)
-          // Para boleto, preferir conta "BOLETO" ou "BANCO"
           const isBoleto = paymentMethod === 'boleto';
           let selected = isBoleto
             ? accounts.find((a: any) => (a.descricao || a.cDescricao || '').toUpperCase().includes('BOLETO') || (a.descricao || a.cDescricao || '').toUpperCase().includes('BANCO'))
@@ -2947,10 +2945,14 @@ export class OmieService {
           const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
           console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
         } else {
-          console.warn(`⚠️ [CONTA] Nenhuma conta corrente encontrada para esta instância - pedido será enviado sem codigo_conta_corrente`);
+          console.error(`❌ [CONTA] Nenhuma conta corrente encontrada para esta instância`);
+          throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie.');
         }
       } catch (err: any) {
-        console.warn(`⚠️ [CONTA] Erro ao buscar contas correntes:`, err.message);
+        if (!omieAccountCode) {
+          console.error(`❌ [CONTA] Erro ao buscar contas correntes:`, err.message);
+          throw new Error(`Erro ao buscar conta corrente no Omie: ${err.message}. A conta corrente é obrigatória para criar pedidos.`);
+        }
       }
 
       // Determinar código da parcela baseado no método de pagamento e prazo
@@ -2998,11 +3000,9 @@ export class OmieService {
       const informacoesAdicionais: any = {
         codigo_categoria: "1.01.03",
         consumidor_final: "N",
-        enviar_email: "S"
+        enviar_email: "S",
+        codigo_conta_corrente: omieAccountCode
       };
-      if (omieAccountCode) {
-        informacoesAdicionais.codigo_conta_corrente = omieAccountCode;
-      }
 
       const orderPayload: any = {
         cabecalho,
@@ -4465,15 +4465,21 @@ export class OmieService {
 
       console.log(`🔍 [OMIE] Cliente encontrado: ${clientData.razao_social}, CNPJ/CPF: ${clientData.cnpj_cpf}`);
       
-      // Usar AlterarCliente com dados mínimos obrigatórios + vendedor
-      const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', {
+      const updatePayload: any = {
         codigo_cliente_omie: omieClientCode,
         cnpj_cpf: clientData.cnpj_cpf,
         razao_social: clientData.razao_social,
         recomendacoes: {
           codigo_vendedor: vendorCode
         }
-      });
+      };
+      if (clientData.email) {
+        updatePayload.email = clientData.email;
+      }
+      if (clientData.nome_fantasia) {
+        updatePayload.nome_fantasia = clientData.nome_fantasia;
+      }
+      const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', updatePayload);
 
       console.log(`🔄 [OMIE] Resposta da atualização de vendedor:`, JSON.stringify(response, null, 2));
 
@@ -5327,10 +5333,14 @@ export async function createOmieOrder(orderData: {
         const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
         console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
       } else {
-        console.warn(`⚠️ [CONTA-HOTSITE] Nenhuma conta corrente encontrada para esta instância - pedido sem codigo_conta_corrente`);
+        console.error(`❌ [CONTA-HOTSITE] Nenhuma conta corrente encontrada para esta instância`);
+        throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie.');
       }
     } catch (err: any) {
-      console.warn(`⚠️ [CONTA-HOTSITE] Erro ao buscar contas:`, err.message);
+      if (!omieAccountCode) {
+        console.error(`❌ [CONTA-HOTSITE] Erro ao buscar contas:`, err.message);
+        throw new Error(`Erro ao buscar conta corrente no Omie: ${err.message}. A conta corrente é obrigatória.`);
+      }
     }
 
     // Determinar código da parcela baseado no método de pagamento e prazo
@@ -5418,7 +5428,7 @@ export async function createOmieOrder(orderData: {
       },
       informacoes_adicionais: {
         codigo_categoria: "1.01.03",
-        ...(omieAccountCode ? { codigo_conta_corrente: omieAccountCode } : {}),
+        codigo_conta_corrente: omieAccountCode,
         consumidor_final: "N",
         enviar_email: "S",
         ...(vendorCode ? { codVend: vendorCode } : {}),
