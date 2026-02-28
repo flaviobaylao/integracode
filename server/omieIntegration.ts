@@ -2926,24 +2926,48 @@ export class OmieService {
 
       // Determinar conta do Omie dinamicamente para esta instância
       let omieAccountCode: number | undefined = undefined;
+      let allAvailableAccounts: any[] = [];
 
       try {
         const accounts = await this.listBankAccounts();
+        allAvailableAccounts = accounts;
         if (accounts.length > 0) {
           const isBoleto = paymentMethod === 'boleto';
-          let selected = isBoleto
-            ? accounts.find((a: any) => (a.descricao || a.cDescricao || '').toUpperCase().includes('BOLETO') || (a.descricao || a.cDescricao || '').toUpperCase().includes('BANCO'))
-            : null;
-          if (!selected) {
-            selected = accounts.find((a: any) =>
-              (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
-              (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
-            );
+          let selected: any = null;
+          
+          if (isBoleto) {
+            selected = accounts.find((a: any) => {
+              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+              return desc.includes('BOLETO');
+            });
           }
+          
+          if (!selected) {
+            selected = accounts.find((a: any) => {
+              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+              return tipo === 'CC' && (desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB'));
+            });
+          }
+          
+          if (!selected) {
+            selected = accounts.find((a: any) => {
+              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+              return tipo === 'CC';
+            });
+          }
+          
+          if (!selected) {
+            selected = accounts.find((a: any) => {
+              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+              return tipo !== 'CX';
+            });
+          }
+          
           if (!selected) selected = accounts[0];
           omieAccountCode = selected.nCodCC;
           const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
-          console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+          console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${selected.tipo || selected.cTipo || '?'})`);
           if (this.storage && this.omieInstanceId) {
             try {
               await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
@@ -3060,18 +3084,64 @@ export class OmieService {
       console.log('🔍 [OMIE-DEBUG] Payload COMPLETO para IncluirPedido:', JSON.stringify(orderPayload, null, 2));
       
       let response: any;
+      const attemptOrder = async (payload: any): Promise<any> => {
+        return await this.makeRequest('/produtos/pedido/', 'IncluirPedido', payload);
+      };
+      
       try {
-        response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+        response = await attemptOrder(orderPayload);
       } catch (firstError: any) {
         const errorMsg = firstError?.message || '';
-        if (errorMsg.includes('Vendedor não cadastrado') && omieVendorCode) {
+        
+        if (errorMsg.includes('Conta Corrente') && errorMsg.includes('inativa') && allAvailableAccounts.length > 1) {
+          console.log(`⚠️ [OMIE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas...`);
+          let retrySuccess = false;
+          const triedCodes = new Set([omieAccountCode]);
+          
+          for (const altAccount of allAvailableAccounts) {
+            if (triedCodes.has(altAccount.nCodCC)) continue;
+            triedCodes.add(altAccount.nCodCC);
+            
+            const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
+            console.log(`🔄 [OMIE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
+            
+            orderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
+            const retryCode = `CRM-${salesCard.id}-R${Date.now()}`;
+            orderPayload.cabecalho.codigo_pedido_integracao = retryCode;
+            
+            try {
+              response = await attemptOrder(orderPayload);
+              console.log(`✅ [OMIE-RETRY] Pedido criado com conta corrente ${altAccount.nCodCC} (${altName})`);
+              omieAccountCode = altAccount.nCodCC;
+              if (this.storage && this.omieInstanceId) {
+                try {
+                  await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(altAccount.nCodCC) } as any);
+                  console.log(`💾 [CONTA] Conta corrente ativa ${altAccount.nCodCC} salva como novo padrão`);
+                } catch (e) {}
+              }
+              retrySuccess = true;
+              break;
+            } catch (retryErr: any) {
+              const retryMsg = retryErr?.message || '';
+              if (retryMsg.includes('Conta Corrente') && retryMsg.includes('inativa')) {
+                console.log(`⚠️ [OMIE-RETRY] Conta ${altAccount.nCodCC} também inativa, tentando próxima...`);
+                continue;
+              }
+              throw retryErr;
+            }
+          }
+          
+          if (!retrySuccess) {
+            throw new Error('Todas as contas correntes disponíveis estão inativas no Omie. Ative uma conta corrente no Omie e tente novamente.');
+          }
+        } else if (errorMsg.includes('Vendedor não cadastrado') && omieVendorCode) {
           console.log(`⚠️ [OMIE-RETRY] Vendedor ${omieVendorCode} não cadastrado no Omie - removendo vendedor e tentando novamente...`);
           delete orderPayload.informacoes_adicionais.codVend;
           
           const retryIntegrationCode = `CRM-${salesCard.id}-R${Date.now()}`;
           orderPayload.cabecalho.codigo_pedido_integracao = retryIntegrationCode;
           
-          response = await this.makeRequest('/produtos/pedido/', 'IncluirPedido', orderPayload);
+          response = await attemptOrder(orderPayload);
           console.log(`✅ [OMIE-RETRY] Pedido criado com sucesso sem vendedor específico`);
         } else {
           throw firstError;
@@ -4926,9 +4996,28 @@ export class OmieService {
         || (Array.isArray(response) ? response : null);
 
       if (accounts && accounts.length > 0) {
-        console.log(`✅ Encontradas ${accounts.length} contas correntes`);
-        console.log(`🔍 [CONTAS] Primeira conta: ${JSON.stringify(accounts[0]).slice(0, 300)}`);
-        return accounts;
+        console.log(`✅ Encontradas ${accounts.length} contas correntes (total)`);
+        const activeAccounts = accounts.filter((a: any) => {
+          const inactive = a.cInativa || a.inativa || '';
+          const blocked = a.bloqueado || '';
+          const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+          if (inactive === 'S' || inactive === 'true' || blocked === 'S') {
+            console.log(`⚠️ [CONTAS] Conta ${a.nCodCC} (${a.descricao || a.cDescricao || '?'}) filtrada: inativa=${inactive}, bloqueado=${blocked}`);
+            return false;
+          }
+          if (desc.includes('ENCERRADA') || desc.includes('INATIVA') || desc.includes('DESATIVADA')) {
+            console.log(`⚠️ [CONTAS] Conta ${a.nCodCC} (${a.descricao || a.cDescricao || '?'}) filtrada por nome: "${desc}"`);
+            return false;
+          }
+          return true;
+        });
+        console.log(`✅ ${activeAccounts.length} contas correntes ativas (${accounts.length - activeAccounts.length} inativas/bloqueadas filtradas)`);
+        if (activeAccounts.length > 0) {
+          activeAccounts.forEach((a: any, i: number) => {
+            console.log(`🔍 [CONTAS] [${i}] nCodCC=${a.nCodCC}, desc="${a.descricao || a.cDescricao || '?'}", bloqueado=${a.bloqueado || 'N/A'}, inativa=${a.cInativa || a.inativa || 'N/A'}, tipo=${a.tipo || a.cTipo || 'N/A'}`);
+          });
+        }
+        return activeAccounts;
       } else {
         console.log(`⚠️ [CONTAS] Nenhuma conta corrente encontrada na resposta`);
         console.log(`🔍 [CONTAS] Resposta completa: ${JSON.stringify(response).slice(0, 1000)}`);
@@ -5159,22 +5248,33 @@ export async function cacheBankAccountsForAllInstances(storage: any): Promise<vo
         console.log(`✅ [CACHE-CNPJ] ${instance.name}: já possui CNPJ (${instance.cnpj})`);
       }
 
-      if (!instance.defaultAccountCode) {
-        try {
-          const accounts = await svc.listBankAccounts();
-          if (accounts.length > 0) {
-            const selected = accounts[0];
-            const code = selected.nCodCC;
+      try {
+        const accounts = await svc.listBankAccounts();
+        if (accounts.length > 0) {
+          let selected = accounts.find((a: any) => {
+            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+            return tipo === 'CC';
+          }) || accounts.find((a: any) => {
+            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+            return tipo !== 'CX';
+          }) || accounts[0];
+          const code = selected.nCodCC;
+          const oldCode = instance.defaultAccountCode;
+          if (String(code) !== String(oldCode)) {
             await storage.updateOmieInstance(instance.id, { defaultAccountCode: String(code) } as any);
-            console.log(`💾 [CACHE-CONTA] ${instance.name}: conta corrente ${code} salva`);
+            console.log(`💾 [CACHE-CONTA] ${instance.name}: conta corrente atualizada ${oldCode} → ${code}`);
           } else {
-            console.warn(`⚠️ [CACHE-CONTA] ${instance.name}: nenhuma conta corrente encontrada`);
+            console.log(`✅ [CACHE-CONTA] ${instance.name}: conta corrente ativa confirmada (${code})`);
           }
-        } catch (err: any) {
+        } else {
+          console.warn(`⚠️ [CACHE-CONTA] ${instance.name}: nenhuma conta corrente ativa encontrada`);
+        }
+      } catch (err: any) {
+        if (instance.defaultAccountCode) {
+          console.log(`✅ [CACHE-CONTA] ${instance.name}: usando fallback salvo (${instance.defaultAccountCode})`);
+        } else {
           console.warn(`⚠️ [CACHE-CONTA] ${instance.name}: erro ao buscar contas: ${err.message}`);
         }
-      } else {
-        console.log(`✅ [CACHE-CONTA] ${instance.name}: já possui conta corrente salva (${instance.defaultAccountCode})`);
       }
     }
     
@@ -5424,24 +5524,48 @@ export async function createOmieOrder(orderData: {
     // 2. Criar pedido de venda no Omie
     // Determinar conta do Omie dinamicamente para esta instância
     let omieAccountCode: number | undefined = undefined;
+    let allAvailableAccounts: any[] = [];
 
     try {
       const accounts = await this.listBankAccounts();
+      allAvailableAccounts = accounts;
       if (accounts.length > 0) {
         const isBoleto = orderData.paymentMethod === 'boleto';
-        let selected = isBoleto
-          ? accounts.find((a: any) => (a.descricao || a.cDescricao || '').toUpperCase().includes('BOLETO') || (a.descricao || a.cDescricao || '').toUpperCase().includes('BANCO'))
-          : null;
-        if (!selected) {
-          selected = accounts.find((a: any) =>
-            (a.descricao || a.cDescricao || '').toUpperCase().includes('OMIE CASH') ||
-            (a.descricao || a.cDescricao || '').toUpperCase().includes('CAIXINHA')
-          );
+        let selected: any = null;
+        
+        if (isBoleto) {
+          selected = accounts.find((a: any) => {
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            return desc.includes('BOLETO');
+          });
         }
+        
+        if (!selected) {
+          selected = accounts.find((a: any) => {
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+            return tipo === 'CC' && (desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB'));
+          });
+        }
+        
+        if (!selected) {
+          selected = accounts.find((a: any) => {
+            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+            return tipo === 'CC';
+          });
+        }
+        
+        if (!selected) {
+          selected = accounts.find((a: any) => {
+            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
+            return tipo !== 'CX';
+          });
+        }
+        
         if (!selected) selected = accounts[0];
         omieAccountCode = selected.nCodCC;
         const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
-        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${selected.tipo || selected.cTipo || '?'})`);
         if (this.storage && this.omieInstanceId) {
           try {
             await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
@@ -5584,30 +5708,68 @@ export async function createOmieOrder(orderData: {
 
     console.log('🔍 [OMIE-HOTSITE-DEBUG] Payload completo para IncluirPedido:', JSON.stringify(omieOrderPayload, null, 2));
 
-    // Fazer chamada direta para API Omie
-    const payload = {
-      call: 'IncluirPedido',
-      app_key: process.env.OMIE_APP_KEY,
-      app_secret: process.env.OMIE_APP_SECRET,
-      param: [omieOrderPayload]
+    const attemptHotsiteOrder = async (orderPl: any): Promise<any> => {
+      const payload = {
+        call: 'IncluirPedido',
+        app_key: process.env.OMIE_APP_KEY,
+        app_secret: process.env.OMIE_APP_SECRET,
+        param: [orderPl]
+      };
+
+      const resp = await fetch('https://app.omie.com.br/api/v1/produtos/pedido/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Omie API error: ${resp.status} ${resp.statusText}`);
+      }
+
+      const result = await resp.json();
+      if (result.faultstring) {
+        throw new Error(`Omie API fault: ${result.faultstring}`);
+      }
+      return result;
     };
 
-    const response = await fetch('https://app.omie.com.br/api/v1/produtos/pedido/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Omie API error: ${response.status} ${response.statusText}`);
-    }
-
-    const omieOrder = await response.json();
-    
-    if (omieOrder.faultstring) {
-      throw new Error(`Omie API fault: ${omieOrder.faultstring}`);
+    let omieOrder: any;
+    try {
+      omieOrder = await attemptHotsiteOrder(omieOrderPayload);
+    } catch (firstError: any) {
+      const errorMsg = firstError?.message || '';
+      if (errorMsg.includes('Conta Corrente') && errorMsg.includes('inativa') && allAvailableAccounts.length > 1) {
+        console.log(`⚠️ [OMIE-HOTSITE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas...`);
+        let retrySuccess = false;
+        const triedCodes = new Set([omieAccountCode]);
+        for (const altAccount of allAvailableAccounts) {
+          if (triedCodes.has(altAccount.nCodCC)) continue;
+          triedCodes.add(altAccount.nCodCC);
+          const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
+          console.log(`🔄 [OMIE-HOTSITE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
+          omieOrderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
+          try {
+            omieOrder = await attemptHotsiteOrder(omieOrderPayload);
+            console.log(`✅ [OMIE-HOTSITE-RETRY] Pedido criado com conta corrente ${altAccount.nCodCC}`);
+            if (this.storage && this.omieInstanceId) {
+              try {
+                await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(altAccount.nCodCC) } as any);
+              } catch (e) {}
+            }
+            retrySuccess = true;
+            break;
+          } catch (retryErr: any) {
+            const retryMsg = retryErr?.message || '';
+            if (retryMsg.includes('Conta Corrente') && retryMsg.includes('inativa')) continue;
+            throw retryErr;
+          }
+        }
+        if (!retrySuccess) {
+          throw new Error('Todas as contas correntes disponíveis estão inativas no Omie.');
+        }
+      } else {
+        throw firstError;
+      }
     }
 
     console.log('✅ Pedido criado no Omie com sucesso:', omieOrder);
