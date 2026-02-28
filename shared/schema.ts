@@ -140,13 +140,14 @@ export const systemSettings = pgTable("system_settings", {
 // Omie instances table - stores API credentials for multiple Omie accounts
 export const omieInstances = pgTable("omie_instances", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name").notNull().unique(), // Nome da instância (ex: "GYN", "BSB", "RJ")
-  displayName: varchar("display_name").notNull(), // Nome completo (ex: "OMIE GYN - Goiânia")
-  appKey: varchar("app_key").notNull(), // Chave APP do Omie
-  appSecret: varchar("app_secret").notNull(), // Chave Secret do Omie
-  tagColor: varchar("tag_color").notNull().default('#3B82F6'), // Cor da tag em hex (azul padrão)
+  name: varchar("name").notNull().unique(),
+  displayName: varchar("display_name").notNull(),
+  appKey: varchar("app_key").notNull(),
+  appSecret: varchar("app_secret").notNull(),
+  tagColor: varchar("tag_color").notNull().default('#3B82F6'),
+  cnpj: varchar("cnpj"),
   isActive: boolean("is_active").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false), // Instância padrão para novos registros
+  isDefault: boolean("is_default").notNull().default(false),
   lastSyncAt: timestamp("last_sync_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -3478,4 +3479,47 @@ export const insertSavedReportSchema = createInsertSchema(savedReports).omit({
 
 export type SavedReport = typeof savedReports.$inferSelect;
 export type InsertSavedReport = z.infer<typeof insertSavedReportSchema>;
+
+export const purchaseInvoiceStatusEnum = pgEnum("purchase_invoice_status", [
+  "detected", "imported", "classified", "linked", "paid", "cancelled"
+]);
+
+export const purchaseInvoices = pgTable("purchase_invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accessKey: varchar("access_key", { length: 44 }).unique(),
+  invoiceNumber: varchar("invoice_number"),
+  series: varchar("series").default("1"),
+  issueDate: timestamp("issue_date"),
+  supplierName: varchar("supplier_name").notNull(),
+  supplierDocument: varchar("supplier_document").notNull(),
+  supplierIe: varchar("supplier_ie"),
+  totalValue: decimal("total_value", { precision: 12, scale: 2 }).notNull().default("0"),
+  items: jsonb("items").default([]),
+  taxes: jsonb("taxes").default({}),
+  status: varchar("status").notNull().default("detected"),
+  xmlContent: text("xml_content"),
+  omieInstanceId: varchar("omie_instance_id"),
+  chartAccountId: varchar("chart_account_id"),
+  payableId: varchar("payable_id"),
+  isStockPurchase: boolean("is_stock_purchase").default(false),
+  stockProcessed: boolean("stock_processed").default(false),
+  cfop: varchar("cfop"),
+  natureOfOperation: varchar("nature_of_operation"),
+  notes: text("notes"),
+  detectedAt: timestamp("detected_at").defaultNow(),
+  importedAt: timestamp("imported_at"),
+  classifiedAt: timestamp("classified_at"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPurchaseInvoiceSchema = createInsertSchema(purchaseInvoices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type PurchaseInvoice = typeof purchaseInvoices.$inferSelect;
+export type InsertPurchaseInvoice = z.infer<typeof insertPurchaseInvoiceSchema>;
 

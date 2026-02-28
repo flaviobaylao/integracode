@@ -179,6 +179,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'fin-dre', label: 'DRE', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'fin-xml', label: 'XMLs', icon: 'fas fa-file-code', available: canAccessReports, badge: null },
         { id: 'fin-sped', label: 'SPED Fiscal', icon: 'fas fa-database', available: canAccessReports, badge: null },
+        { id: 'radar-compras', label: 'Radar de Compras', icon: 'fas fa-satellite-dish', available: canAccessReports, badge: null },
       ],
     },
     {

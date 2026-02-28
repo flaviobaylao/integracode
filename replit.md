@@ -40,6 +40,7 @@
 - **Billing Pipeline (Kanban)**: Internal billing kanban system with 7 stages (Pedido, A Faturar, Faturado, Impresso, Aguardando Rota, Em Rota, Entregue). Features a visual board with card movement, detail modal, stage history audit trail, and access control. Includes auto-receivable creation when an order moves to "faturado".
 - **Financial Module**: Comprehensive financial management with 7 tabs: Contas a Receber, Contas a Pagar, Plano de Contas, Contas Financeiras, DRE, XMLs, and SPED Fiscal. All financial data supports omieInstanceId filtering.
 - **Dynamic Reports Module**: Fully customizable report builder at `/relatorios` with pivot table functionality. Supports 8 data sources (Clientes, Produtos, Vendas, Faturamentos, Débitos Vencidos, Metas, Rotas de Entrega, Usuários). Features include: field selection for rows/columns, groupBy aggregation (sum/count/avg/min/max/count_distinct), dynamic filters with multiple operators, custom ordering, CSV export, and saved report templates. Backend report engine (`server/reportEngine.ts`) dynamically constructs SQL queries with sanitized identifiers. Access restricted to admin/coordinator/administrative roles.
+- **Purchase Invoice Radar**: NF-e purchase invoice management system at `/radar-compras`. Features XML import/parsing, supplier detection, auto-matching to Omie instances via CNPJ, chart-of-accounts classification, automatic payable creation, stock replenishment integration, and summary statistics dashboard. Supports manual XML import with future SEFAZ DF-e automatic scanning capability. Status flow: detected → imported → classified → linked → paid.
 
 # External Dependencies
 
@@ -57,3 +58,4 @@
 - **OSRM API**
 - **node-cron**
 - **node-nfe-nfce** (for NF-e integration)
+- **xml-js** (for XML parsing in Purchase Radar)

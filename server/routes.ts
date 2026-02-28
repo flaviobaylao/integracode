@@ -11,6 +11,7 @@ import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
+import { registerPurchaseRoutes } from "./purchase-routes";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
 import OpenAI from 'openai';
@@ -575,6 +576,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   console.log('✅ Report engine routes registered');
+
+  registerPurchaseRoutes(app);
 
   // Version endpoint
   app.get('/api/version', (req, res) => {
