@@ -232,7 +232,11 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
               Vendedores
             </div>
             <div className="text-2xl font-bold">{allEntries.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">Com metas configuradas</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {allEntries.filter(e => e.revenueGoal > 0).length > 0
+                ? `${allEntries.filter(e => e.revenueGoal > 0).length} com meta configurada`
+                : 'Com código Omie'}
+            </p>
           </CardContent>
         </Card>
         <Card>

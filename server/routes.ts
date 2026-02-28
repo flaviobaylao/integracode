@@ -3312,12 +3312,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return 'vendedor_pj';
       }
 
-      // Build list of sellers who have goals OR have sellerType set
       const goalSellerIds = goals.map((g: any) => g.sellerId).filter((id: string) => id !== 'TELEMARKETING');
       const relevantSellers = allUsers.filter(u =>
         u.isActive && (
           goalSellerIds.includes(u.id) ||
-          (u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType))
+          (u.role === 'vendedor' && u.omieVendorCode) ||
+          (u.sellerType && ['vendedor_clt', 'vendedor_pj'].includes(u.sellerType))
         )
       );
 
