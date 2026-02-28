@@ -16827,6 +16827,209 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
+  // CERTIFICADO DIGITAL POR INSTÂNCIA
+  // ========================================
+
+  const certUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+    if (file.originalname.match(/\.(pfx|p12)$/i)) cb(null, true);
+    else cb(new Error('Apenas arquivos .pfx ou .p12'));
+  }});
+
+  app.get('/api/omie/instances/:id/certificate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) return res.status(404).json({ message: 'Instância não encontrada' });
+
+      const allCerts = await storage.getDigitalCertificates();
+      const instCnpj = (instance.cnpj || '').replace(/\D/g, '');
+      const cert = instCnpj ? allCerts.find(c => (c.cnpj || '').replace(/\D/g, '') === instCnpj) : null;
+
+      res.json({
+        hasCertificate: !!cert,
+        certificate: cert ? {
+          id: cert.id,
+          companyName: cert.companyName,
+          cnpj: cert.cnpj,
+          validFrom: cert.validFrom,
+          validUntil: cert.validUntil,
+          isActive: cert.isActive,
+          isValid: cert.validUntil ? new Date(cert.validUntil) > new Date() : false,
+        } : null,
+        instanceCnpj: instance.cnpj,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/omie/instances/:id/certificate', authenticateUser, requireRole(['admin']), certUpload.single('pfxFile'), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) return res.status(404).json({ message: 'Instância não encontrada' });
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ message: 'Arquivo PFX/P12 é obrigatório' });
+
+      const password = req.body.password;
+      if (!password) return res.status(400).json({ message: 'Senha do certificado é obrigatória' });
+
+      const cryptoMod = await import('crypto');
+      const fsMod = await import('fs');
+      const osMod = await import('os');
+      const pathMod = await import('path');
+      const { execSync } = await import('child_process');
+
+      const CERT_KEY = cryptoMod.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
+      const encPwd = (plain: string) => {
+        const iv = cryptoMod.randomBytes(16);
+        const cipher = cryptoMod.createCipheriv('aes-256-cbc', CERT_KEY, iv);
+        return iv.toString('hex') + ':' + cipher.update(plain, 'utf8', 'hex') + cipher.final('hex');
+      };
+
+      const tmpFile = pathMod.join(osMod.tmpdir(), `cert_${cryptoMod.randomUUID()}.pfx`);
+      const passFile = pathMod.join(osMod.tmpdir(), `pass_${cryptoMod.randomUUID()}.txt`);
+      fsMod.writeFileSync(tmpFile, file.buffer);
+      fsMod.writeFileSync(passFile, password, { mode: 0o600 });
+
+      const tryCmd = (cmd: string) => {
+        try { return { ok: true, out: execSync(cmd, { encoding: 'utf-8', timeout: 15000 }) }; }
+        catch (e: any) { return { ok: false, out: String(e.stdout || '') + String(e.stderr || '') }; }
+      };
+
+      const escapedPass = password.replace(/'/g, "'\\''");
+      const attempts = [
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy 2>&1`,
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin 'pass:${escapedPass}' -legacy 2>&1`,
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" 2>&1`,
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin 'pass:${escapedPass}' 2>&1`,
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy -nodes 2>&1`,
+        `openssl pkcs12 -in "${tmpFile}" -clcerts -nokeys -passin file:"${passFile}" -legacy -nomacver 2>&1`,
+      ];
+
+      let certText = '';
+      for (const cmd of attempts) {
+        const r = tryCmd(cmd);
+        if (r.out.includes('BEGIN CERTIFICATE')) { certText = r.out; break; }
+      }
+
+      if (!certText.includes('BEGIN CERTIFICATE')) {
+        try { fsMod.unlinkSync(passFile); } catch {}
+        try { fsMod.unlinkSync(tmpFile); } catch {}
+        return res.status(400).json({ message: 'Não foi possível ler o certificado. Verifique o arquivo e a senha.' });
+      }
+
+      let certDetails = '';
+      const pemMatch = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+      if (pemMatch) {
+        const pemFile = pathMod.join(osMod.tmpdir(), `pem_${cryptoMod.randomUUID()}.pem`);
+        fsMod.writeFileSync(pemFile, pemMatch[0]);
+        const r = tryCmd(`openssl x509 -in "${pemFile}" -noout -subject -issuer -serial -dates 2>&1`);
+        if (r.ok) certDetails = r.out;
+        try { fsMod.unlinkSync(pemFile); } catch {}
+      }
+      try { fsMod.unlinkSync(passFile); } catch {}
+      try { fsMod.unlinkSync(tmpFile); } catch {}
+
+      const subjectMatch = certDetails.match(/subject\s*=\s*(.*)/i);
+      const subjectLine = subjectMatch ? subjectMatch[1] : '';
+      const cnMatch = subjectLine.match(/CN\s*=\s*([^,/\n]+)/i);
+      const companyName = cnMatch ? cnMatch[1].trim() : 'Desconhecido';
+      let cnpj = '';
+      const cnpjMatch = certDetails.match(/\d{14}/);
+      if (cnpjMatch) cnpj = cnpjMatch[0];
+      if (!cnpj) { const m = subjectLine.match(/\d{14}/); if (m) cnpj = m[0]; }
+
+      const issuerMatch = certDetails.match(/issuer\s*=\s*(.*)/i);
+      const issuerCnMatch = (issuerMatch?.[1] || '').match(/CN\s*=\s*([^,/\n]+)/i);
+      const issuer = issuerCnMatch ? issuerCnMatch[1].trim() : '';
+      const serialMatch = certDetails.match(/serial\s*=\s*([0-9A-Fa-f]+)/i);
+      const notBeforeMatch = certDetails.match(/notBefore\s*=\s*(.*)/i);
+      const notAfterMatch = certDetails.match(/notAfter\s*=\s*(.*)/i);
+
+      const privateDir = process.env.PRIVATE_OBJECT_DIR;
+      const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+      if (!privateDir || !bucketId) return res.status(500).json({ message: 'Object storage não configurado' });
+
+      const { objectStorageClient } = await import('./replit_integrations/object_storage/objectStorage');
+      const storageKey = `${privateDir}/certificates/${cryptoMod.randomUUID()}.pfx`;
+      const bucket = objectStorageClient.bucket(bucketId);
+      await bucket.file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
+
+      if (cnpj && !instance.cnpj) {
+        await storage.updateOmieInstance(instance.id, { cnpj } as any);
+      }
+
+      const existingCerts = await storage.getDigitalCertificates();
+      const existing = cnpj ? existingCerts.find(c => (c.cnpj || '').replace(/\D/g, '') === cnpj) : null;
+
+      let cert;
+      if (existing) {
+        cert = await storage.updateDigitalCertificate(existing.id, {
+          companyName,
+          cnpj: cnpj || existing.cnpj,
+          serialNumber: serialMatch?.[1] || null,
+          issuer: issuer || null,
+          validFrom: notBeforeMatch ? new Date(notBeforeMatch[1].trim()) : new Date(),
+          validUntil: notAfterMatch ? new Date(notAfterMatch[1].trim()) : new Date(),
+          storageKey,
+          certificatePassword: encPwd(password),
+          isActive: true,
+        });
+        console.log(`🔄 [CERT] Certificado atualizado para ${instance.name}: ${companyName} (${cnpj})`);
+      } else {
+        cert = await storage.createDigitalCertificate({
+          companyName,
+          cnpj: cnpj || '',
+          serialNumber: serialMatch?.[1] || null,
+          issuer: issuer || null,
+          validFrom: notBeforeMatch ? new Date(notBeforeMatch[1].trim()) : new Date(),
+          validUntil: notAfterMatch ? new Date(notAfterMatch[1].trim()) : new Date(),
+          certificateType: 'A1',
+          storageKey,
+          certificatePassword: encPwd(password),
+          isActive: true,
+          uploadedBy: req.user?.id || null,
+        });
+        console.log(`✅ [CERT] Certificado criado para ${instance.name}: ${companyName} (${cnpj})`);
+      }
+
+      res.status(201).json({
+        success: true,
+        certificate: {
+          id: cert.id,
+          companyName: cert.companyName,
+          cnpj: cert.cnpj,
+          validFrom: cert.validFrom,
+          validUntil: cert.validUntil,
+          isActive: cert.isActive,
+        }
+      });
+    } catch (error: any) {
+      console.error('[CERT-UPLOAD] Error:', error);
+      res.status(500).json({ message: 'Erro ao cadastrar certificado: ' + error.message });
+    }
+  });
+
+  app.delete('/api/omie/instances/:id/certificate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) return res.status(404).json({ message: 'Instância não encontrada' });
+
+      const instCnpj = (instance.cnpj || '').replace(/\D/g, '');
+      if (!instCnpj) return res.status(400).json({ message: 'Instância sem CNPJ configurado' });
+
+      const allCerts = await storage.getDigitalCertificates();
+      const cert = allCerts.find(c => (c.cnpj || '').replace(/\D/g, '') === instCnpj);
+      if (!cert) return res.status(404).json({ message: 'Nenhum certificado encontrado para esta instância' });
+
+      await storage.deleteDigitalCertificate(cert.id);
+      res.json({ success: true, message: 'Certificado removido' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ========================================
   // FERRAMENTAS DE DIAGNÓSTICO DE COORDENADAS
   // ========================================
   

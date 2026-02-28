@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X } from "lucide-react";
 import type { OmieInstance } from "@shared/schema";
 
 interface OmieInstanceFormData {
@@ -38,14 +38,14 @@ const defaultFormData: OmieInstanceFormData = {
 };
 
 const PRESET_COLORS = [
-  "#3B82F6", // Blue
-  "#10B981", // Green
-  "#F59E0B", // Amber
-  "#EF4444", // Red
-  "#8B5CF6", // Purple
-  "#EC4899", // Pink
-  "#06B6D4", // Cyan
-  "#F97316", // Orange
+  "#3B82F6",
+  "#10B981",
+  "#F59E0B",
+  "#EF4444",
+  "#8B5CF6",
+  "#EC4899",
+  "#06B6D4",
+  "#F97316",
 ];
 
 export default function OmieInstances() {
@@ -59,9 +59,31 @@ export default function OmieInstances() {
   const [formData, setFormData] = useState<OmieInstanceFormData>(defaultFormData);
   const [showSecrets, setShowSecrets] = useState(false);
 
+  const [certDialogOpen, setCertDialogOpen] = useState(false);
+  const [certInstanceId, setCertInstanceId] = useState<string | null>(null);
+  const [certInstanceName, setCertInstanceName] = useState("");
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certPassword, setCertPassword] = useState("");
+  const [certUploading, setCertUploading] = useState(false);
+  const certFileRef = useRef<HTMLInputElement>(null);
+
   const { data: instances = [], isLoading, error } = useQuery<OmieInstance[]>({
     queryKey: ["/api/omie/instances"],
     enabled: !!user && user.role === "admin",
+  });
+
+  const { data: certStatuses = {} } = useQuery<Record<string, any>>({
+    queryKey: ["/api/purchases/certificates-status"],
+    enabled: !!user && user.role === "admin",
+    select: (data: any) => {
+      const map: Record<string, any> = {};
+      if (data?.instances) {
+        for (const inst of data.instances) {
+          map[inst.instanceId] = inst;
+        }
+      }
+      return map;
+    },
   });
 
   const createMutation = useMutation({
@@ -71,17 +93,10 @@ export default function OmieInstances() {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       setIsDialogOpen(false);
       resetForm();
-      toast({
-        title: "Sucesso",
-        description: "Instância Omie criada com sucesso",
-      });
+      toast({ title: "Sucesso", description: "Instância Omie criada com sucesso" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao criar instância",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: error.message || "Erro ao criar instância", variant: "destructive" });
     },
   });
 
@@ -93,17 +108,10 @@ export default function OmieInstances() {
       setIsDialogOpen(false);
       setEditingInstance(null);
       resetForm();
-      toast({
-        title: "Sucesso",
-        description: "Instância atualizada com sucesso",
-      });
+      toast({ title: "Sucesso", description: "Instância atualizada com sucesso" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao atualizar instância",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: error.message || "Erro ao atualizar instância", variant: "destructive" });
     },
   });
 
@@ -111,17 +119,10 @@ export default function OmieInstances() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/omie/instances/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
-      toast({
-        title: "Sucesso",
-        description: "Instância excluída com sucesso",
-      });
+      toast({ title: "Sucesso", description: "Instância excluída com sucesso" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao excluir instância",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: error.message || "Erro ao excluir instância", variant: "destructive" });
     },
   });
 
@@ -130,17 +131,10 @@ export default function OmieInstances() {
       apiRequest("POST", `/api/omie/instances/${id}/set-default`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
-      toast({
-        title: "Sucesso",
-        description: "Instância definida como padrão",
-      });
+      toast({ title: "Sucesso", description: "Instância definida como padrão" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao definir instância padrão",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: error.message || "Erro ao definir instância padrão", variant: "destructive" });
     },
   });
 
@@ -162,13 +156,49 @@ export default function OmieInstances() {
     },
     onError: (error: any) => {
       setSyncingInstanceId(null);
-      toast({
-        title: "Erro na sincronização",
-        description: error.message || "Erro ao sincronizar clientes",
-        variant: "destructive",
-      });
+      toast({ title: "Erro na sincronização", description: error.message || "Erro ao sincronizar clientes", variant: "destructive" });
     },
   });
+
+  const handleUploadCert = async () => {
+    if (!certFile || !certPassword || !certInstanceId) return;
+    setCertUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("pfxFile", certFile);
+      formData.append("password", certPassword);
+      const res = await fetch(`/api/omie/instances/${certInstanceId}/certificate`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Erro ao enviar certificado");
+      toast({
+        title: "Certificado cadastrado",
+        description: `Certificado de ${data.certificate?.companyName || "empresa"} cadastrado com sucesso`,
+      });
+      setCertDialogOpen(false);
+      setCertFile(null);
+      setCertPassword("");
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/certificates-status"] });
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setCertUploading(false);
+    }
+  };
+
+  const handleDeleteCert = async (instanceId: string, instanceName: string) => {
+    if (!window.confirm(`Remover o certificado digital da instância ${instanceName}?`)) return;
+    try {
+      const res = await apiRequest("DELETE", `/api/omie/instances/${instanceId}/certificate`);
+      toast({ title: "Sucesso", description: "Certificado removido" });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/certificates-status"] });
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    }
+  };
 
   if (authLoading) {
     return (
@@ -237,6 +267,13 @@ export default function OmieInstances() {
     return secret.substring(0, 4) + "••••" + secret.substring(secret.length - 4);
   };
 
+  const formatDoc = (doc: string) => {
+    if (!doc) return "";
+    const d = doc.replace(/\D/g, "");
+    if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+    return doc;
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -286,18 +323,11 @@ export default function OmieInstances() {
                 variant="outline"
                 onClick={async () => {
                   try {
-                    const response = await apiRequest("POST", "/api/omie/instances/init-default");
-                    toast({
-                      title: "Sucesso",
-                      description: "Instância padrão OMIE GYN criada com sucesso",
-                    });
+                    await apiRequest("POST", "/api/omie/instances/init-default");
+                    toast({ title: "Sucesso", description: "Instância padrão OMIE GYN criada com sucesso" });
                     queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
                   } catch (error: any) {
-                    toast({
-                      title: "Erro",
-                      description: error.message || "Erro ao criar instância padrão",
-                      variant: "destructive",
-                    });
+                    toast({ title: "Erro", description: error.message || "Erro ao criar instância padrão", variant: "destructive" });
                   }
                 }}
               >
@@ -311,98 +341,140 @@ export default function OmieInstances() {
                 <TableRow>
                   <TableHead>Tag</TableHead>
                   <TableHead>Nome</TableHead>
-                  <TableHead>App Key</TableHead>
+                  <TableHead>CNPJ</TableHead>
+                  <TableHead>Certificado Digital</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Última Sincronização</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {instances.map((instance) => (
-                  <TableRow key={instance.id}>
-                    <TableCell>
-                      <Badge
-                        style={{
-                          backgroundColor: instance.tagColor,
-                          color: "#fff",
-                        }}
-                        className="font-semibold"
-                      >
-                        {instance.name}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{instance.displayName}</span>
-                        {instance.isDefault && (
-                          <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <code className="text-xs bg-gray-100 px-2 py-1 rounded">
-                        {maskSecret(instance.appKey)}
-                      </code>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={instance.isActive ? "default" : "secondary"}>
-                        {instance.isActive ? "Ativa" : "Inativa"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {instance.lastSyncAt
-                        ? new Date(instance.lastSyncAt).toLocaleString("pt-BR", { timeZone: BRAZIL_TZ })
-                        : "Nunca"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => syncClientsMutation.mutate(instance.id)}
-                          disabled={syncingInstanceId === instance.id || !instance.isActive}
-                          title={instance.isActive ? "Sincronizar clientes" : "Instância inativa"}
-                          className="text-blue-600 hover:text-blue-700"
+                {instances.map((instance) => {
+                  const certStatus = certStatuses[instance.id];
+                  return (
+                    <TableRow key={instance.id}>
+                      <TableCell>
+                        <Badge
+                          style={{ backgroundColor: instance.tagColor, color: "#fff" }}
+                          className="font-semibold"
                         >
-                          {syncingInstanceId === instance.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-4 w-4" />
+                          {instance.name}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{instance.displayName}</span>
+                          {instance.isDefault && (
+                            <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
                           )}
-                        </Button>
-                        {!instance.isDefault && (
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {instance.cnpj ? (
+                          <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                            {formatDoc(instance.cnpj)}
+                          </code>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Auto-detectar</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {certStatus?.hasCertificate ? (
+                          <div className="flex items-center gap-2">
+                            {certStatus.certificateValid ? (
+                              <Badge variant="default" className="bg-green-600 text-xs flex items-center gap-1">
+                                <ShieldCheck className="h-3 w-3" />
+                                Válido
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="text-xs flex items-center gap-1">
+                                <ShieldAlert className="h-3 w-3" />
+                                Expirado
+                              </Badge>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-red-500 hover:text-red-700"
+                              onClick={() => handleDeleteCert(instance.id, instance.name)}
+                              title="Remover certificado"
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setCertInstanceId(instance.id);
+                              setCertInstanceName(instance.name);
+                              setCertFile(null);
+                              setCertPassword("");
+                              setCertDialogOpen(true);
+                            }}
+                          >
+                            <Upload className="h-3 w-3 mr-1" />
+                            Importar PFX
+                          </Button>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={instance.isActive ? "default" : "secondary"}>
+                          {instance.isActive ? "Ativa" : "Inativa"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {instance.lastSyncAt
+                          ? new Date(instance.lastSyncAt).toLocaleString("pt-BR", { timeZone: BRAZIL_TZ })
+                          : "Nunca"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setDefaultMutation.mutate(instance.id)}
-                            disabled={setDefaultMutation.isPending}
-                            title="Definir como padrão"
+                            onClick={() => syncClientsMutation.mutate(instance.id)}
+                            disabled={syncingInstanceId === instance.id || !instance.isActive}
+                            title={instance.isActive ? "Sincronizar clientes" : "Instância inativa"}
+                            className="text-blue-600 hover:text-blue-700"
                           >
-                            <Star className="h-4 w-4" />
+                            {syncingInstanceId === instance.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
                           </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleOpenEdit(instance)}
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(instance)}
-                          disabled={deleteMutation.isPending || instance.isDefault}
-                          title={instance.isDefault ? "Não é possível excluir a instância padrão" : "Excluir"}
-                          className={instance.isDefault ? "opacity-50 cursor-not-allowed" : "text-red-600 hover:text-red-700"}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          {!instance.isDefault && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDefaultMutation.mutate(instance.id)}
+                              disabled={setDefaultMutation.isPending}
+                              title="Definir como padrão"
+                            >
+                              <Star className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(instance)} title="Editar">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(instance)}
+                            disabled={deleteMutation.isPending || instance.isDefault}
+                            title={instance.isDefault ? "Não é possível excluir a instância padrão" : "Excluir"}
+                            className={instance.isDefault ? "opacity-50 cursor-not-allowed" : "text-red-600 hover:text-red-700"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -429,15 +501,11 @@ export default function OmieInstances() {
                   id="name"
                   placeholder="Ex: GYN, BSB, RJ"
                   value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value.toUpperCase() })
-                  }
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value.toUpperCase() })}
                   maxLength={10}
                   required
                 />
-                <p className="text-xs text-gray-500">
-                  Sigla que aparecerá nas badges de identificação
-                </p>
+                <p className="text-xs text-gray-500">Sigla que aparecerá nas badges de identificação</p>
               </div>
 
               <div className="grid gap-2">
@@ -446,9 +514,7 @@ export default function OmieInstances() {
                   id="displayName"
                   placeholder="Ex: OMIE GYN - Goiânia"
                   value={formData.displayName}
-                  onChange={(e) =>
-                    setFormData({ ...formData, displayName: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                   required
                 />
               </div>
@@ -461,9 +527,7 @@ export default function OmieInstances() {
                     type={showSecrets ? "text" : "password"}
                     placeholder="Chave APP do Omie"
                     value={formData.appKey}
-                    onChange={(e) =>
-                      setFormData({ ...formData, appKey: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, appKey: e.target.value })}
                     required
                   />
                   <Button
@@ -485,9 +549,7 @@ export default function OmieInstances() {
                   type={showSecrets ? "text" : "password"}
                   placeholder="Chave Secret do Omie"
                   value={formData.appSecret}
-                  onChange={(e) =>
-                    setFormData({ ...formData, appSecret: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, appSecret: e.target.value })}
                   required
                 />
               </div>
@@ -500,9 +562,7 @@ export default function OmieInstances() {
                       key={color}
                       type="button"
                       className={`w-8 h-8 rounded-full border-2 transition-all ${
-                        formData.tagColor === color
-                          ? "border-gray-800 scale-110"
-                          : "border-transparent"
+                        formData.tagColor === color ? "border-gray-800 scale-110" : "border-transparent"
                       }`}
                       style={{ backgroundColor: color }}
                       onClick={() => setFormData({ ...formData, tagColor: color })}
@@ -511,9 +571,7 @@ export default function OmieInstances() {
                   <Input
                     type="color"
                     value={formData.tagColor}
-                    onChange={(e) =>
-                      setFormData({ ...formData, tagColor: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, tagColor: e.target.value })}
                     className="w-8 h-8 p-0 border-0 cursor-pointer"
                     title="Cor personalizada"
                   />
@@ -525,9 +583,7 @@ export default function OmieInstances() {
                   <Switch
                     id="isActive"
                     checked={formData.isActive}
-                    onCheckedChange={(checked) =>
-                      setFormData({ ...formData, isActive: checked })
-                    }
+                    onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                   />
                   <Label htmlFor="isActive">Instância Ativa</Label>
                 </div>
@@ -536,9 +592,7 @@ export default function OmieInstances() {
                     <Switch
                       id="isDefault"
                       checked={formData.isDefault}
-                      onCheckedChange={(checked) =>
-                        setFormData({ ...formData, isDefault: checked })
-                      }
+                      onCheckedChange={(checked) => setFormData({ ...formData, isDefault: checked })}
                     />
                     <Label htmlFor="isDefault">Definir como padrão</Label>
                   </div>
@@ -546,17 +600,10 @@ export default function OmieInstances() {
               </div>
             </div>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsDialogOpen(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button
-                type="submit"
-                disabled={createMutation.isPending || updateMutation.isPending}
-              >
+              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 )}
@@ -564,6 +611,76 @@ export default function OmieInstances() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={certDialogOpen} onOpenChange={setCertDialogOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-blue-600" />
+              Certificado Digital A1 — {certInstanceName}
+            </DialogTitle>
+            <DialogDescription>
+              Importe o arquivo PFX/P12 do certificado digital A1 e informe a senha.
+              O certificado será vinculado automaticamente à instância pelo CNPJ.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Arquivo PFX/P12</Label>
+              <input
+                ref={certFileRef}
+                type="file"
+                accept=".pfx,.p12"
+                className="hidden"
+                onChange={(e) => setCertFile(e.target.files?.[0] || null)}
+              />
+              <div
+                className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-blue-400 transition-colors"
+                onClick={() => certFileRef.current?.click()}
+              >
+                {certFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Shield className="h-5 w-5 text-green-600" />
+                    <span className="font-medium text-sm">{certFile.name}</span>
+                    <span className="text-xs text-muted-foreground">({(certFile.size / 1024).toFixed(1)} KB)</span>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">Clique para selecionar o arquivo .pfx ou .p12</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="certPassword">Senha do Certificado</Label>
+              <Input
+                id="certPassword"
+                type="password"
+                placeholder="Digite a senha do certificado"
+                value={certPassword}
+                onChange={(e) => setCertPassword(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCertDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleUploadCert}
+              disabled={!certFile || !certPassword || certUploading}
+            >
+              {certUploading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4 mr-2" />
+              )}
+              {certUploading ? "Processando..." : "Importar Certificado"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
