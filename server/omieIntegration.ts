@@ -4940,6 +4940,39 @@ export class OmieService {
     }
   }
 
+  async getCompanyInfo(): Promise<{ cnpj: string; razaoSocial: string; fantasia: string } | null> {
+    try {
+      console.log('🏢 Buscando informações da empresa no Omie...');
+      const response = await this.makeRequest('/geral/empresas/', 'ListarEmpresas', {
+        pagina: 1,
+        registros_por_pagina: 10
+      });
+
+      const responseKeys = response ? Object.keys(response) : [];
+      console.log(`🔍 [EMPRESA] Chaves da resposta: ${responseKeys.join(', ')}`);
+
+      const empresas = response?.empresas_cadastro 
+        || response?.ListarEmpresas
+        || response?.empresas
+        || (Array.isArray(response) ? response : null);
+
+      if (empresas && empresas.length > 0) {
+        const emp = empresas[0];
+        const cnpj = emp.cnpj || emp.cnpj_cpf || '';
+        const razaoSocial = emp.razao_social || emp.nome_fantasia || '';
+        const fantasia = emp.nome_fantasia || emp.razao_social || '';
+        console.log(`✅ [EMPRESA] Encontrada: ${razaoSocial} (CNPJ: ${cnpj})`);
+        return { cnpj, razaoSocial, fantasia };
+      } else {
+        console.log(`🔍 [EMPRESA] Resposta: ${JSON.stringify(response).slice(0, 500)}`);
+        return null;
+      }
+    } catch (error: any) {
+      console.warn(`⚠️ [EMPRESA] Erro ao buscar empresa: ${error.message}`);
+      return null;
+    }
+  }
+
   // Listar códigos de parcela disponíveis no Omie
   async listPaymentTerms(): Promise<any[]> {
     try {
@@ -5104,34 +5137,50 @@ export async function cacheBankAccountsForAllInstances(storage: any): Promise<vo
     const instances = await storage.getOmieInstances();
     if (!instances?.length) return;
     
-    console.log(`🏦 [CACHE-CONTAS] Caching contas correntes para ${instances.length} instâncias...`);
+    console.log(`🏦 [CACHE] Caching dados para ${instances.length} instâncias...`);
     
     for (const instance of instances) {
       if (!instance.isActive || !instance.appKey || !instance.appSecret) continue;
-      if (instance.defaultAccountCode) {
-        console.log(`✅ [CACHE-CONTAS] ${instance.name}: já possui conta corrente salva (${instance.defaultAccountCode})`);
-        continue;
-      }
       
-      try {
-        const svc = OmieService.createFromInstance(instance, storage);
-        const accounts = await svc.listBankAccounts();
-        if (accounts.length > 0) {
-          const selected = accounts[0];
-          const code = selected.nCodCC;
-          await storage.updateOmieInstance(instance.id, { defaultAccountCode: String(code) } as any);
-          console.log(`💾 [CACHE-CONTAS] ${instance.name}: conta corrente ${code} salva`);
-        } else {
-          console.warn(`⚠️ [CACHE-CONTAS] ${instance.name}: nenhuma conta corrente encontrada`);
+      const svc = OmieService.createFromInstance(instance, storage);
+      
+      if (!instance.cnpj) {
+        try {
+          const companyInfo = await svc.getCompanyInfo();
+          if (companyInfo?.cnpj) {
+            const cnpj = companyInfo.cnpj.replace(/\D/g, '');
+            await storage.updateOmieInstance(instance.id, { cnpj } as any);
+            console.log(`💾 [CACHE-CNPJ] ${instance.name}: CNPJ ${cnpj} salvo`);
+          }
+        } catch (err: any) {
+          console.warn(`⚠️ [CACHE-CNPJ] ${instance.name}: erro ao buscar CNPJ: ${err.message}`);
         }
-      } catch (err: any) {
-        console.warn(`⚠️ [CACHE-CONTAS] ${instance.name}: erro ao buscar contas: ${err.message}`);
+      } else {
+        console.log(`✅ [CACHE-CNPJ] ${instance.name}: já possui CNPJ (${instance.cnpj})`);
+      }
+
+      if (!instance.defaultAccountCode) {
+        try {
+          const accounts = await svc.listBankAccounts();
+          if (accounts.length > 0) {
+            const selected = accounts[0];
+            const code = selected.nCodCC;
+            await storage.updateOmieInstance(instance.id, { defaultAccountCode: String(code) } as any);
+            console.log(`💾 [CACHE-CONTA] ${instance.name}: conta corrente ${code} salva`);
+          } else {
+            console.warn(`⚠️ [CACHE-CONTA] ${instance.name}: nenhuma conta corrente encontrada`);
+          }
+        } catch (err: any) {
+          console.warn(`⚠️ [CACHE-CONTA] ${instance.name}: erro ao buscar contas: ${err.message}`);
+        }
+      } else {
+        console.log(`✅ [CACHE-CONTA] ${instance.name}: já possui conta corrente salva (${instance.defaultAccountCode})`);
       }
     }
     
-    console.log(`✅ [CACHE-CONTAS] Processo de caching concluído`);
+    console.log(`✅ [CACHE] Processo de caching concluído`);
   } catch (e: any) {
-    console.error('⚠️ [CACHE-CONTAS] Erro geral:', e.message);
+    console.error('⚠️ [CACHE] Erro geral:', e.message);
   }
 }
 
