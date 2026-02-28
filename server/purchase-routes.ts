@@ -1,7 +1,7 @@
 import { type Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
-import { purchaseInvoices, omieInstances, payables, chartOfAccounts } from "@shared/schema";
+import { purchaseInvoices, omieInstances, payables, chartOfAccounts, digitalCertificates } from "@shared/schema";
 import { eq, desc, and, sql, ilike, or } from "drizzle-orm";
 import { nowBrazil } from "./brazilTimezone";
 import * as xmlJs from "xml-js";
@@ -183,9 +183,53 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  app.get("/api/purchases/certificates-status", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
+      const certs = await db.select().from(digitalCertificates);
+      
+      const result = instances.map(inst => {
+        const matchedCert = inst.cnpj 
+          ? certs.find(c => {
+              const instCnpj = (inst.cnpj || '').replace(/\D/g, '');
+              const certCnpj = (c.cnpj || '').replace(/\D/g, '');
+              return instCnpj && certCnpj && instCnpj === certCnpj;
+            })
+          : null;
+        
+        return {
+          instanceId: inst.id,
+          instanceName: inst.name,
+          displayName: inst.displayName,
+          tagColor: inst.tagColor,
+          cnpj: inst.cnpj,
+          hasCertificate: !!matchedCert,
+          certificateId: matchedCert?.id || null,
+          certificateCompany: matchedCert?.companyName || null,
+          certificateValid: matchedCert ? new Date(matchedCert.validUntil!) > new Date() : false,
+          certificateExpiry: matchedCert?.validUntil || null,
+          certificateActive: matchedCert?.isActive || false,
+        };
+      });
+      
+      const unmatchedCerts = certs.filter(c => {
+        const certCnpj = (c.cnpj || '').replace(/\D/g, '');
+        return !instances.some(inst => {
+          const instCnpj = (inst.cnpj || '').replace(/\D/g, '');
+          return instCnpj && certCnpj && instCnpj === certCnpj;
+        });
+      });
+      
+      res.json({ instances: result, unmatchedCertificates: unmatchedCerts, totalCertificates: certs.length });
+    } catch (err: any) {
+      console.error("[PURCHASES] Certificates status error:", err.message);
+      res.json({ instances: [], unmatchedCertificates: [], totalCertificates: 0 });
+    }
+  });
+
   app.get("/api/purchases/stats/summary", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
     try {
-      const [stats] = await db.execute(sql`
+      const result = await db.execute(sql`
         SELECT
           COUNT(*) as total,
           COUNT(*) FILTER (WHERE status = 'detected') as detected,
@@ -199,9 +243,12 @@ export function registerPurchaseRoutes(app: Express) {
         FROM purchase_invoices
         WHERE status != 'cancelled'
       `);
-      res.json(stats);
+      const rows = result.rows || result;
+      const stats = Array.isArray(rows) ? rows[0] : rows;
+      res.json(stats || { total: 0, detected: 0, imported: 0, classified: 0, linked: 0, paid: 0, total_value: 0, linked_value: 0, stock_purchases: 0 });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('❌ [PURCHASE-STATS] Error:', err.message);
+      res.json({ total: 0, detected: 0, imported: 0, classified: 0, linked: 0, paid: 0, total_value: 0, linked_value: 0, stock_purchases: 0 });
     }
   });
 

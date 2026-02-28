@@ -84,6 +84,10 @@ export default function PurchaseRadar() {
     queryKey: ["/api/omie/instances"],
   });
 
+  const { data: certificates = [] } = useQuery<any[]>({
+    queryKey: ["/api/purchases/certificates-status"],
+  });
+
   const importXml = useMutation({
     mutationFn: async (xml: string) => {
       const res = await apiRequest("POST", "/api/purchases/import-xml", { xmlContent: xml });
@@ -387,41 +391,116 @@ export default function PurchaseRadar() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-amber-800 dark:text-amber-200">Certificado Digital Necessário</h4>
-                    <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                      Para ativar o radar automático é necessário configurar um certificado digital A1 válido
-                      para cada instância. O sistema consultará o Web Service de Distribuição de DF-e da SEFAZ AN
-                      para detectar NF-e emitidas contra seus CNPJs automaticamente.
-                    </p>
-                  </div>
-                </div>
-              </div>
+              {(() => {
+                const certData = certificates as any;
+                const certInstances = certData?.instances || [];
+                const unmatchedCerts = certData?.unmatchedCertificates || [];
+                const totalCerts = certData?.totalCertificates || 0;
+                const allReady = certInstances.length > 0 && certInstances.every((i: any) => i.hasCertificate && i.certificateValid && i.cnpj);
 
-              <div>
-                <h4 className="font-medium mb-2">Instâncias com CNPJ cadastrado</h4>
-                {instances.filter((i: any) => i.cnpj).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Nenhuma instância possui CNPJ cadastrado. Acesse Administração → Instâncias Omie para configurar.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {instances.filter((i: any) => i.cnpj).map((inst: any) => (
-                      <div key={inst.id} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: inst.tagColor }} />
-                          <span className="font-medium">{inst.name}</span>
-                          <span className="text-sm text-muted-foreground">{formatDoc(inst.cnpj)}</span>
+                return (
+                  <>
+                    {allReady ? (
+                      <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                        <div className="flex items-start gap-3">
+                          <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-green-800 dark:text-green-200">Radar Pronto</h4>
+                            <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                              Todas as instâncias possuem CNPJ e certificado digital A1 válido configurados.
+                              O radar automático pode ser ativado para detectar NF-e emitidas contra seus CNPJs.
+                            </p>
+                          </div>
                         </div>
-                        <Badge variant="outline">Configurado</Badge>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    ) : (
+                      <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-amber-800 dark:text-amber-200">Configuração Necessária</h4>
+                            <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                              Para ativar o radar automático, cada instância Omie precisa ter um CNPJ cadastrado e
+                              um certificado digital A1 válido configurado no módulo Indústria → Documentação.
+                              O certificado deve ter o mesmo CNPJ da instância.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <h4 className="font-medium mb-2">Status das Instâncias ({certInstances.length})</h4>
+                      {certInstances.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Nenhuma instância Omie ativa encontrada. Acesse Administração → Instâncias Omie para configurar.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {certInstances.map((inst: any) => (
+                            <div key={inst.instanceId} className="flex items-center justify-between p-3 border rounded-lg">
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: inst.tagColor }} />
+                                <span className="font-medium">{inst.instanceName}</span>
+                                {inst.cnpj ? (
+                                  <span className="text-sm text-muted-foreground">{formatDoc(inst.cnpj)}</span>
+                                ) : (
+                                  <span className="text-sm text-red-500">Sem CNPJ</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {inst.hasCertificate ? (
+                                  inst.certificateValid ? (
+                                    <Badge variant="default" className="bg-green-600">
+                                      Certificado válido
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="destructive">Certificado expirado</Badge>
+                                  )
+                                ) : inst.cnpj ? (
+                                  <Badge variant="outline" className="text-amber-600 border-amber-300">
+                                    Sem certificado
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-red-500 border-red-300">
+                                    CNPJ necessário
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {unmatchedCerts.length > 0 && (
+                      <div>
+                        <h4 className="font-medium mb-2 text-amber-600">Certificados não vinculados ({unmatchedCerts.length})</h4>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          Estes certificados estão cadastrados mas não correspondem ao CNPJ de nenhuma instância:
+                        </p>
+                        <div className="space-y-1">
+                          {unmatchedCerts.map((cert: any) => (
+                            <div key={cert.id} className="flex items-center justify-between p-2 border rounded text-sm">
+                              <span>{cert.companyName} ({formatDoc(cert.cnpj)})</span>
+                              <Badge variant="outline">Não vinculado</Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {totalCerts === 0 && (
+                      <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                        <p className="text-sm text-blue-700 dark:text-blue-300">
+                          Nenhum certificado digital cadastrado. Para cadastrar, acesse <strong>Indústria → Documentação</strong> e 
+                          faça o upload do arquivo PFX/P12 do certificado A1 de cada empresa.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               <p className="text-sm text-muted-foreground">
                 Enquanto o radar automático não estiver ativo, utilize a importação manual de XML na aba "Importar XML".
