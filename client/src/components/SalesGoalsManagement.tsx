@@ -69,12 +69,12 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     queryFn: () => fetch(`/api/sales-goals?month=${selectedMonth}&year=${selectedYear}`).then(r => r.json()),
   });
 
-  const sellersWithType = allUsers.filter(
-    (u: User) => u.isActive && u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType)
+  const activeSellers = allUsers.filter(
+    (u: User) => u.isActive && ['vendedor', 'telemarketing'].includes(u.role)
   );
 
-  const individualSellers = sellersWithType.filter((u: User) => u.sellerType !== 'telemarketing');
-  const telemarketingUsers = sellersWithType.filter((u: User) => u.sellerType === 'telemarketing');
+  const individualSellers = activeSellers.filter((u: User) => u.role !== 'telemarketing' && u.sellerType !== 'telemarketing');
+  const telemarketingUsers = activeSellers.filter((u: User) => u.role === 'telemarketing' || u.sellerType === 'telemarketing');
 
   const createGoalMutation = useMutation({
     mutationFn: (goalData: any) => {
@@ -278,9 +278,11 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                   {individualSellers.map((s: User) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.firstName} {s.lastName}
-                      <span className="text-xs text-muted-foreground ml-2">
-                        ({SELLER_TYPE_LABELS[s.sellerType || ''] || s.sellerType})
-                      </span>
+                      {s.sellerType && (
+                        <span className="text-xs text-muted-foreground ml-2">
+                          ({SELLER_TYPE_LABELS[s.sellerType] || s.sellerType})
+                        </span>
+                      )}
                     </SelectItem>
                   ))}
                   {telemarketingUsers.length > 0 && (
