@@ -7,8 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, Mail, MapPin, UserCheck, Edit, Home, RefreshCw, Briefcase } from "lucide-react";
-import { formatDate } from "date-fns";
+import { Switch } from "@/components/ui/switch";
+import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -25,6 +25,8 @@ interface Seller {
   homeLatitude?: string;
   homeLongitude?: string;
   sellerType?: string;
+  omieVendorCode?: string;
+  omieVendorCodes?: Record<string, string>;
 }
 
 const SELLER_TYPE_LABELS: Record<string, string> = {
@@ -44,6 +46,8 @@ export default function Sellers() {
   const [homeLatitude, setHomeLatitude] = useState("");
   const [homeLongitude, setHomeLongitude] = useState("");
   const [sellerType, setSellerType] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -135,9 +139,29 @@ export default function Sellers() {
     });
   };
 
-  const activeSellers = sellers.filter(user => 
-    (user.role === 'vendedor' || user.role === 'telemarketing') && user.isActive
+  const handleToggleActive = (seller: Seller) => {
+    const newStatus = !seller.isActive;
+    const action = newStatus ? 'reativar' : 'inativar';
+    if (!confirm(`Tem certeza que deseja ${action} o vendedor ${seller.firstName} ${seller.lastName}?`)) return;
+    updateSellerMutation.mutate({
+      id: seller.id,
+      data: { isActive: newStatus },
+    });
+  };
+
+  const allSellers = sellers.filter(user =>
+    user.role === 'vendedor' || user.role === 'telemarketing'
   );
+
+  const activeSellers = allSellers.filter(s => s.isActive);
+  const inactiveSellers = allSellers.filter(s => !s.isActive);
+
+  const displaySellers = (showInactive ? allSellers : activeSellers).filter(s => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
+    return fullName.includes(q) || (s.email || '').toLowerCase().includes(q);
+  });
 
   const cltCount = activeSellers.filter(s => s.sellerType === 'vendedor_clt').length;
   const pjCount = activeSellers.filter(s => s.sellerType === 'vendedor_pj').length;
@@ -158,9 +182,9 @@ export default function Sellers() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">Vendedores Ativos</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Vendedores</h1>
           <p className="text-muted-foreground">
-            Lista completa de vendedores ativos no sistema
+            Gestão de vendedores do sistema
           </p>
         </div>
         <div className="flex items-center space-x-2">
@@ -175,8 +199,14 @@ export default function Sellers() {
           </Button>
           <Badge variant="secondary" className="px-3 py-1">
             <Users className="h-4 w-4 mr-1" />
-            {activeSellers.length} vendedores
+            {activeSellers.length} ativos
           </Badge>
+          {inactiveSellers.length > 0 && (
+            <Badge variant="outline" className="px-3 py-1 text-muted-foreground">
+              <UserX className="h-4 w-4 mr-1" />
+              {inactiveSellers.length} inativos
+            </Badge>
+          )}
           <BackToDashboardButton />
         </div>
       </div>
@@ -184,7 +214,7 @@ export default function Sellers() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-4 pb-3">
-            <div className="text-sm text-muted-foreground">Total</div>
+            <div className="text-sm text-muted-foreground">Total Ativos</div>
             <div className="text-2xl font-bold">{activeSellers.length}</div>
           </CardContent>
         </Card>
@@ -215,36 +245,60 @@ export default function Sellers() {
       </div>
 
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Lista de Vendedores</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Lista de Vendedores</h2>
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome ou email..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="pl-9 w-64"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={showInactive} onCheckedChange={setShowInactive} />
+              <Label className="text-sm cursor-pointer" onClick={() => setShowInactive(!showInactive)}>
+                Mostrar inativos
+              </Label>
+            </div>
+          </div>
+        </div>
         
-        {activeSellers.length === 0 ? (
+        {displaySellers.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Users className="h-12 w-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">Nenhum vendedor encontrado</h3>
               <p className="text-muted-foreground text-center mb-4">
-                Não há vendedores ativos cadastrados no sistema.
+                {searchQuery ? 'Nenhum resultado para a busca.' : 'Não há vendedores cadastrados no sistema.'}
               </p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {activeSellers.map((seller) => (
-              <Card key={seller.id} className="hover:shadow-md transition-shadow">
+            {displaySellers.map((seller) => (
+              <Card key={seller.id} className={`hover:shadow-md transition-shadow ${!seller.isActive ? 'opacity-60 border-dashed' : ''}`}>
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">
                       {seller.firstName} {seller.lastName}
                     </CardTitle>
                     <div className="flex items-center gap-1">
+                      {!seller.isActive && (
+                        <Badge variant="destructive" className="text-xs">Inativo</Badge>
+                      )}
                       {seller.sellerType ? (
                         <Badge className={SELLER_TYPE_COLORS[seller.sellerType] || ''}>
                           {SELLER_TYPE_LABELS[seller.sellerType] || seller.sellerType}
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="text-red-500 border-red-200">
-                          Sem Tipo
-                        </Badge>
+                        seller.isActive && (
+                          <Badge variant="outline" className="text-red-500 border-red-200">
+                            Sem Tipo
+                          </Badge>
+                        )
                       )}
                     </div>
                   </div>
@@ -279,7 +333,14 @@ export default function Sellers() {
                     </div>
                   )}
 
-                  {!seller.sellerType && (
+                  {seller.omieVendorCodes && Object.keys(seller.omieVendorCodes).length > 1 && (
+                    <div className="flex items-center space-x-2 text-sm text-blue-600">
+                      <RefreshCw className="h-4 w-4" />
+                      <span>{Object.keys(seller.omieVendorCodes).length} instâncias Omie</span>
+                    </div>
+                  )}
+
+                  {seller.isActive && !seller.sellerType && (
                     <div className="flex gap-1 pt-1">
                       <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => handleQuickSetType(seller, 'vendedor_clt')}>
                         CLT
@@ -293,15 +354,36 @@ export default function Sellers() {
                     </div>
                   )}
                   
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full mt-2"
-                    onClick={() => handleEditClick(seller)}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Editar
-                  </Button>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => handleEditClick(seller)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Editar
+                    </Button>
+                    <Button
+                      variant={seller.isActive ? "outline" : "default"}
+                      size="sm"
+                      className={seller.isActive ? "text-red-600 hover:text-red-700 hover:bg-red-50" : "bg-green-600 hover:bg-green-700 text-white"}
+                      onClick={() => handleToggleActive(seller)}
+                      disabled={updateSellerMutation.isPending}
+                    >
+                      {seller.isActive ? (
+                        <>
+                          <UserX className="h-4 w-4 mr-1" />
+                          Inativar
+                        </>
+                      ) : (
+                        <>
+                          <UserCheck className="h-4 w-4 mr-1" />
+                          Ativar
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
