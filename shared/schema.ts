@@ -146,6 +146,7 @@ export const omieInstances = pgTable("omie_instances", {
   appSecret: varchar("app_secret").notNull(),
   tagColor: varchar("tag_color").notNull().default('#3B82F6'),
   cnpj: varchar("cnpj"),
+  defaultAccountCode: varchar("default_account_code"),
   isActive: boolean("is_active").notNull().default(true),
   isDefault: boolean("is_default").notNull().default(false),
   lastSyncAt: timestamp("last_sync_at"),

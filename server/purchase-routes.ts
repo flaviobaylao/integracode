@@ -107,6 +107,9 @@ async function ensurePurchaseInvoicesTable() {
       ALTER TABLE omie_instances ADD COLUMN IF NOT EXISTS cnpj varchar
     `);
     await db.execute(sql`
+      ALTER TABLE omie_instances ADD COLUMN IF NOT EXISTS default_account_code varchar
+    `);
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS purchase_invoices (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
         access_key varchar(44) UNIQUE,

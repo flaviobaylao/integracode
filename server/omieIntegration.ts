@@ -2924,7 +2924,7 @@ export class OmieService {
         };
       });
 
-      // Determinar conta do Omie dinamicamente para esta instância (evita uso de código de outra instância)
+      // Determinar conta do Omie dinamicamente para esta instância
       let omieAccountCode: number | undefined = undefined;
 
       try {
@@ -2944,15 +2944,32 @@ export class OmieService {
           omieAccountCode = selected.nCodCC;
           const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
           console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+          if (this.storage && this.omieInstanceId) {
+            try {
+              await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
+              console.log(`💾 [CONTA] Conta corrente ${omieAccountCode} salva como fallback na instância`);
+            } catch (e) {}
+          }
         } else {
-          console.error(`❌ [CONTA] Nenhuma conta corrente encontrada para esta instância`);
-          throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie.');
+          console.warn(`⚠️ [CONTA] API retornou lista vazia, tentando fallback do banco de dados...`);
         }
       } catch (err: any) {
-        if (!omieAccountCode) {
-          console.error(`❌ [CONTA] Erro ao buscar contas correntes:`, err.message);
-          throw new Error(`Erro ao buscar conta corrente no Omie: ${err.message}. A conta corrente é obrigatória para criar pedidos.`);
-        }
+        console.warn(`⚠️ [CONTA] Erro na API ListarContasCorrentes: ${err.message}, tentando fallback...`);
+      }
+
+      if (!omieAccountCode && this.storage && this.omieInstanceId) {
+        try {
+          const instance = await this.storage.getOmieInstance(this.omieInstanceId);
+          if (instance && (instance as any).defaultAccountCode) {
+            omieAccountCode = parseInt((instance as any).defaultAccountCode, 10);
+            console.log(`✅ [CONTA-FALLBACK] Usando conta corrente salva no banco: ${omieAccountCode}`);
+          }
+        } catch (e) {}
+      }
+
+      if (!omieAccountCode) {
+        console.error(`❌ [CONTA] Nenhuma conta corrente encontrada (API + fallback falharam)`);
+        throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie e tente novamente.');
       }
 
       // Determinar código da parcela baseado no método de pagamento e prazo
@@ -4899,19 +4916,27 @@ export class OmieService {
         registros_por_pagina: 100
       });
 
-      if (response && response.conta_corrente_lista && response.conta_corrente_lista.length > 0) {
-        console.log(`✅ Encontradas ${response.conta_corrente_lista.length} contas correntes`);
-        return response.conta_corrente_lista;
+      const responseKeys = response ? Object.keys(response) : [];
+      console.log(`🔍 [CONTAS] Chaves da resposta: ${responseKeys.join(', ')}`);
+
+      const accounts = response?.conta_corrente_lista 
+        || response?.ListarContasCorrentes
+        || response?.ListarContasCorrentesResponse 
+        || response?.contaCorrenteLista
+        || (Array.isArray(response) ? response : null);
+
+      if (accounts && accounts.length > 0) {
+        console.log(`✅ Encontradas ${accounts.length} contas correntes`);
+        console.log(`🔍 [CONTAS] Primeira conta: ${JSON.stringify(accounts[0]).slice(0, 300)}`);
+        return accounts;
       } else {
-        console.log(`❌ Nenhuma conta corrente encontrada. Chaves da resposta: ${response ? Object.keys(response).join(', ') : 'null'}`);
-        if (response) {
-          console.log(`🔍 [CONTAS] Resposta completa: ${JSON.stringify(response).slice(0, 500)}`);
-        }
+        console.log(`⚠️ [CONTAS] Nenhuma conta corrente encontrada na resposta`);
+        console.log(`🔍 [CONTAS] Resposta completa: ${JSON.stringify(response).slice(0, 1000)}`);
         return [];
       }
-    } catch (error) {
-      console.error('Erro ao listar contas correntes do Omie:', error);
-      throw error;
+    } catch (error: any) {
+      console.error('❌ Erro ao listar contas correntes do Omie:', error?.message || error);
+      return [];
     }
   }
 
@@ -5071,6 +5096,42 @@ export async function resolveDefaultInstanceId(storage: any): Promise<void> {
     }
   } catch (e) {
     console.error('⚠️ Erro ao resolver instância padrão:', e);
+  }
+}
+
+export async function cacheBankAccountsForAllInstances(storage: any): Promise<void> {
+  try {
+    const instances = await storage.getOmieInstances();
+    if (!instances?.length) return;
+    
+    console.log(`🏦 [CACHE-CONTAS] Caching contas correntes para ${instances.length} instâncias...`);
+    
+    for (const instance of instances) {
+      if (!instance.isActive || !instance.appKey || !instance.appSecret) continue;
+      if (instance.defaultAccountCode) {
+        console.log(`✅ [CACHE-CONTAS] ${instance.name}: já possui conta corrente salva (${instance.defaultAccountCode})`);
+        continue;
+      }
+      
+      try {
+        const svc = OmieService.createFromInstance(instance, storage);
+        const accounts = await svc.listBankAccounts();
+        if (accounts.length > 0) {
+          const selected = accounts[0];
+          const code = selected.nCodCC;
+          await storage.updateOmieInstance(instance.id, { defaultAccountCode: String(code) } as any);
+          console.log(`💾 [CACHE-CONTAS] ${instance.name}: conta corrente ${code} salva`);
+        } else {
+          console.warn(`⚠️ [CACHE-CONTAS] ${instance.name}: nenhuma conta corrente encontrada`);
+        }
+      } catch (err: any) {
+        console.warn(`⚠️ [CACHE-CONTAS] ${instance.name}: erro ao buscar contas: ${err.message}`);
+      }
+    }
+    
+    console.log(`✅ [CACHE-CONTAS] Processo de caching concluído`);
+  } catch (e: any) {
+    console.error('⚠️ [CACHE-CONTAS] Erro geral:', e.message);
   }
 }
 
@@ -5332,15 +5393,32 @@ export async function createOmieOrder(orderData: {
         omieAccountCode = selected.nCodCC;
         const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
         console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName})`);
+        if (this.storage && this.omieInstanceId) {
+          try {
+            await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
+            console.log(`💾 [CONTA-HOTSITE] Conta corrente ${omieAccountCode} salva como fallback`);
+          } catch (e) {}
+        }
       } else {
-        console.error(`❌ [CONTA-HOTSITE] Nenhuma conta corrente encontrada para esta instância`);
-        throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie.');
+        console.warn(`⚠️ [CONTA-HOTSITE] API retornou lista vazia, tentando fallback...`);
       }
     } catch (err: any) {
-      if (!omieAccountCode) {
-        console.error(`❌ [CONTA-HOTSITE] Erro ao buscar contas:`, err.message);
-        throw new Error(`Erro ao buscar conta corrente no Omie: ${err.message}. A conta corrente é obrigatória.`);
-      }
+      console.warn(`⚠️ [CONTA-HOTSITE] Erro na API ListarContasCorrentes: ${err.message}, tentando fallback...`);
+    }
+
+    if (!omieAccountCode && this.storage && this.omieInstanceId) {
+      try {
+        const instance = await this.storage.getOmieInstance(this.omieInstanceId);
+        if (instance && (instance as any).defaultAccountCode) {
+          omieAccountCode = parseInt((instance as any).defaultAccountCode, 10);
+          console.log(`✅ [CONTA-HOTSITE-FALLBACK] Usando conta corrente salva: ${omieAccountCode}`);
+        }
+      } catch (e) {}
+    }
+
+    if (!omieAccountCode) {
+      console.error(`❌ [CONTA-HOTSITE] Nenhuma conta corrente encontrada (API + fallback falharam)`);
+      throw new Error('Nenhuma conta corrente encontrada no Omie para esta instância. Cadastre uma conta corrente no Omie e tente novamente.');
     }
 
     // Determinar código da parcela baseado no método de pagamento e prazo
