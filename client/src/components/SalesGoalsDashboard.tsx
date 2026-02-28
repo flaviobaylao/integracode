@@ -179,7 +179,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
       <div className="text-center py-8 text-muted-foreground">
         <Target className="h-12 w-12 mx-auto mb-4 opacity-50" />
         <p>Nenhum dado disponível para o período selecionado.</p>
-        <p className="text-sm">Configure os tipos de vendedores e metas de faturamento para visualizar o dashboard.</p>
+        <p className="text-sm">Configure metas de faturamento para visualizar o dashboard.</p>
       </div>
     );
   }
@@ -295,7 +295,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                     {allEntries.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                          Nenhum vendedor com tipo configurado. Configure os tipos na página de Vendedores.
+                          Nenhuma meta configurada para este período. Crie metas na seção acima.
                         </TableCell>
                       </TableRow>
                     ) : (

@@ -3279,9 +3279,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Fetch all active users with relevant roles
       const allUsers = await db.select().from(users).where(eq(users.isActive, true));
-      const sellersWithType = allUsers.filter(u =>
-        u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType)
-      );
 
       // Fetch goals for the month
       const goals = await storage.getSalesGoals(undefined, targetMonth, targetYear);
@@ -3308,13 +3305,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (workingDaysElapsed === 0) workingDaysElapsed = 1;
 
-      // Build results for individual sellers (CLT + PJ)
-      const individualSellers = sellersWithType.filter(u => u.sellerType !== 'telemarketing');
-      const telemarketingUsers = sellersWithType.filter(u => u.sellerType === 'telemarketing');
+      function getEffectiveSellerType(u: any): string {
+        if (u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType)) {
+          return u.sellerType;
+        }
+        if (u.role === 'telemarketing') return 'telemarketing';
+        return 'vendedor_pj';
+      }
+
+      // Build list of sellers who have goals OR have sellerType set
+      const goalSellerIds = goals.map((g: any) => g.sellerId).filter((id: string) => id !== 'TELEMARKETING');
+      const relevantSellers = allUsers.filter(u =>
+        u.isActive && (
+          goalSellerIds.includes(u.id) ||
+          (u.sellerType && ['vendedor_clt', 'vendedor_pj', 'telemarketing'].includes(u.sellerType))
+        )
+      );
+
+      const individualSellers = relevantSellers.filter(u => getEffectiveSellerType(u) !== 'telemarketing');
+      const telemarketingUsers = allUsers.filter(u =>
+        u.isActive && (u.sellerType === 'telemarketing' || u.role === 'telemarketing')
+      );
 
       const results: any[] = [];
 
       for (const seller of individualSellers) {
+        const effectiveType = getEffectiveSellerType(seller);
         const goal = goals.find((g: any) => g.sellerId === seller.id);
         const revenueGoal = goal ? parseFloat(goal.revenueGoal || '0') : 0;
 
@@ -3324,12 +3340,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
           : 0;
         const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
-        const commission = getCommissionInfo(seller.sellerType!, achievementPct);
+        const commission = getCommissionInfo(effectiveType, achievementPct);
 
         results.push({
           sellerId: seller.id,
           sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
-          sellerType: seller.sellerType,
+          sellerType: effectiveType,
           revenueGoal,
           revenueActual: totalRevenue,
           revenueProjected: projection,
@@ -3342,8 +3358,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Telemarketing (collective)
       let telemarketingResult: any = null;
-      if (telemarketingUsers.length > 0) {
-        const tmGoal = goals.find((g: any) => g.sellerId === 'TELEMARKETING');
+      const tmGoal = goals.find((g: any) => g.sellerId === 'TELEMARKETING');
+      if (telemarketingUsers.length > 0 || tmGoal) {
         const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
 
         let totalRevenue = 0;
