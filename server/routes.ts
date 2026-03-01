@@ -3123,7 +3123,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/sales-goals/:id', authenticateUser, async (req: any, res, next: any) => {
     const { id } = req.params;
-    if (id === 'commission-dashboard' || id === 'daily-metrics') {
+    if (id === 'commission-dashboard' || id === 'daily-metrics' || id === 'yearly-summary') {
       return next('route');
     }
     try {
@@ -3430,6 +3430,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error fetching commission dashboard:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Yearly summary - goals and execution for the entire year
+  app.get('/api/sales-goals/yearly-summary', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const targetYear = parseInt(req.query.year as string) || new Date().getFullYear();
+
+      const allGoals = await db.select().from(salesGoals).where(eq(salesGoals.year, targetYear));
+
+      const sellerMap: Record<string, { sellerId: string, sellerName: string, months: Record<number, { goal: number, actual: number }> }> = {};
+
+      const allUsersData = await db.select().from(users).where(eq(users.isActive, true));
+
+      for (const goal of allGoals) {
+        if (!sellerMap[goal.sellerId]) {
+          let name = goal.sellerId;
+          if (goal.sellerId === 'TELEMARKETING') {
+            name = 'Vendas Internas (Telemarketing)';
+          } else {
+            const u = allUsersData.find(u => u.id === goal.sellerId);
+            if (u) name = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+          }
+          sellerMap[goal.sellerId] = { sellerId: goal.sellerId, sellerName: name, months: {} };
+        }
+        sellerMap[goal.sellerId].months[goal.month] = {
+          goal: parseFloat(goal.revenueGoal?.toString() || '0'),
+          actual: 0,
+        };
+      }
+
+      const historyRows = await db.execute(sql`
+        SELECT seller_id, month, revenue_actual 
+        FROM sales_goal_history 
+        WHERE year = ${targetYear}
+      `);
+
+      for (const row of (historyRows.rows || [])) {
+        const sid = row.seller_id as string;
+        const month = row.month as number;
+        if (sellerMap[sid] && sellerMap[sid].months[month] !== undefined) {
+          sellerMap[sid].months[month].actual = parseFloat((row.revenue_actual as string) || '0');
+        } else if (sellerMap[sid]) {
+          sellerMap[sid].months[month] = { goal: 0, actual: parseFloat((row.revenue_actual as string) || '0') };
+        }
+      }
+
+      const summary = Object.values(sellerMap).map(s => {
+        let totalGoal = 0;
+        let totalActual = 0;
+        for (const m of Object.values(s.months)) {
+          totalGoal += m.goal;
+          totalActual += m.actual;
+        }
+        return { ...s, totalGoal, totalActual };
+      });
+
+      res.json({ year: targetYear, sellers: summary });
+    } catch (error: any) {
+      console.error("Error fetching yearly summary:", error);
       res.status(500).json({ message: error.message });
     }
   });
