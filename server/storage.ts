@@ -3978,15 +3978,18 @@ export class DatabaseStorage implements IStorage {
       let monthBillings: { rows: any[] } = { rows: [] };
       
       if (!userSellerId || allVendorCodes.length > 0) {
+        const startStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+        const endD = isCurrentMonth ? currentDate : endOfMonth;
+        const endStr = `${endD.getFullYear()}-${String(endD.getMonth() + 1).padStart(2, '0')}-${String(endD.getDate()).padStart(2, '0')}`;
         monthBillings = await db.execute(sql`
           SELECT id, customer_document, cfop, total_value, seller_id, billing_type
           FROM billings
-          WHERE invoice_date >= ${startOfMonth}
-            AND invoice_date <= ${searchEndDate}
+          WHERE invoice_date >= ${startStr}::date
+            AND invoice_date <= ${endStr}::date + interval '1 day' - interval '1 second'
             AND invoice_status = '100'
             AND is_cancelled = false
             AND billing_type IN ('venda', 'devolução')
-            ${allVendorCodes.length > 0 ? sql`AND seller_id = ANY(${allVendorCodes})` : sql``}
+            ${allVendorCodes.length > 0 ? sql`AND seller_id IN (${sql.join(allVendorCodes.map(c => sql`${c}`), sql`, `)})` : sql``}
         `);
       } else {
         console.log(`  ⚠️ Vendedor ${userSellerId} não tem omieVendorCode - billings zerados`);

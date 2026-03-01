@@ -3329,65 +3329,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const results: any[] = [];
 
       for (const seller of individualSellers) {
-        const effectiveType = getEffectiveSellerType(seller);
-        const goal = goals.find((g: any) => g.sellerId === seller.id);
-        const revenueGoal = goal ? parseFloat(goal.revenueGoal || '0') : 0;
+        try {
+          const effectiveType = getEffectiveSellerType(seller);
+          const goal = goals.find((g: any) => g.sellerId === seller.id);
+          const revenueGoal = goal ? parseFloat(goal.revenueGoal || '0') : 0;
 
-        const metrics = await storage.getSalesMetrics(seller.id, targetMonth, targetYear);
-        const totalRevenue = metrics.totalRevenue || 0;
-        const projection = workingDaysElapsed > 0
-          ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
-          : 0;
-        const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
-        const commission = getCommissionInfo(effectiveType, achievementPct);
+          const metrics = await storage.getSalesMetrics(seller.id, targetMonth, targetYear);
+          const totalRevenue = metrics.totalRevenue || 0;
+          const projection = workingDaysElapsed > 0
+            ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
+            : 0;
+          const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
+          const commission = getCommissionInfo(effectiveType, achievementPct);
 
-        results.push({
-          sellerId: seller.id,
-          sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
-          sellerType: effectiveType,
-          revenueGoal,
-          revenueActual: totalRevenue,
-          revenueProjected: projection,
-          achievementPct: Math.round(achievementPct * 100) / 100,
-          commissionRate: commission.rate,
-          commissionTier: commission.tier,
-          commissionTierLabel: commission.tierLabel,
-        });
+          results.push({
+            sellerId: seller.id,
+            sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
+            sellerType: effectiveType,
+            revenueGoal,
+            revenueActual: totalRevenue,
+            revenueProjected: projection,
+            achievementPct: Math.round(achievementPct * 100) / 100,
+            commissionRate: commission.rate,
+            commissionTier: commission.tier,
+            commissionTierLabel: commission.tierLabel,
+          });
+        } catch (sellerError: any) {
+          console.error(`⚠️ [COMMISSION] Error processing seller ${seller.id}:`, sellerError.message);
+          results.push({
+            sellerId: seller.id,
+            sellerName: `${seller.firstName || ''} ${seller.lastName || ''}`.trim(),
+            sellerType: getEffectiveSellerType(seller),
+            revenueGoal: 0,
+            revenueActual: 0,
+            revenueProjected: 0,
+            achievementPct: 0,
+            commissionRate: 0,
+            commissionTier: 0,
+            commissionTierLabel: 'Erro',
+          });
+        }
       }
 
       // Telemarketing (collective)
       let telemarketingResult: any = null;
       const tmGoal = goals.find((g: any) => g.sellerId === 'TELEMARKETING');
       if (telemarketingUsers.length > 0 || tmGoal) {
-        const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
+        try {
+          const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
 
-        let totalRevenue = 0;
-        for (const tmUser of telemarketingUsers) {
-          const metrics = await storage.getSalesMetrics(tmUser.id, targetMonth, targetYear);
-          totalRevenue += (metrics.totalRevenue || 0);
+          let totalRevenue = 0;
+          for (const tmUser of telemarketingUsers) {
+            try {
+              const metrics = await storage.getSalesMetrics(tmUser.id, targetMonth, targetYear);
+              totalRevenue += (metrics.totalRevenue || 0);
+            } catch (tmErr: any) {
+              console.error(`⚠️ [COMMISSION] Error processing TM user ${tmUser.id}:`, tmErr.message);
+            }
+          }
+          const projection = workingDaysElapsed > 0
+            ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
+            : 0;
+          const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
+          const commission = getCommissionInfo('telemarketing', achievementPct);
+
+          telemarketingResult = {
+            sellerId: 'TELEMARKETING',
+            sellerName: 'Vendas Internas (Telemarketing)',
+            sellerType: 'telemarketing',
+            members: telemarketingUsers.map(u => ({
+              id: u.id,
+              name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+            })),
+            revenueGoal,
+            revenueActual: totalRevenue,
+            revenueProjected: projection,
+            achievementPct: Math.round(achievementPct * 100) / 100,
+            commissionRate: commission.rate,
+            commissionTier: commission.tier,
+            commissionTierLabel: commission.tierLabel,
+          };
+        } catch (tmError: any) {
+          console.error(`⚠️ [COMMISSION] Error processing telemarketing:`, tmError.message);
         }
-        const projection = workingDaysElapsed > 0
-          ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
-          : 0;
-        const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
-        const commission = getCommissionInfo('telemarketing', achievementPct);
-
-        telemarketingResult = {
-          sellerId: 'TELEMARKETING',
-          sellerName: 'Vendas Internas (Telemarketing)',
-          sellerType: 'telemarketing',
-          members: telemarketingUsers.map(u => ({
-            id: u.id,
-            name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-          })),
-          revenueGoal,
-          revenueActual: totalRevenue,
-          revenueProjected: projection,
-          achievementPct: Math.round(achievementPct * 100) / 100,
-          commissionRate: commission.rate,
-          commissionTier: commission.tier,
-          commissionTierLabel: commission.tierLabel,
-        };
       }
 
       // Save/update history
@@ -3405,16 +3429,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Fetch history
       let historyRows: any = { rows: [] };
       if (allResults.length > 0) {
-        const sellerIds = allResults.map(r => r.sellerId);
-        historyRows = await db.execute(sql`
-          SELECT * FROM sales_goal_history
-          WHERE seller_id = ANY(${sellerIds})
-          ORDER BY year DESC, month DESC
-          LIMIT 120
-        `);
+        try {
+          const sellerIds = allResults.map(r => r.sellerId);
+          const sellerIdConditions = sql.join(sellerIds.map(id => sql`${id}`), sql`, `);
+          historyRows = await db.execute(sql`
+            SELECT * FROM sales_goal_history
+            WHERE seller_id IN (${sellerIdConditions})
+            ORDER BY year DESC, month DESC
+            LIMIT 120
+          `);
+        } catch (histErr: any) {
+          console.error('⚠️ [COMMISSION] Error fetching history:', histErr.message);
+        }
       }
 
       res.json({
