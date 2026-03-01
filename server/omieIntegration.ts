@@ -834,13 +834,14 @@ export class OmieService {
               }
 
               if (!protectedRoles.includes(existingUser.role)) {
-                // Update name/email only if vendor has real email or existing has fake email
                 if (isRealEmail && (!existingUser.email || existingUser.email.includes('vendor-') || existingUser.email.includes('@omie.com'))) {
                   updateData.email = vendorEmail;
                 }
                 updateData.firstName = firstName;
                 updateData.lastName = lastName;
-                updateData.isActive = vendor.inativo === 'N';
+                if (vendor.inativo === 'S') {
+                  updateData.isActive = false;
+                }
               }
               
               await this.storage.updateUser(existingUser.id, updateData);
