@@ -55,6 +55,7 @@ interface CommissionDashboardData {
     sellerName: string;
     revenueGoal: number;
     revenueActual: number;
+    revenueByInstance: Record<string, number>;
     revenueProjected: number;
     achievementPct: number;
   }>;
@@ -63,11 +64,13 @@ interface CommissionDashboardData {
     sellerName: string;
     revenueGoal: number;
     revenueActual: number;
+    revenueByInstance: Record<string, number>;
     revenueProjected: number;
     achievementPct: number;
   };
   workingDaysElapsed: number;
   workingDaysInMonth: number;
+  instanceLabels: Record<string, string>;
 }
 
 interface YearlySummaryData {
@@ -124,21 +127,24 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   });
 
   const metricsMap = useMemo(() => {
-    const map: Record<string, { actual: number; projected: number; achievement: number }> = {};
+    const map: Record<string, { actual: number; projected: number; achievement: number; byInstance: Record<string, number> }> = {};
     if (dashboardData) {
       for (const s of dashboardData.sellers) {
-        map[s.sellerId] = { actual: s.revenueActual, projected: s.revenueProjected, achievement: s.achievementPct };
+        map[s.sellerId] = { actual: s.revenueActual, projected: s.revenueProjected, achievement: s.achievementPct, byInstance: s.revenueByInstance || {} };
       }
       if (dashboardData.telemarketing) {
         map[dashboardData.telemarketing.sellerId] = {
           actual: dashboardData.telemarketing.revenueActual,
           projected: dashboardData.telemarketing.revenueProjected,
           achievement: dashboardData.telemarketing.achievementPct,
+          byInstance: dashboardData.telemarketing.revenueByInstance || {},
         };
       }
     }
     return map;
   }, [dashboardData]);
+
+  const instanceLabels = dashboardData?.instanceLabels || {};
 
   const activeSellers = allUsers.filter(
     (u: User) => u.isActive && ['vendedor', 'telemarketing'].includes(u.role)
@@ -231,6 +237,13 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   const totalGoal = salesGoals.reduce((s, g) => s + parseFloat(g.revenueGoal?.toString() || '0'), 0);
   const totalActual = salesGoals.reduce((s, g) => s + (metricsMap[g.sellerId]?.actual || 0), 0);
   const totalProjected = salesGoals.reduce((s, g) => s + (metricsMap[g.sellerId]?.projected || 0), 0);
+  const totalByInstance: Record<string, number> = {};
+  for (const g of salesGoals) {
+    const byInst = metricsMap[g.sellerId]?.byInstance || {};
+    for (const [instId, val] of Object.entries(byInst)) {
+      totalByInstance[instId] = (totalByInstance[instId] || 0) + (val as number);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -323,7 +336,22 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           {goalValue > 0 ? formatCurrency(goalValue) : '—'}
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          {formatCurrency(actual)}
+                          <div>
+                            {metrics?.byInstance && Object.keys(metrics.byInstance).length > 0 ? (
+                              <>
+                                {Object.entries(metrics.byInstance).map(([instId, val]) => (
+                                  <div key={instId} className="text-xs text-muted-foreground">
+                                    {instanceLabels[instId] || instId.slice(0, 4)}: {formatCurrency(val as number)}
+                                  </div>
+                                ))}
+                                {Object.keys(metrics.byInstance).length > 1 && (
+                                  <div className="font-semibold border-t mt-0.5 pt-0.5">Total: {formatCurrency(actual)}</div>
+                                )}
+                              </>
+                            ) : (
+                              formatCurrency(actual)
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           <span className={projected >= goalValue && goalValue > 0 ? 'text-green-600 font-semibold' : projected > 0 ? 'text-amber-600' : ''}>
@@ -364,7 +392,20 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     <TableRow className="bg-muted/50 font-semibold">
                       <TableCell colSpan={2}>Total</TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalGoal)}</TableCell>
-                      <TableCell className="text-right font-mono">{formatCurrency(totalActual)}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        <div>
+                          {Object.keys(totalByInstance).length > 0 && Object.keys(totalByInstance).length > 1 && (
+                            <>
+                              {Object.entries(totalByInstance).map(([instId, val]) => (
+                                <div key={instId} className="text-xs text-muted-foreground font-normal">
+                                  {instanceLabels[instId] || instId.slice(0, 4)}: {formatCurrency(val)}
+                                </div>
+                              ))}
+                            </>
+                          )}
+                          <div>{formatCurrency(totalActual)}</div>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalProjected)}</TableCell>
                       <TableCell className="text-right">
                         {totalGoal > 0 ? (

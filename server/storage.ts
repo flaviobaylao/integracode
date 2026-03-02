@@ -3988,15 +3988,15 @@ export class DatabaseStorage implements IStorage {
       
       if (userSellerId) {
         monthBillings = await db.execute(sql`
-          SELECT id, customer_document, cfop, total_value, seller_id, billing_type FROM (
-            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type
+          SELECT id, customer_document, cfop, total_value, seller_id, billing_type, omie_instance_id FROM (
+            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type, b.omie_instance_id
             FROM billings b
             INNER JOIN customers c ON c.id = CONCAT('omie-client-', b.omie_customer_code)
             WHERE ${billingDateFilter}
               AND c.seller_id = ${userSellerId}
             ${allVendorCodes.length > 0 ? sql`
             UNION
-            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type
+            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type, b.omie_instance_id
             FROM billings b
             WHERE ${billingDateFilter}
               AND b.seller_id IN (${sql.join(allVendorCodes.map(c => sql`${c}`), sql`, `)})
@@ -4006,7 +4006,7 @@ export class DatabaseStorage implements IStorage {
         console.log(`  🔗 Billings encontrados: ${monthBillings.rows.length} (via omie_customer_code + direct seller_id)`);
       } else {
         monthBillings = await db.execute(sql`
-          SELECT id, customer_document, cfop, total_value, seller_id, billing_type
+          SELECT id, customer_document, cfop, total_value, seller_id, billing_type, omie_instance_id
           FROM billings b
           WHERE ${billingDateFilter}
         `);
@@ -4088,6 +4088,15 @@ export class DatabaseStorage implements IStorage {
         return sum + (isNaN(value) ? 0 : value);
       }, 0);
 
+      const revenueByInstance: Record<string, number> = {};
+      for (const billing of validBillings) {
+        const instId = billing.omie_instance_id || 'unknown';
+        const value = parseFloat(billing.total_value?.toString() || '0');
+        if (!isNaN(value)) {
+          revenueByInstance[instId] = (revenueByInstance[instId] || 0) + value;
+        }
+      }
+
       const dailyAverageRevenue = workingDaysElapsed > 0 ? totalRevenue / workingDaysElapsed : 0;
       const revenueProjection = dailyAverageRevenue * workingDaysInMonth;
       
@@ -4095,7 +4104,8 @@ export class DatabaseStorage implements IStorage {
         totalRevenue: totalRevenue.toFixed(2),
         validBillings: validBillings.length,
         dailyAverage: dailyAverageRevenue.toFixed(2),
-        projection: revenueProjection.toFixed(2)
+        projection: revenueProjection.toFixed(2),
+        byInstance: revenueByInstance
       });
 
       // === 3. DÉBITO VENCIDO: Soma dos débitos vencidos / Projeção de faturamento ===
@@ -4214,9 +4224,10 @@ export class DatabaseStorage implements IStorage {
       return {
         positivationRate,
         totalRevenue,
+        revenueByInstance,
         revenueProjection,
         overdueDebtRatio,
-        totalOverdueDebt, // Valor absoluto do débito vencido
+        totalOverdueDebt,
         serviceRate,
         workingDaysInMonth,
         workingDaysElapsed,

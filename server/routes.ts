@@ -3348,6 +3348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sellerType: effectiveType,
             revenueGoal,
             revenueActual: totalRevenue,
+            revenueByInstance: metrics.revenueByInstance || {},
             revenueProjected: projection,
             achievementPct: Math.round(achievementPct * 100) / 100,
             commissionRate: commission.rate,
@@ -3362,6 +3363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sellerType: getEffectiveSellerType(seller),
             revenueGoal: 0,
             revenueActual: 0,
+            revenueByInstance: {},
             revenueProjected: 0,
             achievementPct: 0,
             commissionRate: 0,
@@ -3445,6 +3447,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const instancesResult = await db.execute(sql`SELECT id, name, display_name FROM omie_instances WHERE is_active = true`);
+      const instanceLabels: Record<string, string> = {};
+      for (const inst of instancesResult.rows as any[]) {
+        instanceLabels[inst.id] = inst.name || inst.display_name || inst.id;
+      }
+
       res.json({
         month: targetMonth,
         year: targetYear,
@@ -3455,6 +3463,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telemarketing: telemarketingResult,
         history: historyRows.rows || [],
         currentUserId: user.id,
+        instanceLabels,
       });
     } catch (error: any) {
       console.error("Error fetching commission dashboard:", error);
