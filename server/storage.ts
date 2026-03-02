@@ -3972,27 +3972,44 @@ export class DatabaseStorage implements IStorage {
       });
       console.log(`  Tipo de omieVendorCode:`, typeof omieVendorCode, 'Valor:', omieVendorCode);
       
-      // ✅ CORREÇÃO: Se sellerId foi especificado mas não tem omieVendorCode, 
-      // não devemos buscar todos os billings - retornar array vazio
-      // Isso evita métricas inflacionadas para vendedores sem código Omie
       let monthBillings: { rows: any[] } = { rows: [] };
       
-      if (!userSellerId || allVendorCodes.length > 0) {
-        const startStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
-        const endD = isCurrentMonth ? currentDate : endOfMonth;
-        const endStr = `${endD.getFullYear()}-${String(endD.getMonth() + 1).padStart(2, '0')}-${String(endD.getDate()).padStart(2, '0')}`;
+      const startStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+      const endD = isCurrentMonth ? currentDate : endOfMonth;
+      const endStr = `${endD.getFullYear()}-${String(endD.getMonth() + 1).padStart(2, '0')}-${String(endD.getDate()).padStart(2, '0')}`;
+      
+      const billingDateFilter = sql`
+        b.invoice_date >= ${startStr}::date
+        AND b.invoice_date <= ${endStr}::date + interval '1 day' - interval '1 second'
+        AND b.invoice_status = '100'
+        AND b.is_cancelled = false
+        AND b.billing_type IN ('venda', 'devolução')
+      `;
+      
+      if (userSellerId) {
+        monthBillings = await db.execute(sql`
+          SELECT id, customer_document, cfop, total_value, seller_id, billing_type FROM (
+            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type
+            FROM billings b
+            INNER JOIN customers c ON c.id = CONCAT('omie-client-', b.omie_customer_code)
+            WHERE ${billingDateFilter}
+              AND c.seller_id = ${userSellerId}
+            ${allVendorCodes.length > 0 ? sql`
+            UNION
+            SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type
+            FROM billings b
+            WHERE ${billingDateFilter}
+              AND b.seller_id IN (${sql.join(allVendorCodes.map(c => sql`${c}`), sql`, `)})
+            ` : sql``}
+          ) combined
+        `);
+        console.log(`  🔗 Billings encontrados: ${monthBillings.rows.length} (via omie_customer_code + direct seller_id)`);
+      } else {
         monthBillings = await db.execute(sql`
           SELECT id, customer_document, cfop, total_value, seller_id, billing_type
-          FROM billings
-          WHERE invoice_date >= ${startStr}::date
-            AND invoice_date <= ${endStr}::date + interval '1 day' - interval '1 second'
-            AND invoice_status = '100'
-            AND is_cancelled = false
-            AND billing_type IN ('venda', 'devolução')
-            ${allVendorCodes.length > 0 ? sql`AND seller_id IN (${sql.join(allVendorCodes.map(c => sql`${c}`), sql`, `)})` : sql``}
+          FROM billings b
+          WHERE ${billingDateFilter}
         `);
-      } else {
-        console.log(`  ⚠️ Vendedor ${userSellerId} não tem omieVendorCode - billings zerados`);
       }
       
       console.log(`  ✅ Faturamentos encontrados: ${monthBillings.rows.length}`);
