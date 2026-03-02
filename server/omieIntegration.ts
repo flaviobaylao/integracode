@@ -2935,27 +2935,31 @@ export class OmieService {
         if (accounts.length > 0) {
           const isBoleto = paymentMethod === 'boleto';
           let selected: any = null;
-          
+          const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
+
           if (isBoleto) {
-            selected = accounts.find((a: any) => {
+            selected = ccAccounts.find((a: any) => {
               const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-              return desc.includes('BOLETO');
+              return desc.includes('FILIAL');
+            });
+            if (!selected) {
+              selected = ccAccounts.find((a: any) => {
+                const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+                return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
+              });
+            }
+            console.log(`🏦 [CONTA-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'})`);
+          }
+
+          if (!selected) {
+            selected = ccAccounts.find((a: any) => {
+              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+              return desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB');
             });
           }
           
           if (!selected) {
-            selected = accounts.find((a: any) => {
-              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-              return tipo === 'CC' && (desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB'));
-            });
-          }
-          
-          if (!selected) {
-            selected = accounts.find((a: any) => {
-              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-              return tipo === 'CC';
-            });
+            selected = ccAccounts[0];
           }
           
           if (!selected) {
@@ -3102,6 +3106,8 @@ export class OmieService {
           for (const altAccount of allAvailableAccounts) {
             if (triedCodes.has(altAccount.nCodCC)) continue;
             triedCodes.add(altAccount.nCodCC);
+            const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
+            if (altTipo === 'CX') continue;
             
             const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
             console.log(`🔄 [OMIE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
@@ -5533,27 +5539,31 @@ export async function createOmieOrder(orderData: {
       if (accounts.length > 0) {
         const isBoleto = orderData.paymentMethod === 'boleto';
         let selected: any = null;
-        
+        const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
+
         if (isBoleto) {
-          selected = accounts.find((a: any) => {
+          selected = ccAccounts.find((a: any) => {
             const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-            return desc.includes('BOLETO');
+            return desc.includes('FILIAL');
+          });
+          if (!selected) {
+            selected = ccAccounts.find((a: any) => {
+              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+              return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
+            });
+          }
+          console.log(`🏦 [CONTA-HOTSITE-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'})`);
+        }
+
+        if (!selected) {
+          selected = ccAccounts.find((a: any) => {
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            return desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB');
           });
         }
         
         if (!selected) {
-          selected = accounts.find((a: any) => {
-            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-            return tipo === 'CC' && (desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB'));
-          });
-        }
-        
-        if (!selected) {
-          selected = accounts.find((a: any) => {
-            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-            return tipo === 'CC';
-          });
+          selected = ccAccounts[0];
         }
         
         if (!selected) {
@@ -5746,6 +5756,8 @@ export async function createOmieOrder(orderData: {
         for (const altAccount of allAvailableAccounts) {
           if (triedCodes.has(altAccount.nCodCC)) continue;
           triedCodes.add(altAccount.nCodCC);
+          const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
+          if (altTipo === 'CX') continue;
           const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
           console.log(`🔄 [OMIE-HOTSITE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
           omieOrderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
