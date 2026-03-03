@@ -2935,36 +2935,19 @@ export class OmieService {
         if (accounts.length > 0) {
           const isBoleto = paymentMethod === 'boleto';
           let selected: any = null;
+          // Apenas contas CC ativas — prioridade: FILIAL → BB → demais CC
           const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
           console.log(`🔍 [CONTA-CC] Total contas CC disponíveis: ${ccAccounts.length} de ${accounts.length}`);
 
-          if (isBoleto) {
-            selected = ccAccounts.find((a: any) => {
-              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-              return desc.includes('FILIAL');
-            });
-            if (!selected) {
-              selected = ccAccounts.find((a: any) => {
-                const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-                return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
-              });
-            }
-            if (!selected) selected = ccAccounts[0];
-            console.log(`🏦 [CONTA-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'}, tipo=${selected?.tipo || selected?.cTipo || '?'})`);
-          }
-
-          if (!selected) {
-            selected = ccAccounts.find((a: any) => {
-              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-              return desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB');
-            });
-          }
-          
-          if (!selected) {
-            selected = ccAccounts[0];
-          }
-          
-          if (!selected) selected = accounts[0];
+          const ccPriority = (a: any): number => {
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            if (desc.includes('FILIAL')) return 0;
+            if (desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL')) return 1;
+            return 2;
+          };
+          const ccSorted = [...ccAccounts].sort((a, b) => ccPriority(a) - ccPriority(b));
+          selected = ccSorted[0] ?? accounts[0];
+          console.log(`🏦 [CONTA-SELECIONADA] ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'}, tipo=${selected?.tipo || selected?.cTipo || '?'}) | pagamento=${paymentMethod}`);
           omieAccountCode = selected.nCodCC;
           const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
           const tipoSelecionado = (selected.tipo || selected.cTipo || '?');
@@ -3098,24 +3081,20 @@ export class OmieService {
           console.log(`⚠️ [OMIE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas CC...`);
           let retrySuccess = false;
           const triedCodes = new Set([omieAccountCode]);
-          const isBoletoRetry = paymentMethod === 'boleto';
 
-          // Apenas contas CC; para boleto ordena: FILIAL primeiro, depois BB, depois demais
-          const ccCandidates = allAvailableAccounts.filter((a: any) => {
-            if (triedCodes.has(a.nCodCC)) return false;
-            return (a.tipo || a.cTipo || '').toUpperCase() === 'CC';
-          });
+          const retryCCPriority = (a: any): number => {
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            if (desc.includes('FILIAL')) return 0;
+            if (desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL')) return 1;
+            return 2;
+          };
 
-          if (isBoletoRetry) {
-            ccCandidates.sort((a: any, b: any) => {
-              const descA = (a.descricao || a.cDescricao || '').toUpperCase();
-              const descB = (b.descricao || b.cDescricao || '').toUpperCase();
-              const scoreA = descA.includes('FILIAL') ? 0 : descA.includes('BB ') || descA.startsWith('BB-') ? 1 : 2;
-              const scoreB = descB.includes('FILIAL') ? 0 : descB.includes('BB ') || descB.startsWith('BB-') ? 1 : 2;
-              return scoreA - scoreB;
-            });
-            console.log(`🏦 [RETRY-BOLETO] Ordem de tentativa para boleto: ${ccCandidates.map((a: any) => a.descricao || a.nCodCC).join(' → ')}`);
-          }
+          // Apenas contas CC; sempre ordena: FILIAL → BB → demais
+          const ccCandidates = allAvailableAccounts
+            .filter((a: any) => !triedCodes.has(a.nCodCC) && (a.tipo || a.cTipo || '').toUpperCase() === 'CC')
+            .sort((a: any, b: any) => retryCCPriority(a) - retryCCPriority(b));
+
+          console.log(`🔄 [OMIE-RETRY] Ordem de tentativa (${paymentMethod}): ${ccCandidates.map((a: any) => a.descricao || a.nCodCC).join(' → ')}`);
           
           for (const altAccount of ccCandidates) {
             const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
