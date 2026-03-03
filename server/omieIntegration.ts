@@ -2936,6 +2936,7 @@ export class OmieService {
           const isBoleto = paymentMethod === 'boleto';
           let selected: any = null;
           const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
+          console.log(`🔍 [CONTA-CC] Total contas CC disponíveis: ${ccAccounts.length} de ${accounts.length}`);
 
           if (isBoleto) {
             selected = ccAccounts.find((a: any) => {
@@ -2948,7 +2949,8 @@ export class OmieService {
                 return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
               });
             }
-            console.log(`🏦 [CONTA-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'})`);
+            if (!selected) selected = ccAccounts[0];
+            console.log(`🏦 [CONTA-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'}, tipo=${selected?.tipo || selected?.cTipo || '?'})`);
           }
 
           if (!selected) {
@@ -2962,21 +2964,15 @@ export class OmieService {
             selected = ccAccounts[0];
           }
           
-          if (!selected) {
-            selected = accounts.find((a: any) => {
-              const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-              return tipo !== 'CX';
-            });
-          }
-          
           if (!selected) selected = accounts[0];
           omieAccountCode = selected.nCodCC;
           const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
-          console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${selected.tipo || selected.cTipo || '?'})`);
-          if (this.storage && this.omieInstanceId) {
+          const tipoSelecionado = (selected.tipo || selected.cTipo || '?');
+          console.log(`✅ [CONTA] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${tipoSelecionado})`);
+          if (this.storage && this.omieInstanceId && tipoSelecionado === 'CC') {
             try {
               await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
-              console.log(`💾 [CONTA] Conta corrente ${omieAccountCode} salva como fallback na instância`);
+              console.log(`💾 [CONTA] Conta corrente CC ${omieAccountCode} salva como fallback na instância`);
             } catch (e) {}
           }
         } else {
@@ -5540,6 +5536,7 @@ export async function createOmieOrder(orderData: {
         const isBoleto = orderData.paymentMethod === 'boleto';
         let selected: any = null;
         const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
+        console.log(`🔍 [CONTA-HOTSITE-CC] Total contas CC disponíveis: ${ccAccounts.length} de ${accounts.length}`);
 
         if (isBoleto) {
           selected = ccAccounts.find((a: any) => {
@@ -5552,7 +5549,8 @@ export async function createOmieOrder(orderData: {
               return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
             });
           }
-          console.log(`🏦 [CONTA-HOTSITE-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'})`);
+          if (!selected) selected = ccAccounts[0];
+          console.log(`🏦 [CONTA-HOTSITE-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'}, tipo=${selected?.tipo || selected?.cTipo || '?'})`);
         }
 
         if (!selected) {
@@ -5566,21 +5564,15 @@ export async function createOmieOrder(orderData: {
           selected = ccAccounts[0];
         }
         
-        if (!selected) {
-          selected = accounts.find((a: any) => {
-            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-            return tipo !== 'CX';
-          });
-        }
-        
         if (!selected) selected = accounts[0];
         omieAccountCode = selected.nCodCC;
         const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
-        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${selected.tipo || selected.cTipo || '?'})`);
-        if (this.storage && this.omieInstanceId) {
+        const tipoSelecionado = (selected.tipo || selected.cTipo || '?');
+        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${tipoSelecionado})`);
+        if (this.storage && this.omieInstanceId && tipoSelecionado === 'CC') {
           try {
             await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
-            console.log(`💾 [CONTA-HOTSITE] Conta corrente ${omieAccountCode} salva como fallback`);
+            console.log(`💾 [CONTA-HOTSITE] Conta corrente CC ${omieAccountCode} salva como fallback`);
           } catch (e) {}
         }
       } else {
