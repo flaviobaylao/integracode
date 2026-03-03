@@ -5246,15 +5246,20 @@ export async function cacheBankAccountsForAllInstances(storage: any): Promise<vo
       try {
         const accounts = await svc.listBankAccounts();
         if (accounts.length > 0) {
-          let selected = accounts.find((a: any) => {
+          // Prioridade: FILIAL → BB → demais CC → qualquer outra
+          const ccPrio = (a: any) => {
             const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-            return tipo === 'CC';
-          }) || accounts.find((a: any) => {
-            const tipo = (a.tipo || a.cTipo || '').toUpperCase();
-            return tipo !== 'CX';
-          }) || accounts[0];
+            if (tipo !== 'CC') return 99;
+            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+            if (desc.includes('FILIAL')) return 0;
+            if (desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL')) return 1;
+            return 2;
+          };
+          const sorted = [...accounts].sort((a, b) => ccPrio(a) - ccPrio(b));
+          const selected = sorted[0];
           const code = selected.nCodCC;
           const oldCode = instance.defaultAccountCode;
+          console.log(`🏦 [CACHE-CONTA] ${instance.name}: melhor conta = ${code} (${selected.descricao || selected.cDescricao || '?'}, tipo=${selected.tipo || selected.cTipo || '?'})`);
           if (String(code) !== String(oldCode)) {
             await storage.updateOmieInstance(instance.id, { defaultAccountCode: String(code) } as any);
             console.log(`💾 [CACHE-CONTA] ${instance.name}: conta corrente atualizada ${oldCode} → ${code}`);
@@ -5525,46 +5530,23 @@ export async function createOmieOrder(orderData: {
       const accounts = await this.listBankAccounts();
       allAvailableAccounts = accounts;
       if (accounts.length > 0) {
-        const isBoleto = orderData.paymentMethod === 'boleto';
-        let selected: any = null;
-        const ccAccounts = accounts.filter((a: any) => (a.tipo || a.cTipo || '').toUpperCase() === 'CC');
-        console.log(`🔍 [CONTA-HOTSITE-CC] Total contas CC disponíveis: ${ccAccounts.length} de ${accounts.length}`);
-
-        if (isBoleto) {
-          selected = ccAccounts.find((a: any) => {
-            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-            return desc.includes('FILIAL');
-          });
-          if (!selected) {
-            selected = ccAccounts.find((a: any) => {
-              const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-              return desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL');
-            });
-          }
-          if (!selected) selected = ccAccounts[0];
-          console.log(`🏦 [CONTA-HOTSITE-BOLETO] Conta selecionada para boleto: ${selected?.nCodCC} (${selected?.descricao || selected?.cDescricao || '?'}, tipo=${selected?.tipo || selected?.cTipo || '?'})`);
-        }
-
-        if (!selected) {
-          selected = ccAccounts.find((a: any) => {
-            const desc = (a.descricao || a.cDescricao || '').toUpperCase();
-            return desc.includes('BANCO') || desc.includes('BB ') || desc.includes('INTER') || desc.includes('SICOOB');
-          });
-        }
-        
-        if (!selected) {
-          selected = ccAccounts[0];
-        }
-        
-        if (!selected) selected = accounts[0];
+        // Prioridade unificada para todos os pagamentos: FILIAL → BB → demais CC
+        const hotsiteCCPriority = (a: any): number => {
+          if ((a.tipo || a.cTipo || '').toUpperCase() !== 'CC') return 99;
+          const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+          if (desc.includes('FILIAL')) return 0;
+          if (desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL')) return 1;
+          return 2;
+        };
+        const ccSorted = [...accounts].sort((a, b) => hotsiteCCPriority(a) - hotsiteCCPriority(b));
+        const selected = ccSorted[0] ?? accounts[0];
         omieAccountCode = selected.nCodCC;
         const accName = selected.descricao || selected.cDescricao || selected.nCodCC;
         const tipoSelecionado = (selected.tipo || selected.cTipo || '?');
-        console.log(`✅ [CONTA-HOTSITE] Usando conta corrente da instância: ${omieAccountCode} (${accName}, tipo=${tipoSelecionado})`);
+        console.log(`✅ [CONTA-HOTSITE] Usando: ${omieAccountCode} (${accName}, tipo=${tipoSelecionado}) | pagamento=${orderData.paymentMethod}`);
         if (this.storage && this.omieInstanceId && tipoSelecionado === 'CC') {
           try {
             await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(omieAccountCode) } as any);
-            console.log(`💾 [CONTA-HOTSITE] Conta corrente CC ${omieAccountCode} salva como fallback`);
           } catch (e) {}
         }
       } else {
@@ -5734,14 +5716,25 @@ export async function createOmieOrder(orderData: {
     } catch (firstError: any) {
       const errorMsg = firstError?.message || '';
       if (errorMsg.includes('Conta Corrente') && errorMsg.includes('inativa') && allAvailableAccounts.length > 1) {
-        console.log(`⚠️ [OMIE-HOTSITE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas...`);
+        console.log(`⚠️ [OMIE-HOTSITE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas CC...`);
         let retrySuccess = false;
         const triedCodes = new Set([omieAccountCode]);
-        for (const altAccount of allAvailableAccounts) {
-          if (triedCodes.has(altAccount.nCodCC)) continue;
-          triedCodes.add(altAccount.nCodCC);
-          const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
-          if (altTipo !== 'CC') continue;
+
+        const hotsiteRetryPriority = (a: any): number => {
+          if ((a.tipo || a.cTipo || '').toUpperCase() !== 'CC') return 99;
+          const desc = (a.descricao || a.cDescricao || '').toUpperCase();
+          if (desc.includes('FILIAL')) return 0;
+          if (desc.includes('BB ') || desc.startsWith('BB-') || desc.includes('BANCO DO BRASIL')) return 1;
+          return 2;
+        };
+
+        const ccCandidates = allAvailableAccounts
+          .filter((a: any) => !triedCodes.has(a.nCodCC) && (a.tipo || a.cTipo || '').toUpperCase() === 'CC')
+          .sort((a: any, b: any) => hotsiteRetryPriority(a) - hotsiteRetryPriority(b));
+
+        console.log(`🔄 [OMIE-HOTSITE-RETRY] Ordem: ${ccCandidates.map((a: any) => a.descricao || a.nCodCC).join(' → ')}`);
+
+        for (const altAccount of ccCandidates) {
           const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
           console.log(`🔄 [OMIE-HOTSITE-RETRY] Tentando conta CC: ${altAccount.nCodCC} (${altName})`);
           omieOrderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
