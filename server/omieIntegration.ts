@@ -3095,16 +3095,29 @@ export class OmieService {
         const errorMsg = firstError?.message || '';
         
         if (errorMsg.includes('Conta Corrente') && errorMsg.includes('inativa') && allAvailableAccounts.length > 1) {
-          console.log(`⚠️ [OMIE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas...`);
+          console.log(`⚠️ [OMIE-RETRY] Conta corrente ${omieAccountCode} inativa - tentando outras contas CC...`);
           let retrySuccess = false;
           const triedCodes = new Set([omieAccountCode]);
+          const isBoletoRetry = paymentMethod === 'boleto';
+
+          // Apenas contas CC; para boleto ordena: FILIAL primeiro, depois BB, depois demais
+          const ccCandidates = allAvailableAccounts.filter((a: any) => {
+            if (triedCodes.has(a.nCodCC)) return false;
+            return (a.tipo || a.cTipo || '').toUpperCase() === 'CC';
+          });
+
+          if (isBoletoRetry) {
+            ccCandidates.sort((a: any, b: any) => {
+              const descA = (a.descricao || a.cDescricao || '').toUpperCase();
+              const descB = (b.descricao || b.cDescricao || '').toUpperCase();
+              const scoreA = descA.includes('FILIAL') ? 0 : descA.includes('BB ') || descA.startsWith('BB-') ? 1 : 2;
+              const scoreB = descB.includes('FILIAL') ? 0 : descB.includes('BB ') || descB.startsWith('BB-') ? 1 : 2;
+              return scoreA - scoreB;
+            });
+            console.log(`🏦 [RETRY-BOLETO] Ordem de tentativa para boleto: ${ccCandidates.map((a: any) => a.descricao || a.nCodCC).join(' → ')}`);
+          }
           
-          for (const altAccount of allAvailableAccounts) {
-            if (triedCodes.has(altAccount.nCodCC)) continue;
-            triedCodes.add(altAccount.nCodCC);
-            const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
-            if (altTipo !== 'CC') continue;
-            
+          for (const altAccount of ccCandidates) {
             const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
             console.log(`🔄 [OMIE-RETRY] Tentando conta CC: ${altAccount.nCodCC} (${altName})`);
             
