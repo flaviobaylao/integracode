@@ -3103,10 +3103,10 @@ export class OmieService {
             if (triedCodes.has(altAccount.nCodCC)) continue;
             triedCodes.add(altAccount.nCodCC);
             const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
-            if (altTipo === 'CX') continue;
+            if (altTipo !== 'CC') continue;
             
             const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
-            console.log(`🔄 [OMIE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
+            console.log(`🔄 [OMIE-RETRY] Tentando conta CC: ${altAccount.nCodCC} (${altName})`);
             
             orderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
             const retryCode = `CRM-${salesCard.id}-R${Date.now()}`;
@@ -3114,12 +3114,12 @@ export class OmieService {
             
             try {
               response = await attemptOrder(orderPayload);
-              console.log(`✅ [OMIE-RETRY] Pedido criado com conta corrente ${altAccount.nCodCC} (${altName})`);
+              console.log(`✅ [OMIE-RETRY] Pedido criado com conta CC: ${altAccount.nCodCC} (${altName})`);
               omieAccountCode = altAccount.nCodCC;
               if (this.storage && this.omieInstanceId) {
                 try {
                   await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(altAccount.nCodCC) } as any);
-                  console.log(`💾 [CONTA] Conta corrente ativa ${altAccount.nCodCC} salva como novo padrão`);
+                  console.log(`💾 [CONTA] Conta CC ${altAccount.nCodCC} salva como novo padrão`);
                 } catch (e) {}
               }
               retrySuccess = true;
@@ -3127,7 +3127,7 @@ export class OmieService {
             } catch (retryErr: any) {
               const retryMsg = retryErr?.message || '';
               if (retryMsg.includes('Conta Corrente') && retryMsg.includes('inativa')) {
-                console.log(`⚠️ [OMIE-RETRY] Conta ${altAccount.nCodCC} também inativa, tentando próxima...`);
+                console.log(`⚠️ [OMIE-RETRY] Conta CC ${altAccount.nCodCC} também inativa, tentando próxima...`);
                 continue;
               }
               throw retryErr;
@@ -5749,13 +5749,13 @@ export async function createOmieOrder(orderData: {
           if (triedCodes.has(altAccount.nCodCC)) continue;
           triedCodes.add(altAccount.nCodCC);
           const altTipo = (altAccount.tipo || altAccount.cTipo || '').toUpperCase();
-          if (altTipo === 'CX') continue;
+          if (altTipo !== 'CC') continue;
           const altName = altAccount.descricao || altAccount.cDescricao || altAccount.nCodCC;
-          console.log(`🔄 [OMIE-HOTSITE-RETRY] Tentando conta corrente: ${altAccount.nCodCC} (${altName})`);
+          console.log(`🔄 [OMIE-HOTSITE-RETRY] Tentando conta CC: ${altAccount.nCodCC} (${altName})`);
           omieOrderPayload.informacoes_adicionais.codigo_conta_corrente = altAccount.nCodCC;
           try {
             omieOrder = await attemptHotsiteOrder(omieOrderPayload);
-            console.log(`✅ [OMIE-HOTSITE-RETRY] Pedido criado com conta corrente ${altAccount.nCodCC}`);
+            console.log(`✅ [OMIE-HOTSITE-RETRY] Pedido criado com conta CC: ${altAccount.nCodCC} (${altName})`);
             if (this.storage && this.omieInstanceId) {
               try {
                 await this.storage.updateOmieInstance(this.omieInstanceId, { defaultAccountCode: String(altAccount.nCodCC) } as any);
