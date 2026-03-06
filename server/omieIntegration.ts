@@ -3145,6 +3145,54 @@ export class OmieService {
           if (!retrySuccess) {
             throw new Error('Todas as contas correntes disponíveis estão inativas no Omie. Ative uma conta corrente no Omie e tente novamente.');
           }
+        } else if (errorMsg.includes('Parcela') || errorMsg.includes('parcela') || errorMsg.includes('codigo_parcela')) {
+          console.log(`⚠️ [OMIE-RETRY] Código de parcela '${parcelaCode}' rejeitado pelo Omie - tentando outros códigos...`);
+          let parcelaRetrySuccess = false;
+          const triedParcelas = new Set([parcelaCode]);
+          
+          // Candidatos em ordem de prioridade: códigos universais primeiro, depois os da instância
+          const universalCandidates = ['000', 'A00', 'A03', 'AVS', 'AV', 'A0'];
+          let allCandidates: string[] = [...universalCandidates];
+          
+          try {
+            const parcelas = await this.listPaymentTerms();
+            const instanceCandidates = parcelas.map((p: any) => p.cCodigo).filter((c: string) => !triedParcelas.has(c) && !universalCandidates.includes(c));
+            allCandidates = [...universalCandidates, ...instanceCandidates];
+          } catch (e) {}
+          
+          for (const candidateCode of allCandidates) {
+            if (triedParcelas.has(candidateCode)) continue;
+            triedParcelas.add(candidateCode);
+            
+            console.log(`🔄 [OMIE-RETRY-PARCELA] Tentando código de parcela: ${candidateCode}`);
+            orderPayload.cabecalho.codigo_parcela = candidateCode;
+            orderPayload.cabecalho.codigo_pedido_integracao = `CRM-${salesCard.id}-RP${Date.now()}`;
+            
+            try {
+              response = await attemptOrder(orderPayload);
+              console.log(`✅ [OMIE-RETRY-PARCELA] Pedido criado com código de parcela: ${candidateCode}`);
+              // Salvar o código que funcionou para uso futuro
+              if (this.storage && this.omieInstanceId) {
+                try {
+                  await this.storage.updateOmieInstance(this.omieInstanceId, { defaultParcelaCode: candidateCode } as any);
+                  console.log(`💾 [PARCELA] Código ${candidateCode} salvo como padrão para esta instância`);
+                } catch (e) {}
+              }
+              parcelaRetrySuccess = true;
+              break;
+            } catch (retryErr: any) {
+              const retryMsg = retryErr?.message || '';
+              if (retryMsg.includes('Parcela') || retryMsg.includes('parcela') || retryMsg.includes('codigo_parcela')) {
+                console.log(`⚠️ [OMIE-RETRY-PARCELA] Código ${candidateCode} também rejeitado, tentando próximo...`);
+                continue;
+              }
+              throw retryErr;
+            }
+          }
+          
+          if (!parcelaRetrySuccess) {
+            throw new Error(`Nenhum código de parcela válido encontrado para esta instância Omie. Configure o código de parcela nas configurações da instância.`);
+          }
         } else if (errorMsg.includes('Vendedor não cadastrado') && omieVendorCode) {
           console.log(`⚠️ [OMIE-RETRY] Vendedor ${omieVendorCode} não cadastrado no Omie - removendo vendedor e tentando novamente...`);
           delete orderPayload.informacoes_adicionais.codVend;
