@@ -196,6 +196,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   });
 
   const canManage = ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canEdit = user.role === 'admin';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,7 +254,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
         </h2>
       </div>
 
-      {canManage && (
+      {canEdit && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
