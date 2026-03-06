@@ -23,6 +23,7 @@ interface CommissionDashboardData {
   telemarketing: SellerResult | null;
   history: HistoryEntry[];
   currentUserId: string;
+  instanceLabels: Record<string, string>;
 }
 
 interface SellerResult {
@@ -31,6 +32,7 @@ interface SellerResult {
   sellerType: string;
   revenueGoal: number;
   revenueActual: number;
+  revenueByInstance: Record<string, number>;
   revenueProjected: number;
   achievementPct: number;
   commissionRate: number;
@@ -320,8 +322,25 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                             <TableCell className="text-right font-mono">
                               {entry.revenueGoal > 0 ? formatCurrency(entry.revenueGoal) : '—'}
                             </TableCell>
-                            <TableCell className="text-right font-mono">
-                              {formatCurrency(entry.revenueActual)}
+                            <TableCell className="text-right">
+                              <div className="font-mono font-semibold">
+                                {formatCurrency(entry.revenueActual)}
+                              </div>
+                              {entry.revenueByInstance && Object.keys(entry.revenueByInstance).length > 0 && (
+                                <div className="mt-1 space-y-0.5">
+                                  {Object.entries(entry.revenueByInstance)
+                                    .filter(([, val]) => val > 0)
+                                    .sort(([, a], [, b]) => b - a)
+                                    .map(([instId, val]) => (
+                                      <div key={instId} className="flex justify-between items-center gap-2 text-xs text-muted-foreground">
+                                        <span className="bg-gray-100 text-gray-600 rounded px-1 py-0.5 font-medium leading-tight">
+                                          {(data?.instanceLabels?.[instId] || instId).toUpperCase()}
+                                        </span>
+                                        <span className="font-mono">{formatCurrency(val)}</span>
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-mono font-semibold">
                               {formatCurrency(entry.revenueProjected)}

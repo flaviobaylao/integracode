@@ -3381,10 +3381,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
 
           let totalRevenue = 0;
+          const tmRevenueByInstance: Record<string, number> = {};
           for (const tmUser of telemarketingUsers) {
             try {
               const metrics = await storage.getSalesMetrics(tmUser.id, targetMonth, targetYear);
               totalRevenue += (metrics.totalRevenue || 0);
+              for (const [instId, val] of Object.entries(metrics.revenueByInstance || {})) {
+                tmRevenueByInstance[instId] = (tmRevenueByInstance[instId] || 0) + (val as number);
+              }
             } catch (tmErr: any) {
               console.error(`⚠️ [COMMISSION] Error processing TM user ${tmUser.id}:`, tmErr.message);
             }
@@ -3405,6 +3409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })),
             revenueGoal,
             revenueActual: totalRevenue,
+            revenueByInstance: tmRevenueByInstance,
             revenueProjected: projection,
             achievementPct: Math.round(achievementPct * 100) / 100,
             commissionRate: commission.rate,
