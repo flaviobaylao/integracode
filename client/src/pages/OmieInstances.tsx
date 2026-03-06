@@ -11,10 +11,11 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X, CreditCard } from "lucide-react";
 import type { OmieInstance } from "@shared/schema";
 
 interface OmieInstanceFormData {
@@ -25,6 +26,7 @@ interface OmieInstanceFormData {
   tagColor: string;
   isActive: boolean;
   isDefault: boolean;
+  defaultParcelaCode: string;
 }
 
 const defaultFormData: OmieInstanceFormData = {
@@ -35,6 +37,7 @@ const defaultFormData: OmieInstanceFormData = {
   tagColor: "#3B82F6",
   isActive: true,
   isDefault: false,
+  defaultParcelaCode: "",
 };
 
 const PRESET_COLORS = [
@@ -58,6 +61,8 @@ export default function OmieInstances() {
   const [editingInstance, setEditingInstance] = useState<OmieInstance | null>(null);
   const [formData, setFormData] = useState<OmieInstanceFormData>(defaultFormData);
   const [showSecrets, setShowSecrets] = useState(false);
+  const [paymentTerms, setPaymentTerms] = useState<any[]>([]);
+  const [loadingTerms, setLoadingTerms] = useState(false);
 
   const [certDialogOpen, setCertDialogOpen] = useState(false);
   const [certInstanceId, setCertInstanceId] = useState<string | null>(null);
@@ -217,11 +222,25 @@ export default function OmieInstances() {
     setFormData(defaultFormData);
     setEditingInstance(null);
     setShowSecrets(false);
+    setPaymentTerms([]);
   };
 
   const handleOpenCreate = () => {
     resetForm();
     setIsDialogOpen(true);
+  };
+
+  const loadPaymentTerms = async (instanceId: string) => {
+    setLoadingTerms(true);
+    setPaymentTerms([]);
+    try {
+      const terms = await apiRequest("GET", `/api/omie/instances/${instanceId}/payment-terms`);
+      setPaymentTerms(Array.isArray(terms) ? terms : []);
+    } catch (err: any) {
+      toast({ title: "Aviso", description: "Não foi possível carregar os códigos de parcela desta instância", variant: "destructive" });
+    } finally {
+      setLoadingTerms(false);
+    }
   };
 
   const handleOpenEdit = (instance: OmieInstance) => {
@@ -234,7 +253,10 @@ export default function OmieInstances() {
       tagColor: instance.tagColor,
       isActive: instance.isActive,
       isDefault: instance.isDefault,
+      defaultParcelaCode: (instance as any).defaultParcelaCode || "",
     });
+    setPaymentTerms([]);
+    loadPaymentTerms(instance.id);
     setIsDialogOpen(true);
   };
 
@@ -576,6 +598,56 @@ export default function OmieInstances() {
                     title="Cor personalizada"
                   />
                 </div>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="defaultParcelaCode" className="flex items-center gap-1">
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Código de Parcela Padrão (À Vista)
+                  </Label>
+                  {editingInstance && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-blue-600"
+                      onClick={() => loadPaymentTerms(editingInstance.id)}
+                      disabled={loadingTerms}
+                    >
+                      {loadingTerms ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                      Carregar da Omie
+                    </Button>
+                  )}
+                </div>
+                {paymentTerms.length > 0 ? (
+                  <Select
+                    value={formData.defaultParcelaCode}
+                    onValueChange={(val) => setFormData({ ...formData, defaultParcelaCode: val === "__clear__" ? "" : val })}
+                  >
+                    <SelectTrigger id="defaultParcelaCode">
+                      <SelectValue placeholder="Selecione o código de parcela à vista" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__clear__">— Nenhum (auto-detectar) —</SelectItem>
+                      {paymentTerms.map((t: any) => (
+                        <SelectItem key={t.cCodigo} value={t.cCodigo}>
+                          {t.cCodigo} — {t.cDescricao}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="defaultParcelaCode"
+                    placeholder={editingInstance ? "Clique em 'Carregar da Omie' para ver os códigos" : "Ex: 000 ou A00"}
+                    value={formData.defaultParcelaCode}
+                    onChange={(e) => setFormData({ ...formData, defaultParcelaCode: e.target.value })}
+                  />
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Define qual código de condição de pagamento usar ao criar pedidos à vista no Omie. Cada instância pode ter um código diferente.
+                </p>
               </div>
 
               <div className="flex items-center justify-between">

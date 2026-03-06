@@ -2986,22 +2986,38 @@ export class OmieService {
         const boletoDays = salesCard.boletoDays || 7; // Padrão 7 dias se não especificado
         parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
       } else {
-        // Tentar encontrar um código de parcela válido para à vista nesta instância
-        try {
-          const parcelas = await this.listPaymentTerms();
-          const aVistaParcela = parcelas.find((p: any) => 
-            p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
-            (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
-          );
-          if (aVistaParcela) {
-            parcelaCode = aVistaParcela.cCodigo;
-            console.log(`✅ [PARCELA] Código à vista encontrado para esta instância: ${parcelaCode} (${aVistaParcela.cDescricao})`);
-          } else if (parcelas.length > 0) {
-            parcelaCode = parcelas[0].cCodigo;
-            console.log(`⚠️ [PARCELA] Nenhum código à vista encontrado, usando primeiro disponível: ${parcelaCode}`);
+        // 1. Tentar usar código configurado na instância (mais confiável)
+        let instanceParcelaCode: string | null = null;
+        if (this.storage && this.omieInstanceId) {
+          try {
+            const instance = await this.storage.getOmieInstance(this.omieInstanceId);
+            if (instance && (instance as any).defaultParcelaCode) {
+              instanceParcelaCode = (instance as any).defaultParcelaCode;
+              console.log(`✅ [PARCELA] Usando código configurado na instância: ${instanceParcelaCode}`);
+            }
+          } catch (e) {}
+        }
+        if (instanceParcelaCode) {
+          parcelaCode = instanceParcelaCode;
+        } else {
+          // 2. Tentar encontrar um código de parcela válido para à vista nesta instância
+          try {
+            const parcelas = await this.listPaymentTerms();
+            const aVistaParcela = parcelas.find((p: any) => 
+              p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
+              (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
+            );
+            if (aVistaParcela) {
+              parcelaCode = aVistaParcela.cCodigo;
+              console.log(`✅ [PARCELA] Código à vista encontrado para esta instância: ${parcelaCode} (${aVistaParcela.cDescricao})`);
+            } else if (parcelas.length > 0) {
+              // Salvar automaticamente o primeiro código disponível para evitar rejeições futuras
+              parcelaCode = parcelas[0].cCodigo;
+              console.log(`⚠️ [PARCELA] Nenhum código à vista encontrado, usando primeiro disponível: ${parcelaCode} — considere configurar o código padrão na instância`);
+            }
+          } catch (err: any) {
+            console.warn(`⚠️ [PARCELA] Erro ao buscar parcelas, usando padrão '000':`, err.message);
           }
-        } catch (err: any) {
-          console.warn(`⚠️ [PARCELA] Erro ao buscar parcelas, usando padrão '000':`, err.message);
         }
       }
 
@@ -5577,21 +5593,36 @@ export async function createOmieOrder(orderData: {
       const boletoDays = orderData.boletoDays || 7; // Padrão 7 dias se não especificado
       parcelaCode = BOLETO_DAYS_TO_PARCELA_CODE[boletoDays as keyof typeof BOLETO_DAYS_TO_PARCELA_CODE] || 'A07';
     } else {
-      try {
-        const parcelas = await this.listPaymentTerms();
-        const aVistaParcela = parcelas.find((p: any) => 
-          p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
-          (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
-        );
-        if (aVistaParcela) {
-          parcelaCode = aVistaParcela.cCodigo;
-          console.log(`✅ [PARCELA-HOTSITE] Código à vista: ${parcelaCode} (${aVistaParcela.cDescricao})`);
-        } else if (parcelas.length > 0) {
-          parcelaCode = parcelas[0].cCodigo;
-          console.log(`⚠️ [PARCELA-HOTSITE] Usando primeiro disponível: ${parcelaCode}`);
+      // 1. Tentar usar código configurado na instância (mais confiável)
+      let instanceParcelaCode: string | null = null;
+      if (this.storage && this.omieInstanceId) {
+        try {
+          const instance = await this.storage.getOmieInstance(this.omieInstanceId);
+          if (instance && (instance as any).defaultParcelaCode) {
+            instanceParcelaCode = (instance as any).defaultParcelaCode;
+            console.log(`✅ [PARCELA-HOTSITE] Usando código configurado na instância: ${instanceParcelaCode}`);
+          }
+        } catch (e) {}
+      }
+      if (instanceParcelaCode) {
+        parcelaCode = instanceParcelaCode;
+      } else {
+        try {
+          const parcelas = await this.listPaymentTerms();
+          const aVistaParcela = parcelas.find((p: any) => 
+            p.cCodigo === '000' || p.cCodigo === 'A00' || p.cCodigo === 'A03' ||
+            (p.cDescricao && (p.cDescricao.toLowerCase().includes('vista') || p.cDescricao.toLowerCase().includes('antecipado')))
+          );
+          if (aVistaParcela) {
+            parcelaCode = aVistaParcela.cCodigo;
+            console.log(`✅ [PARCELA-HOTSITE] Código à vista: ${parcelaCode} (${aVistaParcela.cDescricao})`);
+          } else if (parcelas.length > 0) {
+            parcelaCode = parcelas[0].cCodigo;
+            console.log(`⚠️ [PARCELA-HOTSITE] Usando primeiro disponível: ${parcelaCode} — considere configurar o código padrão na instância`);
+          }
+        } catch (err: any) {
+          console.warn(`⚠️ [PARCELA-HOTSITE] Erro ao buscar parcelas, usando '000':`, err.message);
         }
-      } catch (err: any) {
-        console.warn(`⚠️ [PARCELA-HOTSITE] Erro ao buscar parcelas, usando '000':`, err.message);
       }
     }
 

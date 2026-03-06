@@ -10994,6 +10994,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Listar códigos de parcela de uma instância específica
+  app.get('/api/omie/instances/:id/payment-terms', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) return res.status(404).json({ message: 'Instância não encontrada' });
+      const svc = OmieService.createFromInstance(instance, storage);
+      const terms = await svc.listPaymentTerms();
+      res.json(terms);
+    } catch (error: any) {
+      console.error('Erro ao listar parcelas da instância:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Rota TEMPORÁRIA (sem auth) para listar códigos de parcela do Omie
   app.get('/api/omie/payment-terms-debug', async (req: any, res) => {
     try {
@@ -16925,7 +16939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Instância não encontrada' });
       }
 
-      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault } = validationResult.data;
+      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault, defaultParcelaCode } = validationResult.data as any;
 
       // Se está alterando o nome, verifica se já existe outra com este nome
       if (name && name !== existingInstance.name) {
@@ -16942,6 +16956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (appSecret !== undefined) updateData.appSecret = appSecret;
       if (tagColor !== undefined) updateData.tagColor = tagColor;
       if (isActive !== undefined) updateData.isActive = isActive;
+      if (defaultParcelaCode !== undefined) updateData.defaultParcelaCode = defaultParcelaCode || null;
 
       const instance = await storage.updateOmieInstance(req.params.id, updateData);
       
