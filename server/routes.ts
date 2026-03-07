@@ -8957,20 +8957,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
               currentProgress: Math.round((i / servicesToSync.length) * 100)
             });
             
-            await (service as any).syncBillings({ 
-              fullResync: true,
-              onProgress: (progress: any) => {
-                storage.updateSyncStatus('omie_billings', { 
-                  status: 'in_progress', 
-                  recordsProcessed: totalProcessed + (progress.processed || 0),
-                  totalRecords: progress.total,
-                  currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
-                });
-              }
-            });
-            
-            totalProcessed += (service as any).lastSyncProcessed || 0;
-            console.log(`✅ Instância ${name} concluída`);
+            try {
+              await (service as any).syncBillings({ 
+                fullResync: true,
+                onProgress: (progress: any) => {
+                  storage.updateSyncStatus('omie_billings', { 
+                    status: 'in_progress', 
+                    recordsProcessed: totalProcessed + (progress.processed || 0),
+                    totalRecords: progress.total,
+                    currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
+                  });
+                }
+              });
+              totalProcessed += (service as any).lastSyncProcessed || 0;
+              console.log(`✅ Instância ${name} concluída`);
+            } catch (instErr: any) {
+              console.error(`❌ Erro na instância ${name}:`, instErr.message);
+            }
           }
           
           await storage.updateSyncStatus('omie_billings', { 
@@ -9074,22 +9077,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
               currentProgress: Math.round((i / servicesToSync.length) * 100)
             });
             
-            const result = await (service as any).syncBillings({ 
-              fullResync: true,
-              onProgress: (progress: any) => {
-                storage.updateSyncStatus('omie_billings', {
-                  status: 'in_progress',
-                  recordsProcessed: totalProcessed + (progress.processed || 0),
-                  totalRecords: progress.total,
-                  currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
-                });
-              }
-            });
-            
-            totalImported += result.imported || 0;
-            totalUpdated += result.updated || 0;
-            totalProcessed += result.totalProcessed || 0;
-            console.log(`✅ Full-sync instância ${name} concluída: ${result.imported || 0} importados, ${result.updated || 0} atualizados`);
+            try {
+              const result = await (service as any).syncBillings({ 
+                fullResync: true,
+                onProgress: (progress: any) => {
+                  storage.updateSyncStatus('omie_billings', {
+                    status: 'in_progress',
+                    recordsProcessed: totalProcessed + (progress.processed || 0),
+                    totalRecords: progress.total,
+                    currentProgress: Math.round(((i + (progress.processed / (progress.total || 1))) / servicesToSync.length) * 100)
+                  });
+                }
+              });
+              totalImported += result.imported || 0;
+              totalUpdated += result.updated || 0;
+              totalProcessed += result.totalProcessed || 0;
+              console.log(`✅ Full-sync instância ${name} concluída: ${result.imported || 0} importados, ${result.updated || 0} atualizados`);
+            } catch (instErr: any) {
+              console.error(`❌ Erro no full-sync da instância ${name}:`, instErr.message);
+            }
           }
           
           console.log(`✅ Sincronização TOTAL de faturamentos concluída (${servicesToSync.length} instância(s)): ${totalImported} importados, ${totalUpdated} atualizados`);
@@ -9471,13 +9477,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const instanceResults: any[] = [];
       
       for (const { service, name } of servicesToSync) {
-        console.log(`📡 Sincronizando faturamentos da instância: ${name}`);
-        const result = await service.syncBillingsInRange(startDate, endDate);
-        totalInserted += result.inserted || 0;
-        totalUpdated += result.updated || 0;
-        totalCount += result.total || 0;
-        instanceResults.push({ instance: name, ...result });
-        console.log(`✅ Instância ${name}: ${result.inserted || 0} inseridos, ${result.updated || 0} atualizados`);
+        try {
+          console.log(`📡 Sincronizando faturamentos da instância: ${name}`);
+          const result = await service.syncBillingsInRange(startDate, endDate);
+          totalInserted += result.inserted || 0;
+          totalUpdated += result.updated || 0;
+          totalCount += result.total || 0;
+          instanceResults.push({ instance: name, ...result });
+          console.log(`✅ Instância ${name}: ${result.inserted || 0} inseridos, ${result.updated || 0} atualizados`);
+        } catch (instErr: any) {
+          console.error(`❌ Erro ao sincronizar faturamentos da instância ${name}:`, instErr.message);
+          instanceResults.push({ instance: name, error: instErr.message, inserted: 0, updated: 0, total: 0 });
+        }
       }
       
       const aggregatedResult = {
