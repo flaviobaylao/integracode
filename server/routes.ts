@@ -12,6 +12,7 @@ import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
+import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
 import OpenAI from 'openai';
@@ -21041,31 +21042,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Estado global de sincronização para SSE
-  let billingSyncState: {
-    status: 'idle' | 'running' | 'completed' | 'error';
-    currentPage: number;
-    totalPages: number;
-    invoicesFound: number;
-    invoicesProcessed: number;
-    inserted: number;
-    updated: number;
-    currentInvoice: string;
-    message: string;
-    startedAt: Date | null;
-    completedAt: Date | null;
-  } = {
-    status: 'idle',
-    currentPage: 0,
-    totalPages: 0,
-    invoicesFound: 0,
-    invoicesProcessed: 0,
-    inserted: 0,
-    updated: 0,
-    currentInvoice: '',
-    message: '',
-    startedAt: null,
-    completedAt: null
-  };
 
   // Endpoint SSE para progresso de sincronização
   app.get('/api/omie/sync-billings/progress', (req, res) => {
@@ -21111,25 +21087,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Reset sync state if stuck for more than 10 minutes
   app.post('/api/omie/sync-billings/reset', async (req: any, res) => {
-    billingSyncState = {
-      status: 'idle', currentPage: 0, totalPages: 0, invoicesFound: 0,
-      invoicesProcessed: 0, inserted: 0, updated: 0, currentInvoice: '',
-      message: '', startedAt: null, completedAt: null
-    };
+    billingSyncState.status = 'idle';
+    billingSyncState.currentPage = 0;
+    billingSyncState.totalPages = 0;
+    billingSyncState.invoicesFound = 0;
+    billingSyncState.invoicesProcessed = 0;
+    billingSyncState.inserted = 0;
+    billingSyncState.updated = 0;
+    billingSyncState.currentInvoice = '';
+    billingSyncState.message = '';
+    billingSyncState.startedAt = null;
+    billingSyncState.completedAt = null;
     res.json({ message: 'Estado de sincronização resetado' });
   });
 
   // Sincronizar faturamentos do Omie - OTIMIZADO: usa syncAllOrders com caches pré-carregados
   app.post('/api/omie/sync-billings', async (req: any, res) => {
     try {
-      if (billingSyncState.status === 'running' && billingSyncState.startedAt) {
-        const elapsed = Date.now() - billingSyncState.startedAt.getTime();
-        if (elapsed > 10 * 60 * 1000) {
-          console.log('⚠️ [SYNC] Auto-reset: sincronização presa há mais de 10 minutos');
-          billingSyncState.status = 'idle';
-        }
-      }
-      if (billingSyncState.status === 'running') {
+      if (isBillingSyncRunning()) {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
       }
 
@@ -21144,19 +21119,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         activeInstances.push({ id: fallback.omieInstanceId, name: 'Default', appKey: fallback['appKey'], appSecret: fallback['appSecret'] });
       }
 
-      billingSyncState = {
-        status: 'running',
-        currentPage: 0,
-        totalPages: 0,
-        invoicesFound: 0,
-        invoicesProcessed: 0,
-        inserted: 0,
-        updated: 0,
-        currentInvoice: '',
-        message: `Iniciando sincronização de ${activeInstances.length} instância(s)...`,
-        startedAt: nowBrazil(),
-        completedAt: null
-      };
+      billingSyncState.status = 'running';
+      billingSyncState.currentPage = 0;
+      billingSyncState.totalPages = 0;
+      billingSyncState.invoicesFound = 0;
+      billingSyncState.invoicesProcessed = 0;
+      billingSyncState.inserted = 0;
+      billingSyncState.updated = 0;
+      billingSyncState.currentInvoice = '';
+      billingSyncState.message = `Iniciando sincronização de ${activeInstances.length} instância(s)...`;
+      billingSyncState.startedAt = nowBrazil();
+      billingSyncState.completedAt = null;
 
       res.status(202).json({ message: `Sincronização de ${activeInstances.length} instância(s) iniciada em background.` });
 

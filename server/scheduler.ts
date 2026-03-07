@@ -2,6 +2,7 @@ import { evolutionAPIService } from './evolution-api-service';
 import { whatsappService } from './whatsapp-service';
 import cron from 'node-cron';
 import { getOmieService, getOmieServiceForInstance } from './omieIntegration';
+import { isBillingSyncRunning } from './billingSyncState';
 import { generateVisitAgenda, syncFutureSalesCards } from './visitScheduleService';
 import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
@@ -243,37 +244,41 @@ async function syncComplete(horario: string) {
       }
 
       // 2. Sincronizar notas fiscais dos últimos 60 dias
-      try {
-        console.log(`💰 [${horario}] [${label}] Sincronizando pedidos dos últimos 60 dias...`);
-        
-        await storage.updateSyncStatus('omie_billings', { 
-          status: 'in_progress', 
-          message: `[${label}] Sincronização automática de pedidos iniciada...`,
-          recordsProcessed: 0,
-          currentProgress: 0
-        });
-        
-        const billingResult = await svc.syncAllOrders((progress: any) => {
-          const syncStatus = svc.getSyncStatus();
-          if (syncStatus.cancelled) return;
-          storage.updateSyncStatus('omie_billings', { 
+      if (isBillingSyncRunning()) {
+        console.log(`⏭️ [${horario}] [${label}] Sincronização manual em andamento — pulando sync automático de pedidos`);
+      } else {
+        try {
+          console.log(`💰 [${horario}] [${label}] Sincronizando pedidos dos últimos 60 dias...`);
+          
+          await storage.updateSyncStatus('omie_billings', { 
             status: 'in_progress', 
-            message: `[${label}] ${progress.invoicesProcessed} processados`,
-            recordsProcessed: progress.invoicesProcessed,
-            totalRecords: progress.invoicesFound,
-            currentProgress: progress.totalPages > 0 ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0
+            message: `[${label}] Sincronização automática de pedidos iniciada...`,
+            recordsProcessed: 0,
+            currentProgress: 0
           });
-        });
-        
-        globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
-        globalResults.billings.imported += billingResult.imported || 0;
-        globalResults.billings.updated += billingResult.updated || 0;
-        
-        console.log(`✅ [${horario}] [${label}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
-      } catch (error: any) {
-        const errorMsg = `[${label}] Erro ao sincronizar notas fiscais: ${error.message}`;
-        globalResults.errors.push(errorMsg);
-        console.error(`❌ [${horario}] ${errorMsg}`);
+          
+          const billingResult = await svc.syncAllOrders((progress: any) => {
+            const syncStatus = svc.getSyncStatus();
+            if (syncStatus.cancelled) return;
+            storage.updateSyncStatus('omie_billings', { 
+              status: 'in_progress', 
+              message: `[${label}] ${progress.invoicesProcessed} processados`,
+              recordsProcessed: progress.invoicesProcessed,
+              totalRecords: progress.invoicesFound,
+              currentProgress: progress.totalPages > 0 ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0
+            });
+          });
+          
+          globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
+          globalResults.billings.imported += billingResult.imported || 0;
+          globalResults.billings.updated += billingResult.updated || 0;
+          
+          console.log(`✅ [${horario}] [${label}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
+        } catch (error: any) {
+          const errorMsg = `[${label}] Erro ao sincronizar notas fiscais: ${error.message}`;
+          globalResults.errors.push(errorMsg);
+          console.error(`❌ [${horario}] ${errorMsg}`);
+        }
       }
 
       // 3. Sincronizar débitos vencidos (com instanceId para não apagar dados de outras instâncias)
@@ -308,16 +313,20 @@ async function syncComplete(horario: string) {
         console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar clientes: ${error.message}`);
       }
 
-      try {
-        console.log(`💰 [${horario}] [${bsbLabel}] Sincronizando pedidos dos últimos 60 dias...`);
-        const billingResult = await bsbEnvSvc.syncAllOrders();
-        globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
-        globalResults.billings.imported += billingResult.imported || 0;
-        globalResults.billings.updated += billingResult.updated || 0;
-        console.log(`✅ [${horario}] [${bsbLabel}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
-      } catch (error: any) {
-        globalResults.errors.push(`[${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
-        console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
+      if (isBillingSyncRunning()) {
+        console.log(`⏭️ [${horario}] [${bsbLabel}] Sincronização manual em andamento — pulando sync automático de pedidos`);
+      } else {
+        try {
+          console.log(`💰 [${horario}] [${bsbLabel}] Sincronizando pedidos dos últimos 60 dias...`);
+          const billingResult = await bsbEnvSvc.syncAllOrders();
+          globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
+          globalResults.billings.imported += billingResult.imported || 0;
+          globalResults.billings.updated += billingResult.updated || 0;
+          console.log(`✅ [${horario}] [${bsbLabel}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
+        } catch (error: any) {
+          globalResults.errors.push(`[${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
+          console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
+        }
       }
 
       try {
