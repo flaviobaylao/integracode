@@ -6265,6 +6265,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Merge duplicate Ezequiel seller records (BSB omie-vendor-10457429564 → 0e92757a)
+  app.post('/api/admin/merge-bsb-sellers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const SOURCE_ID = 'omie-vendor-10457429564';
+      const TARGET_ID = '0e92757a-4f40-4428-9b99-ea7a960befbf';
+      const BSB_INSTANCE = '9ca142af-2695-4ab0-9055-200745c0283e';
+      const SERV_INSTANCE = '0f2e5d32-ad16-48a2-bc48-8ac15cec531b';
+
+      console.log(`\n🔀 Mesclando vendedores BSB: ${SOURCE_ID} → ${TARGET_ID}`);
+
+      // 1. Add BSB and SERV vendor codes to Ezequiel DF's omie_vendor_codes
+      await db.execute(sql`
+        UPDATE users
+        SET omie_vendor_codes = omie_vendor_codes || 
+          jsonb_build_object(${BSB_INSTANCE}, '10457429564', ${SERV_INSTANCE}, '11015081752')
+        WHERE id = ${TARGET_ID}
+      `);
+      console.log(`✅ 1. omie_vendor_codes atualizado para ${TARGET_ID}`);
+
+      // 2. Update BSB customers pointing to SOURCE → TARGET
+      const custResult = await db.execute(sql`
+        UPDATE customers SET seller_id = ${TARGET_ID}
+        WHERE seller_id = ${SOURCE_ID}
+      `);
+      console.log(`✅ 2. Customers atualizados: ${custResult.rowCount}`);
+
+      // 3. Update billings with seller_id = SOURCE → TARGET
+      const billSellerResult = await db.execute(sql`
+        UPDATE billings SET seller_id = ${TARGET_ID}
+        WHERE seller_id = ${SOURCE_ID}
+      `);
+      console.log(`✅ 3. Billings seller direto: ${billSellerResult.rowCount}`);
+
+      // 4. Fix BSB billings with seller_id IS NULL — assign via customer path
+      const billNullResult = await db.execute(sql`
+        UPDATE billings b
+        SET seller_id = c.seller_id
+        FROM customers c
+        WHERE b.omie_instance_id = ${BSB_INSTANCE}
+          AND b.seller_id IS NULL
+          AND c.id = CONCAT('omie-client-', b.omie_customer_code)
+          AND c.seller_id IS NOT NULL
+      `);
+      console.log(`✅ 4. Billings BSB null seller_id corrigidos: ${billNullResult.rowCount}`);
+
+      // 5. Deactivate the now-redundant source user
+      await db.execute(sql`
+        UPDATE users SET is_active = false WHERE id = ${SOURCE_ID}
+      `);
+      console.log(`✅ 5. Usuário duplicado desativado: ${SOURCE_ID}`);
+
+      res.json({
+        success: true,
+        message: 'Mesclagem concluída com sucesso',
+        details: {
+          vendorCodesAdded: ['10457429564 (BSB)', '11015081752 (SERV)'],
+          customersUpdated: custResult.rowCount,
+          billingsSellerUpdated: billSellerResult.rowCount,
+          billingsNullFixed: billNullResult.rowCount,
+          sourceUserDeactivated: SOURCE_ID,
+        }
+      });
+    } catch (error: any) {
+      console.error('❌ Erro na mesclagem:', error);
+      res.status(500).json({ success: false, message: 'Erro na mesclagem', error: error.message });
+    }
+  });
+
   // Fix customers with incorrect delivery_weekdays (admin only)
   app.post('/api/admin/fix-customer-delivery-days', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {

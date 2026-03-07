@@ -1477,14 +1477,25 @@ export class OmieService {
 
   private async loadSellersDbCache(): Promise<Map<string, any>> {
     try {
-      const allUsers = await db.select().from(users).where(isNotNull(users.omieVendorCode));
+      const allUsers = await db.select().from(users).where(
+        sql`omie_vendor_code IS NOT NULL OR omie_vendor_codes IS NOT NULL`
+      );
       const cache = new Map<string, any>();
       for (const u of allUsers) {
+        // Map primary code
         if (u.omieVendorCode) {
           cache.set(u.omieVendorCode, u);
         }
+        // Map ALL instance-specific codes from omieVendorCodes
+        if (u.omieVendorCodes && typeof u.omieVendorCodes === 'object') {
+          for (const code of Object.values(u.omieVendorCodes as Record<string, string>)) {
+            if (code && !cache.has(code)) {
+              cache.set(code, u);
+            }
+          }
+        }
       }
-      console.log(`✅ [PRELOAD] ${cache.size} vendedores do banco carregados`);
+      console.log(`✅ [PRELOAD] ${cache.size} entradas de vendedores do banco carregadas`);
       return cache;
     } catch (error) {
       console.log('⚠️ [PRELOAD] Erro ao carregar vendedores do banco:', error);

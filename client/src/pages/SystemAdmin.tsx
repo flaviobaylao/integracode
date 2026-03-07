@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Trash2, MessageSquare } from "lucide-react";
+import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Trash2, MessageSquare, GitMerge } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
@@ -58,6 +58,10 @@ export default function SystemAdmin() {
   const [confirmText, setConfirmText] = useState("");
   const [showClearDialog, setShowClearDialog] = useState(false);
   const { toast } = useToast();
+
+  // Estados para mesclar vendedores BSB
+  const [isMerging, setIsMerging] = useState(false);
+  const [mergeResult, setMergeResult] = useState<any>(null);
 
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
@@ -136,6 +140,28 @@ export default function SystemAdmin() {
       });
     } finally {
       setIsRecalculating(false);
+    }
+  };
+
+  const handleMergeBsbSellers = async () => {
+    setIsMerging(true);
+    setMergeResult(null);
+    try {
+      const response = await apiRequest('POST', '/api/admin/merge-bsb-sellers', {});
+      setMergeResult(response);
+      toast({
+        title: 'Mesclagem concluída!',
+        description: 'Vendedores BSB mesclados com sucesso.',
+      });
+    } catch (error: any) {
+      setMergeResult({ success: false, message: error.message });
+      toast({
+        title: 'Erro na mesclagem',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsMerging(false);
     }
   };
 
@@ -431,6 +457,68 @@ export default function SystemAdmin() {
                 </Alert>
               )}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <GitMerge className="h-5 w-5" />
+            Mesclar Vendedores BSB Duplicados
+          </CardTitle>
+          <CardDescription>
+            Mescla o registro duplicado "Ezequiel BSB" (omie-vendor-10457429564) com "Ezequiel DF"
+            (0e92757a), adicionando os códigos Omie do BSB e SERV ao usuário principal,
+            corrigindo clientes e faturamentos BSB. Executar apenas uma vez.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Esta operação é idempotente: pode ser executada novamente sem prejuízo caso já tenha sido feita.
+              Após a mesclagem, os faturamentos BSB aparecerão nas metas de Ezequiel DF.
+            </AlertDescription>
+          </Alert>
+
+          <Button
+            onClick={handleMergeBsbSellers}
+            disabled={isMerging}
+            variant="default"
+          >
+            {isMerging ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Mesclando...
+              </>
+            ) : (
+              <>
+                <GitMerge className="mr-2 h-4 w-4" />
+                Executar Mesclagem
+              </>
+            )}
+          </Button>
+
+          {mergeResult && (
+            <Alert variant={mergeResult.success ? 'default' : 'destructive'} className={mergeResult.success ? 'bg-green-50 border-green-200' : ''}>
+              {mergeResult.success ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <AlertCircle className="h-4 w-4" />}
+              <AlertDescription>
+                {mergeResult.success ? (
+                  <div className="space-y-1">
+                    <div className="font-medium text-green-800">{mergeResult.message}</div>
+                    <div className="text-sm text-green-700 grid grid-cols-2 gap-1 mt-2">
+                      <div>Clientes atualizados: <strong>{mergeResult.details?.customersUpdated}</strong></div>
+                      <div>Billings seller: <strong>{mergeResult.details?.billingsSellerUpdated}</strong></div>
+                      <div>Billings null fixados: <strong>{mergeResult.details?.billingsNullFixed}</strong></div>
+                      <div>Duplicado desativado: <strong>{mergeResult.details?.sourceUserDeactivated ? 'Sim' : 'Não'}</strong></div>
+                    </div>
+                  </div>
+                ) : (
+                  <span><strong>Erro:</strong> {mergeResult.message}</span>
+                )}
+              </AlertDescription>
+            </Alert>
           )}
         </CardContent>
       </Card>
