@@ -86,11 +86,15 @@ export class OmieService {
   public omieInstanceName: string | null; // Nome da instância para logging
 
   constructor(config: OmieConfig, storage?: any, omieInstanceId?: string, omieInstanceName?: string) {
-    this.config = config;
+    this.config = {
+      ...config,
+      appKey: config.appKey?.trim() || config.appKey,
+      appSecret: config.appSecret?.trim() || config.appSecret,
+    };
     this.baseUrl = config.baseUrl || 'https://app.omie.com.br/api/v1';
     this.storage = storage;
-    this.appKey = config.appKey;
-    this.appSecret = config.appSecret;
+    this.appKey = this.config.appKey;
+    this.appSecret = this.config.appSecret;
     this.omieInstanceId = omieInstanceId || null;
     this.omieInstanceName = omieInstanceName || null;
   }
@@ -5295,6 +5299,23 @@ export async function resolveDefaultInstanceId(storage: any): Promise<void> {
     }
   } catch (e) {
     console.error('⚠️ Erro ao resolver instância padrão:', e);
+  }
+}
+
+export async function cleanupOmieCredentials(storage: any): Promise<void> {
+  try {
+    const instances = await storage.getOmieInstances();
+    if (!instances?.length) return;
+    for (const inst of instances) {
+      const cleanKey = (inst.appKey || '').trim();
+      const cleanSecret = (inst.appSecret || '').trim();
+      if (cleanKey !== inst.appKey || cleanSecret !== inst.appSecret) {
+        await storage.updateOmieInstance(inst.id, { appKey: cleanKey, appSecret: cleanSecret } as any);
+        console.log(`🧹 [CRED-CLEANUP] ${inst.name}: credenciais limpas (espaços removidos)`);
+      }
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [CRED-CLEANUP] Erro ao limpar credenciais:', e.message);
   }
 }
 

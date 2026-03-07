@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
-import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances } from "./omieIntegration";
+import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances, cleanupOmieCredentials } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -379,6 +379,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auto-resolve default Omie instance ID for env-var-based service
   await resolveDefaultInstanceId(storage);
   
+  // Limpar espaços/caracteres inválidos nas credenciais do Omie (corrige problemas de autenticação)
+  cleanupOmieCredentials(storage).catch(e => console.warn('⚠️ Erro ao limpar credenciais:', e.message));
   cacheBankAccountsForAllInstances(storage).catch(e => console.warn('⚠️ Erro no cache de contas bancárias:', e.message));
 
   // Configure Evolution API for WhatsApp
@@ -16962,8 +16964,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const instance = await storage.createOmieInstance({
         name,
         displayName,
-        appKey,
-        appSecret,
+        appKey: typeof appKey === 'string' ? appKey.trim() : appKey,
+        appSecret: typeof appSecret === 'string' ? appSecret.trim() : appSecret,
         tagColor: tagColor || '#3B82F6',
         isActive: isActive ?? true,
         isDefault: isDefault ?? false,
@@ -17010,8 +17012,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateData: any = {};
       if (name !== undefined) updateData.name = name;
       if (displayName !== undefined) updateData.displayName = displayName;
-      if (appKey !== undefined) updateData.appKey = appKey;
-      if (appSecret !== undefined) updateData.appSecret = appSecret;
+      if (appKey !== undefined) updateData.appKey = typeof appKey === 'string' ? appKey.trim() : appKey;
+      if (appSecret !== undefined) updateData.appSecret = typeof appSecret === 'string' ? appSecret.trim() : appSecret;
       if (tagColor !== undefined) updateData.tagColor = tagColor;
       if (isActive !== undefined) updateData.isActive = isActive;
       if (defaultParcelaCode !== undefined) updateData.defaultParcelaCode = defaultParcelaCode || null;
