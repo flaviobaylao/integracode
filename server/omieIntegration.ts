@@ -4089,6 +4089,16 @@ export class OmieService {
       
       options?.onProgress?.({ processed: 0, total: 0, message: 'Caches carregados! Buscando notas fiscais...' });
       
+      // Calcular data de início: 60 dias atrás no fuso de Brasília
+      const sixtyDaysAgo = nowBrazil();
+      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+      sixtyDaysAgo.setHours(0, 0, 0, 0);
+      const startDay = String(sixtyDaysAgo.getDate()).padStart(2, '0');
+      const startMonth = String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0');
+      const startYear = sixtyDaysAgo.getFullYear();
+      const startDateStr = fullResync ? '' : `${startDay}/${startMonth}/${startYear}`;
+      console.log(`📅 Filtro de data API: ${startDateStr || 'SEM FILTRO (fullResync)'}`);
+
       let totalProcessed = 0;
       let imported = 0;
       let updated = 0;
@@ -4098,11 +4108,8 @@ export class OmieService {
       
       let page = 1;
       let hasMorePages = true;
-      const maxRecordsPerSync = 25000; // Processar até 25.000 notas por vez (~23.945 notas de 2025)
+      const maxRecordsPerSync = 25000;
       let recordsProcessedThisSync = 0;
-      let pagesWithoutValidData = 0;
-      const maxPagesWithoutData = 3; // Parar se 3 páginas consecutivas sem dados nos últimos 60 dias
-      let totalOldInvoicesSkipped = 0; // Contador de notas antigas ignoradas
       
       while (hasMorePages) {
         // Verificar se foi solicitado cancelamento
@@ -4125,12 +4132,12 @@ export class OmieService {
           
           const response = await this.makeRequest('/produtos/nfconsultar/', 'ListarNF', {
             pagina: page,
-            registros_por_pagina: 50,
+            registros_por_pagina: 100,
             apenas_importado_api: 'N',
-            filtrar_por_data_de: '', // API ignora este filtro, usar filtro no código
-            filtrar_por_data_ate: '', // API ignora este filtro, usar filtro no código
+            filtrar_por_data_de: startDateStr,
+            filtrar_por_data_ate: '',
             ordenar_por: 'DATA',
-            ordem_decrescente: 'S' // DECRESCENTE - das mais recentes para as mais antigas (2025 → 2024...)
+            ordem_decrescente: 'S'
           });
           
           const invoices = response.nfCadastro || [];
@@ -4140,20 +4147,18 @@ export class OmieService {
           
           options?.onProgress?.({ 
             processed: totalProcessed, 
-            total: totalProcessed + (invoices.length * 2), 
+            total: totalRecords, 
             page, 
-            totalPages: 0, 
+            totalPages, 
             imported, 
             updated, 
-            message: `Sincronizando últimos 60 dias - Página ${page}... (${totalProcessed} notas processadas)` 
+            message: `Sincronizando últimos 60 dias - Página ${page} de ${totalPages}... (${totalProcessed} notas processadas)` 
           });
           
           if (invoices.length === 0) {
             hasMorePages = false;
             break;
           }
-          
-          let pageHasValidData = false;
           
           for (const invoice of invoices) {
             try {
@@ -4186,17 +4191,6 @@ export class OmieService {
                 continue;
               }
               
-              // FILTRO DE DATA: Rejeitar notas fiscais emitidas antes dos últimos 60 dias
-              if (!fullResync) {
-                const dataLimite = new Date();
-                dataLimite.setDate(dataLimite.getDate() - 60);
-                dataLimite.setHours(0, 0, 0, 0);
-                if (invoiceDateObj < dataLimite) {
-                  totalOldInvoicesSkipped++;
-                  continue;
-                }
-              }
-              pageHasValidData = true;
               // Normalizar número da NF com padding de zeros (8 dígitos) para match com banco de dados
               const normalizedInvoiceNumber = String(invoiceNumber).padStart(8, '0');
               nfsFromOmie.add(normalizedInvoiceNumber); // Rastrear NF que veio do Omie
@@ -4441,57 +4435,18 @@ export class OmieService {
           
           page++;
           
-          // PARADA AGRESSIVA: Se página inteira não teve dados válidos (todos fora dos 60 dias)
-          if (!pageHasValidData) {
-            pagesWithoutValidData++;
-            console.log(`⏭️ Página ${page-1} sem dados dos últimos 60 dias (${pagesWithoutValidData}/${maxPagesWithoutData} consecutivas, ${totalOldInvoicesSkipped} notas antigas ignoradas)`);
-            
-            if (pagesWithoutValidData >= maxPagesWithoutData) {
-              console.log(`🛑 ${maxPagesWithoutData} páginas consecutivas sem dados dos últimos 60 dias - PARANDO sincronização`);
-              options?.onProgress?.({ 
-                processed: totalProcessed, 
-                total: totalProcessed, 
-                page: page - 1, 
-                totalPages: page - 1, 
-                imported, 
-                updated, 
-                message: `Concluído! ${totalProcessed} notas dos últimos 60 dias (${imported} novas, ${updated} atualizadas). ${totalOldInvoicesSkipped} notas antigas ignoradas.` 
-              });
-              hasMorePages = false;
-              break;
-            }
-          } else {
-            pagesWithoutValidData = 0;
-          }
+          hasMorePages = page <= totalPages && recordsProcessedThisSync < maxRecordsPerSync;
           
-          // PARADA EXTRA: Se já ignoramos mais de 100 notas antigas, estamos além dos 60 dias
-          if (totalOldInvoicesSkipped > 100 && !fullResync) {
-            console.log(`🛑 Mais de 100 notas antigas ignoradas (${totalOldInvoicesSkipped}) - ultrapassamos janela de 60 dias, PARANDO`);
-            options?.onProgress?.({ 
-              processed: totalProcessed, 
-              total: totalProcessed, 
-              page: page - 1, 
-              totalPages: page - 1, 
-              imported, 
-              updated, 
-              message: `Concluído! ${totalProcessed} notas dos últimos 60 dias (${imported} novas, ${updated} atualizadas).` 
-            });
-            hasMorePages = false;
-            break;
-          }
-          
-          hasMorePages = recordsProcessedThisSync < maxRecordsPerSync;
-          
-          console.log(`📈 Página ${page-1} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}, Antigas ignoradas: ${totalOldInvoicesSkipped}`);
+          console.log(`📈 Página ${page-1}/${totalPages} concluída. Processadas: ${totalProcessed}, Importadas: ${imported}, Atualizadas: ${updated}`);
           
           options?.onProgress?.({ 
             processed: totalProcessed, 
-            total: totalProcessed, 
+            total: totalRecords, 
             page: page - 1, 
-            totalPages: 0, 
+            totalPages, 
             imported, 
             updated, 
-            message: `Sincronizando últimos 60 dias - Página ${page-1} concluída. ${totalProcessed} notas (${imported} novas, ${updated} atualizadas)` 
+            message: `Sincronizando últimos 60 dias - Página ${page-1} de ${totalPages}. ${totalProcessed} notas (${imported} novas, ${updated} atualizadas)` 
           });
           
         } catch (pageError) {
@@ -4505,40 +4460,34 @@ export class OmieService {
       }
       
       // CLEANUP: Remover billings em "Aguardando Rota" que não estão mais no Omie
-      // ✅ REABILITADO: Notas que saíram de "Aguardando Rota" no Omie devem ser removidas
-      // para evitar dados obsoletos na Gestão de Entregas
-      console.log(`\n🧹 Iniciando limpeza de pedidos que saíram de "Aguardando Rota" no Omie...`);
+      // Apenas dentro da janela de 60 dias sincronizada (evitar deletar notas antigas)
+      console.log(`\n🧹 Iniciando limpeza de pedidos obsoletos em "Aguardando Rota"...`);
       console.log(`📊 NFs rastreadas do Omie nesta sincronização: ${nfsFromOmie.size}`);
       
       let deletedCount = 0;
       try {
-        // Só fazer cleanup se tivermos processado notas (evitar deletar tudo em caso de erro)
-        if (nfsFromOmie.size > 0) {
-          // Buscar billings em "Aguardando Rota" que NÃO estão mais no Omie
+        if (nfsFromOmie.size > 0 && !fullResync) {
+          // Só checar billings dentro da janela de 60 dias (mesma que a API filtrou)
           const aguardandoRotaBillings = await db.execute(sql`
             SELECT id, invoice_number, customer_fantasy_name, invoice_date, total_value
             FROM billings 
             WHERE invoice_stage = 'Aguardando Rota' 
               AND invoice_number IS NOT NULL
+              AND invoice_date >= ${startDateStr ? sixtyDaysAgo.toISOString().split('T')[0] : '2000-01-01'}
           `);
           
           const billingsToDelete: string[] = [];
           for (const row of aguardandoRotaBillings.rows as any[]) {
-            // Normalizar número da NF do banco para comparação (garantir mesmo formato)
             const normalizedDbInvoiceNumber = String(row.invoice_number).padStart(8, '0');
             if (!nfsFromOmie.has(normalizedDbInvoiceNumber)) {
               billingsToDelete.push(row.invoice_number);
-              console.log(`🗑️ Marcado para remoção: NF ${row.invoice_number} (normalizado: ${normalizedDbInvoiceNumber}) - ${row.customer_fantasy_name} (${row.invoice_date}) - R$ ${row.total_value}`);
+              console.log(`🗑️ Marcado para remoção: NF ${row.invoice_number} - ${row.customer_fantasy_name} (${row.invoice_date}) - R$ ${row.total_value}`);
             }
           }
           
-          // Log para debug: mostrar algumas NFs do Set para verificar formato
-          const sampleNfs = Array.from(nfsFromOmie).slice(0, 5);
-          console.log(`📋 Exemplo de NFs no Set (formato Omie normalizado): ${sampleNfs.join(', ')}`);
-          console.log(`📋 Total de billings em "Aguardando Rota" no banco: ${aguardandoRotaBillings.rows.length}`);
+          console.log(`📋 Billings "Aguardando Rota" na janela de 60 dias: ${aguardandoRotaBillings.rows.length}`);
           
           if (billingsToDelete.length > 0) {
-            // Deletar em lotes para evitar query muito longa
             for (const nf of billingsToDelete) {
               await db.execute(sql`
                 DELETE FROM billings 
@@ -4551,7 +4500,7 @@ export class OmieService {
             console.log(`✅ Nenhum pedido obsoleto para remover.`);
           }
         } else {
-          console.log(`⚠️ Nenhuma NF processada do Omie - cleanup ignorado para segurança`);
+          console.log(`⚠️ Cleanup ignorado (${fullResync ? 'fullResync' : 'nenhuma NF processada'})`);
         }
       } catch (cleanupError) {
         console.error(`⚠️ Erro na limpeza de billings:`, cleanupError);
