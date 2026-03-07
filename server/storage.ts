@@ -392,6 +392,7 @@ export interface IStorage {
     reason?: string;
     action?: 'created' | 'updated' | 'skipped';
   }>;
+  markBillingsCancelledByOrderIds(omieOrderIds: string[]): Promise<number>;
 
   // Overdue debts operations
   getOverdueDebts(): Promise<any[]>;
@@ -4762,6 +4763,26 @@ export class DatabaseStorage implements IStorage {
         reason,
         action: 'skipped'
       };
+    }
+  }
+
+  async markBillingsCancelledByOrderIds(omieOrderIds: string[]): Promise<number> {
+    if (!omieOrderIds || omieOrderIds.length === 0) return 0;
+    try {
+      const result = await db.execute(sql`
+        UPDATE billings
+        SET is_cancelled = true, invoice_stage = 'CANCELADO'
+        WHERE omie_order_id = ANY(${omieOrderIds}::text[])
+          AND is_cancelled = false
+      `);
+      const rowsAffected = (result as any).rowCount || 0;
+      if (rowsAffected > 0) {
+        console.log(`✅ [CANCEL-SYNC] ${rowsAffected} faturamento(s) marcado(s) como cancelado(s)`);
+      }
+      return rowsAffected;
+    } catch (error) {
+      console.error('❌ [CANCEL-SYNC] Erro ao marcar cancelamentos:', error);
+      return 0;
     }
   }
 

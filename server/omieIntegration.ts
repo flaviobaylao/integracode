@@ -590,6 +590,14 @@ export class OmieService {
 
       if (!orderNumber && !omieOrderId) return null;
 
+      // Verificar cancelamento diretamente dos dados do pedido
+      const isCancelledByFlag = order.cancelamento?.cCancelado === 'S';
+      const isCancelledByStage = etapa === 'Cancelado' || etapa === 'cancelado';
+      if (isCancelledByFlag || isCancelledByStage) {
+        // Retornar marcador especial para atualizar registros existentes
+        return { _isCancelled: true, omieOrderId };
+      }
+
       let omieInvoiceId = '';
       let invoiceNumber = '';
       let invoiceDate = null;
@@ -1386,15 +1394,29 @@ export class OmieService {
           // Transformar pedidos em lote (sem API calls - tudo via cache)
           const transformStart = Date.now();
           const billingBatch: any[] = [];
+          const cancelledOrderIds: string[] = [];
           
           for (const order of orders) {
             const billingData = this.transformOrderToBillingFast(order, customersCache, sellersDbCache);
             if (billingData) {
-              billingBatch.push({ billingData, orderNumber: order.cabecalho?.numero_pedido || '' });
+              if (billingData._isCancelled) {
+                // Pedido cancelado no Omie → marcar como cancelado no banco
+                if (billingData.omieOrderId) {
+                  cancelledOrderIds.push(billingData.omieOrderId);
+                }
+              } else {
+                billingBatch.push({ billingData, orderNumber: order.cabecalho?.numero_pedido || '' });
+              }
             }
           }
           
-          console.log(`🔄 [SYNC-FAST] Transformados ${billingBatch.length}/${orders.length} pedidos (${Date.now() - transformStart}ms)`);
+          // Marcar pedidos cancelados no banco (em lote)
+          if (cancelledOrderIds.length > 0) {
+            console.log(`🚫 [SYNC-FAST] ${cancelledOrderIds.length} pedido(s) cancelado(s) encontrado(s) - marcando no banco...`);
+            await this.storage.markBillingsCancelledByOrderIds(cancelledOrderIds);
+          }
+          
+          console.log(`🔄 [SYNC-FAST] Transformados ${billingBatch.length}/${orders.length} pedidos (${cancelledOrderIds.length} cancelados) (${Date.now() - transformStart}ms)`);
           
           // Salvar no banco em lote
           const saveStart = Date.now();
