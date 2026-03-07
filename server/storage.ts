@@ -3996,7 +3996,8 @@ export class DatabaseStorage implements IStorage {
         AND b.invoice_date <= ${endStr}::date + interval '1 day' - interval '1 second'
         AND b.invoice_status = '100'
         AND b.is_cancelled = false
-        AND b.billing_type IN ('venda', 'devolução')
+        AND b.billing_type = 'venda'
+        AND b.cfop IN ('5.101','5101','5.102','5102','6.101','6101','6.102','6102')
       `;
       
       if (userSellerId) {
@@ -4060,40 +4061,15 @@ export class DatabaseStorage implements IStorage {
         ? (positivatedCustomers / totalCustomersInRoute) * 100 
         : 0;
 
-      // === 2. VENDAS: Somar faturamentos INCLUINDO apenas CFOPs de venda ===
-      // CFOPs a INCLUIR (mesma lógica do Omie):
-      // - 5.101 / 5101: Venda de Producao do Estabelecimento (intra-estado)
-      // - 5.102 / 5102: Venda de Mercadoria Adquirida (intra-estado)
-      // - 6.101 / 6101: Venda de Producao do Estabelecimento (inter-estado)
-      // - 6.102 / 6102: Venda de Mercadoria Adquirida (inter-estado)
-      // - 1.201 / 1201: Devolucao de Venda de Producao do Estabelecimento
-      const includedCFOPs = [
-        '5.101', '5101',  // Venda de produção (intra-estado)
-        '5.102', '5102',  // Venda de mercadoria (intra-estado)
-        '6.101', '6101',  // Venda de produção (inter-estado)
-        '6.102', '6102',  // Venda de mercadoria (inter-estado)
-        '1.201', '1201'   // Devolução de venda
-      ];
-
-      const validBillings = monthBillings.rows.filter((billing: any) => {
-        const cfop = (billing.cfop ?? '').toString().trim();
-        // IMPORTANTE: Se CFOP estiver vazio/null, incluir o billing
-        // Caso contrário, aplicar filtro de CFOPs permitidos
-        if (cfop === '') {
-          return true; // Incluir quando CFOP não está preenchido
-        }
-        return includedCFOPs.includes(cfop);
-      });
+      // === 2. VENDAS: Apenas CFOPs 5102 e 6102 são vendas reais ===
+      // CFOP 5102: Venda de Mercadoria Adquirida (intra-estado)
+      // CFOP 6102: Venda de Mercadoria Adquirida (inter-estado)
+      // O filtro já foi aplicado no SQL acima (billingDateFilter inclui cfop IN ('5102','5.102','6102','6.102'))
+      const validBillings = monthBillings.rows;
       
-      console.log(`  🔍 FILTRO CFOP:`, {
-        total: monthBillings.rows.length,
-        afterFilter: validBillings.length,
-        excluded: monthBillings.rows.length - validBillings.length,
-        nullCfops: monthBillings.rows.filter((b: any) => !b.cfop).length,
-        sample: monthBillings.rows.slice(0, 2).map((b: any) => ({
-          cfop: b.cfop,
-          isEmpty: !b.cfop || b.cfop.trim() === ''
-        }))
+      console.log(`  🔍 FATURAMENTOS VÁLIDOS (CFOP 5102/6102):`, {
+        total: validBillings.length,
+        cfops: [...new Set(validBillings.map((b: any) => b.cfop))],
       });
 
       const totalRevenue = validBillings.reduce((sum: number, billing: any) => {
