@@ -49,6 +49,7 @@ import {
   insertLeadSchema,
   omieStageLogs,
   orderHistory,
+  salesGoals,
 } from "@shared/schema";
 import { z } from "zod";
 import { sql, eq, and, gte, lte, lt, isNotNull, inArray, ne, or, isNull, asc, desc } from "drizzle-orm";
@@ -8742,6 +8743,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           billingSvcs.push({ svc: omieService, name: 'Padrão (env vars)' });
         }
+        // Include BSB (env vars) if not already covered by a registered instance
+        if (omieService && hasBillingInstances) {
+          const envKey = process.env.OMIE_APP_KEY;
+          const alreadyIncluded = billingInstances.some((i: any) => i.appKey === envKey);
+          if (!alreadyIncluded) {
+            billingSvcs.push({ svc: omieService, name: 'BSB' });
+          }
+        }
         
         let billingTotalProcessed = 0;
         let billingTotalImported = 0;
@@ -8924,6 +8933,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
           }
+          // Include BSB (env vars) if not already covered by a registered instance
+          if (hasInstances) {
+            const defaultSvc = getOmieService(storage);
+            if (defaultSvc) {
+              const envKey = process.env.OMIE_APP_KEY;
+              const alreadyIncluded = activeInstances.some((i: any) => i.appKey === envKey);
+              if (!alreadyIncluded) {
+                servicesToSync.push({ service: defaultSvc, name: 'BSB' });
+              }
+            }
+          }
           
           let totalProcessed = 0;
           for (let i = 0; i < servicesToSync.length; i++) {
@@ -9026,6 +9046,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           } else {
             servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
+          }
+          // Include BSB (env vars) if not already covered by a registered instance
+          if (hasInstances) {
+            const defaultSvc = getOmieService(storage);
+            if (defaultSvc) {
+              const envKey = process.env.OMIE_APP_KEY;
+              const alreadyIncluded = activeInstances.some((i: any) => i.appKey === envKey);
+              if (!alreadyIncluded) {
+                servicesToSync.push({ service: defaultSvc, name: 'BSB' });
+              }
+            }
           }
           
           let totalImported = 0;
@@ -9421,6 +9452,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } else {
         servicesToSync.push({ service: getOmieService(storage)!, name: 'Padrão (env vars)' });
+      }
+      // Include BSB (env vars) if not already covered by a registered instance
+      if (hasInstances) {
+        const defaultSvc = getOmieService(storage);
+        if (defaultSvc) {
+          const envKey = process.env.OMIE_APP_KEY;
+          const alreadyIncluded = activeInstances.some((i: any) => i.appKey === envKey);
+          if (!alreadyIncluded) {
+            servicesToSync.push({ service: defaultSvc, name: 'BSB' });
+          }
+        }
       }
       
       let totalInserted = 0;
