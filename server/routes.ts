@@ -11077,19 +11077,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ ok: false, message: 'Credenciais não configuradas nesta instância' });
       }
       const svc = OmieService.createFromInstance(instance, storage);
-      await svc.listPaymentTerms();
+      const tests: string[] = [];
+      let hasError = false;
+      let errorMsg = '';
+
+      // Test 1: Financial API (payment terms)
+      try {
+        await svc.listPaymentTerms();
+        tests.push('✅ Financeiro (parcelas)');
+      } catch (e: any) {
+        tests.push(`❌ Financeiro: ${e.message}`);
+        hasError = true;
+        errorMsg = e.message;
+      }
+
+      // Test 2: Products/Orders API (pedidos - page 1 only)
+      try {
+        await (svc as any).listOrders(1, 1);
+        tests.push('✅ Pedidos (vendas)');
+      } catch (e: any) {
+        const isPermission = e.message?.includes('inválida') || e.message?.includes('suspenso') || e.message?.includes('permissão');
+        tests.push(`❌ Pedidos: ${isPermission ? 'sem permissão no app Omie' : e.message}`);
+        if (!hasError) { hasError = true; errorMsg = e.message; }
+      }
+
       const elapsed = Date.now() - startTime;
-      return res.json({ ok: true, message: `Credenciais válidas — resposta em ${elapsed}ms`, instance: instance.name });
+      const allOk = !hasError;
+      return res.json({
+        ok: allOk,
+        message: allOk
+          ? `Todas as APIs OK — resposta em ${elapsed}ms`
+          : `Alguns testes falharam (${elapsed}ms)`,
+        tests,
+        instance: instance.name,
+        elapsed,
+      });
     } catch (error: any) {
       const elapsed = Date.now() - startTime;
       const msg = error?.message || String(error);
       console.error(`[TEST-CRED] ${req.params.id} falhou em ${elapsed}ms:`, msg);
-      const isInvalidKey = msg.includes('inválida') || msg.includes('suspenso') || msg.includes('invalid') || msg.includes('401') || msg.includes('403');
       return res.status(200).json({
         ok: false,
-        message: isInvalidKey
-          ? `Autenticação recusada pelo Omie: ${msg}`
-          : `Erro na comunicação com o Omie: ${msg}`,
+        message: `Erro ao testar instância: ${msg}`,
+        tests: [],
         instance: req.params.id,
         elapsed,
       });
@@ -20960,6 +20990,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`✅ [SYNC-PEDIDOS] ${instanceLabel}: ${result.totalProcessed} processados, ${result.imported} inseridos, ${result.updated} atualizados`);
         } catch (instError: any) {
           console.error(`❌ [SYNC-PEDIDOS] Erro na instância ${instanceLabel}:`, instError.message);
+        }
+
+        // Pausa entre instâncias para evitar erro "Consumo redundante" do Omie
+        if (idx < activeInstances.length - 1) {
+          console.log(`⏳ [SYNC-PEDIDOS] Aguardando 15s antes da próxima instância...`);
+          await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
 

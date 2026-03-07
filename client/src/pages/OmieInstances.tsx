@@ -153,10 +153,15 @@ export default function OmieInstances() {
     try {
       const result = await apiRequest("POST", `/api/omie/instances/${instance.id}/test`);
       setTestResults(prev => ({ ...prev, [instance.id]: result as any }));
+      const tests: string[] = (result as any).tests || [];
       if ((result as any).ok) {
-        toast({ title: `✅ ${instance.name} — OK`, description: (result as any).message });
+        toast({ title: `✅ ${instance.name} — OK`, description: tests.join(' | ') || (result as any).message });
       } else {
-        toast({ title: `❌ ${instance.name} — Falhou`, description: (result as any).message, variant: "destructive" });
+        toast({
+          title: `⚠️ ${instance.name} — Atenção`,
+          description: tests.length > 0 ? tests.join(' | ') : (result as any).message,
+          variant: "destructive",
+        });
       }
     } catch (err: any) {
       const msg = err.message || "Erro desconhecido";

@@ -216,13 +216,22 @@ export class OmieService {
       }
 
       // Retry transient auth/server errors (403/500/503) that may be Omie rate-limiting
+      const isRedundant = thrownError.message.includes('Consumo redundante') || thrownError.message.includes('REDUNDANT');
       const isTransient = (response.status === 403 || response.status === 503 || response.status >= 500) &&
         !thrownError.message.includes('NÃ£o existem registros') &&
         !thrownError.message.includes('Client-S001');
       
       if (isTransient && retryCount < MAX_RETRIES) {
-        const delayMs = RETRY_DELAYS_MS[retryCount] || 20000;
-        console.warn(`⚠️ [OMIE] Erro transiente (${response.status}) em ${call}, tentativa ${retryCount + 1}/${MAX_RETRIES}. Aguardando ${delayMs / 1000}s...`);
+        let delayMs = RETRY_DELAYS_MS[retryCount] || 20000;
+        // For REDUNDANT errors, Omie tells us exactly how long to wait — extract and respect it
+        if (isRedundant) {
+          const waitMatch = thrownError.message.match(/Aguarde\s+(\d+)\s+segundo/i);
+          const waitSeconds = waitMatch ? parseInt(waitMatch[1], 10) : 60;
+          delayMs = (waitSeconds + 5) * 1000; // wait specified time + 5s buffer
+          console.warn(`⚠️ [OMIE] Consumo redundante em ${call}, tentativa ${retryCount + 1}/${MAX_RETRIES}. Aguardando ${waitSeconds + 5}s (Omie solicitou ${waitSeconds}s)...`);
+        } else {
+          console.warn(`⚠️ [OMIE] Erro transiente (${response.status}) em ${call}, tentativa ${retryCount + 1}/${MAX_RETRIES}. Aguardando ${delayMs / 1000}s...`);
+        }
         await new Promise(resolve => setTimeout(resolve, delayMs));
         return this.makeRequest(endpoint, call, params, retryCount + 1);
       }
@@ -1432,6 +1441,9 @@ export class OmieService {
           onProgress?.({ message: `Página ${page} processada (${totalProcessed} salvos, ${imported} novos, ${updated} atualizados)`, currentPage: page, totalPages: 0, invoicesFound: totalFound, invoicesProcessed: totalProcessed, inserted: imported, updated, currentInvoice: '' });
           
           page++;
+          // Pausa entre páginas para evitar 403/Consumo redundante do Omie
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
           if (page > 200) {
             console.log('⚠️ [SYNC-FAST] Limite de 200 páginas atingido');
             hasMorePages = false;
