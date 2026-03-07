@@ -6265,25 +6265,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Merge duplicate Ezequiel seller records (BSB omie-vendor-10457429564 → 0e92757a)
+  // Diagnostic: show all Ezequiel users + their sales_goals references
+  app.get('/api/admin/diagnose-bsb-sellers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      // All users matching Ezequiel
+      const ezequielUsers = await db.execute(sql`
+        SELECT id, first_name, last_name, email, role, omie_vendor_code, omie_vendor_codes, is_active
+        FROM users 
+        WHERE email ILIKE '%ezequiel%' OR first_name ILIKE '%ezequiel%'
+        ORDER BY id
+      `);
+
+      // sales_goals references for these users
+      const goalRefs = await db.execute(sql`
+        SELECT sg.seller_id, sg.month, sg.year, sg.revenue_goal, u.first_name, u.email, u.omie_vendor_codes
+        FROM sales_goals sg
+        LEFT JOIN users u ON u.id = sg.seller_id
+        WHERE sg.year = 2026 AND sg.month = 3
+        ORDER BY u.first_name
+      `);
+
+      // BSB customers seller distribution
+      const bsbCustomerSellers = await db.execute(sql`
+        SELECT c.seller_id, u.first_name, u.email, COUNT(*) as customer_count
+        FROM customers c
+        LEFT JOIN users u ON u.id = c.seller_id
+        WHERE c.omie_instance_id = '9ca142af-2695-4ab0-9055-200745c0283e'
+        GROUP BY c.seller_id, u.first_name, u.email
+        ORDER BY customer_count DESC
+        LIMIT 10
+      `);
+
+      // BSB billings seller distribution
+      const bsbBillingSellers = await db.execute(sql`
+        SELECT b.seller_id, b.seller_name, COUNT(*) as billing_count, SUM(b.total_value) as total_value
+        FROM billings b
+        WHERE b.omie_instance_id = '9ca142af-2695-4ab0-9055-200745c0283e'
+          AND b.invoice_status = '100'
+          AND b.is_cancelled = false
+          AND b.billing_type = 'venda'
+        GROUP BY b.seller_id, b.seller_name
+        ORDER BY billing_count DESC
+        LIMIT 10
+      `);
+
+      res.json({
+        ezequielUsers: ezequielUsers.rows,
+        march2026Goals: goalRefs.rows,
+        bsbCustomerSellers: bsbCustomerSellers.rows,
+        bsbBillingSellers: bsbBillingSellers.rows,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Merge duplicate Ezequiel seller records (BSB omie-vendor-10457429564 → main Ezequiel DF user)
   app.post('/api/admin/merge-bsb-sellers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const SOURCE_ID = 'omie-vendor-10457429564';
-      const TARGET_ID = '0e92757a-4f40-4428-9b99-ea7a960befbf';
       const BSB_INSTANCE = '9ca142af-2695-4ab0-9055-200745c0283e';
       const SERV_INSTANCE = '0f2e5d32-ad16-48a2-bc48-8ac15cec531b';
 
-      console.log(`\n🔀 Mesclando vendedores BSB: ${SOURCE_ID} → ${TARGET_ID}`);
-
-      // 1. Add BSB and SERV vendor codes to Ezequiel DF's omie_vendor_codes
-      // Use sql.raw for JSONB keys since PostgreSQL cannot infer parameter types in jsonb_build_object
-      await db.execute(sql`
-        UPDATE users
-        SET omie_vendor_codes = COALESCE(omie_vendor_codes, '{}'::jsonb) || 
-          ('{"${sql.raw(BSB_INSTANCE)}":"10457429564","${sql.raw(SERV_INSTANCE)}":"11015081752"}')::jsonb
-        WHERE id = ${TARGET_ID}
+      // Discover TARGET dynamically: find Ezequiel users who have sales goals (the "real" Ezequiel DF)
+      const goalUsersResult = await db.execute(sql`
+        SELECT DISTINCT u.id, u.first_name, u.email, u.omie_vendor_codes
+        FROM users u
+        INNER JOIN sales_goals sg ON sg.seller_id = u.id
+        WHERE (u.email ILIKE '%ezequiel%' OR u.first_name ILIKE '%ezequiel%')
+          AND u.id != ${SOURCE_ID}
+        LIMIT 1
       `);
-      console.log(`✅ 1. omie_vendor_codes atualizado para ${TARGET_ID}`);
+
+      let TARGET_ID: string;
+      if (goalUsersResult.rows.length > 0) {
+        TARGET_ID = (goalUsersResult.rows[0] as any).id;
+        console.log(`\n🔀 TARGET dinâmico encontrado via sales_goals: ${TARGET_ID} (${(goalUsersResult.rows[0] as any).email})`);
+      } else {
+        // Fallback: find any Ezequiel user who is not the BSB duplicate
+        const ezResult = await db.execute(sql`
+          SELECT id, first_name, email FROM users
+          WHERE (email ILIKE '%ezequiel%' OR first_name ILIKE '%ezequiel%')
+            AND id != ${SOURCE_ID}
+            AND is_active = true
+          ORDER BY id LIMIT 1
+        `);
+        if (ezResult.rows.length === 0) {
+          return res.status(400).json({ success: false, message: 'Nenhum usuário Ezequiel DF encontrado para usar como destino' });
+        }
+        TARGET_ID = (ezResult.rows[0] as any).id;
+        console.log(`\n🔀 TARGET fallback: ${TARGET_ID} (${(ezResult.rows[0] as any).email})`);
+      }
+
+      console.log(`🔀 Mesclando vendedores BSB: ${SOURCE_ID} → ${TARGET_ID}`);
+
+      // 1. Add BSB and SERV vendor codes to all Ezequiel users (TARGET + any others with sales goals)
+      // Update ALL non-source Ezequiel users to ensure the one in sales_goals gets the BSB codes
+      const allEzequielResult = await db.execute(sql`
+        SELECT id FROM users
+        WHERE (email ILIKE '%ezequiel%' OR first_name ILIKE '%ezequiel%')
+          AND id != ${SOURCE_ID}
+      `);
+      const allEzequielIds = allEzequielResult.rows.map((r: any) => r.id);
+      console.log(`  Atualizando omie_vendor_codes para ${allEzequielIds.length} usuários Ezequiel: ${allEzequielIds.join(', ')}`);
+
+      for (const ezId of allEzequielIds) {
+        await db.execute(sql`
+          UPDATE users
+          SET omie_vendor_codes = COALESCE(omie_vendor_codes, '{}'::jsonb) || 
+            ('{"${sql.raw(BSB_INSTANCE)}":"10457429564","${sql.raw(SERV_INSTANCE)}":"11015081752"}')::jsonb
+          WHERE id = ${ezId}
+        `);
+        console.log(`  ✅ omie_vendor_codes atualizado: ${ezId}`);
+      }
+      console.log(`✅ 1. omie_vendor_codes atualizado para todos os usuários Ezequiel`);
 
       // 2. Update BSB customers pointing to SOURCE → TARGET
       const custResult = await db.execute(sql`
@@ -6311,7 +6406,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       console.log(`✅ 4. Billings BSB null seller_id corrigidos: ${billNullResult.rowCount}`);
 
-      // 4b. Populate seller_name for BSB billings
+      // 4b. Also update customers still pointing to 0e92757a (old target) → new TARGET
+      const LEGACY_TARGET = '0e92757a-4f40-4428-9b99-ea7a960befbf';
+      if (LEGACY_TARGET !== TARGET_ID) {
+        const legacyCustResult = await db.execute(sql`
+          UPDATE customers SET seller_id = ${TARGET_ID}
+          WHERE seller_id = ${LEGACY_TARGET}
+        `);
+        const legacyBillResult = await db.execute(sql`
+          UPDATE billings SET seller_id = ${TARGET_ID}
+          WHERE seller_id = ${LEGACY_TARGET}
+        `);
+        console.log(`✅ 4c. Legacy target migrado: ${legacyCustResult.rowCount} customers, ${legacyBillResult.rowCount} billings`);
+      }
+
+      // 5. Populate seller_name for BSB billings
       await db.execute(sql`
         UPDATE billings b
         SET seller_name = COALESCE(
@@ -6323,19 +6432,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND b.seller_id = u.id
           AND (b.seller_name IS NULL OR b.seller_name = '')
       `);
-      console.log(`✅ 4b. seller_name BSB preenchidos`);
+      console.log(`✅ 5. seller_name BSB preenchidos`);
 
-      // 5. Deactivate the now-redundant source user
+      // 6. Deactivate the now-redundant source user
       await db.execute(sql`
         UPDATE users SET is_active = false WHERE id = ${SOURCE_ID}
       `);
-      console.log(`✅ 5. Usuário duplicado desativado: ${SOURCE_ID}`);
+      console.log(`✅ 6. Usuário duplicado desativado: ${SOURCE_ID}`);
 
       res.json({
         success: true,
         message: 'Mesclagem concluída com sucesso',
         details: {
-          vendorCodesAdded: ['10457429564 (BSB)', '11015081752 (SERV)'],
+          targetId: TARGET_ID,
+          allEzequielIdsUpdated: allEzequielIds,
           customersUpdated: custResult.rowCount,
           billingsSellerUpdated: billSellerResult.rowCount,
           billingsNullFixed: billNullResult.rowCount,
