@@ -122,7 +122,10 @@ export class OmieService {
     );
   }
 
-  private async makeRequest(endpoint: string, call: string, params: any = {}) {
+  private async makeRequest(endpoint: string, call: string, params: any = {}, retryCount = 0): Promise<any> {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS_MS = [3000, 6000, 12000];
+
     const payload = {
       call,
       app_key: this.config.appKey,
@@ -177,6 +180,7 @@ export class OmieService {
       }
       
       // Tentar parsear a resposta de erro para obter mais detalhes
+      let thrownError: Error;
       try {
         const errorData = JSON.parse(errorText);
         
@@ -194,18 +198,32 @@ export class OmieService {
             userMessage = 'Erro de permissão no Omie. Verifique se a aplicação tem acesso a este recurso.';
           }
           
-          throw new Error(userMessage);
+          thrownError = new Error(userMessage);
+        } else {
+          const errorMessage = errorData.faultstring || errorData.message || `${response.status}: ${response.statusText}`;
+          thrownError = new Error(errorMessage);
         }
-        
-        const errorMessage = errorData.faultstring || errorData.message || `${response.status}: ${response.statusText}`;
-        throw new Error(errorMessage);
       } catch (parseError) {
         if (parseError instanceof Error && parseError.message !== errorText) {
-          throw parseError;
+          thrownError = parseError;
+        } else {
+          thrownError = new Error(`${response.status}: ${errorText || response.statusText}`);
         }
-        // Se não conseguir fazer parse, lançar erro com o texto da resposta
-        throw new Error(`${response.status}: ${errorText || response.statusText}`);
       }
+
+      // Retry transient auth/server errors (403/500/503) that may be Omie rate-limiting
+      const isTransient = (response.status === 403 || response.status === 503 || response.status >= 500) &&
+        !thrownError.message.includes('NÃ£o existem registros') &&
+        !thrownError.message.includes('Client-S001');
+      
+      if (isTransient && retryCount < MAX_RETRIES) {
+        const delayMs = RETRY_DELAYS_MS[retryCount] || 20000;
+        console.warn(`⚠️ [OMIE] Erro transiente (${response.status}) em ${call}, tentativa ${retryCount + 1}/${MAX_RETRIES}. Aguardando ${delayMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return this.makeRequest(endpoint, call, params, retryCount + 1);
+      }
+
+      throw thrownError;
     }
 
     const data = await response.json();
