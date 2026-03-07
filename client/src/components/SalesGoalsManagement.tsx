@@ -264,7 +264,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                   Gerenciar Metas de Faturamento
                 </CardTitle>
                 <CardDescription>
-                  Defina a meta de faturamento mensal para cada vendedor ou equipe de telemarketing.
+                  Defina a meta de faturamento mensal para cada vendedor ou atendente de telemarketing individualmente.
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
@@ -555,13 +555,17 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     </SelectItem>
                   ))}
                   {telemarketingUsers.length > 0 && (
-                    <SelectItem value="TELEMARKETING">
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4" />
-                        Vendas Internas (Telemarketing)
-                        <span className="text-xs text-muted-foreground">({telemarketingUsers.length} membros)</span>
+                    <>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1">
+                        Telemarketing (individual)
                       </div>
-                    </SelectItem>
+                      {telemarketingUsers.map((s: User) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.firstName} {s.lastName}
+                          <span className="text-xs text-muted-foreground ml-2">(Telemarketing)</span>
+                        </SelectItem>
+                      ))}
+                    </>
                   )}
                 </SelectContent>
               </Select>

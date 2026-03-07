@@ -3320,14 +3320,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         u.isActive && (
           goalSellerIds.includes(u.id) ||
           (u.role === 'vendedor' && u.omieVendorCode) ||
-          (u.sellerType && ['vendedor_clt', 'vendedor_pj'].includes(u.sellerType))
+          (u.sellerType && ['vendedor_clt', 'vendedor_pj'].includes(u.sellerType)) ||
+          u.role === 'telemarketing' ||
+          u.sellerType === 'telemarketing'
         )
       );
 
-      const individualSellers = relevantSellers.filter(u => getEffectiveSellerType(u) !== 'telemarketing');
-      const telemarketingUsers = allUsers.filter(u =>
-        u.isActive && (u.sellerType === 'telemarketing' || u.role === 'telemarketing')
-      );
+      // All sellers (including telemarketing) are processed individually
+      const individualSellers = relevantSellers;
 
       const results: any[] = [];
 
@@ -3376,53 +3376,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Telemarketing (collective)
-      let telemarketingResult: any = null;
-      const tmGoal = goals.find((g: any) => g.sellerId === 'TELEMARKETING');
-      if (telemarketingUsers.length > 0 || tmGoal) {
-        try {
-          const revenueGoal = tmGoal ? parseFloat(tmGoal.revenueGoal || '0') : 0;
-
-          let totalRevenue = 0;
-          const tmRevenueByInstance: Record<string, number> = {};
-          for (const tmUser of telemarketingUsers) {
-            try {
-              const metrics = await storage.getSalesMetrics(tmUser.id, targetMonth, targetYear);
-              totalRevenue += (metrics.totalRevenue || 0);
-              for (const [instId, val] of Object.entries(metrics.revenueByInstance || {})) {
-                tmRevenueByInstance[instId] = (tmRevenueByInstance[instId] || 0) + (val as number);
-              }
-            } catch (tmErr: any) {
-              console.error(`⚠️ [COMMISSION] Error processing TM user ${tmUser.id}:`, tmErr.message);
-            }
-          }
-          const projection = workingDaysElapsed > 0
-            ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
-            : 0;
-          const achievementPct = revenueGoal > 0 ? (projection / revenueGoal) * 100 : 0;
-          const commission = getCommissionInfo('telemarketing', achievementPct);
-
-          telemarketingResult = {
-            sellerId: 'TELEMARKETING',
-            sellerName: 'Vendas Internas (Telemarketing)',
-            sellerType: 'telemarketing',
-            members: telemarketingUsers.map(u => ({
-              id: u.id,
-              name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-            })),
-            revenueGoal,
-            revenueActual: totalRevenue,
-            revenueByInstance: tmRevenueByInstance,
-            revenueProjected: projection,
-            achievementPct: Math.round(achievementPct * 100) / 100,
-            commissionRate: commission.rate,
-            commissionTier: commission.tier,
-            commissionTierLabel: commission.tierLabel,
-          };
-        } catch (tmError: any) {
-          console.error(`⚠️ [COMMISSION] Error processing telemarketing:`, tmError.message);
-        }
-      }
+      // Telemarketing is now processed individually (each user has their own row in results[])
+      // Keep telemarketingResult as null — no more collective aggregation
+      const telemarketingResult: any = null;
 
       // Save/update history
       const allResults = [...results, ...(telemarketingResult ? [telemarketingResult] : [])];
