@@ -11068,6 +11068,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/omie/instances/:id/test', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    const startTime = Date.now();
+    try {
+      const instance = await storage.getOmieInstance(req.params.id);
+      if (!instance) return res.status(404).json({ ok: false, message: 'Instância não encontrada' });
+      if (!instance.appKey || !instance.appSecret) {
+        return res.status(400).json({ ok: false, message: 'Credenciais não configuradas nesta instância' });
+      }
+      const svc = OmieService.createFromInstance(instance, storage);
+      await svc.listPaymentTerms();
+      const elapsed = Date.now() - startTime;
+      return res.json({ ok: true, message: `Credenciais válidas — resposta em ${elapsed}ms`, instance: instance.name });
+    } catch (error: any) {
+      const elapsed = Date.now() - startTime;
+      const msg = error?.message || String(error);
+      console.error(`[TEST-CRED] ${req.params.id} falhou em ${elapsed}ms:`, msg);
+      const isInvalidKey = msg.includes('inválida') || msg.includes('suspenso') || msg.includes('invalid') || msg.includes('401') || msg.includes('403');
+      return res.status(200).json({
+        ok: false,
+        message: isInvalidKey
+          ? `Autenticação recusada pelo Omie: ${msg}`
+          : `Erro na comunicação com o Omie: ${msg}`,
+        instance: req.params.id,
+        elapsed,
+      });
+    }
+  });
+
   // Rota TEMPORÁRIA (sem auth) para listar códigos de parcela do Omie
   app.get('/api/omie/payment-terms-debug', async (req: any, res) => {
     try {

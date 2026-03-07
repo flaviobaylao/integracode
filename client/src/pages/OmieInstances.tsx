@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X, CreditCard } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X, CreditCard, Wifi, WifiOff, CheckCircle2, AlertCircle } from "lucide-react";
 import type { OmieInstance } from "@shared/schema";
 
 interface OmieInstanceFormData {
@@ -144,6 +144,28 @@ export default function OmieInstances() {
   });
 
   const [syncingInstanceId, setSyncingInstanceId] = useState<string | null>(null);
+  const [testingInstanceId, setTestingInstanceId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
+
+  const handleTestCredentials = async (instance: OmieInstance) => {
+    setTestingInstanceId(instance.id);
+    setTestResults(prev => ({ ...prev, [instance.id]: null }));
+    try {
+      const result = await apiRequest("POST", `/api/omie/instances/${instance.id}/test`);
+      setTestResults(prev => ({ ...prev, [instance.id]: result as any }));
+      if ((result as any).ok) {
+        toast({ title: `✅ ${instance.name} — OK`, description: (result as any).message });
+      } else {
+        toast({ title: `❌ ${instance.name} — Falhou`, description: (result as any).message, variant: "destructive" });
+      }
+    } catch (err: any) {
+      const msg = err.message || "Erro desconhecido";
+      setTestResults(prev => ({ ...prev, [instance.id]: { ok: false, message: msg } }));
+      toast({ title: `❌ ${instance.name} — Erro`, description: msg, variant: "destructive" });
+    } finally {
+      setTestingInstanceId(null);
+    }
+  };
   
   const syncClientsMutation = useMutation({
     mutationFn: async (instanceId: string) => {
@@ -454,6 +476,29 @@ export default function OmieInstances() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {testResults[instance.id] !== undefined && testResults[instance.id] !== null && (
+                            <span title={testResults[instance.id]!.message}>
+                              {testResults[instance.id]!.ok ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <WifiOff className="h-4 w-4 text-red-500" />
+                              )}
+                            </span>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleTestCredentials(instance)}
+                            disabled={testingInstanceId === instance.id || !instance.isActive}
+                            title="Testar credenciais"
+                            className="text-purple-600 hover:text-purple-700"
+                          >
+                            {testingInstanceId === instance.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Wifi className="h-4 w-4" />
+                            )}
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"
