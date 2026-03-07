@@ -3892,8 +3892,21 @@ export class DatabaseStorage implements IStorage {
         }
       }
       
+      // Build ALL possible seller ID formats used across instances:
+      // - customers.seller_id uses 'omie-vendor-{code}' format (one per instance)
+      // - billings.seller_id uses raw numeric code (from fetchSellerData) OR 'omie-vendor-{code}' (from syncVendors cache)
+      const allSellerUserIds = [...new Set([
+        userSellerId,
+        ...allVendorCodes.map(code => `omie-vendor-${code}`)
+      ].filter(Boolean))] as string[];
+      
+      const allBillingSellerIds = [...new Set([
+        ...allVendorCodes,
+        ...allVendorCodes.map(code => `omie-vendor-${code}`)
+      ].filter(Boolean))] as string[];
+      
       const omieVendorCode = allVendorCodes.length > 0 ? allVendorCodes[0] : undefined;
-      console.log(`  IDs resolvidos:`, { userSellerId, allVendorCodes });
+      console.log(`  IDs resolvidos:`, { userSellerId, allVendorCodes, allSellerUserIds, allBillingSellerIds });
       
       // Feriados nacionais brasileiros (formato: 'YYYY-MM-DD')
       const nationalHolidays = new Set([
@@ -3993,13 +4006,13 @@ export class DatabaseStorage implements IStorage {
             FROM billings b
             INNER JOIN customers c ON c.id = CONCAT('omie-client-', b.omie_customer_code)
             WHERE ${billingDateFilter}
-              AND c.seller_id = ${userSellerId}
-            ${allVendorCodes.length > 0 ? sql`
+              AND c.seller_id IN (${sql.join(allSellerUserIds.map(id => sql`${id}`), sql`, `)})
+            ${allBillingSellerIds.length > 0 ? sql`
             UNION
             SELECT b.id, b.customer_document, b.cfop, b.total_value, b.seller_id, b.billing_type, b.omie_instance_id
             FROM billings b
             WHERE ${billingDateFilter}
-              AND b.seller_id IN (${sql.join(allVendorCodes.map(c => sql`${c}`), sql`, `)})
+              AND b.seller_id IN (${sql.join(allBillingSellerIds.map(c => sql`${c}`), sql`, `)})
             ` : sql``}
           ) combined
         `);
