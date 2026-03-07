@@ -6310,6 +6310,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       console.log(`✅ 4. Billings BSB null seller_id corrigidos: ${billNullResult.rowCount}`);
 
+      // 4b. Populate seller_name for BSB billings
+      await db.execute(sql`
+        UPDATE billings b
+        SET seller_name = COALESCE(
+          NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''),
+          u.email, b.seller_id
+        )
+        FROM users u
+        WHERE b.omie_instance_id = ${BSB_INSTANCE}
+          AND b.seller_id = u.id
+          AND (b.seller_name IS NULL OR b.seller_name = '')
+      `);
+      console.log(`✅ 4b. seller_name BSB preenchidos`);
+
       // 5. Deactivate the now-redundant source user
       await db.execute(sql`
         UPDATE users SET is_active = false WHERE id = ${SOURCE_ID}
@@ -6330,6 +6344,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('❌ Erro na mesclagem:', error);
       res.status(500).json({ success: false, message: 'Erro na mesclagem', error: error.message });
+    }
+  });
+
+  // Fix billing seller_id + seller_name for ALL instances (via customer path)
+  app.post('/api/admin/fix-billing-sellers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      console.log(`\n🔧 Corrigindo seller_id e seller_name em todos os faturamentos...`);
+
+      // Step 1: Assign seller_id from customer where billing has null seller_id
+      const r1 = await db.execute(sql`
+        UPDATE billings b
+        SET seller_id = c.seller_id
+        FROM customers c
+        WHERE b.seller_id IS NULL
+          AND c.id = CONCAT('omie-client-', b.omie_customer_code)
+          AND c.seller_id IS NOT NULL
+      `);
+      console.log(`✅ Step 1: seller_id atribuídos via customer: ${r1.rowCount}`);
+
+      // Step 2: Populate seller_name from users table
+      const r2 = await db.execute(sql`
+        UPDATE billings b
+        SET seller_name = COALESCE(
+          NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''),
+          u.email,
+          b.seller_id
+        )
+        FROM users u
+        WHERE b.seller_id = u.id
+          AND (b.seller_name IS NULL OR b.seller_name = '')
+      `);
+      console.log(`✅ Step 2: seller_name preenchidos: ${r2.rowCount}`);
+
+      // Summary
+      const summary = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE seller_id IS NOT NULL) as with_seller_id,
+          COUNT(*) FILTER (WHERE seller_name IS NOT NULL AND seller_name != '') as with_seller_name,
+          COUNT(*) as total
+        FROM billings
+      `);
+      const row = (summary.rows[0] as any);
+
+      res.json({
+        success: true,
+        message: 'Vendedores corrigidos em todos os faturamentos',
+        details: {
+          sellerIdAssigned: r1.rowCount,
+          sellerNameFilled: r2.rowCount,
+          totalBillings: row.total,
+          nowWithSellerId: row.with_seller_id,
+          nowWithSellerName: row.with_seller_name,
+        }
+      });
+    } catch (error: any) {
+      console.error('❌ Erro ao corrigir sellers de billings:', error);
+      res.status(500).json({ success: false, message: 'Erro ao corrigir sellers', error: error.message });
     }
   });
 

@@ -63,6 +63,10 @@ export default function SystemAdmin() {
   const [isMerging, setIsMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<any>(null);
 
+  // Estados para corrigir sellers em faturamentos
+  const [isFixingSellers, setIsFixingSellers] = useState(false);
+  const [fixSellersResult, setFixSellersResult] = useState<any>(null);
+
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
       setLocation('/');
@@ -140,6 +144,21 @@ export default function SystemAdmin() {
       });
     } finally {
       setIsRecalculating(false);
+    }
+  };
+
+  const handleFixBillingSellers = async () => {
+    setIsFixingSellers(true);
+    setFixSellersResult(null);
+    try {
+      const response = await apiRequest('POST', '/api/admin/fix-billing-sellers', {});
+      setFixSellersResult(response);
+      toast({ title: 'Vendedores corrigidos!', description: 'seller_id e seller_name atualizados em todos os faturamentos.' });
+    } catch (error: any) {
+      setFixSellersResult({ success: false, message: error.message });
+      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
+    } finally {
+      setIsFixingSellers(false);
     }
   };
 
@@ -457,6 +476,56 @@ export default function SystemAdmin() {
                 </Alert>
               )}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5" />
+            Corrigir Vendedores em Faturamentos
+          </CardTitle>
+          <CardDescription>
+            Preenche os campos Vendedor (seller_id e seller_name) em TODOS os faturamentos de todas as
+            instâncias Omie, usando os dados de clientes como referência. Resolve o "-" na coluna Vendedor
+            e garante que as metas de faturamento contabilizem corretamente.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Operação idempotente — pode ser executada múltiplas vezes sem prejuízo.
+              Leva alguns segundos para processar todos os registros.
+            </AlertDescription>
+          </Alert>
+          <Button onClick={handleFixBillingSellers} disabled={isFixingSellers}>
+            {isFixingSellers ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Corrigindo...</>
+            ) : (
+              <><RefreshCw className="mr-2 h-4 w-4" />Corrigir Vendedores em Todos os Faturamentos</>
+            )}
+          </Button>
+          {fixSellersResult && (
+            <Alert variant={fixSellersResult.success ? 'default' : 'destructive'} className={fixSellersResult.success ? 'bg-green-50 border-green-200' : ''}>
+              {fixSellersResult.success ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <AlertCircle className="h-4 w-4" />}
+              <AlertDescription>
+                {fixSellersResult.success ? (
+                  <div className="space-y-1">
+                    <div className="font-medium text-green-800">{fixSellersResult.message}</div>
+                    <div className="text-sm text-green-700 grid grid-cols-2 gap-1 mt-2">
+                      <div>seller_id atribuídos: <strong>{fixSellersResult.details?.sellerIdAssigned}</strong></div>
+                      <div>seller_name preenchidos: <strong>{fixSellersResult.details?.sellerNameFilled}</strong></div>
+                      <div>Total faturamentos: <strong>{fixSellersResult.details?.totalBillings}</strong></div>
+                      <div>Com seller_name: <strong>{fixSellersResult.details?.nowWithSellerName}</strong></div>
+                    </div>
+                  </div>
+                ) : (
+                  <span><strong>Erro:</strong> {fixSellersResult.message}</span>
+                )}
+              </AlertDescription>
+            </Alert>
           )}
         </CardContent>
       </Card>
