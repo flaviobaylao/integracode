@@ -117,6 +117,11 @@ async function syncComplete(horario: string) {
       activeInstances.push({ id: fallback.omieInstanceId || 'default', name: 'Default' });
     }
 
+    // Verificar se BSB (env vars) está coberto — adicionar se não estiver
+    const envKey = process.env.OMIE_APP_KEY;
+    const bsbAlreadyCovered = activeInstances.some((i: any) => i.appKey === envKey);
+    const bsbEnvSvc = (!bsbAlreadyCovered) ? getOmieService(storage) : null;
+
     console.log(`🏢 [${horario}] ${activeInstances.length} instância(s) ativa(s): ${activeInstances.map((i: any) => i.name).join(', ')}`);
 
     const globalResults = {
@@ -151,6 +156,18 @@ async function syncComplete(horario: string) {
         const errorMsg = `[${label}] Erro ao sincronizar vendedores: ${error.message}`;
         globalResults.errors.push(errorMsg);
         console.error(`❌ [${horario}] ${errorMsg}`);
+      }
+    }
+
+    // 0.0 Sincronizar vendedores BSB (env vars) antes do dedup para incluir códigos BSB no merge
+    if (bsbEnvSvc) {
+      try {
+        console.log(`👤 [${horario}] [BSB] Sincronizando vendedores (env vars)...`);
+        const vendorResult = await bsbEnvSvc.syncVendors();
+        console.log(`✅ [${horario}] [BSB] Vendedores: ${vendorResult.totalProcessed || 0} processados, ${vendorResult.imported || 0} novos`);
+      } catch (error: any) {
+        globalResults.errors.push(`[BSB] Erro ao sincronizar vendedores: ${error.message}`);
+        console.error(`❌ [${horario}] [BSB] Erro ao sincronizar vendedores: ${error.message}`);
       }
     }
 
@@ -274,10 +291,52 @@ async function syncComplete(horario: string) {
       }
     }
 
+    // Sincronizar BSB (env vars) — clientes, faturamentos e débitos (vendedores já sincronizados acima)
+    if (bsbEnvSvc) {
+      const bsbLabel = 'BSB';
+      console.log(`\n🏢 [${horario}] Sincronizando instância: ${bsbLabel} (env vars) — clientes/faturamentos/débitos...`);
+
+      try {
+        console.log(`📋 [${horario}] [${bsbLabel}] Sincronizando clientes ativos...`);
+        const clientResult = await bsbEnvSvc.syncAllClients();
+        globalResults.clients.totalProcessed += clientResult.totalProcessed || 0;
+        globalResults.clients.imported += clientResult.imported || 0;
+        globalResults.clients.updated += clientResult.updated || 0;
+        console.log(`✅ [${horario}] [${bsbLabel}] Clientes: ${clientResult.totalProcessed || 0} processados`);
+      } catch (error: any) {
+        globalResults.errors.push(`[${bsbLabel}] Erro ao sincronizar clientes: ${error.message}`);
+        console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar clientes: ${error.message}`);
+      }
+
+      try {
+        console.log(`💰 [${horario}] [${bsbLabel}] Sincronizando pedidos dos últimos 60 dias...`);
+        const billingResult = await bsbEnvSvc.syncAllOrders();
+        globalResults.billings.totalProcessed += billingResult.totalProcessed || 0;
+        globalResults.billings.imported += billingResult.imported || 0;
+        globalResults.billings.updated += billingResult.updated || 0;
+        console.log(`✅ [${horario}] [${bsbLabel}] Notas fiscais: ${billingResult.totalProcessed || 0} processadas`);
+      } catch (error: any) {
+        globalResults.errors.push(`[${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
+        console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar notas fiscais: ${error.message}`);
+      }
+
+      try {
+        console.log(`📊 [${horario}] [${bsbLabel}] Sincronizando débitos vencidos...`);
+        const debtResult = await bsbEnvSvc.getOverdueDebts();
+        await storage.syncOverdueDebts(debtResult.debts, false, bsbEnvSvc.omieInstanceId);
+        globalResults.overdueDebts.totalClients += debtResult.totalClients || 0;
+        globalResults.overdueDebts.totalAmount += debtResult.totalAmount || 0;
+        console.log(`✅ [${horario}] [${bsbLabel}] Débitos: ${debtResult.totalClients} clientes`);
+      } catch (error: any) {
+        globalResults.errors.push(`[${bsbLabel}] Erro ao sincronizar débitos: ${error.message}`);
+        console.error(`❌ [${horario}] [${bsbLabel}] Erro ao sincronizar débitos: ${error.message}`);
+      }
+    }
+
     // Atualizar status final
     await storage.updateSyncStatus('omie_billings', { 
       status: globalResults.errors.some(e => e.includes('notas fiscais')) ? 'error' : 'success', 
-      message: `${globalResults.billings.imported} importados, ${globalResults.billings.updated} atualizados (${activeInstances.length} instâncias)`,
+      message: `${globalResults.billings.imported} importados, ${globalResults.billings.updated} atualizados (${activeInstances.length + (bsbEnvSvc ? 1 : 0)} instâncias)`,
       recordsProcessed: globalResults.billings.totalProcessed,
       currentProgress: 100,
       lastFinishedAt: nowBrazil()
