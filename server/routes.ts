@@ -6276,10 +6276,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`\n🔀 Mesclando vendedores BSB: ${SOURCE_ID} → ${TARGET_ID}`);
 
       // 1. Add BSB and SERV vendor codes to Ezequiel DF's omie_vendor_codes
+      // Use sql.raw for JSONB keys since PostgreSQL cannot infer parameter types in jsonb_build_object
       await db.execute(sql`
         UPDATE users
-        SET omie_vendor_codes = omie_vendor_codes || 
-          jsonb_build_object(${BSB_INSTANCE}, '10457429564', ${SERV_INSTANCE}, '11015081752')
+        SET omie_vendor_codes = COALESCE(omie_vendor_codes, '{}'::jsonb) || 
+          ('{"${sql.raw(BSB_INSTANCE)}":"10457429564","${sql.raw(SERV_INSTANCE)}":"11015081752"}')::jsonb
         WHERE id = ${TARGET_ID}
       `);
       console.log(`✅ 1. omie_vendor_codes atualizado para ${TARGET_ID}`);
