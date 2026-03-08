@@ -21142,48 +21142,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(202).json({ message: `Sincronização de ${activeInstances.length} instância(s) iniciada em background.` });
 
-      console.log(`\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DE ${activeInstances.length} INSTÂNCIA(S) OMIE (últimos 60 dias)...\n`);
+      console.log(`\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DE ${activeInstances.length} INSTÂNCIA(S) OMIE (paralelo)...\n`);
 
       const totals = { totalProcessed: 0, imported: 0, updated: 0, skipped: 0 };
+      // Contadores por instância para progress reporting paralelo
+      const instanceProgress: Record<string, { processed: number; imported: number; updated: number }> = {};
 
-      for (let idx = 0; idx < activeInstances.length; idx++) {
-        const inst = activeInstances[idx];
-        const instanceLabel = inst.name || inst.id;
-        console.log(`\n🏢 [SYNC-PEDIDOS] Instância ${idx + 1}/${activeInstances.length}: ${instanceLabel}`);
-        billingSyncState.message = `[${instanceLabel}] Sincronizando pedidos (${idx + 1}/${activeInstances.length})...`;
+      // Rodar todas as instâncias em paralelo para máxima velocidade
+      const instanceResults = await Promise.allSettled(
+        activeInstances.map(async (inst) => {
+          const instanceLabel = inst.name || inst.id;
+          instanceProgress[instanceLabel] = { processed: 0, imported: 0, updated: 0 };
+          console.log(`\n🏢 [SYNC-PEDIDOS] Iniciando ${instanceLabel}...`);
 
-        try {
           const svc = await getOmieServiceForInstance(storage, inst.id);
           if (!svc) {
-            console.log(`⚠️ [SYNC-PEDIDOS] Instância ${instanceLabel} sem credenciais válidas, pulando...`);
-            continue;
+            console.log(`⚠️ [SYNC-PEDIDOS] ${instanceLabel}: sem credenciais válidas, pulando...`);
+            return { instanceLabel, totalProcessed: 0, imported: 0, updated: 0, skipped: 0 };
           }
 
           const result = await svc.syncAllOrders((progress) => {
-            billingSyncState.invoicesProcessed = totals.totalProcessed + progress.invoicesProcessed;
-            billingSyncState.invoicesFound = totals.totalProcessed + progress.invoicesFound;
-            billingSyncState.currentPage = progress.currentPage;
-            billingSyncState.totalPages = progress.totalPages;
-            billingSyncState.inserted = totals.imported + progress.inserted;
-            billingSyncState.updated = totals.updated + progress.updated;
-            billingSyncState.currentInvoice = progress.currentInvoice;
-            billingSyncState.message = `[${instanceLabel}] ${progress.message || `${progress.invoicesProcessed} pedidos processados`} (${idx + 1}/${activeInstances.length})`;
+            instanceProgress[instanceLabel].processed = progress.invoicesProcessed;
+            instanceProgress[instanceLabel].imported = progress.inserted;
+            instanceProgress[instanceLabel].updated = progress.updated;
+            const totalSoFar = Object.values(instanceProgress).reduce((a, b) => a + b.processed, 0);
+            billingSyncState.invoicesProcessed = totalSoFar;
+            billingSyncState.invoicesFound = totalSoFar;
+            billingSyncState.message = `[${instanceLabel}] ${progress.message || `${progress.invoicesProcessed} pedidos`} | ${Object.keys(instanceProgress).length}/${activeInstances.length} instâncias ativas`;
           });
 
-          totals.totalProcessed += result.totalProcessed || 0;
-          totals.imported += result.imported || 0;
-          totals.updated += result.updated || 0;
-          totals.skipped += result.skipped || 0;
-
           console.log(`✅ [SYNC-PEDIDOS] ${instanceLabel}: ${result.totalProcessed} processados, ${result.imported} inseridos, ${result.updated} atualizados`);
-        } catch (instError: any) {
-          console.error(`❌ [SYNC-PEDIDOS] Erro na instância ${instanceLabel}:`, instError.message);
-        }
+          return { instanceLabel, ...result };
+        })
+      );
 
-        // Pausa entre instâncias para evitar erro "Consumo redundante" do Omie
-        if (idx < activeInstances.length - 1) {
-          console.log(`⏳ [SYNC-PEDIDOS] Aguardando 15s antes da próxima instância...`);
-          await new Promise(resolve => setTimeout(resolve, 15000));
+      for (const res of instanceResults) {
+        if (res.status === 'fulfilled') {
+          totals.totalProcessed += res.value.totalProcessed || 0;
+          totals.imported += res.value.imported || 0;
+          totals.updated += res.value.updated || 0;
+          totals.skipped += res.value.skipped || 0;
+        } else {
+          console.error(`❌ [SYNC-PEDIDOS] Erro em instância:`, res.reason?.message);
         }
       }
 
