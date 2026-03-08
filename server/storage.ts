@@ -4738,9 +4738,18 @@ export class DatabaseStorage implements IStorage {
         if (!billing.invoiceStage && existing.invoiceStage) {
           billing.invoiceStage = existing.invoiceStage;
         }
-        // Preservar omieInstanceId existente se o novo estiver vazio
-        if (!billing.omieInstanceId && existing.omieInstanceId) {
+        // Preservar omieInstanceId existente — NUNCA sobrescrever com instância diferente
+        // Isso evita que IND/BSB/SERV corrompam registros que pertencem a outra instância
+        if (existing.omieInstanceId) {
+          if (billing.omieInstanceId && billing.omieInstanceId !== existing.omieInstanceId) {
+            // O mesmo pedido (mesmo omieOrderId/invoiceNumber) está sendo trazido por instância diferente
+            // Isso indica credenciais sobrepostas ou pedido pertence à instância original
+            console.warn(`⚠️ [INSTANCE-CONFLICT] Pedido ${(billing as any).omieOrderId || billing.invoiceNumber} já pertence à instância ${existing.omieInstanceId}, ignorando atualização da instância ${billing.omieInstanceId}`);
+          }
+          // Sempre preservar a instância original do registro
           billing.omieInstanceId = existing.omieInstanceId;
+        } else if (!billing.omieInstanceId) {
+          // Ambos vazios — manter como está
         }
         savedBilling = await this.updateBilling(existing.id, billing);
         action = 'updated';
