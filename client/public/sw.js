@@ -1,4 +1,4 @@
-const CACHE_NAME = 'integra-v20';
+const CACHE_NAME = 'integra-v21';
 
 self.addEventListener('install', (event) => {
   console.log('[SW] Instalando versão:', CACHE_NAME);

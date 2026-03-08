@@ -22,7 +22,11 @@ export default function HotsitePricing() {
     mutationFn: async ({ id, data }: { id: string; data: Partial<Product> }) => {
       return apiRequest('PUT', `/api/products/${id}`, data);
     },
-    onSuccess: () => {
+    onSuccess: (updatedProduct: Product) => {
+      queryClient.setQueryData(['/api/products'], (old: Product[] | undefined) => {
+        if (!old) return old;
+        return old.map(p => p.id === updatedProduct.id ? updatedProduct : p);
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/products'] });
       toast({
         title: "Sucesso!",
