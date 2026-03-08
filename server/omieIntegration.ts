@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared/schema';
 import { db } from './db';
-import { customers, users } from '@shared/schema';
-import { eq, sql, isNotNull } from 'drizzle-orm';
+import { customers, users, billings } from '@shared/schema';
+import { eq, sql, isNotNull, isNull, or, and } from 'drizzle-orm';
 import { nowBrazil } from './brazilTimezone';
 
 // Schemas para validação das respostas da API Omie
@@ -602,14 +602,6 @@ export class OmieService {
       let invoiceNumber = '';
       let invoiceDate = null;
 
-      // Log diagnóstico: logar as primeiras 3 orders para inspecionar estrutura real
-      if (!((this as any)._diagCount >= 3)) {
-        (this as any)._diagCount = ((this as any)._diagCount || 0) + 1;
-        console.log(`🔍 [DIAG-NF] Order #${(this as any)._diagCount} - etapa="${etapa}", orderNum="${orderNumber}"`);
-        console.log(`🔍 [DIAG-NF] faturamento:`, JSON.stringify(order.faturamento ?? 'AUSENTE'));
-        console.log(`🔍 [DIAG-NF] inf_adicionais.numero_nf:`, order.informacoes_adicionais?.numero_nf ?? 'AUSENTE');
-        console.log(`🔍 [DIAG-NF] cabecalho.codigo_vendedor:`, order.cabecalho?.codigo_vendedor ?? 'AUSENTE');
-      }
 
       if (order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf) {
         omieInvoiceId = order.faturamento?.cNumNFE || order.informacoes_adicionais?.codigo_nf?.toString() || '';
@@ -643,8 +635,9 @@ export class OmieService {
       const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
 
       let sellerCode = order.cabecalho?.codigo_vendedor?.toString() || order.informacoes_adicionais?.codigo_vendedor?.toString();
-      if (!sellerCode && dbCustomer?.rawData?.recomendacoes?.codigo_vendedor) {
-        sellerCode = dbCustomer.rawData.recomendacoes.codigo_vendedor.toString();
+      // Fallback: extrair código do vendedor do seller_id do customer (formato "omie-vendor-XXXXXXXX")
+      if (!sellerCode && (dbCustomer as any)?.seller_id?.startsWith?.('omie-vendor-')) {
+        sellerCode = ((dbCustomer as any).seller_id as string).replace('omie-vendor-', '');
       }
 
       let sellerName = '';
@@ -1532,6 +1525,83 @@ export class OmieService {
     } catch (error) {
       console.log('⚠️ [PRELOAD] Erro ao carregar vendedores do banco:', error);
       return new Map();
+    }
+  }
+
+  // Enriquece billings sem número de NF chamando ListarEtapasPedido para cada pedido faturado
+  async enrichMissingNfNumbers(limit = 300): Promise<{ enriched: number; checked: number }> {
+    try {
+      const instanceId = this.omieInstanceId;
+      if (!instanceId) {
+        console.log(`⚠️ [ENRICH-NF] omieInstanceId não definido, abortando enriquecimento.`);
+        return { enriched: 0, checked: 0 };
+      }
+      console.log(`🔍 [ENRICH-NF] Buscando pedidos sem NF para instância ${instanceId}...`);
+
+      // Buscar billings sem invoiceNumber em etapas que indicam faturamento
+      const rows = await db.select({
+        id: billings.id,
+        omieOrderId: billings.omieOrderId,
+        orderNumber: billings.orderNumber,
+        invoiceStage: billings.invoiceStage,
+      }).from(billings).where(
+        and(
+          eq(billings.omieInstanceId, instanceId),
+          isNotNull(billings.omieOrderId),
+          or(isNull(billings.invoiceNumber), sql`${billings.invoiceNumber} = ''`),
+          or(
+            sql`${billings.invoiceStage} ILIKE '%fatur%'`,
+            sql`${billings.invoiceStage} ILIKE '%entregue%'`,
+            sql`${billings.invoiceStage} ILIKE '%impresso%'`,
+            sql`${billings.invoiceStage} ILIKE '%rota%'`,
+          )
+        )
+      ).limit(limit);
+
+      console.log(`🔍 [ENRICH-NF] ${rows.length} pedidos faturados sem NF encontrados`);
+
+      let enriched = 0;
+      for (const row of rows) {
+        try {
+          if (!row.omieOrderId) continue;
+
+          const response = await this.makeRequest('/produtos/pedidoetapas/', 'ListarEtapasPedido', {
+            nPagina: 1,
+            nRegPorPagina: 50,
+            nCodPed: parseInt(row.omieOrderId)
+          });
+
+          const etapas: any[] = response.etapasPedido || [];
+          let nfNumber = '';
+          for (const etapa of etapas) {
+            if (etapa.faturamento?.cFaturado === 'S' && etapa.faturamento?.cNumNFE) {
+              nfNumber = etapa.faturamento.cNumNFE;
+              break;
+            }
+          }
+
+          if (nfNumber) {
+            await db.update(billings).set({
+              invoiceNumber: nfNumber,
+              omieInvoiceId: nfNumber,
+            }).where(eq(billings.id, row.id));
+            enriched++;
+            console.log(`✅ [ENRICH-NF] Pedido ${row.orderNumber} → NF ${nfNumber}`);
+          }
+
+          // Rate limiting para não sobrecarregar a API Omie
+          await new Promise(resolve => setTimeout(resolve, 400));
+        } catch (err: any) {
+          console.log(`⚠️ [ENRICH-NF] Erro no pedido ${row.orderNumber}: ${err.message}`);
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+      }
+
+      console.log(`✅ [ENRICH-NF] Concluído: ${enriched} NFs preenchidas de ${rows.length} verificadas`);
+      return { enriched, checked: rows.length };
+    } catch (error: any) {
+      console.error(`❌ [ENRICH-NF] Erro:`, error.message);
+      return { enriched: 0, checked: 0 };
     }
   }
 

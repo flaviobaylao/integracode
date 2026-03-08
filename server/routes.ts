@@ -21214,6 +21214,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 Total atualizados: ${totals.updated}`);
       console.log(`⏭️ Total rejeitados: ${totals.skipped}\n`);
 
+      // Enriquecimento automático de NFs em background (não bloqueia o sync)
+      setImmediate(async () => {
+        console.log(`\n🔍 [ENRICH-NF] Iniciando enriquecimento de NFs em background...`);
+        for (const inst of activeInstances) {
+          try {
+            const enrichSvc = await getOmieServiceForInstance(storage, inst.id);
+            if (enrichSvc) {
+              await (enrichSvc as any).enrichMissingNfNumbers(300);
+            }
+          } catch (enrichErr: any) {
+            console.log(`⚠️ [ENRICH-NF] Erro na instância ${inst.name || inst.id}: ${enrichErr.message}`);
+          }
+        }
+        console.log(`✅ [ENRICH-NF] Enriquecimento concluído para todas as instâncias.`);
+      });
+
     } catch (error: any) {
       billingSyncState.status = 'error';
       billingSyncState.message = `Erro: ${error.message}`;
