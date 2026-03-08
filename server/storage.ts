@@ -4738,6 +4738,14 @@ export class DatabaseStorage implements IStorage {
         if (!billing.invoiceStage && existing.invoiceStage) {
           billing.invoiceStage = existing.invoiceStage;
         }
+        // Preservar sellerName existente se o sync não trouxer vendedor
+        if (!billing.sellerName && existing.sellerName) {
+          (billing as any).sellerName = existing.sellerName;
+        }
+        // Preservar sellerId existente se o sync não trouxer vendedor
+        if (!(billing as any).sellerId && (existing as any).sellerId) {
+          (billing as any).sellerId = (existing as any).sellerId;
+        }
         // Preservar omieInstanceId existente — NUNCA sobrescrever com instância diferente
         // Isso evita que IND/BSB/SERV corrompam registros que pertencem a outra instância
         if (existing.omieInstanceId) {
@@ -5919,7 +5927,7 @@ export class DatabaseStorage implements IStorage {
       if (data.currentProgress !== undefined) updateData.currentProgress = data.currentProgress;
       if (data.lastFinishedAt !== undefined) updateData.lastFinishedAt = data.lastFinishedAt;
       if (data.lastSyncAt !== undefined) updateData.lastSyncAt = data.lastSyncAt;
-      if (data.status === 'success') updateData.lastSyncAt = nowBrazil();
+      if (data.status === 'success') updateData.lastSyncAt = new Date();
 
       const [status] = await db
         .update(syncStatus)
@@ -5932,8 +5940,8 @@ export class DatabaseStorage implements IStorage {
       const insertData: any = {
         syncType,
         status: data.status,
-        lastSyncAt: data.lastSyncAt || nowBrazil(),
-        updatedAt: nowBrazil()
+        lastSyncAt: data.lastSyncAt || new Date(),
+        updatedAt: new Date()
       };
 
       if (data.message !== undefined) insertData.message = data.message;

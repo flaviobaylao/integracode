@@ -9188,7 +9188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateSyncStatus('omie_billings', { 
             status: 'success', 
             message: `Sincronização total concluída com sucesso (${servicesToSync.length} instância(s))`,
-            lastFinishedAt: nowBrazil(),
+            lastFinishedAt: new Date(),
             currentProgress: 100,
             recordsProcessed: totalProcessed
           });
@@ -21201,7 +21201,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateSyncStatus('omie_billings', {
         status: 'success',
         message: completionMsg,
-        lastFinishedAt: nowBrazil(),
+        lastFinishedAt: new Date(),
         currentProgress: 100,
         recordsProcessed: totals.totalProcessed
       });
