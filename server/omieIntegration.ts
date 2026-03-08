@@ -1363,8 +1363,21 @@ export class OmieService {
       let imported = 0;
       let updated = 0;
       let skipped = 0;
+      let filteredOld = 0;
       const errors: any[] = [];
       const rejectedInvoices: any[] = [];
+      
+      // Cutoff para filtro local: 60 dias atrás no fuso de Brasília
+      const cutoffDate = nowBrazil();
+      cutoffDate.setDate(cutoffDate.getDate() - 60);
+      cutoffDate.setHours(0, 0, 0, 0);
+      const parsePedidoDate = (dateStr: string): Date | null => {
+        if (!dateStr || !dateStr.includes('/')) return null;
+        const [d, m, y] = dateStr.split('/');
+        if (!d || !m || !y) return null;
+        return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+      };
+      console.log(`📅 [SYNC-FAST] Filtro local de data: pedidos >= ${cutoffDate.toLocaleDateString('pt-BR')}`);
       
       let page = 1;
       let hasMorePages = true;
@@ -1396,8 +1409,18 @@ export class OmieService {
           const transformStart = Date.now();
           const billingBatch: any[] = [];
           const cancelledOrderIds: string[] = [];
+          let oldOnThisPage = 0;
           
           for (const order of orders) {
+            // FILTRO LOCAL: ignorar pedidos com data_pedido anterior ao cutoff de 60 dias
+            const orderDateStr = order.cabecalho?.data_pedido as string | undefined;
+            const orderDate = parsePedidoDate(orderDateStr || '');
+            if (orderDate && orderDate < cutoffDate) {
+              oldOnThisPage++;
+              filteredOld++;
+              continue;
+            }
+            
             const billingData = this.transformOrderToBillingFast(order, customersCache, sellersDbCache);
             if (billingData) {
               if (billingData._isCancelled) {
@@ -1409,6 +1432,12 @@ export class OmieService {
                 billingBatch.push({ billingData, orderNumber: order.cabecalho?.numero_pedido || '' });
               }
             }
+          }
+          
+          // Parada antecipada: se a página inteira foi de pedidos antigos (sem data válida contam como recentes)
+          if (oldOnThisPage === orders.length && orders.length > 0) {
+            console.log(`🏁 [SYNC-FAST] Página ${page} inteiramente antiga (${oldOnThisPage} pedidos < ${cutoffDate.toLocaleDateString('pt-BR')}) → parando paginação`);
+            hasMorePages = false;
           }
           
           // Marcar pedidos cancelados no banco (em lote)
@@ -1484,7 +1513,7 @@ export class OmieService {
       }
       
       const totalTime = ((Date.now() - syncStart) / 1000).toFixed(1);
-      console.log(`✅ [SYNC-FAST] Concluído em ${totalTime}s: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados`);
+      console.log(`✅ [SYNC-FAST] Concluído em ${totalTime}s: ${totalProcessed} processados, ${imported} importados, ${updated} atualizados, ${skipped} rejeitados, ${filteredOld} ignorados (antigos)`);
       
       if (rejectedInvoices.length > 0) {
         console.log(`📋 [SYNC-FAST] ${rejectedInvoices.length} notas rejeitadas (use logs para detalhes)`);
