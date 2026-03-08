@@ -1276,8 +1276,7 @@ export class OmieService {
           apenas_importado_api: 'N',
           filtrar_por_data_de: effectiveDateFrom, // Filtrar a partir dos últimos 60 dias
           filtrar_por_data_ate: dateTo,    // Até hoje (vazio = até hoje)
-          ordenar_por: 'DATA',             // OBRIGATÓRIO para que filtrar_por_data_de funcione no Omie
-          ordem_decrescente: 'S'           // Mais recentes primeiro (mais eficiente com filtro de data)
+          ordenar_por: 'DATA'              // Necessário para que filtrar_por_data_de filtre por data do pedido
         }]
       };
 
