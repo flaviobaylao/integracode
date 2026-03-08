@@ -531,7 +531,7 @@ export default function Billings() {
               ) : (
                 <RefreshCw className="w-4 h-4 mr-2" />
               )}
-              Sincronizar (60 dias)
+              Sincronizar
             </Button>
             
             <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
