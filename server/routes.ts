@@ -21131,6 +21131,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.startedAt = nowBrazil();
       billingSyncState.completedAt = null;
 
+      // Persistir início no banco para que o UI mostre "Última tentativa" mesmo se SSE cair
+      await storage.updateSyncStatus('omie_billings', {
+        status: 'in_progress',
+        message: `Sincronização manual iniciada (${activeInstances.length} instância(s))...`,
+        recordsProcessed: 0,
+        currentProgress: 0,
+        lastSyncAt: nowBrazil()
+      });
+
       res.status(202).json({ message: `Sincronização de ${activeInstances.length} instância(s) iniciada em background.` });
 
       console.log(`\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DE ${activeInstances.length} INSTÂNCIA(S) OMIE (últimos 60 dias)...\n`);
@@ -21184,8 +21193,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.inserted = totals.imported;
       billingSyncState.updated = totals.updated;
       const rejectedNote = totals.skipped > 0 ? ` (${totals.skipped} rejeitados)` : '';
-      billingSyncState.message = `Sincronização de ${activeInstances.length} instância(s) concluída! ${totals.imported} inseridos, ${totals.updated} atualizados.${rejectedNote}`;
+      const completionMsg = `Sincronização de ${activeInstances.length} instância(s) concluída! ${totals.imported} inseridos, ${totals.updated} atualizados.${rejectedNote}`;
+      billingSyncState.message = completionMsg;
       billingSyncState.completedAt = nowBrazil();
+
+      // Persistir conclusão no banco para atualizar "Última conclusão" no UI
+      await storage.updateSyncStatus('omie_billings', {
+        status: 'success',
+        message: completionMsg,
+        lastFinishedAt: nowBrazil(),
+        currentProgress: 100,
+        recordsProcessed: totals.totalProcessed
+      });
 
       console.log(`\n✅ [SYNC-PEDIDOS] Sincronização multi-instância concluída!`);
       console.log(`📥 Total inseridos: ${totals.imported}`);
@@ -21195,6 +21214,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       billingSyncState.status = 'error';
       billingSyncState.message = `Erro: ${error.message}`;
+      await storage.updateSyncStatus('omie_billings', {
+        status: 'error',
+        message: `Erro na sincronização manual: ${error.message}`
+      });
       console.error('Erro ao sincronizar faturamentos:', error);
     }
   });
