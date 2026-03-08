@@ -4738,6 +4738,14 @@ export class DatabaseStorage implements IStorage {
         if (!billing.invoiceStage && existing.invoiceStage) {
           billing.invoiceStage = existing.invoiceStage;
         }
+        // Preservar invoiceNumber existente se o sync não trouxer NF
+        if (!billing.invoiceNumber && existing.invoiceNumber) {
+          billing.invoiceNumber = existing.invoiceNumber;
+        }
+        // Preservar omieInvoiceId existente se o sync não trouxer
+        if (!(billing as any).omieInvoiceId && (existing as any).omieInvoiceId) {
+          (billing as any).omieInvoiceId = (existing as any).omieInvoiceId;
+        }
         // Preservar sellerName existente se o sync não trouxer vendedor
         if (!billing.sellerName && existing.sellerName) {
           (billing as any).sellerName = existing.sellerName;

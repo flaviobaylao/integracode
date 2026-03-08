@@ -602,6 +602,15 @@ export class OmieService {
       let invoiceNumber = '';
       let invoiceDate = null;
 
+      // Log diagnóstico: logar as primeiras 3 orders para inspecionar estrutura real
+      if (!((this as any)._diagCount >= 3)) {
+        (this as any)._diagCount = ((this as any)._diagCount || 0) + 1;
+        console.log(`🔍 [DIAG-NF] Order #${(this as any)._diagCount} - etapa="${etapa}", orderNum="${orderNumber}"`);
+        console.log(`🔍 [DIAG-NF] faturamento:`, JSON.stringify(order.faturamento ?? 'AUSENTE'));
+        console.log(`🔍 [DIAG-NF] inf_adicionais.numero_nf:`, order.informacoes_adicionais?.numero_nf ?? 'AUSENTE');
+        console.log(`🔍 [DIAG-NF] cabecalho.codigo_vendedor:`, order.cabecalho?.codigo_vendedor ?? 'AUSENTE');
+      }
+
       if (order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf) {
         omieInvoiceId = order.faturamento?.cNumNFE || order.informacoes_adicionais?.codigo_nf?.toString() || '';
         invoiceNumber = order.faturamento?.cNumNFE || order.informacoes_adicionais?.numero_nf || '';
