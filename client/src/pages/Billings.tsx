@@ -955,8 +955,8 @@ export default function Billings() {
                   <TableRow>
                     <SortableHeader field="orderNumber">Nº Pedido</SortableHeader>
                     <SortableHeader field="invoiceNumber">Nº NF</SortableHeader>
-                    <SortableHeader field="customerFantasyName">Cliente</SortableHeader>
                     <SortableHeader field="cfop">CFOP</SortableHeader>
+                    <SortableHeader field="customerFantasyName">Cliente</SortableHeader>
                     <SortableHeader field="invoiceDate">Data Fat.</SortableHeader>
                     <SortableHeader field="totalValue">Valor</SortableHeader>
                     <SortableHeader field="dueDate">Vencimento</SortableHeader>
@@ -981,14 +981,14 @@ export default function Billings() {
                         <TableCell className="font-mono text-sm" data-testid={`cell-invoice-${billing.invoiceNumber}`}>
                           {billing.invoiceNumber || '-'}
                         </TableCell>
+                        <TableCell data-testid={`cell-cfop-${billing.id}`}>
+                          <Badge variant="outline">{getCfopDisplayName(billing.cfop)}</Badge>
+                        </TableCell>
                         <TableCell data-testid={`cell-customer-${billing.id}`}>
                           <div className="flex items-center gap-2">
                             <span>{billing.customerFantasyName || '-'}</span>
                             <OmieInstanceBadge instanceId={billing.omieInstanceId} />
                           </div>
-                        </TableCell>
-                        <TableCell data-testid={`cell-cfop-${billing.id}`}>
-                          <Badge variant="outline">{getCfopDisplayName(billing.cfop)}</Badge>
                         </TableCell>
                         <TableCell data-testid={`cell-date-${billing.id}`}>
                           {formatDate(billing.invoiceDate)}
