@@ -6420,16 +6420,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log(`\n🔧 Corrigindo seller_id e seller_name em todos os faturamentos...`);
 
-      // Step 1: Assign seller_id from customer where billing has null seller_id
+      // Step 1a: Assign seller_id from customer via direct customer_id FK
+      const r1a = await db.execute(sql`
+        UPDATE billings b
+        SET seller_id = c.seller_id
+        FROM customers c
+        WHERE (b.seller_id IS NULL OR b.seller_id = '')
+          AND b.customer_id = c.id
+          AND c.seller_id IS NOT NULL
+          AND c.seller_id != ''
+      `);
+      console.log(`✅ Step 1a: seller_id via customer_id FK: ${r1a.rowCount}`);
+
+      // Step 1b: Assign seller_id from customer via omie_customer_code (fallback)
       const r1 = await db.execute(sql`
         UPDATE billings b
         SET seller_id = c.seller_id
         FROM customers c
-        WHERE b.seller_id IS NULL
+        WHERE (b.seller_id IS NULL OR b.seller_id = '')
           AND c.id = CONCAT('omie-client-', b.omie_customer_code)
           AND c.seller_id IS NOT NULL
+          AND c.seller_id != ''
       `);
-      console.log(`✅ Step 1: seller_id atribuídos via customer: ${r1.rowCount}`);
+      console.log(`✅ Step 1b: seller_id via omie_customer_code: ${r1.rowCount}`);
 
       // Step 2: Populate seller_name from users table
       const r2 = await db.execute(sql`
@@ -21228,14 +21241,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 Total atualizados: ${totals.updated}`);
       console.log(`⏭️ Total rejeitados: ${totals.skipped}\n`);
 
-      // Enriquecimento automático de NFs em background (não bloqueia o sync)
+      // Enriquecimento automático de NFs + correção retroativa de vendedores em background
       setImmediate(async () => {
+        // 1. Correção retroativa de seller_id/seller_name via JOIN com customers
+        try {
+          console.log(`\n👤 [SELLER-FIX] Corrigindo seller_id/seller_name retroativamente...`);
+          const sellerFixResult = await db.execute(sql`
+            UPDATE billings b
+            SET 
+              seller_id = c.seller_id,
+              seller_name = TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')))
+            FROM customers c
+            JOIN users u ON u.id = c.seller_id
+            WHERE b.customer_id = c.id
+              AND (b.seller_id IS NULL OR b.seller_id = '')
+              AND c.seller_id IS NOT NULL
+              AND c.seller_id != ''
+              AND u.first_name IS NOT NULL
+          `);
+          console.log(`✅ [SELLER-FIX] Vendedores corrigidos: ${(sellerFixResult as any).rowCount ?? 0} billings atualizados`);
+        } catch (sellerFixErr: any) {
+          console.log(`⚠️ [SELLER-FIX] Erro ao corrigir vendedores: ${sellerFixErr.message}`);
+        }
+
+        // 2. Enriquecimento de NFs por instância
         console.log(`\n🔍 [ENRICH-NF] Iniciando enriquecimento de NFs em background...`);
         for (const inst of activeInstances) {
           try {
             const enrichSvc = await getOmieServiceForInstance(storage, inst.id);
             if (enrichSvc) {
-              await (enrichSvc as any).enrichMissingNfNumbers(300);
+              // Loop até não haver mais NFs pendentes (máx 5 rodadas de 300 = 1500 por instância)
+              let round = 0;
+              const maxRounds = 5;
+              while (round < maxRounds) {
+                const enrichResult = await (enrichSvc as any).enrichMissingNfNumbers(300) as { enriched: number; checked: number };
+                round++;
+                console.log(`🔍 [ENRICH-NF] ${inst.name || inst.id} rodada ${round}: ${enrichResult.enriched}/${enrichResult.checked} enriquecidos`);
+                if (enrichResult.checked === 0 || enrichResult.enriched === 0) break; // Nada mais pendente
+                if (enrichResult.checked < 300) break; // Menos que batch = terminou
+              }
             }
           } catch (enrichErr: any) {
             console.log(`⚠️ [ENRICH-NF] Erro na instância ${inst.name || inst.id}: ${enrichErr.message}`);

@@ -635,9 +635,10 @@ export class OmieService {
       const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
 
       let sellerCode = order.cabecalho?.codigo_vendedor?.toString() || order.informacoes_adicionais?.codigo_vendedor?.toString();
-      // Fallback: extrair código do vendedor do seller_id do customer (formato "omie-vendor-XXXXXXXX")
-      if (!sellerCode && (dbCustomer as any)?.seller_id?.startsWith?.('omie-vendor-')) {
-        sellerCode = ((dbCustomer as any).seller_id as string).replace('omie-vendor-', '');
+      // Fallback: extrair código do vendedor do sellerId do customer (formato "omie-vendor-XXXXXXXX")
+      const customerSellerId = dbCustomer?.sellerId;
+      if (!sellerCode && customerSellerId?.startsWith('omie-vendor-')) {
+        sellerCode = customerSellerId.replace('omie-vendor-', '');
       }
 
       let sellerName = '';
