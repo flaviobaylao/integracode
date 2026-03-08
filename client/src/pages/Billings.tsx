@@ -125,9 +125,11 @@ export default function Billings() {
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [sseReconnectKey, setSseReconnectKey] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
 
   const sseRetryCountRef = useRef(0);
   const maxSseRetries = 3;
+  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
@@ -491,6 +493,28 @@ export default function Billings() {
 
   const displaySync = syncStatuses?.find(s => s.syncType === 'omie_billings');
 
+  useEffect(() => {
+    if (displaySync?.status === 'in_progress' && displaySync?.lastSyncAt) {
+      const startTime = new Date(displaySync.lastSyncAt).getTime();
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      elapsedIntervalRef.current = setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+    } else {
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current);
+        elapsedIntervalRef.current = null;
+      }
+      setElapsedSeconds(null);
+    }
+    return () => {
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current);
+        elapsedIntervalRef.current = null;
+      }
+    };
+  }, [displaySync?.status, displaySync?.lastSyncAt]);
+
   return (
     <div className="p-6 space-y-6">
       {/* Back Button */}
@@ -550,18 +574,28 @@ export default function Billings() {
           </div>
           
           <div className="text-right">
-            {displaySync?.lastSyncAt && (
-              <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
-            )}
-            {displaySync?.lastFinishedAt && (
-              <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
-            )}
-            {displaySync?.syncDurationSeconds != null && (
-              <p className="text-xs text-muted-foreground">
-                Duração: {displaySync.syncDurationSeconds >= 60
-                  ? `${Math.floor(displaySync.syncDurationSeconds / 60)}min ${displaySync.syncDurationSeconds % 60}s`
-                  : `${displaySync.syncDurationSeconds}s`}
+            {displaySync?.status === 'in_progress' && elapsedSeconds !== null ? (
+              <p className="text-xs font-semibold text-orange-600 animate-pulse">
+                ⏱ Em andamento há {elapsedSeconds >= 60
+                  ? `${Math.floor(elapsedSeconds / 60)}min ${elapsedSeconds % 60}s`
+                  : `${elapsedSeconds}s`}
               </p>
+            ) : (
+              <>
+                {displaySync?.lastSyncAt && (
+                  <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
+                )}
+                {displaySync?.lastFinishedAt && (
+                  <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
+                )}
+                {displaySync?.syncDurationSeconds != null && (
+                  <p className="text-xs text-muted-foreground">
+                    Duração: {displaySync.syncDurationSeconds >= 60
+                      ? `${Math.floor(displaySync.syncDurationSeconds / 60)}min ${displaySync.syncDurationSeconds % 60}s`
+                      : `${displaySync.syncDurationSeconds}s`}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>

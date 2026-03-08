@@ -21137,7 +21137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: `Sincronização manual iniciada (${activeInstances.length} instância(s))...`,
         recordsProcessed: 0,
         currentProgress: 0,
-        lastSyncAt: nowBrazil()
+        lastSyncAt: new Date()
       });
 
       res.status(202).json({ message: `Sincronização de ${activeInstances.length} instância(s) iniciada em background.` });
