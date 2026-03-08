@@ -6485,6 +6485,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Estado do job de enriquecimento de NFs
+  const nfEnrichState = {
+    running: false,
+    totalByInstance: {} as Record<string, { total: number; checked: number; enriched: number }>,
+    startedAt: null as Date | null,
+    completedAt: null as Date | null,
+    error: null as string | null,
+  };
+
+  // Endpoint para estado atual do job de enriquecimento
+  app.get('/api/admin/enrich-all-nf/state', authenticateUser, requireRole(['admin']), (req: any, res) => {
+    res.json({
+      running: nfEnrichState.running,
+      totalByInstance: nfEnrichState.totalByInstance,
+      startedAt: nfEnrichState.startedAt?.toISOString() || null,
+      completedAt: nfEnrichState.completedAt?.toISOString() || null,
+      error: nfEnrichState.error,
+    });
+  });
+
+  // Enriquecimento completo de NFs para todas as instâncias (sem limite, em paralelo)
+  app.post('/api/admin/enrich-all-nf', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    if (nfEnrichState.running) {
+      return res.status(409).json({ success: false, message: 'Enriquecimento já está em andamento.' });
+    }
+
+    // Responder imediatamente — processo roda em background
+    res.json({ success: true, message: 'Enriquecimento de NFs iniciado em background. Acompanhe o progresso pelo estado.' });
+
+    // Rodar em background
+    setImmediate(async () => {
+      nfEnrichState.running = true;
+      nfEnrichState.startedAt = new Date();
+      nfEnrichState.completedAt = null;
+      nfEnrichState.error = null;
+      nfEnrichState.totalByInstance = {};
+
+      try {
+        const activeInstances = await storage.getOmieInstances();
+        console.log(`\n🔍 [ENRICH-ALL] Iniciando enriquecimento completo de NFs para ${activeInstances.length} instâncias...`);
+
+        // Rodar todas as instâncias em PARALELO
+        await Promise.allSettled(activeInstances.map(async (inst) => {
+          const label = inst.name || inst.id;
+          nfEnrichState.totalByInstance[label] = { total: 0, checked: 0, enriched: 0 };
+          try {
+            const enrichSvc = await getOmieServiceForInstance(storage, inst.id);
+            if (!enrichSvc) {
+              console.log(`⚠️ [ENRICH-ALL] Sem serviço para instância ${label}`);
+              return;
+            }
+            const result = await (enrichSvc as any).enrichMissingNfNumbers(
+              0, // sem limite
+              (p: any) => {
+                nfEnrichState.totalByInstance[label] = { total: p.total, checked: p.checked, enriched: p.enriched };
+              }
+            ) as { enriched: number; checked: number };
+            nfEnrichState.totalByInstance[label] = {
+              total: result.checked,
+              checked: result.checked,
+              enriched: result.enriched,
+            };
+            console.log(`✅ [ENRICH-ALL] ${label}: ${result.enriched} NFs enriquecidas de ${result.checked}`);
+          } catch (instErr: any) {
+            console.log(`❌ [ENRICH-ALL] Erro na instância ${label}: ${instErr.message}`);
+          }
+        }));
+
+        nfEnrichState.completedAt = new Date();
+        nfEnrichState.running = false;
+        const total = Object.values(nfEnrichState.totalByInstance).reduce((a, b) => a + b.enriched, 0);
+        console.log(`\n✅ [ENRICH-ALL] Concluído! Total de NFs enriquecidas: ${total}`);
+      } catch (err: any) {
+        nfEnrichState.error = err.message;
+        nfEnrichState.running = false;
+        nfEnrichState.completedAt = new Date();
+        console.error(`❌ [ENRICH-ALL] Erro geral:`, err.message);
+      }
+    });
+  });
+
   // Fix customers with incorrect delivery_weekdays (admin only)
   app.post('/api/admin/fix-customer-delivery-days', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {

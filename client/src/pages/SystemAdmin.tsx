@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
-import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -66,6 +65,11 @@ export default function SystemAdmin() {
   // Estados para corrigir sellers em faturamentos
   const [isFixingSellers, setIsFixingSellers] = useState(false);
   const [fixSellersResult, setFixSellersResult] = useState<any>(null);
+
+  // Estados para enriquecimento completo de NFs
+  const [isEnrichingNf, setIsEnrichingNf] = useState(false);
+  const [nfEnrichState, setNfEnrichState] = useState<any>(null);
+  const nfEnrichPollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
@@ -159,6 +163,35 @@ export default function SystemAdmin() {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setIsFixingSellers(false);
+    }
+  };
+
+  const handleEnrichAllNf = async () => {
+    if (isEnrichingNf) return;
+    setIsEnrichingNf(true);
+    setNfEnrichState({ running: true, totalByInstance: {}, startedAt: new Date().toISOString() });
+    try {
+      await apiRequest('POST', '/api/admin/enrich-all-nf', {});
+      toast({ title: 'Enriquecimento iniciado!', description: 'Processando em background. O progresso será atualizado automaticamente.' });
+      // Iniciar polling de progresso
+      nfEnrichPollRef.current = setInterval(async () => {
+        try {
+          const state = await apiRequest('GET', '/api/admin/enrich-all-nf/state');
+          setNfEnrichState(state);
+          if (!state.running) {
+            clearInterval(nfEnrichPollRef.current!);
+            nfEnrichPollRef.current = null;
+            setIsEnrichingNf(false);
+            if (!state.error) {
+              queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+              toast({ title: 'Enriquecimento concluído!', description: 'Números de NF preenchidos para todos os faturamentos.' });
+            }
+          }
+        } catch {}
+      }, 3000);
+    } catch (error: any) {
+      setIsEnrichingNf(false);
+      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     }
   };
 
@@ -526,6 +559,50 @@ export default function SystemAdmin() {
                 )}
               </AlertDescription>
             </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5" />
+            Preencher Números de NF em Faturamentos
+          </CardTitle>
+          <CardDescription>
+            Busca o número de nota fiscal (NF) para todos os pedidos faturados que ainda não têm esse dado.
+            Processa todas as instâncias Omie em paralelo. Pode levar 20-40 minutos para processar milhares de pedidos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Processo roda em background sem travar o sistema. Acompanhe o progresso abaixo enquanto processa.
+            </AlertDescription>
+          </Alert>
+          <Button onClick={handleEnrichAllNf} disabled={isEnrichingNf} className="bg-blue-600 hover:bg-blue-700">
+            {isEnrichingNf ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processando NFs...</>
+            ) : (
+              <><RefreshCw className="mr-2 h-4 w-4" />Preencher Todos os Números de NF</>
+            )}
+          </Button>
+          {nfEnrichState && (
+            <div className="space-y-2">
+              <div className={`text-sm font-medium ${nfEnrichState.running ? 'text-blue-600' : nfEnrichState.error ? 'text-red-600' : 'text-green-700'}`}>
+                {nfEnrichState.running ? 'Processando...' : nfEnrichState.error ? `Erro: ${nfEnrichState.error}` : 'Concluído!'}
+              </div>
+              {Object.entries(nfEnrichState.totalByInstance || {}).map(([label, data]: [string, any]) => (
+                <div key={label} className="flex items-center justify-between text-sm bg-gray-50 rounded px-3 py-2">
+                  <span className="font-medium">{label}</span>
+                  <span className="text-gray-600">
+                    {data.enriched} NFs preenchidas / {data.checked} verificadas
+                    {data.total > 0 && ` (${Math.round((data.checked / data.total) * 100)}%)`}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

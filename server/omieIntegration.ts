@@ -1530,41 +1530,47 @@ export class OmieService {
   }
 
   // Enriquece billings sem número de NF chamando ListarEtapasPedido para cada pedido faturado
-  async enrichMissingNfNumbers(limit = 300): Promise<{ enriched: number; checked: number }> {
+  async enrichMissingNfNumbers(
+    limit = 300,
+    onProgress?: (progress: { checked: number; enriched: number; total: number; instanceId: string }) => void
+  ): Promise<{ enriched: number; checked: number }> {
     try {
       const instanceId = this.omieInstanceId;
       if (!instanceId) {
         console.log(`⚠️ [ENRICH-NF] omieInstanceId não definido, abortando enriquecimento.`);
         return { enriched: 0, checked: 0 };
       }
-      console.log(`🔍 [ENRICH-NF] Buscando pedidos sem NF para instância ${instanceId}...`);
 
       // Buscar billings sem invoiceNumber em etapas que indicam faturamento
-      const rows = await db.select({
+      const whereCondition = and(
+        eq(billings.omieInstanceId, instanceId),
+        isNotNull(billings.omieOrderId),
+        sql`${billings.omieOrderId} != ''`,
+        or(isNull(billings.invoiceNumber), sql`${billings.invoiceNumber} = ''`),
+        or(
+          sql`${billings.invoiceStage} ILIKE '%fatur%'`,
+          sql`${billings.invoiceStage} ILIKE '%entregue%'`,
+          sql`${billings.invoiceStage} ILIKE '%impresso%'`,
+          sql`${billings.invoiceStage} ILIKE '%rota%'`,
+        )
+      );
+
+      const query = db.select({
         id: billings.id,
         omieOrderId: billings.omieOrderId,
         orderNumber: billings.orderNumber,
         invoiceStage: billings.invoiceStage,
-      }).from(billings).where(
-        and(
-          eq(billings.omieInstanceId, instanceId),
-          isNotNull(billings.omieOrderId),
-          or(isNull(billings.invoiceNumber), sql`${billings.invoiceNumber} = ''`),
-          or(
-            sql`${billings.invoiceStage} ILIKE '%fatur%'`,
-            sql`${billings.invoiceStage} ILIKE '%entregue%'`,
-            sql`${billings.invoiceStage} ILIKE '%impresso%'`,
-            sql`${billings.invoiceStage} ILIKE '%rota%'`,
-          )
-        )
-      ).limit(limit);
+      }).from(billings).where(whereCondition);
 
-      console.log(`🔍 [ENRICH-NF] ${rows.length} pedidos faturados sem NF encontrados`);
+      const rows = limit > 0 ? await query.limit(limit) : await query;
+      const total = rows.length;
+      console.log(`🔍 [ENRICH-NF] ${instanceId}: ${total} pedidos faturados sem NF encontrados`);
 
       let enriched = 0;
+      let checked = 0;
       for (const row of rows) {
         try {
-          if (!row.omieOrderId) continue;
+          if (!row.omieOrderId) { checked++; continue; }
 
           const response = await this.makeRequest('/produtos/pedidoetapas/', 'ListarEtapasPedido', {
             nPagina: 1,
@@ -1587,19 +1593,21 @@ export class OmieService {
               omieInvoiceId: nfNumber,
             }).where(eq(billings.id, row.id));
             enriched++;
-            console.log(`✅ [ENRICH-NF] Pedido ${row.orderNumber} → NF ${nfNumber}`);
           }
+          checked++;
+          onProgress?.({ checked, enriched, total, instanceId });
 
-          // Rate limiting para não sobrecarregar a API Omie
-          await new Promise(resolve => setTimeout(resolve, 400));
+          // Rate limiting — 200ms entre chamadas (seguro para a API Omie)
+          await new Promise(resolve => setTimeout(resolve, 200));
         } catch (err: any) {
           console.log(`⚠️ [ENRICH-NF] Erro no pedido ${row.orderNumber}: ${err.message}`);
-          await new Promise(resolve => setTimeout(resolve, 400));
+          checked++;
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
 
-      console.log(`✅ [ENRICH-NF] Concluído: ${enriched} NFs preenchidas de ${rows.length} verificadas`);
-      return { enriched, checked: rows.length };
+      console.log(`✅ [ENRICH-NF] ${instanceId}: ${enriched} NFs preenchidas de ${total} verificadas`);
+      return { enriched, checked };
     } catch (error: any) {
       console.error(`❌ [ENRICH-NF] Erro:`, error.message);
       return { enriched: 0, checked: 0 };
