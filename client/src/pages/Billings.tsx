@@ -556,6 +556,13 @@ export default function Billings() {
             {displaySync?.lastFinishedAt && (
               <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
             )}
+            {displaySync?.syncDurationSeconds != null && (
+              <p className="text-xs text-muted-foreground">
+                Duração: {displaySync.syncDurationSeconds >= 60
+                  ? `${Math.floor(displaySync.syncDurationSeconds / 60)}min ${displaySync.syncDurationSeconds % 60}s`
+                  : `${displaySync.syncDurationSeconds}s`}
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -5927,6 +5927,7 @@ export class DatabaseStorage implements IStorage {
       if (data.currentProgress !== undefined) updateData.currentProgress = data.currentProgress;
       if (data.lastFinishedAt !== undefined) updateData.lastFinishedAt = data.lastFinishedAt;
       if (data.lastSyncAt !== undefined) updateData.lastSyncAt = data.lastSyncAt;
+      if ((data as any).syncDurationSeconds !== undefined) updateData.syncDurationSeconds = (data as any).syncDurationSeconds;
       if (data.status === 'success') updateData.lastSyncAt = new Date();
 
       const [status] = await db

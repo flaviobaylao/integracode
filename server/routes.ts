@@ -21144,6 +21144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`\n💰 [SYNC-PEDIDOS] SINCRONIZANDO PEDIDOS DE ${activeInstances.length} INSTÂNCIA(S) OMIE (paralelo)...\n`);
 
+      const syncStartTime = Date.now();
       const totals = { totalProcessed: 0, imported: 0, updated: 0, skipped: 0 };
       // Contadores por instância para progress reporting paralelo
       const instanceProgress: Record<string, { processed: number; imported: number; updated: number }> = {};
@@ -21198,12 +21199,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.completedAt = nowBrazil();
 
       // Persistir conclusão no banco para atualizar "Última conclusão" no UI
+      const syncDurationSeconds = Math.round((Date.now() - syncStartTime) / 1000);
       await storage.updateSyncStatus('omie_billings', {
         status: 'success',
         message: completionMsg,
         lastFinishedAt: new Date(),
         currentProgress: 100,
-        recordsProcessed: totals.totalProcessed
+        recordsProcessed: totals.totalProcessed,
+        syncDurationSeconds
       });
 
       console.log(`\n✅ [SYNC-PEDIDOS] Sincronização multi-instância concluída!`);
