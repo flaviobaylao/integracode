@@ -1274,8 +1274,10 @@ export class OmieService {
           pagina: page,
           registros_por_pagina: pageSize,
           apenas_importado_api: 'N',
-          filtrar_por_data_de: effectiveDateFrom, // Filtrar a partir dos últimos 2 meses por padrão
-          filtrar_por_data_ate: dateTo    // Até hoje (vazio = até hoje)
+          filtrar_por_data_de: effectiveDateFrom, // Filtrar a partir dos últimos 60 dias
+          filtrar_por_data_ate: dateTo,    // Até hoje (vazio = até hoje)
+          ordenar_por: 'DATA',             // OBRIGATÓRIO para que filtrar_por_data_de funcione no Omie
+          ordem_decrescente: 'S'           // Mais recentes primeiro (mais eficiente com filtro de data)
         }]
       };
 
@@ -1464,7 +1466,7 @@ export class OmieService {
           
           page++;
           // Pausa entre páginas para evitar 403/Consumo redundante do Omie
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 250));
           
           if (page > 200) {
             console.log('⚠️ [SYNC-FAST] Limite de 200 páginas atingido');
