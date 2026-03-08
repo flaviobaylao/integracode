@@ -195,15 +195,31 @@ export default function Billings() {
         
         sseRetryCountRef.current += 1;
         if (sseRetryCountRef.current >= maxSseRetries) {
-          console.log('SSE: Máximo de tentativas atingido, encerrando');
-          setIsSyncing(false);
-          setSyncProgress(null);
+          // SSE falhou — ativar modo polling como fallback silencioso
+          console.log('SSE: Falhou, usando polling como fallback');
           sseRetryCountRef.current = 0;
-          toast({
-            title: 'Erro de conexão',
-            description: 'Não foi possível conectar ao servidor. Tente novamente.',
-            variant: 'destructive',
-          });
+          let pollStopped = false;
+          const pollInterval = setInterval(async () => {
+            if (!isMounted || pollStopped) { clearInterval(pollInterval); return; }
+            try {
+              const r = await fetch('/api/omie/sync-billings/state', { credentials: 'include' });
+              if (r.ok) {
+                const data = await r.json();
+                if (data.status === 'completed' || data.status === 'error') {
+                  pollStopped = true;
+                  clearInterval(pollInterval);
+                  if (isMounted) {
+                    setSyncProgress(data);
+                    setIsSyncing(false);
+                    queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+                    queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+                  }
+                } else if (data.status === 'running' && isMounted) {
+                  setSyncProgress(data);
+                }
+              }
+            } catch {}
+          }, 2000);
         } else {
           console.log(`SSE: Tentativa ${sseRetryCountRef.current}/${maxSseRetries}, reconectando em 2s...`);
           setTimeout(() => {
@@ -514,6 +530,26 @@ export default function Billings() {
       }
     };
   }, [displaySync?.status, displaySync?.lastSyncAt]);
+
+  // Detectar conclusão do sync via polling (confiável em produção, independente do SSE)
+  const prevSyncFinishedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const finishedAt = displaySync?.lastFinishedAt;
+    if (!finishedAt) return;
+    if (prevSyncFinishedRef.current === finishedAt) return;
+    if (prevSyncFinishedRef.current !== null) {
+      // Sync acabou de completar — atualizar lista
+      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
+      setIsSyncing(false);
+      setSyncProgress(null);
+      toast({
+        title: 'Sincronização concluída',
+        description: displaySync?.message || 'Lista de faturamentos atualizada.',
+      });
+    }
+    prevSyncFinishedRef.current = finishedAt;
+  }, [displaySync?.lastFinishedAt]);
 
   return (
     <div className="p-6 space-y-6">

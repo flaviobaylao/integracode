@@ -21044,6 +21044,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Estado global de sincronização para SSE
 
   // Endpoint SSE para progresso de sincronização
+  // Endpoint REST para estado atual do sync (fallback para SSE em produção)
+  app.get('/api/omie/sync-billings/state', (req: any, res) => {
+    try {
+      const stateToSend = {
+        ...billingSyncState,
+        startedAt: billingSyncState.startedAt?.toISOString() || null,
+        completedAt: billingSyncState.completedAt?.toISOString() || null
+      };
+      res.json(stateToSend);
+    } catch (error) {
+      res.status(500).json({ message: 'Erro ao obter estado do sync' });
+    }
+  });
+
   app.get('/api/omie/sync-billings/progress', (req, res) => {
     try {
       res.setHeader('Content-Type', 'text/event-stream');
