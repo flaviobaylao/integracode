@@ -8,31 +8,21 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
-// REPLIT_DOMAINS é fornecida automaticamente pelo Replit em produção
-// Em desenvolvimento local, pode não estar presente
-if (!process.env.REPLIT_DOMAINS) {
-  console.warn('⚠️ AVISO: REPLIT_DOMAINS não configurada');
-  console.warn('   Isso é normal em desenvolvimento local');
-  console.warn('   Em produção, o Replit fornece essa variável automaticamente');
-  
-  // Em desenvolvimento, usar o domínio atual ou um padrão
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔧 Modo desenvolvimento: autenticação pode não funcionar corretamente');
-  } else {
-    console.error('❌ ERRO: REPLIT_DOMAINS não encontrada em produção!');
-    console.error('   Isso não deveria acontecer. O Replit fornece essa variável automaticamente.');
-    throw new Error("REPLIT_DOMAINS not provided in production");
-  }
+// Verificar se estamos rodando no Replit
+const IS_REPLIT = !!process.env.REPLIT_DOMAINS;
+
+if (!IS_REPLIT) {
+  console.log("INFO: REPLIT_DOMAINS nao configurada - modo Railway/standalone ativo");
+  console.log("   Autenticacao local (email + senha) sera usada.");
 } else {
-  console.log('✅ REPLIT_DOMAINS configurada:', process.env.REPLIT_DOMAINS);
-  console.log('🌐 Domínios aceitos:', process.env.REPLIT_DOMAINS.split(',').map(d => d.trim()));
+  console.log("OK: REPLIT_DOMAINS configurada:", process.env.REPLIT_DOMAINS);
 }
 
 const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
+      process.env.REPL_ID
     );
   },
   { maxAge: 3600 * 1000 }
@@ -40,21 +30,14 @@ const getOidcConfig = memoize(
 
 export function getSession() {
   if (!process.env.SESSION_SECRET) {
-    console.error('❌ ERRO CRÍTICO: SESSION_SECRET não configurada!');
-    console.error('📝 Configure SESSION_SECRET nos Secrets do Replit');
     throw new Error("SESSION_SECRET must be provided");
   }
-  
+
   if (!process.env.DATABASE_URL) {
-    console.error('❌ ERRO CRÍTICO: DATABASE_URL não configurada!');
-    console.error('📝 Provisione um banco de dados PostgreSQL na aba Database');
     throw new Error("DATABASE_URL must be provided");
   }
 
-  console.log('✅ SESSION_SECRET configurada');
-  console.log('✅ DATABASE_URL configurada');
-
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -62,58 +45,45 @@ export function getSession() {
     ttl: sessionTtl,
     tableName: "sessions",
   });
-  // Verificar se está rodando via HTTPS (produção ou ambiente Replit)
-  const isHttps = process.env.NODE_ENV === 'production' || 
-                  !!process.env.REPLIT_DOMAINS || 
+
+  const isHttps = process.env.NODE_ENV === "production" ||
+                  !!process.env.REPLIT_DOMAINS ||
                   !!process.env.REPL_SLUG;
-  
+
   return session({
-    secret: process.env.SESSION_SECRET!,
+    secret: process.env.SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: true,
     cookie: {
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'none' : 'lax', // 'none' é necessário para cross-site requests em HTTPS
+      sameSite: isHttps ? "none" : "lax",
       maxAge: sessionTtl,
     },
     proxy: true,
   });
 }
 
-function updateUserSession(
-  user: any,
-  tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
-) {
+function updateUserSession(user: any, tokens: any) {
   user.claims = tokens.claims();
   user.access_token = tokens.access_token;
   user.refresh_token = tokens.refresh_token;
   user.expires_at = user.claims?.exp;
 }
 
-async function upsertUser(
-  claims: any,
-) {
-  // Verificar se já existe um usuário com este email
+async function upsertUser(claims: any) {
   const existingUser = await storage.getUserByEmail(claims["email"]);
-  
   if (existingUser) {
-    // Se o ID for diferente, temos um problema de mapeamento
-    if (existingUser.id !== claims["sub"]) {
-      // CRITICAL FIX: Não sobrescrever o usuário existente com ID diferente
-      // Isso causaria o problema de aparecer como vendedor
-      return;
-    }
+    if (existingUser.id !== claims["sub"]) return;
   }
-  
   await storage.upsertUser({
     id: claims["sub"],
     email: claims["email"],
     firstName: claims["first_name"],
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],
-    role: claims["role"], // Incluindo role dos claims OIDC
+    role: claims["role"],
   });
 }
 
@@ -123,23 +93,33 @@ export async function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
+  passport.serializeUser((user: any, cb) => cb(null, user));
+  passport.deserializeUser((user: any, cb) => cb(null, user));
+
+  if (!IS_REPLIT) {
+    console.log("Replit OIDC desabilitado - apenas autenticacao local ativa");
+    app.get("/api/login", (req, res) => res.redirect("/?login=true"));
+    app.get("/api/callback", (req, res) => res.redirect("/"));
+    app.get("/api/logout", (req, res) => {
+      req.logout(() => {
+        (req.session as any).user = null;
+        req.session.destroy(() => res.redirect("/"));
+      });
+    });
+    return;
+  }
+
   const config = await getOidcConfig();
 
-  const verify: VerifyFunction = async (
-    tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
-    verified: passport.AuthenticateCallback
-  ) => {
-    const user = {};
+  const verify: VerifyFunction = async (tokens, verified) => {
+    const user: any = {};
     updateUserSession(user, tokens);
     await upsertUser(tokens.claims());
     verified(null, user);
   };
 
-  console.log('🔐 Configurando estratégias de autenticação Replit...');
-  for (const domain of process.env
-    .REPLIT_DOMAINS!.split(",")) {
+  for (const domain of process.env.REPLIT_DOMAINS!.split(",")) {
     const trimmedDomain = domain.trim();
-    console.log(`   ✓ Estratégia configurada para: ${trimmedDomain}`);
     const strategy = new Strategy(
       {
         name: `replitauth:${trimmedDomain}`,
@@ -151,30 +131,9 @@ export async function setupAuth(app: Express) {
     );
     passport.use(strategy);
   }
-  console.log('✅ Autenticação Replit configurada com sucesso!');
-
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   app.get("/api/login", (req, res, next) => {
-    console.log(`🔑 Tentativa de login no domínio: ${req.hostname}`);
-    const strategyName = `replitauth:${req.hostname}`;
-    
-    // Verificar se a estratégia existe
-    const hasStrategy = (passport as any)._strategies[strategyName];
-    if (!hasStrategy) {
-      console.error(`❌ ERRO: Estratégia não encontrada para domínio "${req.hostname}"`);
-      console.error(`   Domínios configurados: ${process.env.REPLIT_DOMAINS}`);
-      console.error(`   Estratégia procurada: ${strategyName}`);
-      return res.status(500).send(`
-        <h1>Erro de Configuração</h1>
-        <p>O domínio <strong>${req.hostname}</strong> não está configurado para autenticação.</p>
-        <p>Domínios aceitos: <code>${process.env.REPLIT_DOMAINS}</code></p>
-        <p>Por favor, adicione este domínio à variável REPLIT_DOMAINS nos Secrets do Replit.</p>
-      `);
-    }
-    
-    passport.authenticate(strategyName, {
+    passport.authenticate(`replitauth:${req.hostname}`, {
       prompt: "login consent",
       scope: ["openid", "email", "profile", "offline_access"],
     })(req, res, next);
@@ -200,14 +159,9 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  // Verificar tanto req.user (Replit Auth) quanto req.session.user (login com senha)
   const user = (req.user as any) || (req.session as any)?.user;
+  if (!user) return res.status(401).json({ message: "Unauthorized" });
 
-  if (!user) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-
-  // Verificar autenticação Passport (Replit Auth) ou sessão local (login com senha)
   const isPassportAuth = req.isAuthenticated();
   const isLocalAuth = !!(req.session as any)?.user;
 
@@ -215,9 +169,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
-  // Se é autenticação local (login com senha), permitir
   if (isLocalAuth && !isPassportAuth) {
-    // Verificar expiração se houver expires_at
     if (user.expires_at) {
       const now = Math.floor(Date.now() / 1000);
       if (now > user.expires_at) {
@@ -227,21 +179,13 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return next();
   }
 
-  // Se é Replit Auth (Passport), fazer verificação completa com refresh token
-  if (!user.expires_at) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!user.expires_at) return res.status(401).json({ message: "Unauthorized" });
 
   const now = Math.floor(Date.now() / 1000);
-  if (now <= user.expires_at) {
-    return next();
-  }
+  if (now <= user.expires_at) return next();
 
   const refreshToken = user.refresh_token;
-  if (!refreshToken) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
+  if (!refreshToken) return res.status(401).json({ message: "Unauthorized" });
 
   try {
     const config = await getOidcConfig();
@@ -249,7 +193,6 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     updateUserSession(user, tokenResponse);
     return next();
   } catch (error) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
+    return res.status(401).json({ message: "Unauthorized" });
   }
 };
