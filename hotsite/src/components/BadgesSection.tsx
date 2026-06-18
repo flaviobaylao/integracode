@@ -1,62 +1,91 @@
-import { Leaf, Droplet, Shield } from 'lucide-react';
+const STATS = [
+  { value: '5.000+', label: 'clientes em Goiânia', icon: '👥' },
+  { value: '4 anos', label: 'no mercado', icon: '🏆' },
+  { value: '2×/semana', label: 'produção fresca', icon: '🌿' },
+  { value: '4.9★', label: 'avaliação média', icon: '⭐' },
+];
+
+const TRUST = [
+  {
+    icon: '🍓',
+    title: '100% Fruta Natural',
+    desc: 'Sem concentrado, sem água adicionada. Só fruta mesmo.',
+    highlight: 'bg-green-50 border-green-200',
+    titleColor: 'text-green-800',
+  },
+  {
+    icon: '🚫🍬',
+    title: 'Zero Açúcar Adicionado',
+    desc: 'O doce vem da fruta. Nenhum grama de açúcar refinado.',
+    highlight: 'bg-orange-50 border-orange-200',
+    titleColor: 'text-orange-800',
+  },
+  {
+    icon: '🧪',
+    title: 'Sem Conservantes',
+    desc: 'Sem química, sem mistério. Validade curta = produto real.',
+    highlight: 'bg-blue-50 border-blue-200',
+    titleColor: 'text-blue-800',
+  },
+  {
+    icon: '🚚',
+    title: 'Entrega em Goiânia',
+    desc: 'Direto da nossa produção para a sua porta, sempre fresco.',
+    highlight: 'bg-purple-50 border-purple-200',
+    titleColor: 'text-purple-800',
+  },
+];
 
 export default function BadgesSection() {
-  const badges = [
-    {
-      icon: Leaf,
-      title: '100% FRUTA',
-      description: 'Feito com frutas naturais',
-      color: 'text-green-600'
-    },
-    {
-      icon: Droplet,
-      title: 'SEM AÇÚCAR ADICIONADO',
-      description: 'Adoçado naturalmente',
-      color: 'text-blue-600'
-    },
-    {
-      icon: Shield,
-      title: 'SEM ADIÇÃO DE CONSERVANTES',
-      description: 'Puro e natural',
-      color: 'text-rose-600'
-    }
-  ];
-
   return (
     <section className="py-16 bg-white">
-      <div className="container mx-auto px-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-          {badges.map((badge, index) => (
-            <div
-              key={index}
-              className="text-center p-8 rounded-2xl hover:bg-gray-50 transition-all group"
-              data-testid={`badge-${index}`}
-            >
-              <div className={`inline-flex items-center justify-center w-20 h-20 rounded-full bg-gray-100 mb-6 group-hover:scale-110 transition-transform ${badge.color}`}>
-                <badge.icon className="w-10 h-10" />
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">
-                {badge.title}
-              </h3>
-              <p className="text-gray-600 text-lg">
-                {badge.description}
-              </p>
+      <div className="container mx-auto px-4 max-w-5xl">
+
+        {/* Stats strip */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-14">
+          {STATS.map((s) => (
+            <div key={s.value} className="text-center p-4 rounded-2xl bg-gray-50 border border-gray-100">
+              <div className="text-2xl mb-1">{s.icon}</div>
+              <div className="text-2xl font-extrabold text-gray-900">{s.value}</div>
+              <div className="text-sm text-gray-500 leading-tight mt-0.5">{s.label}</div>
             </div>
           ))}
         </div>
 
-        <div className="mt-12 text-center max-w-3xl mx-auto">
-          <div className="bg-gradient-to-r from-rose-50 to-pink-50 border-2 border-rose-200 rounded-2xl p-8">
-            <p className="text-2xl font-bold text-gray-900 mb-3">
-              Direto da Fazenda para Você
-            </p>
-            <p className="text-lg text-gray-700 leading-relaxed">
-              Cada garrafa leva <strong>frutas frescas</strong> selecionadas.
-              Nada mais, nada menos. É como espremer as frutas na hora,
-              mas com a praticidade de ter sempre à mão.
-            </p>
-          </div>
+        {/* Trust cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-12">
+          {TRUST.map((t) => (
+            <div
+              key={t.title}
+              className={`flex items-start gap-4 p-6 rounded-2xl border-2 ${t.highlight} transition-transform hover:scale-[1.02]`}
+            >
+              <span className="text-4xl leading-none">{t.icon}</span>
+              <div>
+                <h3 className={`text-lg font-bold mb-1 ${t.titleColor}`}>{t.title}</h3>
+                <p className="text-gray-700 text-sm leading-relaxed">{t.desc}</p>
+              </div>
+            </div>
+          ))}
         </div>
+
+        {/* Bottom CTA strip */}
+        <div className="bg-gradient-to-r from-honest-green to-green-700 rounded-2xl p-6 md:p-8 text-white text-center">
+          <p className="text-xl md:text-2xl font-bold mb-2">
+            Pronto para tomar algo de verdade?
+          </p>
+          <p className="text-green-100 mb-5 text-sm md:text-base">
+            Junte-se a mais de 5.000 famílias que já trocaram o suco artificial pelo Honest.
+          </p>
+          <a
+            href="https://wa.me/556299578281?text=Olá! Quero conhecer os sucos Honest"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-white text-honest-green font-bold px-8 py-3 rounded-full hover:bg-green-50 transition-colors shadow-md"
+          >
+            💬 Pedir pelo WhatsApp
+          </a>
+        </div>
+
       </div>
     </section>
   );
