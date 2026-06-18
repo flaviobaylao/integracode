@@ -26,7 +26,6 @@ export default defineConfig(async () => {
       pwaPlugins.push(
         VitePWA({
           registerType: "autoUpdate",
-          // Não gerar manifest — usa o client/public/manifest.webmanifest estático
           manifest: false,
           includeAssets: ["icons/icon.svg", "icons/*.png"],
           workbox: {
@@ -77,14 +76,17 @@ export default defineConfig(async () => {
     build: {
       outDir: path.resolve(__dirname, "dist/public"),
       emptyOutDir: true,
+      chunkSizeWarningLimit: 3000,
       rollupOptions: {
         output: {
           manualChunks: {
-            vendor:   ["react", "react-dom"],
-            router:   ["wouter"],
-            ui:       ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-select"],
-            charts:   ["recharts"],
-            query:    ["@tanstack/react-query"],
+            vendor:     ["react", "react-dom"],
+            router:     ["wouter"],
+            ui:         ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-select"],
+            charts:     ["recharts"],
+            query:      ["@tanstack/react-query"],
+            pdf:        ["jspdf", "html2canvas"],
+            "xlsx-lib": ["xlsx"],
           },
         },
       },
