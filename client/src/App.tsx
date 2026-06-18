@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import MobileNav from "@/components/mobile-nav";
+import PWAInstallBanner from "@/components/PWAInstallBanner";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -98,10 +99,10 @@ function Router() {
   }
 
   if (isError) {
-    const isConnectionError = error?.message?.includes('timeout') || 
-                               error?.message?.includes('rede') ||
-                               error?.message?.includes('fetch');
-    
+    const isConnectionError = error?.message?.includes('timeout') ||
+      error?.message?.includes('rede') ||
+      error?.message?.includes('fetch');
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-yellow-50 p-4">
         <div className="max-w-md w-full bg-white rounded-lg shadow-xl p-6">
@@ -115,7 +116,7 @@ function Router() {
               {isConnectionError ? 'Problema de Conexão' : 'Erro ao Carregar'}
             </h1>
             <p className="text-gray-600 text-sm">
-              {isConnectionError 
+              {isConnectionError
                 ? 'Sua internet pode estar lenta ou instável. Toque em "Tentar Novamente" para reconectar.'
                 : 'O sistema não conseguiu se conectar. Tente novamente ou faça login.'}
             </p>
@@ -254,6 +255,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <PWAInstallBanner />
         <Router />
       </TooltipProvider>
     </QueryClientProvider>
