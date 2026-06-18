@@ -1,6 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { log, serveStatic } from "./utils";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
@@ -31,7 +31,6 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
-    // Deixar o multer processar essas requisições
     return next();
   }
   express.json()(req, res, next);
@@ -41,7 +40,6 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
-    // Deixar o multer processar essas requisições
     return next();
   }
   express.urlencoded({ extended: false })(req, res, next);
@@ -78,21 +76,17 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Configurar hotsite ANTES de todas as rotas para evitar interceptação do Vite
   const isDevelopment = app.get("env") === "development";
-  
+
   // ✅ SERVIR HOTSITE EM AMBOS OS MODOS (desenvolvimento e produção)
   const distHotsitePath = path.join(process.cwd(), "server", "public-hotsite");
   log("🏪 Servindo hotsite de " + distHotsitePath);
-  
-  // Servir arquivos estáticos do hotsite com fallthrough disabled
+
   app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
-  
-  // Catch-all para servir index.html em rotas do hotsite
   app.all('/shop*', (_req, res) => {
     res.sendFile(path.join(distHotsitePath, "index.html"));
   });
-  
+
   app.get('/clear-cache', (_req, res) => {
     res.set({
       'Content-Type': 'text/html',
@@ -129,23 +123,20 @@ run();
   await initializeDefaultAdmin();
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    console.error(`\u{1F525} [ERROR HANDLER] ${req.method} ${req.path}:`, err);
+    console.error(`🔥 [ERROR HANDLER] ${req.method} ${req.path}:`, err);
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     res.status(status).json({ message });
   });
 
-  if (app.get("env") === "development") {
+  if (isDevelopment) {
+    // Dynamically import vite only in development — keeps vite out of the production bundle
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
   server.listen({
     port,
