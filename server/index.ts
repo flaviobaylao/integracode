@@ -4,8 +4,10 @@ import { setupVite, serveStatic, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
-import { startSyncWorker } from "./sync-1.0";
-import { startSync20Worker } from "./sync-2.0";
+import { startSyncWorker, runSync } from "./sync-1.0";
+import { startSync20Worker, runSync20 } from "./sync-2.0";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const app = express();
 
@@ -133,6 +135,40 @@ run();
   // Iniciar workers de sincronização bidirecional
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
+
+  // ── Sync Monitor API ──────────────────────────────────────────────────
+  // GET /api/admin/sync-status — last sync timestamps from system_settings
+  app.get('/api/admin/sync-status', async (_req, res) => {
+    try {
+      const result = await db.execute(
+        sql`SELECT key, value, updated_at FROM system_settings WHERE key IN ('sync_1_0_last_at','sync_2_0_last_at')`
+      );
+      res.json(result.rows || []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/admin/sync/trigger-1to2 — manual trigger Integra 1.0→2.0
+  app.post('/api/admin/sync/trigger-1to2', async (_req, res) => {
+    try {
+      await runSync();
+      res.json({ success: true, message: 'Sync 1.0→2.0 executado com sucesso' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/admin/sync/trigger-2to1 — manual trigger Integra 2.0→1.0
+  app.post('/api/admin/sync/trigger-2to1', async (_req, res) => {
+    try {
+      const result = await runSync20();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  // ─────────────────────────────────────────────────────────────────────
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     console.error(`🔥 [ERROR HANDLER] ${req.method} ${req.path}:`, err);
