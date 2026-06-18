@@ -4,6 +4,7 @@ import { queryClient, QueryClientProvider } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
+import { MobileNav } from "@/components/mobile-nav";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -169,7 +170,8 @@ function Router() {
   }
 
   return (
-    <Switch>
+    <>
+      <Switch>
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
@@ -243,6 +245,8 @@ function Router() {
       )}
       <Route component={NotFound} />
     </Switch>
+      {isAuthenticated && <MobileNav />}
+    </>
   );
 }
 
