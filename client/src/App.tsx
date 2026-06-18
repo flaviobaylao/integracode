@@ -4,7 +4,7 @@ import { queryClient, QueryClientProvider } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
-import { MobileNav } from "@/components/mobile-nav";
+import MobileNav from "@/components/mobile-nav";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -71,9 +71,7 @@ import Financial from "@/pages/Financial";
 import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
 import PurchaseRadar from "@/pages/PurchaseRadar";
-import DailyRouteView from "@/pages/DailyRouteView";
-import InvoiceDebugger from "@/pages/InvoiceDebugger";
-import LocationsManagement from "@/pages/LocationsManagement";
+import SyncMonitor from "@/pages/SyncMonitor";
 
 function Router() {
   const { isAuthenticated, isLoading, isError, error, refetch } = useAuth();
@@ -90,10 +88,10 @@ function Router() {
 
   if (isLoading || isRetrying) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0d1117]">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-orange-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-emerald-500 mx-auto mb-4"></div>
-          <p className="text-gray-400">{isRetrying ? 'Reconectando...' : 'Carregando Sistema Integra...'}</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">{isRetrying ? 'Reconectando...' : 'Carregando Sistema Integra...'}</p>
         </div>
       </div>
     );
@@ -105,32 +103,32 @@ function Router() {
                                error?.message?.includes('fetch');
     
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0d1117] p-4">
-        <div className="max-w-md w-full bg-[#161b22] border border-gray-700 rounded-lg shadow-xl p-6">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-yellow-50 p-4">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-xl p-6">
           <div className="text-center mb-5">
-            <div className="w-16 h-16 bg-orange-900/30 rounded-full flex items-center justify-center mx-auto mb-3">
-              <svg className="w-8 h-8 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" />
               </svg>
             </div>
-            <h1 className="text-xl font-bold text-gray-100 mb-2">
+            <h1 className="text-xl font-bold text-gray-900 mb-2">
               {isConnectionError ? 'Problema de Conexão' : 'Erro ao Carregar'}
             </h1>
-            <p className="text-gray-400 text-sm">
+            <p className="text-gray-600 text-sm">
               {isConnectionError 
                 ? 'Sua internet pode estar lenta ou instável. Toque em "Tentar Novamente" para reconectar.'
                 : 'O sistema não conseguiu se conectar. Tente novamente ou faça login.'}
             </p>
           </div>
 
-          <div className="bg-orange-900/20 border border-orange-800/40 rounded-lg p-3 mb-5">
-            <p className="text-xs text-orange-300">{error?.message || 'Erro desconhecido'}</p>
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-5">
+            <p className="text-xs text-orange-800">{error?.message || 'Erro desconhecido'}</p>
           </div>
 
           {isConnectionError && (
-            <div className="bg-blue-900/20 border border-blue-800/40 rounded-lg p-3 mb-5">
-              <p className="text-sm text-blue-300 font-medium mb-1">Dicas:</p>
-              <ul className="text-xs text-blue-400 space-y-1">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-5">
+              <p className="text-sm text-blue-800 font-medium mb-1">Dicas:</p>
+              <ul className="text-xs text-blue-700 space-y-1">
                 <li>- Verifique se o Wi-Fi ou dados móveis estão ligados</li>
                 <li>- Mova-se para um local com melhor sinal</li>
                 <li>- Aguarde alguns segundos e tente novamente</li>
@@ -155,7 +153,7 @@ function Router() {
                 Recarregar Página
               </button>
               <button
-                onClick={() => window.location.href = '/login'}
+                onClick={() => window.location.href = '/api/login'}
                 className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors text-sm"
                 data-testid="button-login"
               >
@@ -173,8 +171,7 @@ function Router() {
   }
 
   return (
-    <>
-      <Switch>
+    <Switch>
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
       <Route path="/set-password" component={SetPassword} />
@@ -234,6 +231,7 @@ function Router() {
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/admin/omie-instances" component={OmieInstances} />
           <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
+          <Route path="/admin/sync-monitor" component={SyncMonitor} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
@@ -243,16 +241,11 @@ function Router() {
           <Route path="/industria" component={Industry} />
           <Route path="/relatorios" component={Reports} />
           <Route path="/radar-compras" component={PurchaseRadar} />
-          <Route path="/rota-diaria" component={DailyRouteView} />
-          <Route path="/debug/invoice" component={InvoiceDebugger} />
-          <Route path="/locations" component={LocationsManagement} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
       <Route component={NotFound} />
     </Switch>
-      {isAuthenticated && <MobileNav />}
-    </>
   );
 }
 
