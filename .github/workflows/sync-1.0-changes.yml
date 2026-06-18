@@ -1,0 +1,119 @@
+name: Track Integra 1.0 Changes
+
+on:
+  # Executa manualmente pelo GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      replit_repo:
+        description: "URL do repo Git do Replit 1.0"
+        required: false
+        default: "https://github.com/flaviobaylao/Integra-Honest"
+        type: string
+      since_days:
+        description: "Buscar commits dos últimos N dias"
+        required: false
+        default: "7"
+        type: string
+
+  # Executa às 8h (Brasília = 11h UTC) toda segunda-feira
+  schedule:
+    - cron: "0 11 * * 1"
+
+jobs:
+  check-changes:
+    name: Verificar mudanças no Integra 1.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 2.0
+        uses: actions/checkout@v4
+
+      - name: Tentar clonar repo 1.0
+        id: clone
+        run: |
+          REPO="${{ github.event.inputs.replit_repo || 'https://github.com/flaviobaylao/Integra-Honest' }}"
+          echo "Tentando clonar: $REPO"
+          if git clone --depth 30 "$REPO" /tmp/integra-1.0 2>/dev/null; then
+            echo "cloned=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "cloned=false" >> "$GITHUB_OUTPUT"
+            echo "Repo 1.0 não acessível. Pule esta execução ou configure o repo."
+          fi
+
+      - name: Listar commits recentes do 1.0
+        if: steps.clone.outputs.cloned == 'true'
+        id: commits
+        run: |
+          DAYS="${{ github.event.inputs.since_days || '7' }}"
+          cd /tmp/integra-1.0
+          COMMITS=$(git log --since="${DAYS} days ago" --oneline --no-merges 2>/dev/null)
+          COUNT=$(echo "$COMMITS" | grep -c . || true)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "commits<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "--- $COUNT commits nos últimos $DAYS dias ---"
+          echo "$COMMITS"
+
+      - name: Detectar arquivos alterados
+        if: steps.clone.outputs.cloned == 'true'
+        id: files
+        run: |
+          cd /tmp/integra-1.0
+          FILES=$(git diff --name-only HEAD~10 HEAD 2>/dev/null || echo "")
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FILES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Criar Issue de rastreamento
+        if: steps.clone.outputs.cloned == 'true' && steps.commits.outputs.count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commits = `${{ steps.commits.outputs.commits }}`.trim();
+            const files   = `${{ steps.files.outputs.files }}`.trim();
+            const days    = '${{ github.event.inputs.since_days || "7" }}';
+            const today   = new Date().toISOString().split('T')[0];
+
+            const { data: existingIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              state: 'open',
+              labels: '1.0-sync',
+            });
+
+            // Não duplica se já existe issue aberta desta semana
+            const thisWeek = existingIssues.find(i => i.title.includes(today));
+            if (thisWeek) {
+              core.info('Issue de rastreamento já existe para hoje: ' + thisWeek.html_url);
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `[1.0→2.0] Mudanças detectadas — ${today}`,
+              body: [
+                '## Mudanças no Integra 1.0 (últimos ' + days + ' dias)',
+                '',
+                '> Gerado automaticamente. Revise e aplique ao 2.0 se necessário.',
+                '',
+                '### Commits',
+                '```',
+                commits || '(nenhum)',
+                '```',
+                '',
+                '### Arquivos alterados',
+                '```',
+                files || '(nenhum)',
+                '```',
+                '',
+                '### Checklist',
+                '- [ ] Revisar commits acima',
+                '- [ ] Identificar correções de bugs críticos',
+                '- [ ] Identificar novas features a portar',
+                '- [ ] Aplicar mudanças ao branch `main` do 2.0',
+                '- [ ] Fechar esta issue',
+              ].join('\n'),
+              labels: ['1.0-sync'],
+            });
