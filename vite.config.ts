@@ -18,7 +18,7 @@ export default defineConfig(async () => {
     }
   }
 
-  // PWA plugin — apenas em produção ou quando explicitamente ativado
+  // PWA plugin — usa manifest.webmanifest estático de client/public/
   const pwaPlugins: any[] = [];
   if (process.env.VITE_PWA !== "false") {
     try {
@@ -26,24 +26,9 @@ export default defineConfig(async () => {
       pwaPlugins.push(
         VitePWA({
           registerType: "autoUpdate",
-          includeAssets: ["favicon.ico", "icons/*.png", "icons/*.svg"],
-          manifest: {
-            name: "Integra 2.0",
-            short_name: "Integra",
-            description: "Sistema de gestão de vendas Integra",
-            theme_color: "#10b981",
-            background_color: "#0d1117",
-            display: "standalone",
-            orientation: "portrait-primary",
-            scope: "/",
-            start_url: "/",
-            icons: [
-              { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-              { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-              { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-            ],
-            categories: ["business", "productivity"],
-          },
+          // Não gerar manifest — usa o client/public/manifest.webmanifest estático
+          manifest: false,
+          includeAssets: ["icons/icon.svg", "icons/*.png"],
           workbox: {
             globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
             runtimeCaching: [
@@ -110,7 +95,6 @@ export default defineConfig(async () => {
         deny: ["**/.*"],
       },
     },
-    // Otimizações de performance
     optimizeDeps: {
       include: ["react", "react-dom", "wouter", "@tanstack/react-query"],
     },
