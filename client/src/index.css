@@ -2,306 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ================================================================
-   INTEGRA 2.0 — Design System
-   Dark mode elegante: charcoal profundo + verde esmeralda
-   ================================================================ */
-
-/* Google Fonts — Inter + JetBrains Mono */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-
 :root {
-  /* ---- Light mode (admin desktop) ---- */
-  --background:            hsl(210 20% 98%);
-  --foreground:            hsl(222 47% 11%);
-  --card:                  hsl(0 0% 100%);
-  --card-foreground:       hsl(222 47% 11%);
-  --popover:               hsl(0 0% 100%);
-  --popover-foreground:    hsl(222 47% 11%);
-  --primary:               hsl(158 64% 40%);
-  --primary-foreground:    hsl(0 0% 100%);
-  --secondary:             hsl(210 40% 94%);
-  --secondary-foreground:  hsl(222 47% 11%);
-  --muted:                 hsl(210 40% 95%);
-  --muted-foreground:      hsl(215 16% 47%);
-  --accent:                hsl(158 50% 92%);
-  --accent-foreground:     hsl(158 64% 30%);
-  --destructive:           hsl(0 84% 60%);
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(224 71% 4%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(224 71% 4%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(224 71% 4%);
+  --primary: hsl(142 72% 29%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(220 14% 96%);
+  --secondary-foreground: hsl(224 71% 4%);
+  --muted: hsl(220 14% 96%);
+  --muted-foreground: hsl(220 9% 46%);
+  --accent: hsl(142 72% 93%);
+  --accent-foreground: hsl(142 72% 25%);
+  --destructive: hsl(0 84% 60%);
   --destructive-foreground: hsl(0 0% 100%);
-  --border:                hsl(214 32% 91%);
-  --input:                 hsl(214 32% 91%);
-  --ring:                  hsl(158 64% 40%);
-
-  /* Charts */
-  --chart-1: hsl(158 64% 40%);
-  --chart-2: hsl(199 89% 48%);
-  --chart-3: hsl(42 92% 56%);
-  --chart-4: hsl(292 60% 55%);
-  --chart-5: hsl(0 84% 60%);
-
-  /* Sidebar */
-  --sidebar:                   hsl(222 47% 14%);
-  --sidebar-foreground:        hsl(210 40% 92%);
-  --sidebar-primary:           hsl(158 64% 52%);
-  --sidebar-primary-foreground: hsl(222 47% 8%);
-  --sidebar-accent:            hsl(222 47% 20%);
-  --sidebar-accent-foreground: hsl(210 40% 92%);
-  --sidebar-border:            hsl(222 30% 22%);
-  --sidebar-ring:              hsl(158 64% 52%);
-
-  /* Tokens */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', Menlo, monospace;
+  --border: hsl(220 13% 91%);
+  --input: hsl(220 13% 91%);
+  --ring: hsl(142 72% 29%);
+  --honest-green: hsl(142 72% 29%);
+  --sidebar: hsl(0 0% 98%);
+  --sidebar-foreground: hsl(224 71% 4%);
+  --sidebar-primary: hsl(142 72% 29%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(142 72% 93%);
+  --sidebar-accent-foreground: hsl(142 72% 25%);
+  --sidebar-border: hsl(220 13% 91%);
+  --sidebar-ring: hsl(142 72% 29%);
   --radius: 0.625rem;
-
-  /* Shadows — visíveis em light mode */
-  --shadow-xs:  0 1px 2px 0 hsl(222 47% 11% / 0.05);
-  --shadow-sm:  0 1px 3px 0 hsl(222 47% 11% / 0.08), 0 1px 2px -1px hsl(222 47% 11% / 0.04);
-  --shadow:     0 4px 6px -1px hsl(222 47% 11% / 0.08), 0 2px 4px -2px hsl(222 47% 11% / 0.04);
-  --shadow-md:  0 10px 15px -3px hsl(222 47% 11% / 0.08), 0 4px 6px -4px hsl(222 47% 11% / 0.04);
-  --shadow-lg:  0 20px 25px -5px hsl(222 47% 11% / 0.10), 0 8px 10px -6px hsl(222 47% 11% / 0.04);
-  --shadow-xl:  0 25px 50px -12px hsl(222 47% 11% / 0.20);
-
-  /* Brand */
-  --integra-green:  hsl(158 64% 40%);
-  --integra-green-light: hsl(158 64% 52%);
-  --integra-teal:   hsl(180 60% 40%);
-  --integra-amber:  hsl(38 92% 50%);
-  --integra-red:    hsl(0 84% 60%);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.08);
+  --shadow: 0 2px 6px -1px rgb(0 0 0 / 0.10);
+  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.10);
+  --shadow-lg: 0 10px 16px -3px rgb(0 0 0 / 0.10);
 }
 
-/* ================================================================
-   DARK MODE — Tema Principal
-   ================================================================ */
-.dark {
-  /* Backgrounds — escada de profundidade */
-  --background:            hsl(222 47% 7%);     /* mais fundo */
-  --foreground:            hsl(210 40% 94%);
-  --card:                  hsl(222 47% 10%);    /* cards elevados */
-  --card-foreground:       hsl(210 40% 94%);
-  --popover:               hsl(222 47% 11%);
-  --popover-foreground:    hsl(210 40% 94%);
-
-  /* Primary — verde esmeralda vibrante */
-  --primary:               hsl(158 64% 52%);
-  --primary-foreground:    hsl(222 47% 7%);
-
-  --secondary:             hsl(222 30% 17%);
-  --secondary-foreground:  hsl(210 40% 88%);
-  --muted:                 hsl(222 30% 13%);
-  --muted-foreground:      hsl(215 20% 55%);
-  --accent:                hsl(158 40% 12%);
-  --accent-foreground:     hsl(158 64% 65%);
-  --destructive:           hsl(0 72% 51%);
-  --destructive-foreground: hsl(0 0% 98%);
-  --border:                hsl(222 20% 17%);
-  --input:                 hsl(222 25% 15%);
-  --ring:                  hsl(158 64% 52%);
-
-  /* Charts */
-  --chart-1: hsl(158 64% 52%);
-  --chart-2: hsl(199 89% 60%);
-  --chart-3: hsl(42 92% 60%);
-  --chart-4: hsl(292 55% 65%);
-  --chart-5: hsl(0 72% 63%);
-
-  /* Sidebar — ligeiramente mais escura que o background */
-  --sidebar:                   hsl(222 47% 5%);
-  --sidebar-foreground:        hsl(210 30% 82%);
-  --sidebar-primary:           hsl(158 64% 52%);
-  --sidebar-primary-foreground: hsl(222 47% 7%);
-  --sidebar-accent:            hsl(222 35% 13%);
-  --sidebar-accent-foreground: hsl(210 40% 90%);
-  --sidebar-border:            hsl(222 25% 13%);
-  --sidebar-ring:              hsl(158 64% 52%);
-
-  /* Shadows — visíveis em dark mode com glow esverdeado */
-  --shadow-xs:  0 1px 2px 0 hsl(0 0% 0% / 0.30);
-  --shadow-sm:  0 1px 3px 0 hsl(0 0% 0% / 0.35), 0 1px 2px -1px hsl(0 0% 0% / 0.20);
-  --shadow:     0 4px 6px -1px hsl(0 0% 0% / 0.40), 0 2px 4px -2px hsl(0 0% 0% / 0.25);
-  --shadow-md:  0 10px 15px -3px hsl(0 0% 0% / 0.45), 0 4px 6px -4px hsl(0 0% 0% / 0.30);
-  --shadow-lg:  0 20px 25px -5px hsl(0 0% 0% / 0.55), 0 8px 10px -6px hsl(0 0% 0% / 0.35);
-  --shadow-xl:  0 25px 50px -12px hsl(0 0% 0% / 0.65);
-
-  /* Glow verde para elementos de destaque */
-  --glow-primary: 0 0 20px hsl(158 64% 52% / 0.25);
-  --glow-sm:      0 0 8px  hsl(158 64% 52% / 0.15);
-}
-
-/* ================================================================
-   BASE STYLES
-   ================================================================ */
 @layer base {
-  * {
-    @apply border-border;
-  }
-
-  html {
-    -webkit-tap-highlight-color: transparent;
-    scroll-behavior: smooth;
-  }
-
-  body {
-    @apply bg-background text-foreground antialiased;
-    font-family: var(--font-sans);
-    font-feature-settings: "cv11", "ss01";
-    font-variation-settings: "opsz" 32;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  /* Scrollbar customizada — dark elegante */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: hsl(222 25% 25%);
-    border-radius: 999px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: hsl(158 64% 40%);
-  }
-
-  /* Focus ring acessível */
-  *:focus-visible {
-    outline: 2px solid hsl(158 64% 52%);
-    outline-offset: 2px;
-    border-radius: var(--radius);
-  }
-
-  /* Seleção de texto */
-  ::selection {
-    background: hsl(158 64% 52% / 0.25);
-    color: inherit;
-  }
-}
-
-/* ================================================================
-   COMPONENT UTILITIES
-   ================================================================ */
-@layer utilities {
-  /* Glow effect para botões/ícones primários */
-  .glow-primary {
-    box-shadow: var(--glow-primary);
-  }
-  .glow-sm {
-    box-shadow: var(--glow-sm);
-  }
-
-  /* Glass morphism — cards com blur em dark */
-  .glass {
-    background: hsl(222 47% 10% / 0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid hsl(222 20% 20% / 0.6);
-  }
-
-  /* Gradient verde sutil para hero/header areas */
-  .gradient-primary {
-    background: linear-gradient(135deg, hsl(158 64% 52% / 0.15) 0%, transparent 60%);
-  }
-
-  /* Texto com gradiente verde */
-  .text-gradient {
-    background: linear-gradient(135deg, hsl(158 64% 65%), hsl(180 60% 55%));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  /* Animate shimmer para loading states */
-  .shimmer {
-    background: linear-gradient(
-      90deg,
-      hsl(222 30% 13%) 0%,
-      hsl(222 30% 18%) 50%,
-      hsl(222 30% 13%) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-  }
-  @keyframes shimmer {
-    0%   { background-position: -200% 0; }
-    100% { background-position:  200% 0; }
-  }
-
-  /* Fade in suave para page transitions */
-  .fade-in {
-    animation: fadeIn 0.25s ease-out;
-  }
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to   { opacity: 1; transform: translateY(0);   }
-  }
-
-  /* Card hover elevado */
-  .card-hover {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  .card-hover:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
-  }
-
-  /* Status dot pulsante */
-  .status-dot-pulse {
-    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.4; }
-  }
-
-  /* Mobile safe area padding */
-  .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .safe-top {
-    padding-top: env(safe-area-inset-top, 0px);
-  }
-}
-
-/* ================================================================
-   BRAND COLORS (mantidos para compatibilidade)
-   ================================================================ */
-.bg-honest-blue    { background-color: var(--integra-green); }
-.bg-honest-orange  { background-color: var(--integra-amber); }
-.text-honest-blue  { color: var(--integra-green); }
-.text-honest-orange{ color: var(--integra-amber); }
-.border-honest-blue  { border-color: var(--integra-green); }
-.border-honest-orange{ border-color: var(--integra-amber); }
-.hover\:bg-honest-blue:hover  { background-color: var(--integra-green); }
-.hover\:bg-honest-orange:hover{ background-color: var(--integra-amber); }
-
-/* ================================================================
-   MOBILE OVERRIDES
-   ================================================================ */
-@media (max-width: 768px) {
-  body {
-    /* Evita zoom em inputs no iOS */
-    font-size: 16px;
-  }
-
-  /* Bottom nav bar safe area */
-  .mobile-nav {
-    padding-bottom: env(safe-area-inset-bottom, 12px);
-  }
-
-  /* Botões maiores para touch */
-  button, [role="button"] {
-    min-height: 44px;
-  }
-}
-
-/* ================================================================
-   PRINT
-   ================================================================ */
-@media print {
-  .no-print { display: none !important; }
-  body { background: white; color: black; }
+  * { @apply border-border; }
+  body { @apply font-sans antialiased bg-background text-foreground; }
 }
