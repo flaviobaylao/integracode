@@ -35,7 +35,7 @@ const { Client } = pg;
 const REPLIT_DB_URL    = process.env.REPLIT_DATABASE_URL;
 const LOCAL_DB_URL     = process.env.DATABASE_URL;
 const SYNC_ENABLED     = process.env.SYNC_ENABLED === "true";
-const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "5", 10);
+const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 
 // Tabelas sincronizadas e suas PKs
 const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> = [
@@ -50,6 +50,7 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> =
   { table: "delivery_orders",      pk: "id", hasUpdatedAt: true  },
   { table: "payment_records",      pk: "id", hasUpdatedAt: true  },
   { table: "omie_sync_logs",       pk: "id", hasUpdatedAt: false },
+  { table: "billing_pipeline_items", pk: "id", hasUpdatedAt: true  },
 ];
 
 const SETTINGS_KEY = "sync_1_0_last_at";
