@@ -65,17 +65,24 @@ async function getLastSyncedAt(target: pg.Client): Promise<Date> {
       "SELECT value FROM system_settings WHERE key = $1",
       [SETTINGS_KEY]
     );
-    if (res.rows[0]?.value) return new Date(res.rows[0].value);
+    const raw = res.rows[0]?.value;
+    if (raw) {
+      // pg driver auto-parseia jsonb; raw pode ser string ou objeto
+      const val = typeof raw === 'string' ? raw : String(raw);
+      return new Date(val);
+    }
   } catch { /* tabela pode não existir ainda */ }
   return new Date(0); // Época Unix — sincroniza tudo na primeira vez
 }
 
 async function setLastSyncedAt(target: pg.Client, at: Date): Promise<void> {
+  // JSON.stringify garante valor JSON válido (coluna value pode ser jsonb)
+  const value = JSON.stringify(at.toISOString());
   await target.query(`
     INSERT INTO system_settings (id, key, value, description, updated_by, updated_at)
     VALUES (gen_random_uuid(), $1, $2, 'Última sincronização 1.0→2.0', 'sync-service', NOW())
     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-  `, [SETTINGS_KEY, at.toISOString()]);
+  `, [SETTINGS_KEY, value]);
 }
 
 async function syncTable(
@@ -177,10 +184,14 @@ async function runSync(): Promise<void> {
 
     let totalRows = 0;
     for (const cfg of SYNC_TABLES) {
-      const count = await syncTable(source, target, cfg, since);
-      if (count > 0) {
-        logger.info({ table: cfg.table, count }, "Tabela sincronizada");
-        totalRows += count;
+      try {
+        const count = await syncTable(source, target, cfg, since);
+        if (count > 0) {
+          logger.info({ table: cfg.table, count }, "Tabela sincronizada");
+          totalRows += count;
+        }
+      } catch (tableErr: any) {
+        logger.error({ table: cfg.table, err: tableErr.message }, "Erro ao sincronizar tabela — pulando");
       }
     }
 
