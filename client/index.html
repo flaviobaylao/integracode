@@ -1,5 +1,5 @@
 —<!DOCTYPE html>
-<html lang="pt-BR" class="dark">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -63,11 +63,10 @@
       (function() {
         try {
           var stored = localStorage.getItem('integra-theme');
-          if (stored === 'light') {
-            document.documentElement.classList.remove('dark');
-          } else {
-            document.documentElement.classList.add('dark');
-          }
+    if (stored === 'dark') {
+      document.documentElement.classList.add('dark');
+    }
+    // Padrão: modo claro
         } catch(e) {}
       })();
     </script>
