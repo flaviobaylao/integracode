@@ -103,6 +103,13 @@ async function syncTable(
     return 0;
   }
 
+  // Obtém colunas que existem no target para evitar schema mismatch (1.0 pode ter colunas extras)
+  const targetColsRes = await target.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+    [cfg.table]
+  );
+  const targetColSet = new Set<string>(targetColsRes.rows.map((r: any) => r.column_name as string));
+
   const dataRes = await source.query(
     `SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT 1000`,
     [since]
@@ -110,7 +117,9 @@ async function syncTable(
 
   if (dataRes.rows.length === 0) return 0;
 
-  const cols  = Object.keys(dataRes.rows[0]);
+  // Filtra apenas colunas presentes no target (evita erros de schema mismatch)
+  const cols = Object.keys(dataRes.rows[0]).filter(c => targetColSet.has(c));
+  if (cols.length === 0) return 0;
   const colsSql = cols.map(c => `"${c}"`).join(", ");
 
   // BUILD: INSERT … ON CONFLICT (pk) DO UPDATE SET …
