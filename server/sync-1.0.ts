@@ -117,41 +117,55 @@ async function syncTable(
   );
   const targetColSet = new Set<string>(targetColsRes.rows.map((r: any) => r.column_name as string));
 
-  const dataRes = await source.query(
-    `SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT 1000`,
-    [since]
-  );
-
-  if (dataRes.rows.length === 0) return 0;
-
-  // Filtra apenas colunas presentes no target (evita erros de schema mismatch)
-  const cols = Object.keys(dataRes.rows[0]).filter(c => targetColSet.has(c));
-  if (cols.length === 0) return 0;
-  const colsSql = cols.map(c => `"${c}"`).join(", ");
-
-  // BUILD: INSERT … ON CONFLICT (pk) DO UPDATE SET …
-  const setClauses = cols
-    .filter(c => c !== cfg.pk)
-    .map(c => `"${c}" = EXCLUDED."${c}"`)
-    .join(", ");
-
+  // Busca com paginação — percorre TODAS as páginas até esgotar os registros
+  const FETCH_LIMIT = 1000;
   const BATCH = 200;
+  let currentSince = since;
   let upserted = 0;
+  let cols: string[] | null = null;
+  let colsSql = "";
+  let setClauses = "";
 
-  for (let i = 0; i < dataRes.rows.length; i += BATCH) {
-    const batch = dataRes.rows.slice(i, i + BATCH);
-    const valuePlaceholders = batch.map((_, ri) =>
-      "(" + cols.map((_, ci) => `$${ri * cols.length + ci + 1}`).join(", ") + ")"
-    ).join(", ");
-    const flat = batch.flatMap(r => cols.map(c => r[c]));
-
-    await target.query(
-      `INSERT INTO "${cfg.table}" (${colsSql})
-       VALUES ${valuePlaceholders}
-       ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
-      flat
+  while (true) {
+    const dataRes = await source.query(
+      `SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT ${FETCH_LIMIT}`,
+      [currentSince]
     );
-    upserted += batch.length;
+
+    if (dataRes.rows.length === 0) break;
+
+    if (!cols) {
+      // Determina colunas na primeira iteração (filtra apenas as do target)
+      cols = Object.keys(dataRes.rows[0]).filter(c => targetColSet.has(c));
+      if (cols.length === 0) break;
+      colsSql = cols.map(c => `"${c}"`).join(", ");
+      setClauses = cols
+        .filter(c => c !== cfg.pk)
+        .map(c => `"${c}" = EXCLUDED."${c}"`)
+        .join(", ");
+    }
+
+    for (let i = 0; i < dataRes.rows.length; i += BATCH) {
+      const batch = dataRes.rows.slice(i, i + BATCH);
+      const valuePlaceholders = batch.map((_, ri) =>
+        "(" + cols!.map((_, ci) => `${ri * cols!.length + ci + 1}`).join(", ") + ")"
+      ).join(", ");
+      const flat = batch.flatMap(r => cols!.map(c => r[c]));
+
+      await target.query(
+        `INSERT INTO "${cfg.table}" (${colsSql})
+         VALUES ${valuePlaceholders}
+         ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
+        flat
+      );
+      upserted += batch.length;
+    }
+
+    if (dataRes.rows.length < FETCH_LIMIT) break; // Não há mais páginas
+
+    // Avança cursor para a próxima página usando o updated_at/created_at da última linha
+    const lastRow = dataRes.rows[dataRes.rows.length - 1];
+    currentSince = lastRow[dateCol];
   }
 
   return upserted;
@@ -238,5 +252,18 @@ export function startSyncWorker(): void {
   logger.info({ intervalMinutes: INTERVAL_MINUTES }, "Worker de sync 1.0→2.0 iniciado");
 }
 
-// Exporta a função de sync para execução manual (ex: scripts/run-sync.ts)
+// Exporta funções para execução manual e reset de timestamp
 export { runSync };
+
+/** Remove o timestamp salvo, forçando a próxima sync a partir do epoch (resync completo) */
+export async function resetSyncTimestamp(): Promise<void> {
+  if (!LOCAL_DB_URL) return;
+  const target = new Client({ connectionString: LOCAL_DB_URL, ssl: { rejectUnauthorized: false } });
+  await target.connect();
+  try {
+    await target.query("DELETE FROM system_settings WHERE key = $1", [SETTINGS_KEY]);
+    logger.info("Timestamp de sync resetado — próxima sync será completa");
+  } finally {
+    await target.end().catch(() => {});
+  }
+}
