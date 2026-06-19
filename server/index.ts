@@ -4,7 +4,7 @@ import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
-import { startSyncWorker, runSync } from "./sync-1.0";
+import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
 import { startSync20Worker, runSync20 } from "./sync-2.0";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
@@ -193,6 +193,16 @@ run();
     host: "0.0.0.0",
     reusePort: true,
   }, () => {
-    log(`serving on port ${port}`);
+    log(`serving on port
+
+app.post('/api/admin/sync/full-reset', async (_req, res) => {
+  try {
+    await resetSyncTimestamp();
+    await runSync();
+    res.json({ success: true, message: "Full resync concluído — todos os dados sincronizados desde o início" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+}); ${port}`);
   });
 })();
