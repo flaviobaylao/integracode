@@ -43,10 +43,15 @@ interface BillingPipelineItem {
 }
 
 const STAGES = [
+  { key: 'bloqueado', label: 'Bloqueados', icon: Power, color: 'bg-red-600', badgeColor: 'bg-red-100 text-red-800' },
+  { key: 'agendado', label: 'Agendado', icon: Clock, color: 'bg-cyan-500', badgeColor: 'bg-cyan-100 text-cyan-800' },
   { key: 'pedido', label: 'Pedido', icon: ClipboardList, color: 'bg-blue-500', badgeColor: 'bg-blue-100 text-blue-800' },
   { key: 'a_faturar', label: 'A Faturar', icon: FileText, color: 'bg-yellow-500', badgeColor: 'bg-yellow-100 text-yellow-800' },
   { key: 'faturado', label: 'Faturado', icon: FileText, color: 'bg-orange-500', badgeColor: 'bg-orange-100 text-orange-800' },
   { key: 'impresso', label: 'Impresso', icon: Printer, color: 'bg-purple-500', badgeColor: 'bg-purple-100 text-purple-800' },
+  { key: 'bsb', label: 'BSB', icon: MapPin, color: 'bg-pink-500', badgeColor: 'bg-pink-100 text-pink-800' },
+  { key: 'aguardando_rota_bsb', label: 'Ag. Rota BSB', icon: Clock, color: 'bg-teal-600', badgeColor: 'bg-teal-100 text-teal-800' },
+  { key: 'outras_cidades', label: 'Outras Cidades', icon: MapPin, color: 'bg-violet-500', badgeColor: 'bg-violet-100 text-violet-800' },
   { key: 'aguardando_rota', label: 'Aguardando Rota', icon: Clock, color: 'bg-gray-500', badgeColor: 'bg-gray-100 text-gray-800' },
   { key: 'em_rota', label: 'Em Rota', icon: Truck, color: 'bg-indigo-500', badgeColor: 'bg-indigo-100 text-indigo-800' },
   { key: 'entregue', label: 'Entregue', icon: CheckCircle2, color: 'bg-green-500', badgeColor: 'bg-green-100 text-green-800' },
