@@ -345,6 +345,54 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     }
   });
 
+  // POST /api/admin/sync/debug-billings — sync billings only with detailed error reporting
+  app.post('/api/admin/sync/debug-billings', async (_req: Request, res: Response) => {
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const [tgtColsRes, tgtJsonRes] = await Promise.all([
+        tgt.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' ORDER BY ordinal_position"),
+        tgt.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' AND udt_name IN ('json','jsonb')")
+      ]);
+      const tgtColSet = new Set(tgtColsRes.rows.map((r: any) => r.column_name as string));
+      const jsonbCols = new Set(tgtJsonRes.rows.map((r: any) => r.column_name as string));
+      const LIMIT = 500; const BATCH = 50;
+      let offset = 0; let upserted = 0; const errors: string[] = [];
+      while (true) {
+        const dataRes = await src.query(`SELECT * FROM "billings" ORDER BY "id" LIMIT ${LIMIT} OFFSET $1`, [offset]);
+        if (dataRes.rows.length === 0) break;
+        const cols = Object.keys(dataRes.rows[0]).filter(c => tgtColSet.has(c));
+        const colsSql = cols.map(c => `"${c}"`).join(', ');
+        const setClauses = cols.filter(c => c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+        for (let i = 0; i < dataRes.rows.length; i += BATCH) {
+          const batch = dataRes.rows.slice(i, i + BATCH);
+          const ph = batch.map((_: any, ri: number) => '(' + cols.map((_: any, ci: number) => '$' + (ri * cols.length + ci + 1)).join(',') + ')').join(',');
+          const flat = batch.flatMap((r: any) => cols.map(c => { const v = r[c]; if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; }));
+          try {
+            await tgt.query(`INSERT INTO "billings" (${colsSql}) VALUES ${ph} ON CONFLICT ("id") DO UPDATE SET ${setClauses}`, flat);
+            upserted += batch.length;
+          } catch (be: any) {
+            for (const row of batch) {
+              const rv = cols.map(c => { const v = row[c]; if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
+              const rph = cols.map((_: any, i: number) => '$' + (i + 1)).join(',');
+              try { await tgt.query(`INSERT INTO "billings" (${colsSql}) VALUES (${rph}) ON CONFLICT ("id") DO UPDATE SET ${setClauses}`, rv); upserted++; }
+              catch (re: any) { if (errors.length < 10) errors.push('id=' + row.id + ': ' + re.message.substring(0, 120)); }
+            }
+          }
+        }
+        if (dataRes.rows.length < LIMIT) break;
+        offset += LIMIT;
+      }
+      res.json({ success: true, upserted, errorCount: errors.length, firstErrors: errors });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    } finally {
+      await src.end().catch(() => {}); await tgt.end().catch(() => {});
+    }
+  });
+
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
