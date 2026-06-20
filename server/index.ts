@@ -169,11 +169,40 @@ run();
   });
   // ─────────────────────────────────────────────────────────────────────
 
+  // GET /api/admin/sync/source-tables
+  app.get('/api/admin/sync/source-tables', async (_req, res) => {
+    const pg = await import('pg');
+    const client = new pg.default.Client({
+      connectionString: process.env.REPLIT_DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    });
+    try {
+      await client.connect();
+      const result = await client.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
+      );
+      res.json(result.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      await client.end().catch(() => {});
+    }
+  });
+
+  // POST /api/admin/sync/full-reset
+  app.post('/api/admin/sync/full-reset', async (_req, res) => {
+    try {
+      await resetSyncTimestamp();
+      await runSync();
+      res.json({ success: true, message: "Full resync concluído — todos os dados sincronizados desde o início" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    console.error(`\u{1F525} [ERROR HANDLER] ${req.method} ${req.path}:`, err);
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     res.status(status).json({ message });
   });
 
@@ -193,30 +222,6 @@ run();
     host: "0.0.0.0",
     reusePort: true,
   }, () => {
-    log(`serving on port
-
-app.get('/api/admin/sync/source-tables', async (_req, res) => {
-  const pg = await import('pg');
-  const client = new pg.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-  try {
-    await client.connect();
-    const result = await client.query("SELECT table_name, (SELECT COUNT(*) FROM \"" + "\" || quote_ident(table_name)) as rows FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
-    res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  } finally {
-    await client.end().catch(() => {});
-  }
-});
-
-app.post('/api/admin/sync/full-reset', async (_req, res) => {
-  try {
-    await resetSyncTimestamp();
-    await runSync();
-    res.json({ success: true, message: "Full resync concluído — todos os dados sincronizados desde o início" });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-}); ${port}`);
+    log(`serving on port ${port}`);
   });
 })();
