@@ -159,13 +159,9 @@ run();
   });
   
   // POST /api/admin/sync/trigger-2to1 — manual trigger Integra 2.0→1.0
-  app.post('/api/admin/sync/trigger-2to1', async (_req, res) => {
-    try {
-      const result = await runSync20();
-      res.json({ success: true, ...result });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  app.post('/api/admin/sync/trigger-2to1', (_req, res) => {
+    res.json({ success: true, message: 'Sync 2.0→1.0 iniciado em background' });
+    runSync20().catch((err: any) => logger.error({ err: err.message }, 'trigger-2to1 falhou'));
   });
   // ─────────────────────────────────────────────────────────────────────
 
@@ -337,9 +333,9 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     try {
       await resetSyncTimestamp();        // reset 1.0→2.0 timestamp
       await resetSync20Timestamp();      // reset 2.0→1.0 timestamp
-      const r1 = await runSync();        // sync 1.0→2.0
-      const r2 = await runSync20();      // sync 2.0→1.0
-      res.json({ success: true, sync1to2: r1, sync2to1: r2 });
+      res.json({ success: true, message: 'Timestamps resetados. Sync bidirecional iniciado em background.' });
+      runSync().catch((e: any) => logger.error({ err: e.message }, '1.0→2.0 bg falhou'));
+      runSync20().catch((e: any) => logger.error({ err: e.message }, '2.0→1.0 bg falhou'));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
