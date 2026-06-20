@@ -38,6 +38,8 @@ const SYNC_ENABLED     = process.env.SYNC_ENABLED === "true";
 const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 
 // Tabelas sincronizadas e suas PKs
+// Ordem importa: tabelas referenciadas (pais) vêm antes das que dependem
+// delas (FKs), para que o full-reset insira na ordem correta.
 const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> = [
 { table: "omie_instances", pk: "id", hasUpdatedAt: true },
 { table: "users", pk: "id", hasUpdatedAt: true },
@@ -48,6 +50,28 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> =
 { table: "sales_cards", pk: "id", hasUpdatedAt: false },
 { table: "virtual_service_logs", pk: "id", hasUpdatedAt: true },
 { table: "prospections", pk: "id", hasUpdatedAt: false },
+// --- Tabelas adicionadas (paridade de dados 1.0 → 2.0) ---
+{ table: "leads", pk: "id", hasUpdatedAt: true },
+{ table: "lead_visits", pk: "id", hasUpdatedAt: false },
+{ table: "order_history", pk: "id", hasUpdatedAt: true },
+{ table: "sales_goals", pk: "id", hasUpdatedAt: true },
+{ table: "blocked_orders", pk: "id", hasUpdatedAt: true },
+{ table: "delivery_drivers", pk: "id", hasUpdatedAt: true },
+{ table: "delivery_routes", pk: "id", hasUpdatedAt: true },
+{ table: "delivery_route_stops", pk: "id", hasUpdatedAt: true },
+{ table: "visit_agenda", pk: "id", hasUpdatedAt: true },
+{ table: "exported_reports", pk: "id", hasUpdatedAt: false },
+// --- Módulo de chat/atendimento (pais antes dos filhos por FK) ---
+{ table: "chat_agents", pk: "id", hasUpdatedAt: true },
+{ table: "chat_customers", pk: "id", hasUpdatedAt: true },
+{ table: "chat_conversations", pk: "id", hasUpdatedAt: true },
+{ table: "chat_messages", pk: "id", hasUpdatedAt: false },
+{ table: "chat_assignment_history", pk: "id", hasUpdatedAt: false },
+{ table: "chat_quick_messages", pk: "id", hasUpdatedAt: true },
+{ table: "chat_orders", pk: "id", hasUpdatedAt: true },
+{ table: "chat_products", pk: "id", hasUpdatedAt: false },
+{ table: "chat_deliveries", pk: "id", hasUpdatedAt: true },
+{ table: "chat_reports", pk: "id", hasUpdatedAt: false },
 ];
 
 const SETTINGS_KEY = "sync_1_0_last_at";
