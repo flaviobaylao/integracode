@@ -214,6 +214,30 @@ run();
     }
   });
 
+  // GET /api/admin/sync/billing-debug — compare billings columns in source vs target
+  app.get('/api/admin/sync/billing-debug', async (_req, res) => {
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const colQuery = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' ORDER BY ordinal_position";
+      const [srcCols, tgtCols] = await Promise.all([src.query(colQuery), tgt.query(colQuery)]);
+      const srcNames = new Set(srcCols.rows.map((r:any) => r.column_name));
+      const tgtNames = new Set(tgtCols.rows.map((r:any) => r.column_name));
+      const inBoth = tgtCols.rows.filter((r:any) => srcNames.has(r.column_name));
+      const tgtOnly = tgtCols.rows.filter((r:any) => !srcNames.has(r.column_name));
+      const srcOnly = srcCols.rows.filter((r:any) => !tgtNames.has(r.column_name));
+      // Also try inserting 1 row
+      const sample = await src.query("SELECT * FROM billings LIMIT 1");
+      res.json({ inBoth: inBoth.map((r:any)=>r.column_name), tgtOnly, srcOnly: srcOnly.map((r:any)=>r.column_name), sampleKeys: sample.rows[0] ? Object.keys(sample.rows[0]) : [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      await src.end().catch(()=>{}); await tgt.end().catch(()=>{});
+    }
+  });
+
   // POST /api/admin/sync/full-reset
   app.post('/api/admin/sync/full-reset', async (_req, res) => {
     try {
