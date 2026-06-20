@@ -189,6 +189,31 @@ run();
     }
   });
 
+  // GET /api/admin/sync/audit — row counts in both source (Neon) and target (Railway)
+  app.get('/api/admin/sync/audit', async (_req, res) => {
+    const pgMod = await import('pg');
+    const TABLES = ['omie_instances','users','routes','customers','billings','products','sales_cards','virtual_service_logs','prospections'];
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      await tgt.connect();
+      const results = await Promise.all(TABLES.map(async t => {
+        const [s, d] = await Promise.all([
+          src.query('SELECT COUNT(*)::int AS n FROM ' + '"'+ t +'"').catch(() => ({rows:[{n:-1}]})),
+          tgt.query('SELECT COUNT(*)::int AS n FROM ' + '"'+ t +'"').catch(() => ({rows:[{n:-1}]}))
+        ]);
+        return { table: t, source: s.rows[0].n, target: d.rows[0].n, diff: d.rows[0].n - s.rows[0].n };
+      }));
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      await src.end().catch(() => {});
+      await tgt.end().catch(() => {});
+    }
+  });
+
   // POST /api/admin/sync/full-reset
   app.post('/api/admin/sync/full-reset', async (_req, res) => {
     try {
