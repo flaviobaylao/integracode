@@ -238,7 +238,26 @@ run();
     }
   });
 
-  // POST /api/admin/sync/full-reset
+  // GET /api/admin/sync/billing-type-values — distinct billing_type values in source
+app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
+  const pgMod = await import('pg');
+  const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  try {
+    await src.connect();
+    const [types, nulls, total] = await Promise.all([
+      src.query("SELECT billing_type::text, COUNT(*)::int AS n FROM billings GROUP BY billing_type ORDER BY n DESC"),
+      src.query("SELECT COUNT(*)::int AS nulls FROM billings WHERE billing_type IS NULL"),
+      src.query("SELECT COUNT(*)::int AS total FROM billings"),
+    ]);
+    res.json({ total: total.rows[0].total, nullCount: nulls.rows[0].nulls, distinctValues: types.rows });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    await src.end().catch(() => {});
+  }
+});
+
+// POST /api/admin/sync/full-reset
   app.post('/api/admin/sync/full-reset', async (_req, res) => {
     try {
       await resetSyncTimestamp();
