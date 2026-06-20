@@ -43,7 +43,7 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> =
 { table: "users", pk: "id", hasUpdatedAt: true },
 { table: "routes", pk: "id", hasUpdatedAt: true },
 { table: "customers", pk: "id", hasUpdatedAt: true },
-{ table: "billings", pk: "id", hasUpdatedAt: true },
+{ table: "billings", pk: "id", hasUpdatedAt: false },
 { table: "products", pk: "id", hasUpdatedAt: true },
 { table: "sales_cards", pk: "id", hasUpdatedAt: false },
 { table: "virtual_service_logs", pk: "id", hasUpdatedAt: true },
@@ -127,49 +127,63 @@ async function syncTable(
   let colsSql = "";
   let setClauses = "";
 
-  while (true) {
-    const dataRes = await source.query(
-      `SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT ${FETCH_LIMIT}`,
-      [currentSince]
-    );
+  // Full reset (since=epoch): use OFFSET pagination; delta: use date cursor
+const isFullReset = since.getTime() === 0;
+let offset = 0;
 
-    if (dataRes.rows.length === 0) break;
+while (true) {
+let dataRes;
+if (isFullReset) {
+dataRes = await source.query(
+`SELECT * FROM "${cfg.table}" ORDER BY "${cfg.pk}" LIMIT ${FETCH_LIMIT} OFFSET $1`,
+[offset]
+);
+} else {
+dataRes = await source.query(
+`SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT ${FETCH_LIMIT}`,
+[currentSince]
+);
+}
 
-    if (!cols) {
-      // Determina colunas na primeira iteração (filtra apenas as do target)
-      cols = Object.keys(dataRes.rows[0]).filter(c => targetColSet.has(c));
-      if (cols.length === 0) break;
-      colsSql = cols.map(c => `"${c}"`).join(", ");
-      setClauses = cols
-        .filter(c => c !== cfg.pk)
-        .map(c => `"${c}" = EXCLUDED."${c}"`)
-        .join(", ");
-    }
+if (dataRes.rows.length === 0) break;
 
-    for (let i = 0; i < dataRes.rows.length; i += BATCH) {
-      const batch = dataRes.rows.slice(i, i + BATCH);
-      const valuePlaceholders = batch.map((_, ri) =>
-        "(" + cols!.map((_, ci) => `$${ri * cols!.length + ci + 1}`).join(", ") + ")"
-      ).join(", ");
-      const flat = batch.flatMap(r => cols!.map(c => r[c]));
+if (!cols) {
+cols = Object.keys(dataRes.rows[0]).filter(c => targetColSet.has(c));
+if (cols.length === 0) break;
+colsSql = cols.map(c => `"${c}"`).join(", ");
+setClauses = cols
+.filter(c => c !== cfg.pk)
+.map(c => `"${c}" = EXCLUDED."${c}"`)
+.join(", ");
+}
 
-      await target.query(
-        `INSERT INTO "${cfg.table}" (${colsSql})
-         VALUES ${valuePlaceholders}
-         ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
-        flat
-      );
-      upserted += batch.length;
-    }
+for (let i = 0; i < dataRes.rows.length; i += BATCH) {
+const batch = dataRes.rows.slice(i, i + BATCH);
+const valuePlaceholders = batch.map((_, ri) =>
+"(" + cols!.map((_, ci) => `$${ri * cols!.length + ci + 1}`).join(", ") + ")"
+).join(", ");
+const flat = batch.flatMap(r => cols!.map(c => r[c]));
 
-    if (dataRes.rows.length < FETCH_LIMIT) break; // Não há mais páginas
+await target.query(
+`INSERT INTO "${cfg.table}" (${colsSql})
+VALUES ${valuePlaceholders}
+ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
+flat
+);
+upserted += batch.length;
+}
 
-    // Avança cursor para a próxima página usando o updated_at/created_at da última linha
-    const lastRow = dataRes.rows[dataRes.rows.length - 1];
-    currentSince = lastRow[dateCol];
-  }
+if (dataRes.rows.length < FETCH_LIMIT) break;
 
-  return upserted;
+if (isFullReset) {
+offset += FETCH_LIMIT;
+} else {
+const lastRow = dataRes.rows[dataRes.rows.length - 1];
+currentSince = lastRow[dateCol];
+}
+}
+
+return upserted;
 }
 
 // ----------------------------------------------------------------
