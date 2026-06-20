@@ -84,19 +84,19 @@ app.use((req, res, next) => {
 (async () => {
   // Configurar hotsite ANTES de todas as rotas para evitar interceptação do Vite
   const isDevelopment = app.get("env") === "development";
-  
+
   // ✅ SERVIR HOTSITE EM AMBOS OS MODOS (desenvolvimento e produção)
   const distHotsitePath = path.join(process.cwd(), "server", "public-hotsite");
   log("🏪 Servindo hotsite de " + distHotsitePath);
-  
+
   // Servir arquivos estáticos do hotsite com fallthrough disabled
   app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
-  
+
   // Catch-all para servir index.html em rotas do hotsite
   app.all('/shop*', (_req, res) => {
     res.sendFile(path.join(distHotsitePath, "index.html"));
   });
-  
+
   app.get('/clear-cache', (_req, res) => {
     res.set({
       'Content-Type': 'text/html',
@@ -147,7 +147,7 @@ run();
       res.status(500).json({ error: err.message });
     }
   });
-  
+
   // POST /api/admin/sync/trigger-1to2 — manual trigger Integra 1.0→2.0
   app.post('/api/admin/sync/trigger-1to2', async (_req, res) => {
     try {
@@ -157,7 +157,7 @@ run();
       res.status(500).json({ error: err.message });
     }
   });
-  
+
   // POST /api/admin/sync/trigger-2to1 — manual trigger Integra 2.0→1.0
   app.post('/api/admin/sync/trigger-2to1', (_req, res) => {
     res.json({ success: true, message: 'Sync 2.0→1.0 iniciado em background' });
@@ -424,7 +424,7 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     }
   });
 
-  
+
   // POST /api/admin/sync/diagnose — find rows in 1.0 not in 2.0 and capture exact errors
   app.post('/api/admin/sync/diagnose', async (req: Request, res: Response) => {
     const tbl = (req.body?.table || 'billings') as string;
@@ -467,6 +467,74 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
       res.json({ srcCnt, tgtCnt, missingCount: missingIds.length, results: errors });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
+  });
+
+  // POST /api/admin/sync/compare — compara CONTEÚDO real linha-a-linha (hash dos campos) entre 1.0 (Neon) e 2.0 (Railway)
+  // READ-ONLY: apenas SELECTs nos dois bancos. Body: { table, exclude?: string[], sample?: number }
+  app.post('/api/admin/sync/compare', async (req: Request, res: Response) => {
+    const tbl = (req.body?.table || 'customers') as string;
+    const excludeCols: string[] = Array.isArray(req.body?.exclude) ? req.body.exclude : [];
+    const sampleLimit = Math.min(parseInt(req.body?.sample) || 15, 50);
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      // Força UTC nas duas conexões para timestamps comparáveis (evita falso-positivo de fuso)
+      await src.query("SET TIME ZONE 'UTC'"); await tgt.query("SET TIME ZONE 'UTC'");
+      const colQ = "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY column_name";
+      const [sc, tc] = await Promise.all([src.query(colQ, [tbl]), tgt.query(colQ, [tbl])]);
+      const sCols = new Set(sc.rows.map((r: any) => r.column_name as string));
+      const tCols = new Set(tc.rows.map((r: any) => r.column_name as string));
+      const cols = [...sCols].filter(c => tCols.has(c) && !excludeCols.includes(c)).sort();
+      const srcOnlyCols = [...sCols].filter(c => !tCols.has(c));
+      const tgtOnlyCols = [...tCols].filter(c => !sCols.has(c));
+      if (cols.length === 0) { res.json({ error: 'sem colunas comuns', table: tbl }); return; }
+      if (!cols.includes('id')) { res.json({ error: 'tabela sem coluna id', table: tbl }); return; }
+      // Expressão de hash: md5 do concat de todas as colunas comuns (ordem alfabética estável) como texto
+      const hashExpr = 'md5(concat_ws(\'|\', ' + cols.map(c => `COALESCE("${c}"::text,'∅')`).join(', ') + '))';
+      const sel = `SELECT id::text AS id, ${hashExpr} AS h FROM "${tbl}"`;
+      const [sr, tr] = await Promise.all([src.query(sel), tgt.query(sel)]);
+      const sMap = new Map<string, string>(sr.rows.map((r: any) => [r.id, r.h]));
+      const tMap = new Map<string, string>(tr.rows.map((r: any) => [r.id, r.h]));
+      const onlySrc: string[] = []; const diff: string[] = [];
+      for (const [id, h] of sMap) { if (!tMap.has(id)) onlySrc.push(id); else if (tMap.get(id) !== h) diff.push(id); }
+      const onlyTgt: string[] = [];
+      for (const id of tMap.keys()) { if (!sMap.has(id)) onlyTgt.push(id); }
+      // Amostra de divergências de conteúdo: busca as linhas e aponta exatamente os campos diferentes
+      const sampleDiffs: any[] = [];
+      const colListSel = cols.map(c => `"${c}"::text AS "${c}"`).join(', ');
+      for (const id of diff.slice(0, sampleLimit)) {
+        const [sRow, tRow] = await Promise.all([
+          src.query(`SELECT ${colListSel} FROM "${tbl}" WHERE id::text=$1`, [id]),
+          tgt.query(`SELECT ${colListSel} FROM "${tbl}" WHERE id::text=$1`, [id]),
+        ]);
+        const a = sRow.rows[0] || {}; const b = tRow.rows[0] || {};
+        const fields: any = {};
+        for (const c of cols) {
+          const av = a[c] ?? null; const bv = b[c] ?? null;
+          if (av !== bv) fields[c] = { src: av, tgt: bv };
+        }
+        if (Object.keys(fields).length > 0) sampleDiffs.push({ id, fields });
+      }
+      res.json({
+        table: tbl,
+        columnsCompared: cols.length,
+        excluded: excludeCols,
+        srcOnlyColumns: srcOnlyCols,
+        tgtOnlyColumns: tgtOnlyCols,
+        srcCount: sMap.size,
+        tgtCount: tMap.size,
+        onlyInSrc: onlySrc.length,
+        onlyInTgt: onlyTgt.length,
+        contentDiff: diff.length,
+        identical: onlySrc.length === 0 && onlyTgt.length === 0 && diff.length === 0,
+        onlyInSrcSample: onlySrc.slice(0, 10),
+        onlyInTgtSample: onlyTgt.slice(0, 10),
+        sampleDiffs,
+      });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
