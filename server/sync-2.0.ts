@@ -98,7 +98,6 @@ async function syncTable(
     return 0;
   }
 
-  // Colunas comuns — ignora colunas exclusivas do 2.0
   const [srcCols, tgtCols] = await Promise.all([
     getColumns(source, cfg.table),
     getColumns(target, cfg.table),
@@ -106,15 +105,6 @@ async function syncTable(
   const tgtSet = new Set(tgtCols);
   const cols = srcCols.filter(c => tgtSet.has(c));
   if (cols.length === 0) return 0;
-
-  const dataRes = await source.query(
-    `SELECT ${cols.map(c => `"${c}"`).join(", ")}
-     FROM "${cfg.table}"
-     WHERE ${cfg.dateCol} > $1
-     ORDER BY ${cfg.dateCol} ASC LIMIT 1000`,
-    [since]
-  );
-  if (dataRes.rows.length === 0) return 0;
 
   const colsSql = cols.map(c => `"${c}"`).join(", ");
   const setClauses = cols
@@ -124,25 +114,71 @@ async function syncTable(
   const whereClause = tgtCols.includes("updated_at")
     ? `WHERE "${cfg.table}"."updated_at" <= EXCLUDED."updated_at"`
     : "";
+  const colSelect = cols.map(c => `"${c}"`).join(", ");
 
+  const FETCH_LIMIT = 1000;
   const BATCH = 200;
+  const isFullReset = since.getTime() === 0;
+  let offset = 0;
+  let currentSince = since;
   let upserted = 0;
-  for (let i = 0; i < dataRes.rows.length; i += BATCH) {
-    const batch = dataRes.rows.slice(i, i + BATCH);
-    const placeholders = batch
-      .map((_, ri) =>
-        "(" + cols.map((_, ci) => `$${ri * cols.length + ci + 1}`).join(", ") + ")"
-      )
-      .join(", ");
-    const flat = batch.flatMap(r => cols.map(c => r[c]));
-    await target.query(
-      `INSERT INTO "${cfg.table}" (${colsSql})
-       VALUES ${placeholders}
-       ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}
-       ${whereClause}`,
-      flat
-    );
-    upserted += batch.length;
+
+  while (true) {
+    let dataRes;
+    if (isFullReset) {
+      dataRes = await source.query(
+        `SELECT ${colSelect} FROM "${cfg.table}" ORDER BY "${cfg.pk}" LIMIT ${FETCH_LIMIT} OFFSET $1`,
+        [offset]
+      );
+    } else {
+      dataRes = await source.query(
+        `SELECT ${colSelect} FROM "${cfg.table}" WHERE ${cfg.dateCol} > $1 ORDER BY ${cfg.dateCol} ASC LIMIT ${FETCH_LIMIT}`,
+        [currentSince]
+      );
+    }
+    if (dataRes.rows.length === 0) break;
+
+    for (let i = 0; i < dataRes.rows.length; i += BATCH) {
+      const batch = dataRes.rows.slice(i, i + BATCH);
+      const placeholders = batch
+        .map((_, ri) =>
+          "(" + cols.map((_, ci) => "$" + (ri * cols.length + ci + 1)).join(", ") + ")"
+        )
+        .join(", ");
+      const flat = batch.flatMap(r => cols.map(c => r[c]));
+      try {
+        await target.query(
+          `INSERT INTO "${cfg.table}" (${colsSql})
+          VALUES ${placeholders}
+          ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}
+          ${whereClause}`,
+          flat
+        );
+        upserted += batch.length;
+      } catch (batchErr: any) {
+        logger.warn({ table: cfg.table, batchErr: batchErr.message }, "2.0→1.0 batch falhou — row-by-row");
+        for (const row of batch) {
+          const rowVals = cols.map(c => row[c]);
+          const rowPH = cols.map((_x: any, j: number) => "$" + (j + 1)).join(", ");
+          try {
+            await target.query(
+              `INSERT INTO "${cfg.table}" (${colsSql}) VALUES (${rowPH}) ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses} ${whereClause}`,
+              rowVals
+            );
+            upserted++;
+          } catch (rowErr: any) {
+            logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "2.0→1.0 linha pulada");
+          }
+        }
+      }
+    }
+
+    if (dataRes.rows.length < FETCH_LIMIT) break;
+    if (isFullReset) {
+      offset += FETCH_LIMIT;
+    } else {
+      currentSince = dataRes.rows[dataRes.rows.length - 1][cfg.dateCol];
+    }
   }
   return upserted;
 }
