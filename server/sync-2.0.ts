@@ -106,6 +106,13 @@ async function syncTable(
   const cols = srcCols.filter(c => tgtSet.has(c));
   if (cols.length === 0) return 0;
 
+  // Detect JSON/JSONB columns in target for proper serialization
+  const tgtJsonRes = await target.query(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND udt_name IN ('json','jsonb')",
+    [cfg.table]
+  );
+  const jsonCols = new Set<string>(tgtJsonRes.rows.map((r: any) => r.column_name as string));
+
   const colsSql = cols.map(c => `"${c}"`).join(", ");
   const setClauses = cols
     .filter(c => c !== cfg.pk)
@@ -145,7 +152,7 @@ async function syncTable(
           "(" + cols.map((_, ci) => "$" + (ri * cols.length + ci + 1)).join(", ") + ")"
         )
         .join(", ");
-      const flat = batch.flatMap(r => cols.map(c => r[c]));
+      const flat = batch.flatMap(r => cols.map(c => { const v = r[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; }));
       try {
         await target.query(
           `INSERT INTO "${cfg.table}" (${colsSql})
@@ -158,7 +165,7 @@ async function syncTable(
       } catch (batchErr: any) {
         logger.warn({ table: cfg.table, batchErr: batchErr.message }, "2.0→1.0 batch falhou — row-by-row");
         for (const row of batch) {
-          const rowVals = cols.map(c => row[c]);
+          const rowVals = cols.map(c => { const v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
           const rowPH = cols.map((_x: any, j: number) => "$" + (j + 1)).join(", ");
           try {
             await target.query(
