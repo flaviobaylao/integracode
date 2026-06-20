@@ -537,6 +537,48 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // POST /api/admin/sync/align-columns — adiciona ao 2.0 as colunas que existem no 1.0 (Neon) e faltam no 2.0 (Railway).
+  // ADITIVO e SEGURO: ADD COLUMN IF NOT EXISTS, sempre nullable, sem default, sem reescrita de tabela. Tipos copiados do 1.0.
+  // Body: { table: string, dryRun?: boolean }. Use dryRun:true para PRÉ-VISUALIZAR o que seria criado sem executar.
+  app.post('/api/admin/sync/align-columns', async (req: Request, res: Response) => {
+    const tbl = (req.body?.table || '') as string;
+    if (!tbl) { res.status(400).json({ error: 'informe table' }); return; }
+    const dryRun = req.body?.dryRun === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      // Tipos exatos do 1.0 via format_type (cobre varchar(n), numeric(p,s), text[], jsonb, timestamp, etc.)
+      const typeQ = `SELECT a.attname AS col, format_type(a.atttypid, a.atttypmod) AS coltype
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = $1 AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum`;
+      const srcTypes = (await src.query(typeQ, [tbl])).rows as Array<{ col: string; coltype: string }>;
+      if (srcTypes.length === 0) { res.json({ table: tbl, error: 'tabela não existe no 1.0 (source)' }); return; }
+      const tgtCols = new Set((await tgt.query(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", [tbl]
+      )).rows.map((r: any) => r.column_name as string));
+      if (tgtCols.size === 0) { res.json({ table: tbl, error: 'tabela não existe no 2.0 (target)' }); return; }
+      const missing = srcTypes.filter(r => !tgtCols.has(r.col));
+      const planned = missing.map(m => `ALTER TABLE "${tbl}" ADD COLUMN IF NOT EXISTS "${m.col}" ${m.coltype}`);
+      if (dryRun) { res.json({ table: tbl, dryRun: true, missing: missing.map(m => ({ col: m.col, type: m.coltype })), planned }); return; }
+      const added: string[] = []; const errors: any[] = [];
+      for (const m of missing) {
+        try {
+          await tgt.query(`ALTER TABLE "${tbl}" ADD COLUMN IF NOT EXISTS "${m.col}" ${m.coltype}`);
+          added.push(m.col);
+        } catch (e: any) {
+          errors.push({ col: m.col, type: m.coltype, error: e.message.substring(0, 150) });
+        }
+      }
+      res.json({ table: tbl, added, errors, message: `Adicionadas ${added.length} coluna(s). Rode full-reset para popular.` });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
