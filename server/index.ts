@@ -424,7 +424,52 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     }
   });
 
-  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  
+  // POST /api/admin/sync/diagnose — find rows in 1.0 not in 2.0 and capture exact errors
+  app.post('/api/admin/sync/diagnose', async (req: Request, res: Response) => {
+    const tbl = (req.body?.table || 'billings') as string;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      // Get column lists
+      const srcColsRes = await src.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position", [tbl]);
+      const tgtColsRes = await tgt.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position", [tbl]);
+      const tgtSet = new Set(tgtColsRes.rows.map((r: any) => r.column_name as string));
+      const jsonRes = await tgt.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND udt_name IN ('json','jsonb')", [tbl]);
+      const jsonCols = new Set(jsonRes.rows.map((r: any) => r.column_name as string));
+      const cols = srcColsRes.rows.map((r: any) => r.column_name as string).filter((c: string) => tgtSet.has(c));
+      const colsSql = cols.map((c: string) => '"' + c + '"').join(', ');
+      const setClauses = cols.filter((c: string) => c !== 'id').map((c: string) => '"' + c + '" = EXCLUDED."' + c + '"').join(', ');
+      const ph = cols.map((_: any, i: number) => '$' + (i + 1)).join(', ');
+      // Counts
+      const srcCnt = (await src.query('SELECT COUNT(*) FROM "' + tbl + '"')).rows[0].count;
+      const tgtCnt = (await tgt.query('SELECT COUNT(*) FROM "' + tbl + '"')).rows[0].count;
+      // Find IDs in src not in tgt (sample 200)
+      const srcIds = (await src.query('SELECT id FROM "' + tbl + '" ORDER BY id LIMIT 500')).rows.map((r: any) => r.id);
+      const tgtIds = new Set((await tgt.query('SELECT id FROM "' + tbl + '" WHERE id = ANY($1::text[])', [srcIds])).rows.map((r: any) => r.id));
+      const missingIds = srcIds.filter((id: string) => !tgtIds.has(id)).slice(0, 20);
+      // Try inserting each missing row
+      const errors: any[] = [];
+      for (const id of missingIds) {
+        const rowRes = await src.query('SELECT ' + cols.map((c: string) => '"' + c + '"').join(',') + ' FROM "' + tbl + '" WHERE id=$1', [id]);
+        if (!rowRes.rows[0]) continue;
+        const row = rowRes.rows[0];
+        const vals = cols.map((c: string) => { const v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
+        try {
+          await tgt.query('INSERT INTO "' + tbl + '" (' + colsSql + ') VALUES (' + ph + ') ON CONFLICT (id) DO UPDATE SET ' + setClauses, vals);
+          errors.push({ id, result: 'ok' });
+        } catch (e: any) {
+          errors.push({ id, error: e.message.substring(0, 200) });
+        }
+      }
+      res.json({ srcCnt, tgtCnt, missingCount: missingIds.length, results: errors });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
+  });
+
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
     res.status(status).json({ message });
