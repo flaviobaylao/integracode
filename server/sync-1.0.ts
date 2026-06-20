@@ -40,12 +40,15 @@ const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 // Tabelas sincronizadas e suas PKs
 // Ordem importa: tabelas referenciadas (pais) vêm antes das que dependem
 // delas (FKs), para que o full-reset insira na ordem correta.
-const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> = [
+// naturalKey (opcional): quando o INSERT por id falha por conflito de chave
+// única natural (mesma entidade com id diferente entre 1.0 e 2.0), faz UPDATE
+// da linha existente no 2.0 casada por essa chave — sem alterar id/FKs.
+const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; naturalKey?: string }> = [
 { table: "omie_instances", pk: "id", hasUpdatedAt: true },
 { table: "users", pk: "id", hasUpdatedAt: true },
 { table: "routes", pk: "id", hasUpdatedAt: true },
-{ table: "customers", pk: "id", hasUpdatedAt: true },
-{ table: "billings", pk: "id", hasUpdatedAt: false },
+{ table: "customers", pk: "id", hasUpdatedAt: true, naturalKey: "cpf" },
+{ table: "billings", pk: "id", hasUpdatedAt: false, naturalKey: "omie_order_id" },
 { table: "products", pk: "id", hasUpdatedAt: true },
 { table: "sales_cards", pk: "id", hasUpdatedAt: false },
 { table: "virtual_service_logs", pk: "id", hasUpdatedAt: true },
@@ -146,6 +149,8 @@ async function syncTable(
     [cfg.table]
   );
   const jsonbCols = new Set<string>(tgtJsonColsRes.rows.map((r: any) => r.column_name as string));
+  // naturalKey só é usável se a coluna existir no target
+  const naturalKey = cfg.naturalKey && targetColSet.has(cfg.naturalKey) ? cfg.naturalKey : undefined;
 
 
   // Busca com paginação — percorre TODAS as páginas até esgotar os registros
@@ -209,7 +214,11 @@ const valuePlaceholders = batch.map((_, ri) =>
         } catch (batchErr: any) {
           logger.warn({ table: cfg.table, batchErr: batchErr.message }, "Batch falhou — row-by-row");
           for (const row of batch) {
-            const rowVals = cols!.map(c => row[c]);
+            const rowVals = cols!.map(c => {
+              const v = row[c];
+              if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v);
+              return v;
+            });
             const rowPH = cols!.map((_x: any, i: number) => '$' + (i + 1)).join(", ");
             try {
               await target.query(
@@ -218,7 +227,33 @@ const valuePlaceholders = batch.map((_, ri) =>
               );
               upserted++;
             } catch (rowErr: any) {
-              logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "Linha pulada");
+              // Merge por chave natural (ex: cpf, omie_order_id): a mesma entidade já
+              // existe no 2.0 com id diferente — atualiza a linha existente sem mexer no id.
+              if (naturalKey && row[naturalKey] != null) {
+                try {
+                  const upCols = cols!.filter(c => c !== cfg.pk && c !== naturalKey);
+                  const setExpr = upCols.map((c, idx) => `"${c}" = $${idx + 1}`).join(", ");
+                  const upVals = upCols.map(c => {
+                    const v = row[c];
+                    if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v);
+                    return v;
+                  });
+                  upVals.push(row[naturalKey]);
+                  const upRes = await target.query(
+                    `UPDATE "${cfg.table}" SET ${setExpr} WHERE "${naturalKey}" = $${upCols.length + 1}`,
+                    upVals
+                  );
+                  if (upRes.rowCount && upRes.rowCount > 0) {
+                    upserted++;
+                  } else {
+                    logger.warn({ table: cfg.table, id: row[cfg.pk] }, "Linha pulada (chave natural não encontrada)");
+                  }
+                } catch (nkErr: any) {
+                  logger.warn({ table: cfg.table, id: row[cfg.pk], err: nkErr.message }, "Linha pulada (merge por chave natural falhou)");
+                }
+              } else {
+                logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "Linha pulada");
+              }
             }
           }
         }
@@ -286,6 +321,23 @@ async function runSync(): Promise<void> {
   }
 }
 
+// Guarda contra execuções sobrepostas (importante no fallback setInterval)
+let __syncRunning = false;
+async function runSyncGuarded(): Promise<void> {
+  if (__syncRunning) {
+    logger.warn("Sync 1.0→2.0 já em execução — ciclo ignorado");
+    return;
+  }
+  __syncRunning = true;
+  try {
+    await runSync();
+  } catch (err: any) {
+    logger.error({ err: err?.message }, "Sync 1.0→2.0 (ciclo) falhou");
+  } finally {
+    __syncRunning = false;
+  }
+}
+
 // ----------------------------------------------------------------
 // Registro como worker BullMQ
 // ----------------------------------------------------------------
@@ -298,7 +350,11 @@ export function startSyncWorker(): void {
 
   const queue = getQueue("omie-sync" as any); // reusa fila genérica de sync
   if (!queue) {
-    logger.warn("Redis não disponível — worker de sync 1.0→2.0 não iniciado");
+    // FALLBACK sem Redis: agenda via setInterval no próprio processo.
+    // Garante sync contínuo mesmo quando o BullMQ/Redis não está disponível.
+    logger.warn({ intervalMinutes: INTERVAL_MINUTES }, "Redis indisponível — usando setInterval como fallback para sync 1.0→2.0");
+    setInterval(() => { void runSyncGuarded(); }, INTERVAL_MINUTES * 60 * 1000);
+    void runSyncGuarded(); // roda uma vez logo ao iniciar
     return;
   }
 
@@ -315,7 +371,7 @@ export function startSyncWorker(): void {
   // Registra o worker que processa o job
   createWorker("omie-sync" as any, async (job) => {
     if (job.name !== "sync-1.0") return;
-    await runSync();
+    await runSyncGuarded();
   });
 
   logger.info({ intervalMinutes: INTERVAL_MINUTES }, "Worker de sync 1.0→2.0 iniciado");
