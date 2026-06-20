@@ -9,6 +9,7 @@ import { Camera, Download, MapPin, Clock, User, Building2, Calendar, X } from "l
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/hooks/useAuth";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface CheckInPhoto {
   id: string;
@@ -24,7 +25,7 @@ interface CheckInPhoto {
 export default function CheckInPhotos() {
   const { user } = useAuth();
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
-  
+
   const [selectedSellerId, setSelectedSellerId] = useState<string>('all');
   const [selectedPhoto, setSelectedPhoto] = useState<CheckInPhoto | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -56,7 +57,7 @@ export default function CheckInPhotos() {
   const photos: CheckInPhoto[] = photosData?.photos || [];
 
   // Filtrar por busca
-  const filteredPhotos = photos.filter(photo => 
+  const filteredPhotos = photos.filter(photo =>
     photo.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     photo.sellerName.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -145,7 +146,7 @@ export default function CheckInPhotos() {
               Nenhuma foto encontrada
             </h3>
             <p className="text-gray-500 dark:text-gray-400">
-              {photos.length === 0 
+              {photos.length === 0
                 ? 'Ainda não há fotos de check-in registradas no sistema.'
                 : 'Nenhuma foto corresponde aos filtros aplicados.'
               }
@@ -156,14 +157,14 @@ export default function CheckInPhotos() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredPhotos.map((photo) => (
             <Card key={photo.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-              <div 
+              <div
                 className="relative h-64 bg-gray-100 dark:bg-gray-800 cursor-pointer"
                 onClick={() => setSelectedPhoto(photo)}
                 data-testid={`photo-card-${photo.id}`}
               >
                 {photo.checkInPhotoUrl && photo.checkInPhotoUrl.length > 100 ? (
-                  <img 
-                    src={photo.checkInPhotoUrl} 
+                  <img
+                    src={photo.checkInPhotoUrl}
                     alt={`Check-in ${photo.customerName}`}
                     className="w-full h-full object-cover"
                   />
@@ -235,10 +236,10 @@ export default function CheckInPhotos() {
               >
                 <X className="h-4 w-4" />
               </Button>
-              
+
               {selectedPhoto.checkInPhotoUrl && selectedPhoto.checkInPhotoUrl.length > 100 ? (
-                <img 
-                  src={selectedPhoto.checkInPhotoUrl} 
+                <img
+                  src={selectedPhoto.checkInPhotoUrl}
                   alt={`Check-in ${selectedPhoto.customerName}`}
                   className="w-full max-h-[80vh] object-contain bg-black"
                 />
@@ -250,7 +251,7 @@ export default function CheckInPhotos() {
                   </div>
                 </div>
               )}
-              
+
               <div className="p-6 bg-white dark:bg-gray-800">
                 <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
                   <Building2 className="h-5 w-5 text-honest-blue" />
