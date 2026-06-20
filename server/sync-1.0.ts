@@ -99,7 +99,10 @@ async function syncTable(
     "SELECT to_regclass($1) AS exists",
     [`public.${cfg.table}`]
   );
-  if (!existsRes.rows[0]?.exists) return 0;
+  if (!existsRes.rows[0]?.exists) {
+    logger.info({ table: cfg.table }, "Tabela não existe no source (Neon) — pulando");
+    return 0;
+  }
 
   // Também verifica no target
   const existsTarget = await target.query(
@@ -149,7 +152,7 @@ async function syncTable(
     for (let i = 0; i < dataRes.rows.length; i += BATCH) {
       const batch = dataRes.rows.slice(i, i + BATCH);
       const valuePlaceholders = batch.map((_, ri) =>
-        "(" + cols!.map((_, ci) => `${ri * cols!.length + ci + 1}`).join(", ") + ")"
+        "(" + cols!.map((_, ci) => `$${ri * cols!.length + ci + 1}`).join(", ") + ")"
       ).join(", ");
       const flat = batch.flatMap(r => cols!.map(c => r[c]));
 
