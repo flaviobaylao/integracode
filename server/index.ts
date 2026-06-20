@@ -393,6 +393,41 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     }
   });
 
+  // POST /api/admin/sync/fix-billings-schema — drop NOT NULL on nullable columns
+  app.post('/api/admin/sync/fix-billings-schema', async (_req: Request, res: Response) => {
+    try {
+      const pgMod = await import('pg');
+      const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      await tgt.connect();
+      try {
+        const results: string[] = [];
+        // Check which columns are NOT NULL in target but nullable in source
+        const nullableCols = await tgt.query(`
+          SELECT column_name, is_nullable, column_default
+          FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'billings'
+          AND is_nullable = 'NO'
+          AND column_name NOT IN ('id')
+          ORDER BY ordinal_position
+        `);
+        // Drop NOT NULL on order_date specifically (null in source)
+        const colsToDrop = ['order_date', 'customer_id', 'seller_id', 'route_id'];
+        for (const col of colsToDrop) {
+          const exists = nullableCols.rows.find((r: any) => r.column_name === col);
+          if (exists) {
+            await tgt.query(`ALTER TABLE billings ALTER COLUMN "${col}" DROP NOT NULL`);
+            results.push(`Dropped NOT NULL on ${col}`);
+          }
+        }
+        res.json({ success: true, changes: results, notNullCols: nullableCols.rows.map((r: any) => r.column_name) });
+      } finally {
+        await tgt.end().catch(() => {});
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
