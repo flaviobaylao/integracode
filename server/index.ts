@@ -238,7 +238,46 @@ run();
     }
   });
 
-  // GET /api/admin/sync/billing-type-values — distinct billing_type values in source
+  // GET /api/admin/sync/billing-dry-run — try inserting 1 billing from source to target, return result
+app.get('/api/admin/sync/billing-dry-run', async (_req, res) => {
+  const pgMod = await import('pg');
+  const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  try {
+    await src.connect();
+    await tgt.connect();
+    // Get cols common to both
+    const [srcColsRes, tgtColsRes] = await Promise.all([
+      src.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' ORDER BY ordinal_position"),
+      tgt.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' ORDER BY ordinal_position"),
+    ]);
+    const tgtSet = new Set(tgtColsRes.rows.map((r: any) => r.column_name));
+    const cols = srcColsRes.rows.map((r: any) => r.column_name).filter((c: string) => tgtSet.has(c));
+    const colsSql = cols.map((c: string) => `"${c}"`).join(", ");
+    const setClauses = cols.filter((c: string) => c !== "id").map((c: string) => `"${c}" = EXCLUDED."${c}"`).join(", ");
+    // Fetch 1 row from source that is NOT already in target
+    const row1 = await src.query("SELECT * FROM billings LIMIT 1");
+    if (!row1.rows[0]) { res.json({ result: "no source rows" }); return; }
+    const row = row1.rows[0];
+    const vals = cols.map((c: string) => row[c]);
+    const ph = cols.map((_: any, i: number) => "$" + (i + 1)).join(", ");
+    // Check nulls in row for key columns
+    const nullCols = cols.filter((c: string) => row[c] === null || row[c] === undefined);
+    try {
+      await tgt.query(`INSERT INTO "billings" (${colsSql}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${setClauses}`, vals);
+      res.json({ result: "success", id: row.id, nullCols });
+    } catch (insertErr: any) {
+      res.json({ result: "error", error: insertErr.message, id: row.id, nullCols, billing_type: row.billing_type });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    await src.end().catch(() => {});
+    await tgt.end().catch(() => {});
+  }
+});
+
+// GET /api/admin/sync/billing-type-values — distinct billing_type values in source
 app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
   const pgMod = await import('pg');
   const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
