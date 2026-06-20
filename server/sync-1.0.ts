@@ -67,17 +67,18 @@ async function getLastSyncedAt(target: pg.Client): Promise<Date> {
     );
     const raw = res.rows[0]?.value;
     if (raw) {
-      // pg driver auto-parseia jsonb; raw pode ser string ou objeto
+      // value pode estar como JSON string com aspas extra (ex: '"2026-..."') — fazer JSON.parse
       const val = typeof raw === 'string' ? raw : String(raw);
-      return new Date(val);
+      const clean = val.startsWith('"') ? JSON.parse(val) : val;
+      const date = new Date(clean);
+      if (!isNaN(date.getTime())) return date;
     }
   } catch { /* tabela pode não existir ainda */ }
   return new Date(0); // Época Unix — sincroniza tudo na primeira vez
 }
 
 async function setLastSyncedAt(target: pg.Client, at: Date): Promise<void> {
-  // JSON.stringify garante valor JSON válido (coluna value pode ser jsonb)
-  const value = JSON.stringify(at.toISOString());
+  const value = at.toISOString(); // ISO string pura (sem aspas JSON extras)
   await target.query(`
     INSERT INTO system_settings (id, key, value, description, updated_by, updated_at)
     VALUES (gen_random_uuid(), $1, $2, 'Última sincronização 1.0→2.0', 'sync-service', NOW())
