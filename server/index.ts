@@ -238,7 +238,27 @@ run();
     }
   });
 
-  // GET /api/admin/sync/billing-dry-run — try inserting 1 billing from source to target, return result
+  // GET /api/admin/sync/billing-col-types — compare column data types between source and target billings
+app.get('/api/admin/sync/billing-col-types', async (_req, res) => {
+  const pgMod = await import('pg');
+  const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  try {
+    await src.connect(); await tgt.connect();
+    const q = "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billings' ORDER BY ordinal_position";
+    const [srcT, tgtT] = await Promise.all([src.query(q), tgt.query(q)]);
+    const srcMap: any = {}; srcT.rows.forEach((r: any) => { srcMap[r.column_name] = r.data_type + '/' + r.udt_name; });
+    const tgtMap: any = {}; tgtT.rows.forEach((r: any) => { tgtMap[r.column_name] = r.data_type + '/' + r.udt_name; });
+    const diffs = Object.keys(srcMap).filter(c => srcMap[c] !== tgtMap[c]).map(c => ({ col: c, src: srcMap[c], tgt: tgtMap[c] }));
+    res.json({ diffs, srcCols: srcMap, tgtCols: tgtMap });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    await src.end().catch(() => {}); await tgt.end().catch(() => {});
+  }
+});
+
+// GET /api/admin/sync/billing-dry-run — try inserting 1 billing from source to target, return result
 app.get('/api/admin/sync/billing-dry-run', async (_req, res) => {
   const pgMod = await import('pg');
   const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
