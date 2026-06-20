@@ -11,9 +11,9 @@ interface ConversationListProps {
   onPullConversation?: (conversationId: string) => void;
 }
 
-export function ConversationList({ 
-  conversations, 
-  selectedConversation, 
+export function ConversationList({
+  conversations,
+  selectedConversation,
   onSelectConversation,
   currentUser,
   agents = [],
@@ -78,31 +78,31 @@ export function ConversationList({
       {/* Filters */}
       <div className="px-4 pb-3">
         <div className="flex space-x-2">
-          <button 
+          <button
             onClick={() => setFilter("all")}
             className={`flex-1 px-3 py-2 text-sm rounded-lg font-medium transition-colors ${
-              filter === "all" 
-                ? "bg-whatsapp-500 text-white" 
+              filter === "all"
+                ? "bg-whatsapp-500 text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
             Todas
           </button>
-          <button 
+          <button
             onClick={() => setFilter("new")}
             className={`flex-1 px-3 py-2 text-sm rounded-lg font-medium transition-colors ${
-              filter === "new" 
-                ? "bg-whatsapp-500 text-white" 
+              filter === "new"
+                ? "bg-whatsapp-500 text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
             Novas
           </button>
-          <button 
+          <button
             onClick={() => setFilter("urgent")}
             className={`flex-1 px-3 py-2 text-sm rounded-lg font-medium transition-colors ${
-              filter === "urgent" 
-                ? "bg-whatsapp-500 text-white" 
+              filter === "urgent"
+                ? "bg-whatsapp-500 text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
@@ -117,7 +117,7 @@ export function ConversationList({
           {filteredConversations.map((conversation) => {
             const statusInfo = getStatusText(conversation.status, conversation.priority);
             const isSelected = selectedConversation?.id === conversation.id;
-            
+
             return (
               <div
                 key={conversation.id}
@@ -133,7 +133,7 @@ export function ConversationList({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-medium text-gray-900 truncate">
-                        {conversation.customer.name}
+                        {conversation.customer?.name || "Cliente sem cadastro"}
                       </span>
                       <span className="text-xs text-gray-500">
                         {formatTime(conversation.lastMessageTime)}
@@ -148,10 +148,10 @@ export function ConversationList({
                       </span>
                       <div className="flex items-center space-x-1">
                         <div className={`w-2 h-2 rounded-full ${
-                          conversation.priority === "urgent" 
-                            ? "bg-red-400 animate-pulse" 
-                            : conversation.agentId 
-                              ? "bg-green-400" 
+                          conversation.priority === "urgent"
+                            ? "bg-red-400 animate-pulse"
+                            : conversation.agentId
+                              ? "bg-green-400"
                               : "bg-orange-400"
                         }`}></div>
                         <span className="text-xs text-gray-500">
@@ -159,7 +159,7 @@ export function ConversationList({
                         </span>
                       </div>
                     </div>
-                    
+
                     {/* Admin Actions */}
                     {currentUser?.role === "admin" && (
                       <div className="flex space-x-1 mt-2">
@@ -182,7 +182,7 @@ export function ConversationList({
                             Transferir
                           </button>
                         </div>
-                        
+
                         {/* Pull Button */}
                         {conversation.agentId !== currentUser.agentId && (
                           <button
@@ -206,7 +206,7 @@ export function ConversationList({
               </div>
             );
           })}
-          
+
           {filteredConversations.length === 0 && (
             <div className="text-center py-8">
               <i className="fas fa-comments text-gray-300 text-4xl mb-2"></i>
