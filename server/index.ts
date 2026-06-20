@@ -411,7 +411,7 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
           ORDER BY ordinal_position
         `);
         // Drop NOT NULL on order_date specifically (null in source)
-        const colsToDrop = ['order_date', 'customer_id', 'seller_id', 'route_id'];
+        const colsToDrop = ['order_date', 'order_number', 'customer_id', 'customer_fantasy_name', 'seller_id', 'route_id', 'total_value', 'billing_type', 'is_cancelled', 'is_urgent', 'stage_name', 'vehicle_types', 'delivery_time_slots', 'delivery_saturday_time_slots'];
         for (const col of colsToDrop) {
           const exists = nullableCols.rows.find((r: any) => r.column_name === col);
           if (exists) {
