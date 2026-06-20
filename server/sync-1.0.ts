@@ -39,18 +39,15 @@ const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 
 // Tabelas sincronizadas e suas PKs
 const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean }> = [
-  { table: "omie_instances",       pk: "id", hasUpdatedAt: true  },
-  { table: "users",                pk: "id", hasUpdatedAt: true  },
-  { table: "routes",               pk: "id", hasUpdatedAt: true  },
-  { table: "customers",            pk: "id", hasUpdatedAt: true  },
-  { table: "products",             pk: "id", hasUpdatedAt: true  },
-  { table: "sales_cards",          pk: "id", hasUpdatedAt: false }, // sem updated_at, usa created_at
-  { table: "virtual_service_logs", pk: "id", hasUpdatedAt: true  },
-  { table: "prospections",         pk: "id", hasUpdatedAt: false },
-  { table: "delivery_orders",      pk: "id", hasUpdatedAt: true  },
-  { table: "payment_records",      pk: "id", hasUpdatedAt: true  },
-  { table: "omie_sync_logs",       pk: "id", hasUpdatedAt: false },
-  { table: "billing_pipeline_items", pk: "id", hasUpdatedAt: true  },
+{ table: "omie_instances", pk: "id", hasUpdatedAt: true },
+{ table: "users", pk: "id", hasUpdatedAt: true },
+{ table: "routes", pk: "id", hasUpdatedAt: true },
+{ table: "customers", pk: "id", hasUpdatedAt: true },
+{ table: "billings", pk: "id", hasUpdatedAt: true },
+{ table: "products", pk: "id", hasUpdatedAt: true },
+{ table: "sales_cards", pk: "id", hasUpdatedAt: false },
+{ table: "virtual_service_logs", pk: "id", hasUpdatedAt: true },
+{ table: "prospections", pk: "id", hasUpdatedAt: false },
 ];
 
 const SETTINGS_KEY = "sync_1_0_last_at";
