@@ -46,6 +46,7 @@ const SYNC_TABLES: Array<{
   { table: "daily_routes",    pk: "id", dateCol: "updated_at" },
   { table: "delivery_routes", pk: "id", dateCol: "updated_at" },
   { table: "delivery_drivers",pk: "id", dateCol: "updated_at" },
+{ table: "billings", pk: "id", dateCol: "created_at" },
 ];
 
 const SETTINGS_KEY = "sync_2_0_last_at";
@@ -206,6 +207,19 @@ export async function runSync20(): Promise<{
     };
   } finally {
     await source.end().catch(() => {});
+    await target.end().catch(() => {});
+  }
+}
+
+/** Remove o timestamp do sync 2.0→1.0, forçando resync completo */
+export async function resetSync20Timestamp(): Promise<void> {
+  if (!REPLIT_DB_URL) return;
+  const target = new Client({ connectionString: REPLIT_DB_URL, ssl: { rejectUnauthorized: false } });
+  await target.connect();
+  try {
+    await target.query("DELETE FROM system_settings WHERE key = $1", [SETTINGS_KEY]);
+    logger.info("Timestamp sync 2.0→1.0 resetado");
+  } finally {
     await target.end().catch(() => {});
   }
 }
