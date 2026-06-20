@@ -164,13 +164,30 @@ const valuePlaceholders = batch.map((_, ri) =>
 ).join(", ");
 const flat = batch.flatMap(r => cols!.map(c => r[c]));
 
-await target.query(
-`INSERT INTO "${cfg.table}" (${colsSql})
-VALUES ${valuePlaceholders}
-ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
-flat
-);
-upserted += batch.length;
+        try {
+          await target.query(
+            `INSERT INTO "${cfg.table}" (${colsSql})
+            VALUES ${valuePlaceholders}
+            ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
+            flat
+          );
+          upserted += batch.length;
+        } catch (batchErr: any) {
+          logger.warn({ table: cfg.table, batchErr: batchErr.message }, "Batch falhou — row-by-row");
+          for (const row of batch) {
+            const rowVals = cols!.map(c => row[c]);
+            const rowPH = cols!.map((_x: any, i: number) => '$' + (i + 1)).join(", ");
+            try {
+              await target.query(
+                `INSERT INTO "${cfg.table}" (${colsSql}) VALUES (${rowPH}) ON CONFLICT ("${cfg.pk}") DO UPDATE SET ${setClauses}`,
+                rowVals
+              );
+              upserted++;
+            } catch (rowErr: any) {
+              logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "Linha pulada");
+            }
+          }
+        }
 }
 
 if (dataRes.rows.length < FETCH_LIMIT) break;
