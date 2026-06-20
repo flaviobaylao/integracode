@@ -195,6 +195,20 @@ run();
   }, () => {
     log(`serving on port
 
+app.get('/api/admin/sync/source-tables', async (_req, res) => {
+  const pg = await import('pg');
+  const client = new pg.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  try {
+    await client.connect();
+    const result = await client.query("SELECT table_name, (SELECT COUNT(*) FROM \"" + "\" || quote_ident(table_name)) as rows FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    await client.end().catch(() => {});
+  }
+});
+
 app.post('/api/admin/sync/full-reset', async (_req, res) => {
   try {
     await resetSyncTimestamp();
