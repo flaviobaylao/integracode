@@ -194,6 +194,9 @@ async function runSync(): Promise<void> {
 
   try {
     await source.connect();
+    // Diagnose source tables
+    const srcTablesRes = await source.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
+    logger.info({ sourceTables: srcTablesRes.rows.map((r: any) => r.table_name) }, "Source DB tables");
     await target.connect();
 
     const since = await getLastSyncedAt(target);
