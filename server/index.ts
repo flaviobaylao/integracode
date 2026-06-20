@@ -5,7 +5,7 @@ import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
 import "./scheduler";
 import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
-import { startSync20Worker, runSync20 } from "./sync-2.0";
+import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
@@ -220,6 +220,19 @@ run();
       await resetSyncTimestamp();
       await runSync();
       res.json({ success: true, message: "Full resync concluído — todos os dados sincronizados desde o início" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/admin/sync/full-reset-both — reset AMBOS timestamps e roda sync bidirecional
+  app.post('/api/admin/sync/full-reset-both', async (_req, res) => {
+    try {
+      await resetSyncTimestamp();        // reset 1.0→2.0 timestamp
+      await resetSync20Timestamp();      // reset 2.0→1.0 timestamp
+      const r1 = await runSync();        // sync 1.0→2.0
+      const r2 = await runSync20();      // sync 2.0→1.0
+      res.json({ success: true, sync1to2: r1, sync2to1: r2 });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
