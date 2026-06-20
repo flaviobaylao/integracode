@@ -117,6 +117,12 @@ async function syncTable(
     [cfg.table]
   );
   const targetColSet = new Set<string>(targetColsRes.rows.map((r: any) => r.column_name as string));
+  const tgtJsonColsRes = await target.query(
+    "SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND udt_name IN ('json','jsonb')",
+    [cfg.table]
+  );
+  const jsonbCols = new Set<string>(tgtJsonColsRes.rows.map((r: any) => r.column_name as string));
+
 
   // Busca com paginação — percorre TODAS as páginas até esgotar os registros
   const FETCH_LIMIT = 1000;
@@ -162,7 +168,11 @@ const batch = dataRes.rows.slice(i, i + BATCH);
 const valuePlaceholders = batch.map((_, ri) =>
 "(" + cols!.map((_, ci) => `$${ri * cols!.length + ci + 1}`).join(", ") + ")"
 ).join(", ");
-const flat = batch.flatMap(r => cols!.map(c => r[c]));
+        const flat = batch.flatMap(r => cols!.map(c => {
+          const v = r[c];
+          if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v);
+          return v;
+        }));
 
         try {
           await target.query(
