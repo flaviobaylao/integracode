@@ -75,6 +75,13 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; nat
 { table: "chat_products", pk: "id", hasUpdatedAt: false },
 { table: "chat_deliveries", pk: "id", hasUpdatedAt: true },
 { table: "chat_reports", pk: "id", hasUpdatedAt: false },
+// --- Tabelas de recurso adicionais (descobertas na varredura de abas; tinham dados no 1.0 e estavam vazias no 2.0) ---
+{ table: "active_customers", pk: "id", hasUpdatedAt: true },        // alimenta a tela "Clientes Ativos"
+{ table: "active_customer_uploads", pk: "id", hasUpdatedAt: false },
+{ table: "fiscal_scenarios", pk: "id", hasUpdatedAt: true },        // cenários fiscais
+{ table: "chat_ai_settings", pk: "id", hasUpdatedAt: true },
+{ table: "chat_ai_logs", pk: "id", hasUpdatedAt: false },
+{ table: "chat_ai_reports", pk: "id", hasUpdatedAt: false },
 ];
 
 const SETTINGS_KEY = "sync_1_0_last_at";
@@ -378,17 +385,4 @@ export function startSyncWorker(): void {
 }
 
 // Exporta funções para execução manual e reset de timestamp
-export { runSync };
-
-/** Remove o timestamp salvo, forçando a próxima sync a partir do epoch (resync completo) */
-export async function resetSyncTimestamp(): Promise<void> {
-  if (!LOCAL_DB_URL) return;
-  const target = new Client({ connectionString: LOCAL_DB_URL, ssl: { rejectUnauthorized: false } });
-  await target.connect();
-  try {
-    await target.query("DELETE FROM system_settings WHERE key = $1", [SETTINGS_KEY]);
-    logger.info("Timestamp de sync resetado — próxima sync será completa");
-  } finally {
-    await target.end().catch(() => {});
-  }
-}
+ex
