@@ -56,17 +56,27 @@ export default function CheckInPhotos() {
 
   const photos: CheckInPhoto[] = photosData?.photos || [];
 
-  // Filtrar por busca
+  // Filtrar por busca (guarda contra nomes nulos)
   const filteredPhotos = photos.filter(photo =>
-    photo.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    photo.sellerName.toLowerCase().includes(searchQuery.toLowerCase())
+    (photo.customerName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (photo.sellerName || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Formata data com segurança (evita "Invalid time value" se a data for nula/inválida)
+  const safeFmt = (d: string | null | undefined, f: string) => {
+    if (!d) return '—';
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? '—' : format(dt, f, { locale: ptBR });
+  };
 
   // Função para fazer download da foto
   const downloadPhoto = (photo: CheckInPhoto) => {
     const link = document.createElement('a');
     link.href = photo.checkInPhotoUrl;
-    link.download = `checkin-${photo.customerName}-${format(new Date(photo.checkInTime), 'yyyy-MM-dd-HHmm')}.jpg`;
+    const stamp = photo.checkInTime && !isNaN(new Date(photo.checkInTime).getTime())
+      ? format(new Date(photo.checkInTime), 'yyyy-MM-dd-HHmm')
+      : 'sem-data';
+    link.download = `checkin-${photo.customerName || 'cliente'}-${stamp}.jpg`;
     link.click();
   };
 
@@ -204,11 +214,11 @@ export default function CheckInPhotos() {
                 </div>
                 <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
                   <Calendar className="h-4 w-4" />
-                  {format(new Date(photo.checkInTime), "dd/MM/yyyy", { locale: ptBR })}
+                  {safeFmt(photo.checkInTime, "dd/MM/yyyy")}
                 </div>
                 <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
                   <Clock className="h-4 w-4" />
-                  {format(new Date(photo.checkInTime), "HH:mm", { locale: ptBR })}
+                  {safeFmt(photo.checkInTime, "HH:mm")}
                 </div>
                 {photo.distanceToCustomer && (
                   <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
@@ -264,11 +274,11 @@ export default function CheckInPhotos() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-gray-500" />
-                    <span>{format(new Date(selectedPhoto.checkInTime), "dd/MM/yyyy", { locale: ptBR })}</span>
+                    <span>{safeFmt(selectedPhoto.checkInTime, "dd/MM/yyyy")}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-gray-500" />
-                    <span>{format(new Date(selectedPhoto.checkInTime), "HH:mm:ss", { locale: ptBR })}</span>
+                    <span>{safeFmt(selectedPhoto.checkInTime, "HH:mm:ss")}</span>
                   </div>
                   {selectedPhoto.distanceToCustomer && (
                     <div className="flex items-center gap-2">
