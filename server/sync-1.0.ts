@@ -385,4 +385,17 @@ export function startSyncWorker(): void {
 }
 
 // Exporta funções para execução manual e reset de timestamp
-ex
+export { runSync };
+
+/** Remove o timestamp salvo, forçando a próxima sync a partir do epoch (resync completo) */
+export async function resetSyncTimestamp(): Promise<void> {
+  if (!LOCAL_DB_URL) return;
+  const target = new Client({ connectionString: LOCAL_DB_URL, ssl: { rejectUnauthorized: false } });
+  await target.connect();
+  try {
+    await target.query("DELETE FROM system_settings WHERE key = $1", [SETTINGS_KEY]);
+    logger.info("Timestamp de sync resetado — próxima sync será completa");
+  } finally {
+    await target.end().catch(() => {});
+  }
+}
