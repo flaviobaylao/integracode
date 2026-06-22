@@ -72,6 +72,7 @@ import Financial from "@/pages/Financial";
 import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
 import PurchaseRadar from "@/pages/PurchaseRadar";
+import RelatoriosIA from "@/pages/RelatoriosIA";
 import SyncMonitor from "@/pages/SyncMonitor";
 
 function Router() {
@@ -242,6 +243,7 @@ function Router() {
           <Route path="/industria" component={Industry} />
           <Route path="/relatorios" component={Reports} />
           <Route path="/radar-compras" component={PurchaseRadar} />
+          <Route path="/relatorios-ia" component={RelatoriosIA} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
