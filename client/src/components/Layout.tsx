@@ -220,6 +220,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-chart-bar',
       items: [
         { id: 'relatorios', label: 'Relatórios Dinâmicos', icon: 'fas fa-chart-bar', available: canAccessReports, badge: null },
+        { id: 'relatorios-ia', label: 'Relatórios IA', icon: 'fas fa-brain', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -302,7 +303,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'radar-compras'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
