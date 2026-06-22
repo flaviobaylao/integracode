@@ -102,6 +102,10 @@ export default function BillingPipeline() {
     queryKey: ['/api/billing-pipeline'],
   });
 
+  const { data: blockedOrders = [] } = useQuery<any[]>({
+    queryKey: ['/api/blocked-orders'],
+  });
+
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
     queryKey: ['/api/billing-pipeline/mode'],
     refetchInterval: 10000,
@@ -200,8 +204,35 @@ export default function BillingPipeline() {
         groups[item.stage].push(item);
       }
     });
+    if (groups['bloqueado']) {
+      for (const b of (blockedOrders as any[])) {
+        groups['bloqueado'].push({
+          id: b.id,
+          salesCardId: b.salesCardId,
+          customerId: b.customerId,
+          customerName: b.customer?.name ?? b.customerName ?? 'Cliente',
+          customerDocument: b.customer?.document ?? null,
+          sellerId: b.sellerId ?? null,
+          sellerName: b.seller ? ((b.seller.firstName || '') + ' ' + (b.seller.lastName || '')).trim() : (b.sellerId ?? null),
+          stage: 'bloqueado',
+          orderNumber: b.omieOrderId ?? null,
+          invoiceNumber: null,
+          saleValue: b.totalAmount ?? null,
+          paymentMethod: b.paymentMethod ?? null,
+          operationType: b.operationType ?? null,
+          products: b.products ?? null,
+          notes: b.blockDetails ?? b.blockReason ?? null,
+          omieInstanceId: null,
+          omieInstanceName: null,
+          stageHistory: [],
+          createdBy: null,
+          createdAt: b.blockedAt ?? b.createdAt,
+          updatedAt: b.updatedAt,
+        });
+      }
+    }
     return groups;
-  }, [items]);
+  }, [items, blockedOrders]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
