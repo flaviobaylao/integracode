@@ -129,6 +129,64 @@ run();
   });
 
   const server = await registerRoutes(app);
+    app.get('/api/reports/clientes-sem-pedido', async (req: Request, res: Response) => {
+    try {
+      const dias = Math.max(1, Math.min(parseInt(String(req.query.dias)) || 30, 365));
+      const result: any = await db.execute(sql`
+        WITH pip AS (
+          SELECT customer_id, max(created_at) AS last_order
+          FROM billing_pipeline
+          GROUP BY customer_id
+        ),
+        bil AS (
+          SELECT translate(coalesce(customer_document, ''), './- ', '') AS doc,
+                 max(invoice_date) AS last_inv
+          FROM billings
+          WHERE char_length(translate(coalesce(customer_document, ''), './- ', '')) >= 11
+          GROUP BY 1
+        ),
+        base AS (
+          SELECT c.id, c.name,
+                 coalesce(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), c.seller_id, 'sem vendedor') AS vendedor,
+                 greatest(pip.last_order, bil.last_inv) AS ultima_compra
+          FROM customers c
+          LEFT JOIN pip ON pip.customer_id = c.id
+          LEFT JOIN bil ON bil.doc = translate(coalesce(NULLIF(c.document, ''), c.cpf, c.cnpj, ''), './- ', '')
+          LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', ''))
+          WHERE c.is_active = true AND c.is_lead = false
+        )
+        SELECT id, name, vendedor,
+               to_char(ultima_compra, 'YYYY-MM-DD') AS ultima_compra,
+               CASE WHEN ultima_compra IS NULL THEN 'nunca_comprou'
+                    WHEN ultima_compra > now() - make_interval(days => ${dias}::int) THEN 'comprou'
+                    ELSE 'parou' END AS status
+        FROM base
+        ORDER BY vendedor, status, ultima_compra NULLS LAST
+      `);
+      const rows: any[] = result.rows || [];
+      const porVendedor: Record<string, any> = {};
+      for (const r of rows) {
+        const v = r.vendedor || 'sem vendedor';
+        porVendedor[v] = porVendedor[v] || { vendedor: v, total: 0, comprou: 0, parou: 0, nunca_comprou: 0 };
+        porVendedor[v].total++;
+        porVendedor[v][r.status] = (porVendedor[v][r.status] || 0) + 1;
+      }
+      res.json({
+        gerado_em: new Date().toISOString(),
+        dias,
+        total: rows.length,
+        resumo: {
+          comprou: rows.filter(r => r.status === 'comprou').length,
+          parou: rows.filter(r => r.status === 'parou').length,
+          nunca_comprou: rows.filter(r => r.status === 'nunca_comprou').length,
+        },
+        por_vendedor: Object.values(porVendedor).sort((a: any, b: any) => (b.parou + b.nunca_comprou) - (a.parou + a.nunca_comprou)),
+        clientes: rows,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   await initializeDefaultAdmin();
 
