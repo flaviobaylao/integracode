@@ -188,6 +188,128 @@ run();
     }
   });
 
+  // ── Relatório IA: dashboard consolidado de vendas ────────────────────────
+  // GET /api/reports/ia-dashboard?dias=30  — READ-ONLY
+  // Fonte-verdade de vendas = billing_pipeline (vivo); débitos = overdue_debts.
+  app.get('/api/reports/ia-dashboard', async (req: Request, res: Response) => {
+    try {
+      const dias = Math.max(1, Math.min(parseInt(String(req.query.dias)) || 30, 365));
+
+      // 1) Resumo de carteira: comprou / parou / nunca (clientes ativos não-lead)
+      const carteira: any = await db.execute(sql`
+        WITH pip AS (
+          SELECT customer_id, max(created_at) AS last_order
+          FROM billing_pipeline GROUP BY customer_id
+        ),
+        base AS (
+          SELECT c.id,
+                 coalesce(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), c.seller_id, 'sem vendedor') AS vendedor,
+                 pip.last_order AS ultima_compra
+          FROM customers c
+          LEFT JOIN pip ON pip.customer_id = c.id
+          LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', ''))
+          WHERE c.is_active = true AND c.is_lead = false
+        )
+        SELECT vendedor,
+               count(*)::int AS ativos,
+               count(*) FILTER (WHERE ultima_compra > now() - make_interval(days => ${dias}::int))::int AS comprou,
+               count(*) FILTER (WHERE ultima_compra IS NOT NULL AND ultima_compra <= now() - make_interval(days => ${dias}::int))::int AS parou,
+               count(*) FILTER (WHERE ultima_compra IS NULL)::int AS nunca
+        FROM base GROUP BY vendedor
+      `);
+      const cart = (carteira.rows || []) as any[];
+      const resumo_carteira = cart.reduce((a: any, r: any) => ({
+        ativos: a.ativos + Number(r.ativos),
+        comprou: a.comprou + Number(r.comprou),
+        parou: a.parou + Number(r.parou),
+        nunca: a.nunca + Number(r.nunca),
+      }), { ativos: 0, comprou: 0, parou: 0, nunca: 0 });
+
+      // 2) Vendas no período (billing_pipeline) por vendedor
+      const vendas: any = await db.execute(sql`
+        SELECT coalesce(NULLIF(trim(bp.seller_name), ''),
+                        NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''),
+                        bp.seller_id, 'sem vendedor') AS vendedor,
+               count(*)::int AS pedidos,
+               coalesce(sum(bp.sale_value), 0)::float AS valor_total
+        FROM billing_pipeline bp
+        LEFT JOIN users u ON (u.omie_vendor_code = bp.seller_id OR u.omie_vendor_code = replace(coalesce(bp.seller_id,''), 'omie-vendor-', ''))
+        WHERE bp.created_at > now() - make_interval(days => ${dias}::int)
+        GROUP BY 1 ORDER BY valor_total DESC
+      `);
+      const vendasRows = (vendas.rows || []) as any[];
+
+      // merge ranking: vendas + carteira(parou/nunca)
+      const cartMap: Record<string, any> = {};
+      for (const r of cart) cartMap[r.vendedor] = r;
+      const rankSet = new Set<string>([...vendasRows.map(v => v.vendedor), ...cart.map(c => c.vendedor)]);
+      const ranking_vendedores = Array.from(rankSet).map((v) => {
+        const ven = vendasRows.find(x => x.vendedor === v) || { pedidos: 0, valor_total: 0 };
+        const c = cartMap[v] || { ativos: 0, comprou: 0, parou: 0, nunca: 0 };
+        const pedidos = Number(ven.pedidos) || 0;
+        const valor = Number(ven.valor_total) || 0;
+        return {
+          vendedor: v,
+          pedidos,
+          valor_total: valor,
+          ticket_medio: pedidos > 0 ? valor / pedidos : 0,
+          ativos: Number(c.ativos) || 0,
+          comprou: Number(c.comprou) || 0,
+          parou: Number(c.parou) || 0,
+          nunca: Number(c.nunca) || 0,
+        };
+      }).sort((a, b) => b.valor_total - a.valor_total);
+
+      // 3) Pipeline por estágio (snapshot atual, total)
+      const estagios: any = await db.execute(sql`
+        SELECT stage, count(*)::int AS qtd, coalesce(sum(sale_value), 0)::float AS valor
+        FROM billing_pipeline GROUP BY stage ORDER BY qtd DESC
+      `);
+
+      // 4) Vendas por dia no período (para gráfico)
+      const porDia: any = await db.execute(sql`
+        SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS dia,
+               count(*)::int AS pedidos,
+               coalesce(sum(sale_value), 0)::float AS valor
+        FROM billing_pipeline
+        WHERE created_at > now() - make_interval(days => ${dias}::int)
+        GROUP BY 1 ORDER BY 1
+      `);
+
+      // 5) Débitos vencidos (overdue_debts)
+      const debitosResumo: any = await db.execute(sql`
+        SELECT count(*)::int AS clientes, coalesce(sum(total_amount), 0)::float AS valor_total
+        FROM overdue_debts
+      `);
+      const debitosTop: any = await db.execute(sql`
+        SELECT client_name, total_amount::float AS total_amount, max_days_overdue
+        FROM overdue_debts ORDER BY total_amount DESC LIMIT 15
+      `);
+
+      const totalVendidoPeriodo = vendasRows.reduce((s, r) => s + (Number(r.valor_total) || 0), 0);
+      const totalPedidosPeriodo = vendasRows.reduce((s, r) => s + (Number(r.pedidos) || 0), 0);
+
+      res.json({
+        gerado_em: new Date().toISOString(),
+        dias,
+        resumo_carteira,
+        kpis: {
+          total_vendido_periodo: totalVendidoPeriodo,
+          total_pedidos_periodo: totalPedidosPeriodo,
+          ticket_medio_periodo: totalPedidosPeriodo > 0 ? totalVendidoPeriodo / totalPedidosPeriodo : 0,
+          debitos_clientes: Number((debitosResumo.rows?.[0] || {}).clientes) || 0,
+          debitos_valor: Number((debitosResumo.rows?.[0] || {}).valor_total) || 0,
+        },
+        ranking_vendedores,
+        pipeline_estagios: (estagios.rows || []),
+        vendas_por_dia: (porDia.rows || []),
+        debitos_top: (debitosTop.rows || []),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   await initializeDefaultAdmin();
 
   startSyncWorker();      // Sync 1.0 → 2.0
