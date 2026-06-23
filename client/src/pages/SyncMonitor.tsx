@@ -177,6 +177,45 @@ export default function SyncMonitor() {
           </div>
         </CardContent>
       </Card>
-    </div>
+          {/* Ambiente de Faturamento (NF-e) */}
+      <FiscalEnvCard />
+      </div>
+  );
+}
+
+
+function FiscalEnvCard() {
+  const { data: envs = [], refetch, isLoading } = useQuery<any[]>({ queryKey: ['/api/admin/fiscal/environments'] });
+  const { toast } = useToast();
+  const setMut = useMutation({
+    mutationFn: async (v: { instanceId: string; environment: string }) => {
+      const r = await fetch('/api/admin/fiscal/environment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(v) });
+      if (!r.ok) throw new Error(((await r.json()) || {}).error || 'falha');
+      return r.json();
+    },
+    onSuccess: (_d: any, v: any) => { toast({ title: 'Ambiente atualizado', description: v.environment }); refetch(); },
+    onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+  return (
+    <Card className="mt-6">
+      <CardHeader className="border-b border-gray-200">
+        <CardTitle className="text-lg font-semibold text-gray-800">Ambiente de Faturamento (NF-e)</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 space-y-3">
+        <p className="text-sm text-gray-600">Controle o ambiente de emissao por empresa/instancia. Mantenha em HOMOLOGACAO ate o cutover; vire para PRODUCAO ao emitir notas reais.</p>
+        {isLoading ? <p className="text-sm text-gray-500">Carregando...</p> : (envs as any[]).map((row: any) => (
+          <div key={row.instanceId} className="flex items-center justify-between border rounded-lg p-3">
+            <div>
+              <p className="font-semibold text-gray-800">{row.name}</p>
+              <Badge className={row.environment === 'producao' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>{row.environment === 'producao' ? 'PRODUCAO' : 'HOMOLOGACAO'}</Badge>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant={row.environment === 'homologacao' ? 'default' : 'outline'} disabled={setMut.isPending} onClick={() => setMut.mutate({ instanceId: row.instanceId, environment: 'homologacao' })}>Homologacao</Button>
+              <Button size="sm" className={row.environment === 'producao' ? 'bg-green-600 hover:bg-green-700 text-white' : ''} variant={row.environment === 'producao' ? 'default' : 'outline'} disabled={setMut.isPending} onClick={() => { if (window.confirm('Virar PRODUCAO para ' + row.name + '? As proximas notas serao emitidas de verdade na SEFAZ.')) setMut.mutate({ instanceId: row.instanceId, environment: 'producao' }); }}>Producao</Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
