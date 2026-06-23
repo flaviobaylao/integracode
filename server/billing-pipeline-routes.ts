@@ -10,11 +10,15 @@ let internalBillingModeActive = false;
 let internalBillingActivatedBy: string | null = null;
 
 export function isInternalBillingModeActive() {
-  return internalBillingModeActive;
+  // Faturamento e SEMPRE pelo pipeline interno (Omie descontinuado para faturamento).
+  // Todo pedido com venda registrada entra no pipeline, independente de toggle/Omie.
+  return true;
 }
 
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
-  if (!internalBillingModeActive) return null;
+  if (!isInternalBillingModeActive()) return null;
+  // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
+  if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) return null;
 
   try {
     const existing = await storage.getBillingPipelineItems();
