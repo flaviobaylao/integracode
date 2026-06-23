@@ -385,6 +385,90 @@ run();
     }
   });
 
+  // ── Pipeline: re-sync 1.0→2.0 do billing_pipeline (helper compartilhado) ──
+  async function resyncBillingPipeline(src: any, tgt: any) {
+    const colQ = "SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='billing_pipeline'";
+    const [scr, tcr] = await Promise.all([src.query(colQ), tgt.query(colQ)]);
+    const tgtCols = new Set((tcr.rows as any[]).map((r) => r.column_name));
+    const jsonbCols = new Set((tcr.rows as any[]).filter((r) => r.udt_name === 'json' || r.udt_name === 'jsonb').map((r) => r.column_name));
+    const cols = (scr.rows as any[]).map((r) => r.column_name).filter((c) => tgtCols.has(c));
+    const colsSql = cols.map((c) => '"' + c + '"').join(',');
+    const setSql = cols.filter((c) => c !== 'id').map((c) => '"' + c + '"=EXCLUDED."' + c + '"').join(',');
+    const flatten = (row: any) => cols.map((c) => { const v = row[c]; if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
+    const all = await src.query('SELECT ' + colsSql + ' FROM billing_pipeline');
+    let upserted = 0, failed = 0; const errors: any[] = [];
+    const BATCH = 200;
+    for (let i = 0; i < all.rows.length; i += BATCH) {
+      const batch = all.rows.slice(i, i + BATCH);
+      const ph = batch.map((_: any, ri: number) => '(' + cols.map((_c: any, ci: number) => '$' + (ri * cols.length + ci + 1)).join(',') + ')').join(',');
+      try {
+        await tgt.query('INSERT INTO billing_pipeline (' + colsSql + ') VALUES ' + ph + ' ON CONFLICT (id) DO UPDATE SET ' + setSql, batch.flatMap(flatten));
+        upserted += batch.length;
+      } catch (e: any) {
+        for (const row of batch) {
+          const rph = cols.map((_c: any, i2: number) => '$' + (i2 + 1)).join(',');
+          try { await tgt.query('INSERT INTO billing_pipeline (' + colsSql + ') VALUES (' + rph + ') ON CONFLICT (id) DO UPDATE SET ' + setSql, flatten(row)); upserted++; }
+          catch (e2: any) { failed++; if (errors.length < 10) errors.push({ id: row.id, err: String(e2.message).slice(0, 160) }); }
+        }
+      }
+    }
+    return { total: all.rows.length, upserted, failed, errors };
+  }
+
+  // POST /api/admin/pipeline/fix-sync — corrige enum (estágios faltantes) + colunas e re-sincroniza billing_pipeline.
+  // READ-ONLY por padrão; Body { apply:true } para aplicar.
+  app.post('/api/admin/pipeline/fix-sync', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const mkTgt = () => new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    let tgt = mkTgt();
+    try {
+      await src.connect(); await tgt.connect();
+      const [ss, tsr] = await Promise.all([
+        src.query("SELECT stage::text AS stage, count(*)::int AS c FROM billing_pipeline GROUP BY 1 ORDER BY 2 DESC"),
+        tgt.query("SELECT stage::text AS stage, count(*)::int AS c FROM billing_pipeline GROUP BY 1 ORDER BY 2 DESC"),
+      ]);
+      const enumRes = await tgt.query("SELECT e.enumlabel AS l FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='billing_pipeline_stage' ORDER BY e.enumsortorder");
+      const enumLabels = new Set((enumRes.rows as any[]).map((r) => r.l));
+      const srcStages = (ss.rows as any[]).map((r) => r.stage).filter(Boolean);
+      const missingEnum = srcStages.filter((s: string) => !enumLabels.has(s));
+      const colQ = "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='billing_pipeline'";
+      const [sc, tc] = await Promise.all([src.query(colQ), tgt.query(colQ)]);
+      const tgtColSet = new Set((tc.rows as any[]).map((r) => r.column_name));
+      const missingCols = (sc.rows as any[]).filter((r) => !tgtColSet.has(r.column_name));
+      const out: any = { srcStages: ss.rows, tgtStages: tsr.rows, currentEnum: [...enumLabels], missingEnum, missingCols: missingCols.map((r: any) => r.column_name) };
+      if (apply) {
+        for (const v of missingEnum) await tgt.query("ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS '" + String(v).replace(/'/g, "''") + "'");
+        for (const r of missingCols) {
+          const typ = r.data_type === 'USER-DEFINED' ? 'text' : r.data_type;
+          await tgt.query('ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS "' + r.column_name + '" ' + typ);
+        }
+        // reconecta o target para que os novos valores de enum fiquem visíveis ao INSERT
+        await tgt.end().catch(() => {});
+        tgt = mkTgt(); await tgt.connect();
+        out.resync = await resyncBillingPipeline(src, tgt);
+        out.applied = { enumAdded: missingEnum, colsAdded: missingCols.map((r: any) => r.column_name) };
+      }
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
+  // POST /api/billing-pipeline/sync-now — sincroniza billing_pipeline 1.0→2.0 sob demanda (botão Atualizar).
+  app.post('/api/billing-pipeline/sync-now', async (_req: Request, res: Response) => {
+    if (!process.env.REPLIT_DATABASE_URL) { res.json({ synced: false, reason: '1.0 não configurado' }); return; }
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const r = await resyncBillingPipeline(src, tgt);
+      res.json({ synced: true, ...r });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
   await initializeDefaultAdmin();
 
   startSyncWorker();      // Sync 1.0 → 2.0
