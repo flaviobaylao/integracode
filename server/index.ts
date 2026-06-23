@@ -347,7 +347,8 @@ run();
         for (const f of FIELDS) {
           const sv = norm(f, s[f]); const tv = norm(f, t[f]);
           if (sv !== tv) {
-            const direction = (sv === '') ? 'erase_block' : (tv === '' ? 'fill' : 'change');
+            const blank = (x: string) => x === '' || x === '[]';
+            const direction = blank(sv) ? 'erase_block' : (blank(tv) ? 'fill' : 'change');
             diffs.push({ id: s.id, name: s.name, field: f, v_1_0: s[f], v_2_0: t[f], direction });
             perField[f] = (perField[f] || 0) + 1;
           }
