@@ -509,6 +509,34 @@ run();
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // -- Cria no Railway as tabelas que existem no neondb e faltam aqui (schema replicado, sem FK) --
+  app.post('/api/admin/sync/create-missing-tables', async (req: Request, res: Response) => {
+    const dryRun = req.body?.dryRun === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const KNOWN = /^(text|character varying|character|varchar|char|integer|int|int4|int8|bigint|smallint|numeric|decimal|real|double precision|boolean|bool|date|timestamp|timestamp with time zone|timestamp without time zone|time|json|jsonb|uuid|bytea)(\(|\[|$| )/i;
+    try {
+      await src.connect(); await tgt.connect();
+      const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
+      const sT = (await src.query(tq)).rows.map((r: any) => r.table_name);
+      const tT = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
+      const missing = sT.filter((t: string) => !tT.has(t));
+      const results: any[] = [];
+      for (const t of missing) {
+        const cols = (await src.query("SELECT a.attname AS col, format_type(a.atttypid, a.atttypmod) AS coltype FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", [t])).rows;
+        if (cols.length === 0) { results.push({ table: t, skipped: 'no cols' }); continue; }
+        const defs = cols.map((c: any) => { let ct = c.coltype; if (!KNOWN.test(ct)) ct = 'text'; return '"' + c.col + '" ' + ct; });
+        const hasId = cols.some((c: any) => c.col === 'id');
+        const ddl = 'CREATE TABLE IF NOT EXISTS "' + t + '" (' + defs.join(', ') + (hasId ? ', PRIMARY KEY ("id")' : '') + ')';
+        if (dryRun) { results.push({ table: t, cols: cols.length, ddl: ddl.slice(0, 180) }); continue; }
+        try { await tgt.query(ddl); results.push({ table: t, ok: true, cols: cols.length }); } catch (e: any) { results.push({ table: t, error: e.message.slice(0, 180) }); }
+      }
+      res.json({ missingCount: missing.length, createdCount: results.filter((r: any) => r.ok).length, errorCount: results.filter((r: any) => r.error).length, results });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
   // -- Ambiente fiscal por instancia (homologacao/producao) --
   app.get('/api/admin/fiscal/environments', async (_req: Request, res: Response) => {
     try {
