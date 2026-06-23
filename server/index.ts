@@ -490,6 +490,25 @@ run();
     } catch (err: any) { res.status(500).json({ error: err.message, partial: out }); }
   });
 
+  // -- Auditoria de sync: todas as tabelas (src=neondb 1.0 vs tgt=Railway 2.0) --
+  app.get('/api/admin/sync/audit-all', async (_req: Request, res: Response) => {
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const Q = "SELECT c.relname AS t, c.reltuples::bigint AS n FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = 'public' AND c.relkind = 'r'";
+      const sr: any = await src.query(Q); const tr: any = await tgt.query(Q);
+      const sMap: any = {}; sr.rows.forEach((r: any) => { sMap[r.t] = Number(r.n); });
+      const tMap: any = {}; tr.rows.forEach((r: any) => { tMap[r.t] = Number(r.n); });
+      const rows = Object.keys(sMap).sort().map((t) => ({ table: t, src: sMap[t], tgt: (t in tMap) ? tMap[t] : null, tgtExists: t in tMap }));
+      const missingInTarget = rows.filter((r) => !r.tgtExists).map((r) => r.table);
+      const tgtOnly = Object.keys(tMap).filter((t) => !(t in sMap)).sort();
+      res.json({ srcTableCount: Object.keys(sMap).length, tgtTableCount: Object.keys(tMap).length, missingInTarget, tgtOnly, rows });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
   // -- Ambiente fiscal por instancia (homologacao/producao) --
   app.get('/api/admin/fiscal/environments', async (_req: Request, res: Response) => {
     try {
