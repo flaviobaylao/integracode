@@ -5,6 +5,8 @@ import { sefazService } from "./sefaz-service";
 import { nowBrazil } from "./brazilTimezone";
 import crypto from "crypto";
 import { z } from "zod";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { insertFiscalScenarioSchema, insertFiscalInvoiceSchema, insertFiscalInvoiceItemSchema, insertDigitalCertificateSchema } from "@shared/schema";
 import multer from "multer";
 import { execSync } from "child_process";
@@ -566,6 +568,16 @@ export function registerNfeRoutes(app: Express) {
         }
       }
       
+      // Ambiente de emissao por instancia (system_settings: fiscal_env_<id>). Default homologacao ate cutover.
+      try {
+        const __instId = (invoiceFields as any).omieInstanceId || 'default';
+        const __envRes: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${'fiscal_env_' + __instId}`);
+        const __raw = (__envRes && __envRes.rows && __envRes.rows[0]) ? __envRes.rows[0].value : null;
+        (invoiceFields as any).environment = (__raw === 'producao' || __raw === '"producao"') ? 'producao' : 'homologacao';
+      } catch (e) {
+        (invoiceFields as any).environment = 'homologacao';
+      }
+
       const invoice = await storage.createFiscalInvoice({
         ...invoiceFields,
         invoiceNumber: nextNumber,
