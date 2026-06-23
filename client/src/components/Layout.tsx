@@ -233,7 +233,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       items: [
         { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
         { id: 'omie-instances', label: 'Instâncias Omie', icon: 'fas fa-building', available: canAccessUsers, badge: null },
-        { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
+        { id: 'sync-monitor', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+      { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
       ],
@@ -312,6 +313,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
+      return;
+    }
+
+    if (itemId === 'sync-monitor') {
+      navigate('/admin/sync-monitor');
       return;
     }
 
