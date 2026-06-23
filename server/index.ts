@@ -488,7 +488,6 @@ run();
       out.sellerComparison = await q('sellerComparison', "SELECT COALESCE(seller_name, seller_id, 'sem vendedor') AS seller_name, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia, COALESCE(SUM(sale_value),0) AS revenue, COUNT(*)::int AS pedidos FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) GROUP BY 1,2 ORDER BY 1,2");
       res.json(out);
     } catch (err: any) { res.status(500).json({ error: err.message, partial: out }); }
-  }); }
   });
 
   // -- Ambiente fiscal por instancia (homologacao/producao) --
