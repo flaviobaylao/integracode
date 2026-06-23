@@ -491,6 +491,34 @@ async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, origin
   }
 }
 
+// -- Umbler uTalk (api.utalk.chat): envio de texto via WhatsApp --
+async function sendUmblerText(toPhone: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const token = process.env.UMBLER_API_KEY;
+  if (!token) return { success: false, error: 'UMBLER_API_KEY ausente' };
+  let digits = String(toPhone || '').replace(/\\D/g, '');
+  if (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) digits = '55' + digits;
+  if (!digits) return { success: false, error: 'Telefone do cliente vazio' };
+  const to = `${digits}@c.us`;
+  try {
+    const body = new URLSearchParams({ token, cmd: 'chat', to, msg: text }).toString();
+    const resp = await fetch('https://api.utalk.chat/send/token/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(30000),
+    });
+    const raw = await resp.text();
+    console.log(`[UMBLER] to=${to} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
+    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    let waStatus = '';
+    try { waStatus = String(JSON.parse(raw).status || '').toLowerCase(); } catch {}
+    if (waStatus === 'offline') return { success: false, error: 'uTalk: sessao WhatsApp offline (token invalido ou WhatsApp desconectado no painel Umbler)' };
+    return { success: true, messageId: waStatus || undefined };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -3520,8 +3548,8 @@ export function registerChatRoutes(app: Express): void {
             
             console.log(`📱 [SEND-WHATSAPP] Config: instanceName=${config.instanceName}, hasKey=${!!config.apiKey}`);
             
-            if (!config.instanceName || !config.apiKey) {
-              console.warn(`⚠️ [SEND-WHATSAPP] Configuração incompleta da Evolution API`);
+            if (!process.env.UMBLER_API_KEY && (!config.instanceName || !config.apiKey)) {
+              console.warn(`⚠️ [SEND-WHATSAPP] Configuração incompleta (Evolution/Umbler)`);
             } else {
               const phoneNormalized = normalizePhoneNumber(chatCustomer.phone);
               const phoneFormatted = phoneNormalized.includes('@') 
@@ -3530,12 +3558,17 @@ export function registerChatRoutes(app: Express): void {
               
               let sendResult;
               if (messageType === 'text' && content) {
-                console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
-                sendResult = await evolutionAPIService.sendTextMessage(
-                  config.instanceName,
-                  phoneFormatted,
-                  content
-                );
+                if (process.env.UMBLER_API_KEY) {
+                  console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
+                  sendResult = await sendUmblerText(chatCustomer.phone, content);
+                } else {
+                  console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
+                  sendResult = await evolutionAPIService.sendTextMessage(
+                    config.instanceName,
+                    phoneFormatted,
+                    content
+                  );
+                }
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
                 
