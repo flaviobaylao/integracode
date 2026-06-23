@@ -111,6 +111,21 @@ export default function BillingPipeline() {
     refetchInterval: 10000,
   });
 
+  const syncNowMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('POST', '/api/billing-pipeline/sync-now');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      toast({ title: 'Pipeline sincronizado', description: 'Dados atualizados a partir do Integra 1.0' });
+    },
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: 'Falha ao sincronizar', description: error.message, variant: 'destructive' });
+    }
+  });
+
   const toggleModeMutation = useMutation({
     mutationFn: async (active: boolean) => {
       return await apiRequest('POST', '/api/billing-pipeline/mode', { active });
@@ -373,9 +388,14 @@ export default function BillingPipeline() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] })}
+              onClick={() => syncNowMutation.mutate()}
+              disabled={syncNowMutation.isPending}
             >
-              <RefreshCw className="h-4 w-4 mr-1" />
+              {syncNowMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-1" />
+              )}
               Atualizar
             </Button>
           </div>
