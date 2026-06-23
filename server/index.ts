@@ -169,7 +169,7 @@ run();
         const info = infoMap.get(cid) || {};
         const meta = metaMap.get(cid) || 0;
         const visits = Array.from(cellMap.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: false, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
-        return { customerId: cid, customerName: info.customer_name || "-", sellerId: info.seller_id || "sem-vendedor", sellerName: info.seller_name || "Sem vendedor", visits };
+        return { customerId: cid, customerName: info.customer_name || "-", sellerId: info.seller_name ? info.seller_id : "admin-flavio", sellerName: info.seller_name || "Flavio Administrador", visits };
       });
       const visitSummary = { start: startDate, end: endDate, dates, rows };
       res.json({ stats, vendasEfetivasMes, ordersOverview, visitSummary });
