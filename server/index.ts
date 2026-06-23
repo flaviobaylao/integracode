@@ -472,6 +472,22 @@ run();
 
   await initializeDefaultAdmin();
 
+  // -- Dashboard 2.0 (espelho do 1.0) --
+  app.get('/api/dashboard2/all', async (_req: Request, res: Response) => {
+    const out: any = { stats: {}, ordersOverview: { blocked: [], unbilled: [], todayInvoices: [], totals: {} }, errors: [] };
+    async function q(label: string, text: string) { try { const r: any = await db.execute(sql.raw(text)); return r.rows || []; } catch (e: any) { out.errors.push(label + ': ' + e.message); return []; } }
+    try {
+      const s = await q('stats', "SELECT COALESCE((SELECT SUM(total_invoice) FROM fiscal_invoices WHERE status='authorized' AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date),0) AS today_sales, COALESCE((SELECT SUM(total_invoice) FROM fiscal_invoices WHERE status='authorized' AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('week', now() AT TIME ZONE 'America/Sao_Paulo')),0) AS week_sales, COALESCE((SELECT SUM(total_invoice) FROM fiscal_invoices WHERE status='authorized' AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')),0) AS month_sales");
+      out.stats = s[0] || {};
+      out.ordersOverview.todayInvoices = await q('todayInvoices', "SELECT id, invoice_number, customer_name, seller_name, total_invoice, authorization_date, emission_date, issuer_cnpj FROM fiscal_invoices WHERE status='authorized' AND (COALESCE(emission_date,authorization_date) AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY COALESCE(authorization_date,emission_date) DESC LIMIT 300");
+      out.ordersOverview.unbilled = await q('unbilled', "SELECT id, customer_name, seller_name, stage, sale_value, omie_instance_name, created_at FROM billing_pipeline WHERE stage IN ('pedido','a_faturar') ORDER BY created_at DESC LIMIT 300");
+      out.ordersOverview.blocked = await q('blocked', "SELECT bo.id, COALESCE(c.name, bo.customer_id) AS customer_name, bo.seller_id, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id WHERE bo.status='blocked' ORDER BY bo.blocked_at DESC LIMIT 300");
+      const sm = (arr: any[], k: string) => arr.reduce((a: number, x: any) => a + (parseFloat(x[k]) || 0), 0);
+      out.ordersOverview.totals = { blockedCount: out.ordersOverview.blocked.length, blockedAmount: sm(out.ordersOverview.blocked, 'total_amount'), unbilledCount: out.ordersOverview.unbilled.length, unbilledAmount: sm(out.ordersOverview.unbilled, 'sale_value'), todayInvoicesCount: out.ordersOverview.todayInvoices.length, todayInvoicesAmount: sm(out.ordersOverview.todayInvoices, 'total_invoice') };
+      res.json(out);
+    } catch (err: any) { res.status(500).json({ error: err.message, partial: out }); }
+  });
+
   // -- Ambiente fiscal por instancia (homologacao/producao) --
   app.get('/api/admin/fiscal/environments', async (_req: Request, res: Response) => {
     try {
