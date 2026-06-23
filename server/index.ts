@@ -129,6 +129,52 @@ run();
   });
 
   const server = await registerRoutes(app);
+
+
+  // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  app.get("/api/dashboard2/full", async (_req, res) => {
+    try {
+      const tz = "America/Sao_Paulo";
+      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const a2 = new Date(todayStr + "T12:00:00Z");
+      const dates: string[] = [todayStr];
+      let rr = 0;
+      while (rr < 3) { a2.setUTCDate(a2.getUTCDate() - 1); const dow = a2.getUTCDay(); if (dow >= 1 && dow <= 5) { dates.push(a2.toISOString().slice(0, 10)); rr++; } }
+      dates.sort();
+      const startDate = dates[0];
+      const endDate = todayStr;
+      const q2 = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const statsRows = await q2(`SELECT COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS today_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1), 0) AS yesterday_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('week', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS week_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS month_sales FROM billing_pipeline`);
+      const stats = { todaySales: statsRows[0]?.today_sales ?? 0, yesterdaySales: statsRows[0]?.yesterday_sales ?? 0, weekSales: statsRows[0]?.week_sales ?? 0, monthSales: statsRows[0]?.month_sales ?? 0 };
+      const vendasEfetivasMes: any = { label: null, value: 0, approx: true };
+      const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','')) WHERE bo.status = 'blocked' ORDER BY bo.blocked_at DESC NULLS LAST`);
+      const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar') ORDER BY bp.created_at DESC NULLS LAST`);
+      const nfsHoje = await q2(`SELECT fi.id, COALESCE(fi.customer_name, '-') AS customer_name, fi.invoice_number, fi.total_invoice, COALESCE(fi.authorization_date, fi.emission_date) AS authorization_date, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name FROM fiscal_invoices fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN users u ON (u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(sc.seller_id,'omie-vendor-','')) WHERE fi.status = 'authorized' AND (COALESCE(fi.authorization_date, fi.emission_date) AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY COALESCE(fi.authorization_date, fi.emission_date) DESC NULLS LAST`);
+      const ordersOverview = { blocked, aFaturar, nfsHoje };
+      const sched = await q2(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(check_in_time IS NOT NULL) AS visited FROM sales_cards WHERE scheduled_date IS NOT NULL AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      let metas: any[] = [];
+      try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM billing_pipeline WHERE sale_value > 0 AND customer_id IS NOT NULL GROUP BY customer_id`); } catch (e) {}
+      const custInfo = await q2(`SELECT c.id AS customer_id, c.name AS customer_name, c.seller_id, TRIM(CONCAT(u.first_name,' ',u.last_name)) AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id,'omie-vendor-',''))`);
+      const metaMap = new Map<string, number>();
+      for (const m of metas) metaMap.set(m.customer_id, Number(m.meta) || 0);
+      const infoMap = new Map<string, any>();
+      for (const c of custInfo) infoMap.set(c.customer_id, c);
+      type Cell = { isScheduled: boolean; hasVisit: boolean; hasOrder: boolean; orderValue: number };
+      const byCust = new Map<string, Map<string, Cell>>();
+      const ensure = (cid: string, d: string): Cell => { let m = byCust.get(cid); if (!m) { m = new Map(); byCust.set(cid, m); } let cell = m.get(d); if (!cell) { cell = { isScheduled: false, hasVisit: false, hasOrder: false, orderValue: 0 }; m.set(d, cell); } return cell; };
+      for (const s of sched) { const cell = ensure(s.customer_id, s.d); cell.isScheduled = true; if (s.visited === true || s.visited === "t") cell.hasVisit = true; }
+      for (const o of orders) { const cell = ensure(o.customer_id, o.d); cell.hasOrder = Number(o.n) > 0; cell.orderValue = Number(o.v) || 0; }
+      const rows = Array.from(byCust.entries()).map(([cid, cellMap]) => {
+        const info = infoMap.get(cid) || {};
+        const meta = metaMap.get(cid) || 0;
+        const visits = Array.from(cellMap.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: false, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
+        return { customerId: cid, customerName: info.customer_name || "-", sellerId: info.seller_id || "sem-vendedor", sellerName: info.seller_name || "Sem vendedor", visits };
+      });
+      const visitSummary = { start: startDate, end: endDate, dates, rows };
+      res.json({ stats, vendasEfetivasMes, ordersOverview, visitSummary });
+    } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
+  });
     app.get('/api/reports/clientes-sem-pedido', async (req: Request, res: Response) => {
     try {
       const dias = Math.max(1, Math.min(parseInt(String(req.query.dias)) || 30, 365));
