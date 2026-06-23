@@ -472,6 +472,26 @@ run();
 
   await initializeDefaultAdmin();
 
+  // -- Ambiente fiscal por instancia (homologacao/producao) --
+  app.get('/api/admin/fiscal/environments', async (_req: Request, res: Response) => {
+    try {
+      const insts: any = await db.execute(sql`SELECT id, name FROM omie_instances ORDER BY name`);
+      const sett: any = await db.execute(sql`SELECT key, value FROM system_settings WHERE key LIKE 'fiscal_env_%'`);
+      const map: any = {}; (sett.rows||[]).forEach((r: any) => { map[r.key] = r.value; });
+      const norm = (v: any) => (v === 'producao' || v === '"producao"') ? 'producao' : 'homologacao';
+      const out = (insts.rows||[]).map((i: any) => ({ instanceId: i.id, name: i.name, environment: norm(map['fiscal_env_' + i.id]) }));
+      res.json(out);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.post('/api/admin/fiscal/environment', async (req: Request, res: Response) => {
+    try {
+      const instanceId = req.body?.instanceId; const environment = req.body?.environment;
+      if (!instanceId || !['homologacao', 'producao'].includes(environment)) return res.status(400).json({ error: 'instanceId e environment obrigatorios' });
+      await db.execute(sql`INSERT INTO system_settings (id, key, value, description, updated_by, updated_at) VALUES (gen_random_uuid(), ${'fiscal_env_' + instanceId}, ${environment}, 'Ambiente NF-e por instancia', 'fiscal-toggle', NOW()) ON CONFLICT (key) DO UPDATE SET value = ${environment}, updated_at = NOW()`);
+      res.json({ success: true, instanceId, environment });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
 
