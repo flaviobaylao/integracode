@@ -310,6 +310,80 @@ run();
     }
   });
 
+  // ── Auditoria/correção de cadastro de clientes: 1.0 (Neon) vs 2.0 (Railway) ──
+  // POST /api/admin/audit/customer-fields
+  // Body: { applyFields?: string[] }  — sem applyFields = READ-ONLY (auditoria).
+  // Campos operacionais; junta por id; trata null/'' como iguais; normaliza weekdays (JSON ordenado).
+  // Apply: 2.0 := 1.0 nos applyFields onde divergem, NUNCA apagando dado do 2.0 com vazio do 1.0.
+  app.post('/api/admin/audit/customer-fields', async (req: Request, res: Response) => {
+    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone'];
+    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone']);
+    const applyFields: string[] = Array.isArray(req.body?.applyFields)
+      ? req.body.applyFields.filter((f: string) => FIELDS.includes(f) && SAFE.has(f)) : [];
+    const ENUM_CAST: Record<string, string> = { visit_periodicity: '::visit_periodicity', virtual_service: '::boolean' };
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const norm = (field: string, v: any): string => {
+      if (v === null || v === undefined) return '';
+      let s = String(v).trim();
+      if (field === 'weekdays') { try { const a = JSON.parse(s); if (Array.isArray(a)) return JSON.stringify(a.map((x: any) => String(x)).sort()); } catch (e) {} return s; }
+      if (field === 'virtual_service') return s.toLowerCase();
+      return s;
+    };
+    try {
+      await src.connect(); await tgt.connect();
+      const colList = ['id', 'name'].concat(FIELDS).map((c) => '"' + c + '"::text AS "' + c + '"').join(', ');
+      const [sr, tr] = await Promise.all([
+        src.query('SELECT ' + colList + ' FROM customers'),
+        tgt.query('SELECT ' + colList + ' FROM customers'),
+      ]);
+      const tMap = new Map<string, any>((tr.rows as any[]).map((r) => [r.id, r]));
+      const diffs: any[] = [];
+      const perField: Record<string, number> = {};
+      for (const s of (sr.rows as any[])) {
+        const t = tMap.get(s.id);
+        if (!t) continue; // só clientes presentes nos dois lados
+        for (const f of FIELDS) {
+          const sv = norm(f, s[f]); const tv = norm(f, t[f]);
+          if (sv !== tv) {
+            const direction = (sv === '') ? 'erase_block' : (tv === '' ? 'fill' : 'change');
+            diffs.push({ id: s.id, name: s.name, field: f, v_1_0: s[f], v_2_0: t[f], direction });
+            perField[f] = (perField[f] || 0) + 1;
+          }
+        }
+      }
+      const applied: Record<string, number> = {};
+      if (applyFields.length > 0) {
+        for (const f of applyFields) {
+          // só aplica onde 1.0 tem valor (direction != erase_block) → nunca apaga dado do 2.0
+          const rows = diffs.filter((d) => d.field === f && d.direction !== 'erase_block');
+          if (rows.length === 0) { applied[f] = 0; continue; }
+          const cast = ENUM_CAST[f] || '';
+          const params: any[] = [];
+          const tuples = rows.map((d, i) => { params.push(d.id, d.v_1_0); return '($' + (2 * i + 1) + '::text, $' + (2 * i + 2) + '::text)'; }).join(',');
+          await tgt.query(
+            'UPDATE customers AS c SET "' + f + '" = v.val' + cast + ', updated_at = now() ' +
+            'FROM (VALUES ' + tuples + ') AS v(id, val) WHERE c.id = v.id', params);
+          applied[f] = rows.length;
+        }
+      }
+      res.json({
+        bothSides: tMap.size,
+        srcTotal: sr.rows.length,
+        perField,
+        totalDiffs: diffs.length,
+        applyFields,
+        applied,
+        diffs: applyFields.length > 0 ? undefined : diffs,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    } finally {
+      await src.end().catch(() => {}); await tgt.end().catch(() => {});
+    }
+  });
+
   await initializeDefaultAdmin();
 
   startSyncWorker();      // Sync 1.0 → 2.0
