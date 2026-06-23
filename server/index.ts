@@ -537,6 +537,58 @@ run();
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // -- Backfill genérico: sincroniza TODAS as tabelas comuns neondb->Railway (full upsert por id) --
+  app.post('/api/admin/sync/backfill-all', async (_req: Request, res: Response) => {
+    res.json({ started: true, note: 'backfill rodando em background; ver /api/admin/sync/backfill-status' });
+    (async () => {
+      const pgMod = await import('pg');
+      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      const summary: any[] = [];
+      try {
+        await src.connect(); await tgt.connect();
+        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs']);
+        const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
+        const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
+        const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
+        const tables = sTabs.filter((t: string) => tTabs.has(t) && !block.has(t));
+        for (const t of tables) {
+          try {
+            const tcols = (await tgt.query("SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", [t])).rows as any[];
+            const tgtCols = new Set(tcols.map((r) => r.column_name));
+            const jsonCols = new Set(tcols.filter((r) => r.udt_name === 'json' || r.udt_name === 'jsonb').map((r) => r.column_name));
+            if (!tgtCols.has('id')) { summary.push({ t, skipped: 'no id' }); continue; }
+            let offset = 0; let up = 0;
+            while (true) {
+              const data = await src.query('SELECT * FROM "' + t + '" ORDER BY "id" LIMIT 1000 OFFSET ' + offset);
+              if (data.rows.length === 0) break;
+              const cols = Object.keys(data.rows[0]).filter((c) => tgtCols.has(c));
+              const colsSql = cols.map((c) => '"' + c + '"').join(',');
+              const setSql = cols.filter((c) => c !== 'id').map((c) => '"' + c + '"=EXCLUDED."' + c + '"').join(',');
+              const conflict = setSql ? ' ON CONFLICT ("id") DO UPDATE SET ' + setSql : ' ON CONFLICT ("id") DO NOTHING';
+              const enc = (row: any) => cols.map((c) => { const v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
+              for (let i = 0; i < data.rows.length; i += 200) {
+                const batch = data.rows.slice(i, i + 200);
+                const ph = batch.map((_: any, ri: number) => '(' + cols.map((_: any, ci: number) => '$' + (ri * cols.length + ci + 1)).join(',') + ')').join(',');
+                const flat = batch.flatMap((row: any) => enc(row));
+                try { await tgt.query('INSERT INTO "' + t + '" (' + colsSql + ') VALUES ' + ph + conflict, flat); up += batch.length; }
+                catch (be: any) { for (const row of batch) { const rph = cols.map((_: any, k: number) => '$' + (k + 1)).join(','); try { await tgt.query('INSERT INTO "' + t + '" (' + colsSql + ') VALUES (' + rph + ')' + conflict, enc(row)); up++; } catch (re: any) {} } }
+              }
+              if (data.rows.length < 1000) break;
+              offset += 1000;
+            }
+            summary.push({ t, up });
+          } catch (te: any) { summary.push({ t, error: te.message.slice(0, 120) }); }
+        }
+        await tgt.query("INSERT INTO system_settings (id, key, value, description, updated_by, updated_at) VALUES (gen_random_uuid(), 'backfill_all_last', $1, 'backfill', 'sync', NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()", [JSON.stringify({ at: new Date().toISOString(), summary }).slice(0, 9000)]);
+      } catch (e: any) { console.error('backfill-all', e.message); }
+      finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+    })().catch((e) => console.error('backfill-all outer', e));
+  });
+  app.get('/api/admin/sync/backfill-status', async (_req: Request, res: Response) => {
+    try { const r: any = await db.execute(sql.raw("SELECT value, updated_at FROM system_settings WHERE key='backfill_all_last'")); res.json(r.rows[0] || { empty: true }); } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // -- Ambiente fiscal por instancia (homologacao/producao) --
   app.get('/api/admin/fiscal/environments', async (_req: Request, res: Response) => {
     try {
