@@ -1287,6 +1287,19 @@ export function registerChatRoutes(app: Express): void {
     });
   });
 
+  // Diagnostico de envio Umbler (retorna resultado real do sendUmblerText)
+  app.get("/api/chat/umbler/test-send", async (req: any, res: any) => {
+    try {
+      const to = String(req.query.to || "");
+      const msg = String(req.query.msg || "Teste Umbler uTalk");
+      if (!to) return res.status(400).json({ error: "informe ?to=5562999999999" });
+      const r = await sendUmblerText(to, msg);
+      res.json({ umblerKeyPresent: !!process.env.UMBLER_API_KEY, to, result: r });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
   app.post("/api/chat/webhook/messages", async (req, res) => {
     // CRITICAL: Log immediately when webhook is called to confirm Evolution API connectivity
     console.log(`📥 [WEBHOOK-HIT] Webhook recebido às ${new Date().toISOString()}, evento=${req.body?.event || 'unknown'}`);
