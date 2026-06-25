@@ -289,6 +289,14 @@ function ReceivablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
+              {filtered.length > 0 && (
+                <TableRow className="bg-muted/50 font-semibold border-t-2">
+                  <TableCell colSpan={3}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
+                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0))}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amountPaid) || 0), 0))}</TableCell>
+                  <TableCell colSpan={5} className="text-muted-foreground">Saldo a receber: {formatCurrency(filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0))}</TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
