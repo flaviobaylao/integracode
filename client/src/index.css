@@ -45,3 +45,9 @@
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   }
 }
+
+
+/* Telas em largura cheia no desktop; no mobile o container ja e 100% (responsivo) */
+.container {
+  max-width: 100% !important;
+}
