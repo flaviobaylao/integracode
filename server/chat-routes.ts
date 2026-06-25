@@ -1276,6 +1276,17 @@ export function registerChatRoutes(app: Express): void {
 
   // POST /api/chat/webhook/messages - Receber TODAS as mensagens via webhook da Evolution API
   // 🪞 ESPELHO COMPLETO DO WHATSAPP - Captura mensagens enviadas via celular E via sistema
+  // Diagnostico Umbler/uTalk (read-only)
+  app.get("/api/chat/umbler/status", (req: any, res: any) => {
+    const host = req.headers.host || "integracode-production.up.railway.app";
+    res.json({
+      umblerKeyPresent: !!process.env.UMBLER_API_KEY,
+      sendImplemented: true,
+      webhookReceiverUrl: "https://" + host + "/api/chat/webhook/messages",
+      note: "Configurar este URL como webhook no painel Umbler (uTalk). Parser uTalk de recebimento ativo (shim).",
+    });
+  });
+
   app.post("/api/chat/webhook/messages", async (req, res) => {
     // CRITICAL: Log immediately when webhook is called to confirm Evolution API connectivity
     console.log(`📥 [WEBHOOK-HIT] Webhook recebido às ${new Date().toISOString()}, evento=${req.body?.event || 'unknown'}`);
@@ -1301,6 +1312,26 @@ export function registerChatRoutes(app: Express): void {
         if (req.body.key && req.body.message) {
           event = 'messages.upsert';
           data = req.body;
+        }
+      }
+      
+      // uTalk (Umbler api.utalk.chat) — normalizar webhook de RECEBIMENTO para shape Evolution
+      if (!event) {
+        const ub: any = req.body || {};
+        const utext = ub.msg ?? ub.message ?? ub.body ?? ub.text ?? ub.texto;
+        const uphoneRaw = ub.from ?? ub.sender ?? ub.phone ?? ub.chatId ?? ub.de ?? ub.to;
+        if (utext != null && uphoneRaw) {
+          const digits = String(uphoneRaw).replace(/@.*/, '').replace(/\D/g, '');
+          const isFromMe = ub.fromMe === true || ub.fromMe === 'true' || ub.sent === true || String(ub.type || '').toLowerCase() === 'sent';
+          event = 'messages.upsert';
+          data = {
+            key: { remoteJid: digits + '@s.whatsapp.net', fromMe: !!isFromMe, id: String(ub.id || ub.messageId || ('utalk-' + Date.now())) },
+            message: { conversation: String(utext) },
+            pushName: ub.senderName || ub.name || ub.pushName || ub.nome || undefined,
+            messageTimestamp: ub.time || ub.timestamp || Math.floor(Date.now() / 1000),
+          };
+          (debugInfo as any).utalk = true;
+          debugInfo.steps.push('utalk-normalized');
         }
       }
       
