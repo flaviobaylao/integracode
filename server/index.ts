@@ -138,12 +138,13 @@ run();
       if (valid.length === 0) return res.json([]);
       const inList = valid.map((x) => "'" + x + "'").join(",");
       const text =
-        "SELECT bp.id AS item_id, r.id AS receivable_id, " +
-        "to_jsonb(bc) AS boleto, to_jsonb(pc) AS pix " +
+        "SELECT bp.id AS item_id, r.id AS receivable_id, fi.id AS fiscal_invoice_id, " +
+        "COALESCE((SELECT to_jsonb(b) FROM boleto_charges b WHERE b.receivable_id = r.id ORDER BY b.created_at DESC LIMIT 1), " +
+        "(SELECT to_jsonb(b) FROM boleto_charges b WHERE fi.id IS NOT NULL AND b.fiscal_invoice_id = fi.id ORDER BY b.created_at DESC LIMIT 1)) AS boleto, " +
+        "(SELECT to_jsonb(p) FROM pix_charges p WHERE p.receivable_id = r.id ORDER BY p.created_at DESC LIMIT 1) AS pix " +
         "FROM billing_pipeline bp " +
         "LEFT JOIN receivables r ON r.billing_pipeline_id = bp.id " +
-        "LEFT JOIN LATERAL (SELECT * FROM boleto_charges b WHERE b.receivable_id = r.id ORDER BY b.created_at DESC LIMIT 1) bc ON true " +
-        "LEFT JOIN LATERAL (SELECT * FROM pix_charges p WHERE p.receivable_id = r.id ORDER BY p.created_at DESC LIMIT 1) pc ON true " +
+        "LEFT JOIN fiscal_invoices fi ON fi.invoice_number::text = regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g') " +
         "WHERE bp.id IN (" + inList + ")";
       const rows = (await db.execute(sql.raw(text))).rows;
       res.json(rows);
