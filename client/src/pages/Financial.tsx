@@ -661,6 +661,14 @@ function PayablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
+              {filtered.length > 0 && (
+                <TableRow className="bg-muted/50 font-semibold border-t-2">
+                  <TableCell colSpan={4}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
+                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amountPaid) || 0), 0))}</TableCell>
+                  <TableCell colSpan={5} className="text-muted-foreground">Saldo a pagar: {formatCurrency(filtered.reduce((s: number, p: any) => s + ((Number(p.amount) || 0) - (Number(p.amountPaid) || 0)), 0))}</TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
