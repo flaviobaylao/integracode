@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateDanfePdf, generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
+import { generateMultiCobrancaPdf, generateCompletoPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
@@ -91,6 +92,8 @@ export default function BillingPipeline() {
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
   const [isPrintingDanfe, setIsPrintingDanfe] = useState(false);
+  const [isPrintingCobranca, setIsPrintingCobranca] = useState(false);
+  const [isPrintingCompleto, setIsPrintingCompleto] = useState(false);
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/user'],
@@ -329,6 +332,48 @@ export default function BillingPipeline() {
     }
   }, [selectedItems]);
 
+  const handlePrintCobrancas = useCallback(async () => {
+    if (selectedItems.length === 0) { toast({ title: 'Nenhum pedido selecionado', variant: 'destructive' }); return; }
+    setIsPrintingCobranca(true);
+    try {
+      const ids = selectedItems.map((i) => i.id);
+      const resp = await fetch('/api/billing-pipeline/charges', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ids }) });
+      if (!resp.ok) throw new Error('Erro ao buscar cobrancas');
+      const rows = await resp.json();
+      const byItem = new Map<string, any>();
+      for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix }; });
+      const n = generateMultiCobrancaPdf(list);
+      if (n === 0) toast({ title: 'Nenhuma cobranca encontrada', description: 'Os pedidos selecionados nao possuem boleto/PIX gerado.', variant: 'destructive' });
+      else toast({ title: n + ' cobranca(s) gerada(s)' });
+    } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
+    finally { setIsPrintingCobranca(false); }
+  }, [selectedItems]);
+
+  const handlePrintCompleto = useCallback(async () => {
+    if (selectedItems.length === 0) { toast({ title: 'Nenhum pedido selecionado', variant: 'destructive' }); return; }
+    setIsPrintingCompleto(true);
+    try {
+      const ids = selectedItems.map((i) => i.id);
+      const resp = await fetch('/api/billing-pipeline/charges', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ids }) });
+      const rows = resp.ok ? await resp.json() : [];
+      const byItem = new Map<string, any>();
+      for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
+      const invNums = selectedItems.filter((i) => i.invoiceNumber).map((i) => i.invoiceNumber);
+      const danfeByNum = new Map<string, DanfeInvoice>();
+      if (invNums.length) {
+        try {
+          const fr = await fetch('/api/fiscal-invoices/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ invoiceNumbers: invNums }) });
+          if (fr.ok) { const invs: DanfeInvoice[] = await fr.json(); for (const inv of invs) { danfeByNum.set(String(inv.invoiceNumber), inv); } }
+        } catch (e) {}
+      }
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
+      const n = generateCompletoPdf(list);
+      toast({ title: n + ' pedido(s) impresso(s)' });
+    } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
+    finally { setIsPrintingCompleto(false); }
+  }, [selectedItems]);
+
   const moveItem = (item: BillingPipelineItem, direction: 'forward' | 'backward') => {
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
@@ -444,6 +489,36 @@ export default function BillingPipeline() {
                     <Printer className="h-3 w-3 mr-1" />
                   )}
                   Imprimir DANFE ({selectedFaturadoCount})
+                </Button>
+              )}
+              {selectedItems.length > 0 && (
+                <Button
+                  size="sm"
+                  className="text-xs h-7 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={handlePrintCobrancas}
+                  disabled={isPrintingCobranca}
+                >
+                  {isPrintingCobranca ? (
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  ) : (
+                    <Printer className="h-3 w-3 mr-1" />
+                  )}
+                  Imprimir Cobrancas ({selectedItems.length})
+                </Button>
+              )}
+              {selectedItems.length > 0 && (
+                <Button
+                  size="sm"
+                  className="text-xs h-7 bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={handlePrintCompleto}
+                  disabled={isPrintingCompleto}
+                >
+                  {isPrintingCompleto ? (
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  ) : (
+                    <Printer className="h-3 w-3 mr-1" />
+                  )}
+                  Imprimir Completo ({selectedItems.length})
                 </Button>
               )}
               <Button
