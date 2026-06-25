@@ -103,7 +103,7 @@ export function generateDanfePdf(invoice: DanfeInvoice) {
   doc.save(fileName);
 }
 
-function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice) {
+export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice) {
   const pageWidth = 210;
   const margin = 7;
   const contentWidth = pageWidth - margin * 2;
