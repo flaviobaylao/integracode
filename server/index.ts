@@ -130,6 +130,28 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== IMPRESSAO DE COBRANCAS (boleto/pix ja sincronizados) — endpoint read-only =====
+  app.post("/api/billing-pipeline/charges", async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+      const valid = ids.filter((x) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));
+      if (valid.length === 0) return res.json([]);
+      const inList = valid.map((x) => "'" + x + "'").join(",");
+      const text =
+        "SELECT bp.id AS item_id, r.id AS receivable_id, " +
+        "to_jsonb(bc) AS boleto, to_jsonb(pc) AS pix " +
+        "FROM billing_pipeline bp " +
+        "LEFT JOIN receivables r ON r.billing_pipeline_id = bp.id " +
+        "LEFT JOIN LATERAL (SELECT * FROM boleto_charges b WHERE b.receivable_id = r.id ORDER BY b.created_at DESC LIMIT 1) bc ON true " +
+        "LEFT JOIN LATERAL (SELECT * FROM pix_charges p WHERE p.receivable_id = r.id ORDER BY p.created_at DESC LIMIT 1) pc ON true " +
+        "WHERE bp.id IN (" + inList + ")";
+      const rows = (await db.execute(sql.raw(text))).rows;
+      res.json(rows);
+    } catch (e) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
   app.get("/api/dashboard2/full", async (_req, res) => {
