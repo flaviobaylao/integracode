@@ -130,6 +130,53 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== Agentes de IA (config de comportamento dos agentes de WhatsApp) =====
+  async function ensureAgentesTables() {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS agentes_config (id text PRIMARY KEY, nome text NOT NULL, modelo text NOT NULL, system_prompt text NOT NULL, ferramentas jsonb NOT NULL DEFAULT '[]'::jsonb, limites jsonb NOT NULL DEFAULT '{}'::jsonb, ativo boolean NOT NULL DEFAULT true, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())`);
+  }
+  app.post("/api/admin/agentes/setup", async (_req: any, res: any) => {
+    try { await ensureAgentesTables(); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/admin/agentes", async (_req: any, res: any) => {
+    try {
+      await ensureAgentesTables();
+      const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
+      const ags = await db.execute(sql`SELECT id, nome, modelo, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
+      res.json({ baseComum: (base.rows[0] && (base.rows[0] as any).valor) || null, agentes: ags.rows });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/admin/agentes/:id", async (req: any, res: any) => {
+    try {
+      await ensureAgentesTables();
+      const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
+      const ag = await db.execute(sql`SELECT * FROM agentes_config WHERE id = ${req.params.id}`);
+      const row: any = ag.rows[0];
+      if (!row) return res.status(404).json({ error: "agente nao encontrado" });
+      const baseComum = (base.rows[0] && (base.rows[0] as any).valor) || "";
+      res.json(Object.assign({}, row, { system_prompt_efetivo: baseComum + "\n\n" + row.system_prompt }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/admin/agentes/upsert", async (req: any, res: any) => {
+    try {
+      await ensureAgentesTables();
+      const b = req.body || {};
+      if (!b.id || !b.nome || !b.modelo || !b.system_prompt) return res.status(400).json({ error: "id, nome, modelo, system_prompt obrigatorios" });
+      await db.execute(sql`INSERT INTO agentes_config (id, nome, modelo, system_prompt, ferramentas, limites, ativo) VALUES (${b.id}, ${b.nome}, ${b.modelo}, ${b.system_prompt}, ${JSON.stringify(b.ferramentas || [])}::jsonb, ${JSON.stringify(b.limites || {})}::jsonb, ${b.ativo !== false}) ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome, modelo = EXCLUDED.modelo, system_prompt = EXCLUDED.system_prompt, ferramentas = EXCLUDED.ferramentas, limites = EXCLUDED.limites, ativo = EXCLUDED.ativo, updated_at = now()`);
+      res.json({ ok: true, id: b.id });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.put("/api/admin/config/base-comum", async (req: any, res: any) => {
+    try {
+      await ensureAgentesTables();
+      const valor = (req.body || {}).valor;
+      if (!valor) return res.status(400).json({ error: "valor obrigatorio" });
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('base_comum', ${valor}, 'Prompt base compartilhado pelos agentes de WhatsApp') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ===== IMPRESSAO DE COBRANCAS (boleto/pix ja sincronizados) — endpoint read-only =====
   app.post("/api/billing-pipeline/charges", async (req, res) => {
     try {
