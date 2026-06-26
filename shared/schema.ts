@@ -3252,6 +3252,8 @@ export const receivables = pgTable("receivables", {
   customerId: varchar("customer_id"),
   customerName: varchar("customer_name").notNull(),
   customerDocument: varchar("customer_document"),
+  category: varchar("category"),
+  sellerName: varchar("seller_name"),
   description: text("description"),
   issueDate: timestamp("issue_date").notNull(),
   dueDate: timestamp("due_date").notNull(),
