@@ -1380,6 +1380,24 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Diagnostico: estrutura MASCARADA dos ultimos webhooks recebidos (read-only, nao vaza conteudo)
+  app.get("/api/chat/umbler-talk/last-webhook", async (req: any, res: any) => {
+    try {
+      const rows: any = await db.execute(sql`SELECT id, created_at, LEFT(raw_payload, 6000) as raw FROM webhook_debug_log ORDER BY created_at DESC LIMIT 5`);
+      const mask = (v: any): any => {
+        if (typeof v === 'string') return 'str(' + v.length + ')';
+        if (Array.isArray(v)) return v.slice(0, 3).map(mask);
+        if (v && typeof v === 'object') { const o: any = {}; for (const k of Object.keys(v).slice(0, 40)) o[k] = mask(v[k]); return o; }
+        return v;
+      };
+      const list = (rows.rows || rows || []);
+      const out = list.map((r: any) => { let parsed: any = null; try { parsed = JSON.parse(r.raw); } catch {} return { id: r.id, at: r.created_at, topKeys: parsed ? Object.keys(parsed) : [], structure: parsed ? mask(parsed) : String(r.raw || '').slice(0, 120) }; });
+      res.json({ count: out.length, items: out });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
   app.post("/api/chat/webhook/messages", async (req, res) => {
     // CRITICAL: Log immediately when webhook is called to confirm Evolution API connectivity
     console.log(`📥 [WEBHOOK-HIT] Webhook recebido às ${new Date().toISOString()}, evento=${req.body?.event || 'unknown'}`);
@@ -1393,6 +1411,10 @@ export function registerChatRoutes(app: Express): void {
     try {
       let { event, instance, data } = req.body;
       debugInfo.steps.push('1-parse-body');
+      // Captura crua antecipada (qualquer payload, mesmo nao reconhecido) p/ diagnostico de formato
+      try {
+        await db.execute(sql`INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to) VALUES (${JSON.stringify(req.body || {}).substring(0, 8000)}, ${'EARLY-RAW'}, ${''}, ${''}, ${false}, ${null})`);
+      } catch {}
       
       // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
       if (!event && req.body.webhook?.event) {
@@ -1454,6 +1476,54 @@ export function registerChatRoutes(app: Express): void {
           };
           (debugInfo as any).utalk = true;
           debugInfo.steps.push(hasMedia ? 'utalk-normalized-media' : 'utalk-normalized');
+        }
+      }
+
+      // Umbler Talk (app-utalk.umbler.com) — normalizar webhook de RECEBIMENTO para shape Evolution
+      if (!event) {
+        const ut: any = req.body || {};
+        const chat = (ut.Payload && ut.Payload.Content) || (ut.payload && ut.payload.content) || null;
+        const lm = chat && (chat.LastMessage || chat.lastMessage);
+        if (chat && lm) {
+          const contact = chat.Contact || chat.contact || {};
+          const phoneRaw = contact.PhoneNumber || contact.phoneNumber || contact.Phone || '';
+          const digits = String(phoneRaw).replace(/\D/g, '');
+          if (digits) {
+            const source = String(lm.Source || lm.source || '').toLowerCase();
+            const isFromMe = source === 'member' || !!(lm.SentByOrganizationMember || lm.sentByOrganizationMember);
+            const mtypeRaw = String(lm.MessageType || lm.messageType || 'Text').toLowerCase();
+            const caption = String(lm.Content != null ? lm.Content : (lm.content != null ? lm.content : ''));
+            const file = lm.File || lm.file || null;
+            const fileUrl = file && (file.Url || file.url);
+            const fileMime = file && (file.MimeType || file.mimetype || file.mimeType);
+            const fileName = file && (file.FileName || file.fileName || file.Name);
+            let mt: 'text' | 'image' | 'audio' | 'video' | 'document' = 'text';
+            if (/image/.test(mtypeRaw)) mt = 'image';
+            else if (/audio|ptt|voice/.test(mtypeRaw)) mt = 'audio';
+            else if (/video/.test(mtypeRaw)) mt = 'video';
+            else if (/file|document|application/.test(mtypeRaw) || fileUrl) {
+              mt = (fileMime && /^image\//.test(fileMime)) ? 'image' : (fileMime && /^audio\//.test(fileMime)) ? 'audio' : (fileMime && /^video\//.test(fileMime)) ? 'video' : 'document';
+            }
+            let msgObj: any;
+            if (mt !== 'text' && fileUrl) {
+              if (mt === 'image') msgObj = { imageMessage: { url: fileUrl, mimetype: fileMime || 'image/jpeg', caption } };
+              else if (mt === 'audio') msgObj = { audioMessage: { url: fileUrl, mimetype: fileMime || 'audio/ogg' } };
+              else if (mt === 'video') msgObj = { videoMessage: { url: fileUrl, mimetype: fileMime || 'video/mp4', caption } };
+              else msgObj = { documentMessage: { url: fileUrl, mimetype: fileMime || 'application/octet-stream', fileName: fileName || 'documento', caption } };
+              (debugInfo as any).umblerTalkMedia = mt;
+            } else {
+              msgObj = { conversation: caption };
+            }
+            event = 'messages.upsert';
+            data = {
+              key: { remoteJid: digits + '@s.whatsapp.net', fromMe: !!isFromMe, id: String(lm.Id || lm.id || ut.EventId || ('umblertalk-' + Date.now())) },
+              message: msgObj,
+              pushName: contact.Name || contact.name || undefined,
+              messageTimestamp: Math.floor(Date.now() / 1000),
+            };
+            (debugInfo as any).umblerTalk = true;
+            debugInfo.steps.push('umbler-talk-normalized');
+          }
         }
       }
       
