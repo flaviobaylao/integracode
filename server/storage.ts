@@ -8353,10 +8353,18 @@ export class DatabaseStorage implements IStorage {
     if (filters?.paymentMethod) conditions.push(eq(receivables.paymentMethod, filters.paymentMethod as any));
     if (filters?.chartAccountId) conditions.push(eq(receivables.chartAccountId, filters.chartAccountId));
 
-    if (conditions.length > 0) {
-      return db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt));
-    }
-    return db.select().from(receivables).orderBy(desc(receivables.createdAt));
+    const rows = conditions.length > 0
+      ? await db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt))
+      : await db.select().from(receivables).orderBy(desc(receivables.createdAt));
+    try {
+      const pipeIds = Array.from(new Set(rows.map((r) => r.billingPipelineId).filter(Boolean)));
+      if (pipeIds.length > 0) {
+        const pipes = await db.select({ id: billingPipeline.id, sellerName: billingPipeline.sellerName }).from(billingPipeline).where(inArray(billingPipeline.id, pipeIds));
+        const sm = new Map(pipes.map((p) => [p.id, p.sellerName]));
+        for (const r of rows) { r.sellerName = sm.get(r.billingPipelineId) || null; }
+      }
+    } catch (e) { /* enrich sellerName: best-effort */ }
+    return rows;
   }
 
   async getReceivable(id: string): Promise<Receivable | undefined> {
