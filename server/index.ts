@@ -586,6 +586,62 @@ run();
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // ── Diagnóstico das entregas: billings 'Aguardando Rota' 1.0 vs 2.0 ──────
+  // POST /api/admin/sync/deliveries-diag  (read-only) — pode aplicar resync de stage com {apply:true}
+  app.post('/api/admin/sync/deliveries-diag', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const qAR = "SELECT count(*)::int AS c FROM billings WHERE invoice_stage='Aguardando Rota' AND invoice_date IS NOT NULL";
+      const srcAR = (await src.query(qAR)).rows[0].c;
+      const tgtAR = (await tgt.query(qAR)).rows[0].c;
+      const tgtIds = (await tgt.query("SELECT id FROM billings WHERE invoice_stage='Aguardando Rota' AND invoice_date IS NOT NULL")).rows.map((r: any) => r.id);
+      const srcRows = tgtIds.length ? (await src.query("SELECT id, invoice_stage FROM billings WHERE id = ANY($1::text[])", [tgtIds])).rows : [];
+      const srcMap = new Map<string, string>(srcRows.map((r: any) => [r.id, r.invoice_stage]));
+      let notInSrc = 0, stageDrift = 0, sameAR = 0; const driftIds: string[] = []; const extraIds: string[] = [];
+      for (const id of tgtIds) {
+        if (!srcMap.has(id)) { notInSrc++; if (extraIds.length < 1000) extraIds.push(id); }
+        else if (srcMap.get(id) !== 'Aguardando Rota') { stageDrift++; if (driftIds.length < 2000) driftIds.push(id); }
+        else sameAR++;
+      }
+      const out: any = {
+        srcTotalBillings: (await src.query('SELECT count(*)::int AS c FROM billings')).rows[0].c,
+        tgtTotalBillings: (await tgt.query('SELECT count(*)::int AS c FROM billings')).rows[0].c,
+        srcAguardandoRota: srcAR, tgtAguardandoRota: tgtAR,
+        tgtBreakdown: { notInSrc, stageDrift, sameAR },
+      };
+      if (apply) {
+        // (1) Corrigir stage dos que existem no 1.0 com estágio diferente (puxa o stage do 1.0)
+        let stageFixed = 0;
+        if (driftIds.length) {
+          const drv = (await src.query("SELECT id, invoice_stage FROM billings WHERE id = ANY($1::text[])", [driftIds])).rows;
+          for (let i = 0; i < drv.length; i += 200) {
+            const batch = drv.slice(i, i + 200);
+            const params: any[] = []; const tuples = batch.map((r: any, k: number) => { params.push(r.id, r.invoice_stage); return '($' + (2*k+1) + '::text,$' + (2*k+2) + '::text)'; }).join(',');
+            const r = await tgt.query('UPDATE billings AS b SET invoice_stage = v.st FROM (VALUES ' + tuples + ') AS v(id, st) WHERE b.id = v.id', params);
+            stageFixed += r.rowCount || 0;
+          }
+        }
+        // (2) Marcar como 'Entregue' os 'Aguardando Rota' do 2.0 que NÃO existem mais no 1.0 (stale — saem da fila sem deletar)
+        let staleClosed = 0;
+        if (extraIds.length) {
+          for (let i = 0; i < extraIds.length; i += 500) {
+            const batch = extraIds.slice(i, i + 500);
+            const r = await tgt.query("UPDATE billings SET invoice_stage='Entregue' WHERE id = ANY($1::text[]) AND invoice_stage='Aguardando Rota'", [batch]);
+            staleClosed += r.rowCount || 0;
+          }
+        }
+        out.applied = { stageFixed, staleClosed };
+        out.tgtAguardandoRotaAfter = (await tgt.query(qAR)).rows[0].c;
+      }
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
   await initializeDefaultAdmin();
 
   // -- Dashboard 2.0 (espelho do 1.0) --
