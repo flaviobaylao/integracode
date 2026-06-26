@@ -38,7 +38,7 @@ app.use((req, res, next) => {
     // Deixar o multer processar essas requisições
     return next();
   }
-  express.json()(req, res, next);
+  express.json({ limit: '25mb' })(req, res, next);
 });
 
 // Middleware condicional para urlencoded - NÃO processar requisições multipart/form-data
@@ -48,7 +48,7 @@ app.use((req, res, next) => {
     // Deixar o multer processar essas requisições
     return next();
   }
-  express.urlencoded({ extended: false })(req, res, next);
+  express.urlencoded({ extended: false, limit: '25mb' })(req, res, next);
 });
 
 app.use((req, res, next) => {
