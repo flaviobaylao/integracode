@@ -270,7 +270,7 @@ function ReceivablesTab() {
                 <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
               ) : filtered.map((r: any) => (
                 <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.title || '-'}</TableCell>
+                  <TableCell className="font-medium">{r.titleNumber || '-'}</TableCell>
                   <TableCell>{r.customerName || '-'}</TableCell>
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
@@ -278,7 +278,7 @@ function ReceivablesTab() {
                   <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}</TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
-                  <TableCell><Badge variant="outline">{r.instanceId || '-'}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{r.omieInstanceId || '-'}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
@@ -641,7 +641,7 @@ function PayablesTab() {
                 <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
               ) : filtered.map((p: any) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-medium">{p.title || '-'}</TableCell>
+                  <TableCell className="font-medium">{p.titleNumber || '-'}</TableCell>
                   <TableCell>{p.supplierName || '-'}</TableCell>
                   <TableCell className="text-xs">{p.supplierDocument || '-'}</TableCell>
                   <TableCell className="max-w-[180px] truncate">{p.description || '-'}</TableCell>
@@ -650,7 +650,7 @@ function PayablesTab() {
                   <TableCell>{getPayableStatusBadge(p.status, p.dueDate)}</TableCell>
                   <TableCell>{formatDate(p.dueDate)}</TableCell>
                   <TableCell><Badge variant="outline">{sourceLabels[p.source] || p.source || '-'}</Badge></TableCell>
-                  <TableCell><Badge variant="outline">{p.instanceId || '-'}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{p.omieInstanceId || '-'}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
