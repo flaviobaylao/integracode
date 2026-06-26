@@ -610,6 +610,39 @@ async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: s
   }
 }
 
+// -- Transcricao de audio recebido via OpenAI Whisper --
+async function transcribeAudioSource(src: string, mimetype?: string): Promise<string | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY || !src) return null;
+    let buffer: Buffer; let mt = mimetype || 'audio/ogg';
+    if (src.startsWith('data:')) {
+      const m = src.match(/^data:([^;]+);base64,(.*)$/);
+      if (!m) return null;
+      mt = m[1]; buffer = Buffer.from(m[2], 'base64');
+    } else if (/^https?:\/\//.test(src)) {
+      const r = await fetch(src, { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) return null;
+      mt = r.headers.get('content-type') || mt;
+      buffer = Buffer.from(await r.arrayBuffer());
+    } else {
+      return null;
+    }
+    if (!buffer || buffer.length === 0) return null;
+    const ext = /ogg|opus/.test(mt) ? 'ogg' : /mpeg|mp3/.test(mt) ? 'mp3' : /wav/.test(mt) ? 'wav' : /m4a|mp4|aac/.test(mt) ? 'm4a' : 'ogg';
+    const mod: any = await import('openai');
+    const OpenAI = mod.default || mod.OpenAI || mod;
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    let fileArg: any;
+    if (typeof mod.toFile === 'function') fileArg = await mod.toFile(buffer, `audio.${ext}`, { type: mt });
+    else fileArg = new File([buffer], `audio.${ext}`, { type: mt });
+    const resp = await client.audio.transcriptions.create({ file: fileArg, model: 'whisper-1', language: 'pt' });
+    return (resp && resp.text) ? String(resp.text).trim() : null;
+  } catch (e: any) {
+    console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e));
+    return null;
+  }
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -1418,6 +1451,19 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Teste de transcricao de audio (OpenAI Whisper) — ?url=<audio publico>
+  app.get("/api/chat/transcribe-test", async (req: any, res: any) => {
+    try {
+      const url = String(req.query.url || "");
+      if (!url) return res.status(400).json({ error: "informe ?url=<audio>" });
+      const t0 = Date.now();
+      const transcript = await transcribeAudioSource(url);
+      res.json({ hasOpenAIKey: !!process.env.OPENAI_API_KEY, ms: Date.now() - t0, transcript });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
   // Diagnostico: estrutura MASCARADA dos ultimos webhooks recebidos (read-only, nao vaza conteudo)
   app.get("/api/chat/umbler-talk/last-webhook", async (req: any, res: any) => {
     try {
@@ -1836,7 +1882,7 @@ export function registerChatRoutes(app: Express): void {
         }
       }
       
-      await storage.createChatMessage({
+      const savedMsg = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
@@ -1846,6 +1892,22 @@ export function registerChatRoutes(app: Express): void {
         externalId: messageId,
         isRead: true
       });
+
+      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — fire-and-forget, atualiza a mensagem
+      if (finalMessageType === 'audio' && !isFromMe && savedMsg?.id) {
+        const audioSrc = finalMediaUrl;
+        const audioMime = mediaInfo.mediaType;
+        (async () => {
+          const transcript = await transcribeAudioSource(audioSrc as string, audioMime);
+          if (transcript) {
+            await storage.updateChatMessage(savedMsg.id, {
+              content: '🎤 ' + transcript,
+              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript, transcribedAt: new Date().toISOString() },
+            } as any);
+            console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${transcript.slice(0, 60)}`);
+          }
+        })().catch((e: any) => console.error('[TRANSCRIBE] fire-and-forget erro:', e && e.message ? e.message : String(e)));
+      }
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
       // IMPORTANTE: NÃO mudar status para 'new' se conversa já tem agente atribuído
