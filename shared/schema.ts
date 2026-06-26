@@ -3549,3 +3549,26 @@ export const insertPurchaseInvoiceSchema = createInsertSchema(purchaseInvoices).
 export type PurchaseInvoice = typeof purchaseInvoices.$inferSelect;
 export type InsertPurchaseInvoice = z.infer<typeof insertPurchaseInvoiceSchema>;
 
+
+// ===== Agentes de IA (config de comportamento) =====
+export const configGlobal = pgTable("config_global", {
+  chave: text("chave").primaryKey(),
+  valor: text("valor").notNull(),
+  descricao: text("descricao"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const agentesConfig = pgTable("agentes_config", {
+  id: text("id").primaryKey(),
+  nome: text("nome").notNull(),
+  modelo: text("modelo").notNull(),
+  systemPrompt: text("system_prompt").notNull(),
+  ferramentas: jsonb("ferramentas").notNull().default([]),
+  limites: jsonb("limites").notNull().default({}),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type ConfigGlobal = typeof configGlobal.$inferSelect;
+export type AgenteConfig = typeof agentesConfig.$inferSelect;
