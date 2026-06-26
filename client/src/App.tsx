@@ -73,6 +73,7 @@ import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
 import PurchaseRadar from "@/pages/PurchaseRadar";
 import RelatoriosIA from "@/pages/RelatoriosIA";
+import AgentesIA from "@/pages/AgentesIA";
 import SyncMonitor from "@/pages/SyncMonitor";
 
 function Router() {
@@ -234,6 +235,7 @@ function Router() {
           <Route path="/admin/omie-instances" component={OmieInstances} />
           <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
           <Route path="/admin/sync-monitor" component={SyncMonitor} />
+          <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
