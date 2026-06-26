@@ -647,7 +647,10 @@ async function transcribeAudioSource(src: string, mimetype?: string): Promise<st
 async function fetchUmblerTalkMessageFile(messageId: string): Promise<{ url?: string; mime?: string; fileName?: string } | null> {
   try {
     if (!process.env.UMBLER_TALK_TOKEN || !messageId) return null;
-    const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(messageId) + '/');
+    const cfg = await resolveUmblerTalkConfig();
+    const orgId = ('error' in cfg) ? '' : cfg.orgId;
+    if (!orgId) return null;
+    const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(messageId) + '/?organizationId=' + encodeURIComponent(orgId));
     if (!resp.ok) return null;
     const m: any = await resp.json();
     const f = m && (m.File || m.file || (m.LastMessage && (m.LastMessage.File || m.LastMessage.file)));
