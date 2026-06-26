@@ -143,7 +143,7 @@ run();
     try {
       await ensureAgentesTables();
       const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
-      const ags = await db.execute(sql`SELECT id, nome, modelo, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
+      const ags = await db.execute(sql`SELECT id, nome, modelo, system_prompt, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
       res.json({ baseComum: (base.rows[0] && (base.rows[0] as any).valor) || null, agentes: ags.rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
