@@ -643,6 +643,21 @@ async function transcribeAudioSource(src: string, mimetype?: string): Promise<st
   }
 }
 
+// -- Umbler Talk: resolver arquivo de uma mensagem (audio/imagem) via API (upload async) --
+async function fetchUmblerTalkMessageFile(messageId: string): Promise<{ url?: string; mime?: string; fileName?: string } | null> {
+  try {
+    if (!process.env.UMBLER_TALK_TOKEN || !messageId) return null;
+    const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(messageId) + '/');
+    if (!resp.ok) return null;
+    const m: any = await resp.json();
+    const f = m && (m.File || m.file || (m.LastMessage && (m.LastMessage.File || m.LastMessage.file)));
+    if (!f) return null;
+    return { url: f.Url || f.url, mime: f.MimeType || f.mimetype || f.mimeType, fileName: f.FileName || f.fileName || f.Name };
+  } catch {
+    return null;
+  }
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -1604,10 +1619,10 @@ export function registerChatRoutes(app: Express): void {
             const isFromMe = source === 'member' || !!(lm.SentByOrganizationMember || lm.sentByOrganizationMember);
             const mtypeRaw = String(lm.MessageType || lm.messageType || 'Text').toLowerCase();
             const caption = String(lm.Content != null ? lm.Content : (lm.content != null ? lm.content : ''));
-            const file = lm.File || lm.file || null;
-            const fileUrl = file && (file.Url || file.url);
-            const fileMime = file && (file.MimeType || file.mimetype || file.mimeType);
-            const fileName = file && (file.FileName || file.fileName || file.Name);
+            let file = lm.File || lm.file || null;
+            let fileUrl = file && (file.Url || file.url);
+            let fileMime = file && (file.MimeType || file.mimetype || file.mimeType);
+            let fileName = file && (file.FileName || file.fileName || file.Name);
             let mt: 'text' | 'image' | 'audio' | 'video' | 'document' = 'text';
             if (/image/.test(mtypeRaw)) mt = 'image';
             else if (/audio|ptt|voice/.test(mtypeRaw)) mt = 'audio';
@@ -1615,25 +1630,40 @@ export function registerChatRoutes(app: Express): void {
             else if (/file|document|application/.test(mtypeRaw) || fileUrl) {
               mt = (fileMime && /^image\//.test(fileMime)) ? 'image' : (fileMime && /^audio\//.test(fileMime)) ? 'audio' : (fileMime && /^video\//.test(fileMime)) ? 'video' : 'document';
             }
-            let msgObj: any;
-            if (mt !== 'text' && fileUrl) {
-              if (mt === 'image') msgObj = { imageMessage: { url: fileUrl, mimetype: fileMime || 'image/jpeg', caption } };
-              else if (mt === 'audio') msgObj = { audioMessage: { url: fileUrl, mimetype: fileMime || 'audio/ogg' } };
-              else if (mt === 'video') msgObj = { videoMessage: { url: fileUrl, mimetype: fileMime || 'video/mp4', caption } };
-              else msgObj = { documentMessage: { url: fileUrl, mimetype: fileMime || 'application/octet-stream', fileName: fileName || 'documento', caption } };
-              (debugInfo as any).umblerTalkMedia = mt;
-            } else {
-              msgObj = { conversation: caption };
+            const umMsgId = String(lm.Id || lm.id || '');
+            // Umbler envia o evento Message de midia SEM o arquivo (File=null, upload async). Resolver via API.
+            if (mt !== 'text' && !fileUrl && umMsgId && process.env.UMBLER_TALK_TOKEN) {
+              const resolved = await fetchUmblerTalkMessageFile(umMsgId);
+              if (resolved && resolved.url) {
+                fileUrl = resolved.url; fileMime = resolved.mime || fileMime; fileName = resolved.fileName || fileName;
+                (debugInfo as any).umblerTalkFileResolved = true;
+              }
             }
-            event = 'messages.upsert';
-            data = {
-              key: { remoteJid: digits + '@s.whatsapp.net', fromMe: !!isFromMe, id: String(lm.Id || lm.id || ut.EventId || ('umblertalk-' + Date.now())) },
-              message: msgObj,
-              pushName: contact.Name || contact.name || undefined,
-              messageTimestamp: Math.floor(Date.now() / 1000),
-            };
-            (debugInfo as any).umblerTalk = true;
-            debugInfo.steps.push('umbler-talk-normalized');
+            if (mt !== 'text' && !fileUrl) {
+              // midia ainda sem arquivo (upload nao concluido) — ignorar; o evento MessageFileUploaded trara o arquivo
+              (debugInfo as any).umblerTalkSkipped = 'media-no-file:' + mt;
+              debugInfo.steps.push('umbler-talk-skip-media-no-file');
+            } else {
+              let msgObj: any;
+              if (mt !== 'text' && fileUrl) {
+                if (mt === 'image') msgObj = { imageMessage: { url: fileUrl, mimetype: fileMime || 'image/jpeg', caption } };
+                else if (mt === 'audio') msgObj = { audioMessage: { url: fileUrl, mimetype: fileMime || 'audio/ogg' } };
+                else if (mt === 'video') msgObj = { videoMessage: { url: fileUrl, mimetype: fileMime || 'video/mp4', caption } };
+                else msgObj = { documentMessage: { url: fileUrl, mimetype: fileMime || 'application/octet-stream', fileName: fileName || 'documento', caption } };
+                (debugInfo as any).umblerTalkMedia = mt;
+              } else {
+                msgObj = { conversation: caption };
+              }
+              event = 'messages.upsert';
+              data = {
+                key: { remoteJid: digits + '@s.whatsapp.net', fromMe: !!isFromMe, id: umMsgId || String(ut.EventId || ('umblertalk-' + Date.now())) },
+                message: msgObj,
+                pushName: contact.Name || contact.name || undefined,
+                messageTimestamp: Math.floor(Date.now() / 1000),
+              };
+              (debugInfo as any).umblerTalk = true;
+              debugInfo.steps.push('umbler-talk-normalized');
+            }
           }
         }
       }
