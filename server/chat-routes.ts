@@ -1328,23 +1328,52 @@ export function registerChatRoutes(app: Express): void {
         }
       }
       
-      // uTalk (Umbler api.utalk.chat) — normalizar webhook de RECEBIMENTO para shape Evolution
+      // uTalk (Umbler api.utalk.chat) — normalizar webhook de RECEBIMENTO para shape Evolution (texto + midia)
       if (!event) {
         const ub: any = req.body || {};
         const utext = ub.msg ?? ub.message ?? ub.body ?? ub.text ?? ub.texto;
         const uphoneRaw = ub.from ?? ub.sender ?? ub.phone ?? ub.chatId ?? ub.de ?? ub.to;
-        if (utext != null && uphoneRaw) {
+        // Deteccao tolerante de midia (uTalk: base64 no corpo, ou url, + mimetype/nome)
+        const umediaRaw = ub.base64 ?? ub.blob ?? ub.media ?? ub.file ?? ub.attachment ?? ub.image ?? ub.audio ?? ub.document ?? null;
+        const umediaUrl = ub.url ?? ub.mediaUrl ?? ub.fileUrl ?? ub.link ?? null;
+        const umime = ub.mimetype ?? ub.mime ?? ub.contentType ?? ub.fileType ?? null;
+        const ufilename = ub.fn ?? ub.filename ?? ub.fileName ?? null;
+        const hasMedia = !!(umediaUrl || (umediaRaw && typeof umediaRaw === 'string'));
+        if (uphoneRaw && (utext != null || hasMedia)) {
           const digits = String(uphoneRaw).replace(/@.*/, '').replace(/\D/g, '');
-          const isFromMe = ub.fromMe === true || ub.fromMe === 'true' || ub.sent === true || String(ub.type || '').toLowerCase() === 'sent';
-          event = 'messages.upsert';
+          const isFromMe = ub.fromMe === true || ub.fromMe === 'true' || ub.sent === true
+            || String(ub.direction || '').toLowerCase() === 'sent'
+            || String(ub.type || '').toLowerCase() === 'sent';
+          const caption = utext != null ? String(utext) : '';
+          let msgObj: any;
+          if (hasMedia) {
+            const builtUrl = umediaUrl
+              || (typeof umediaRaw === 'string'
+                ? (umediaRaw.startsWith('data:') ? umediaRaw : `data:${umime || 'application/octet-stream'};base64,${umediaRaw}`)
+                : undefined);
+            let mt: 'image' | 'audio' | 'video' | 'document' = 'document';
+            if (umime && umime.startsWith('image/')) mt = 'image';
+            else if (umime && umime.startsWith('audio/')) mt = 'audio';
+            else if (umime && umime.startsWith('video/')) mt = 'video';
+            else if (!umime && /\.(jpe?g|png|gif|webp)$/i.test(ufilename || '')) mt = 'image';
+            else if (!umime && /\.(mp3|ogg|wav|m4a|opus)$/i.test(ufilename || '')) mt = 'audio';
+            else if (!umime && /\.(mp4|webm|mov)$/i.test(ufilename || '')) mt = 'video';
+            if (mt === 'image') msgObj = { imageMessage: { url: builtUrl, mimetype: umime || 'image/jpeg', caption } };
+            else if (mt === 'video') msgObj = { videoMessage: { url: builtUrl, mimetype: umime || 'video/mp4', caption } };
+            else msgObj = { documentMessage: { url: builtUrl, mimetype: umime || 'application/octet-stream', fileName: ufilename || 'documento', caption } };
+            (debugInfo as any).utalkMedia = mt;
+          } else {
+            msgObj = { conversation: String(utext) };
+          }
+        event = 'messages.upsert';
           data = {
             key: { remoteJid: digits + '@s.whatsapp.net', fromMe: !!isFromMe, id: String(ub.id || ub.messageId || ('utalk-' + Date.now())) },
-            message: { conversation: String(utext) },
+            message: msgObj,
             pushName: ub.senderName || ub.name || ub.pushName || ub.nome || undefined,
             messageTimestamp: ub.time || ub.timestamp || Math.floor(Date.now() / 1000),
           };
           (debugInfo as any).utalk = true;
-          debugInfo.steps.push('utalk-normalized');
+          debugInfo.steps.push(hasMedia ? 'utalk-normalized-media' : 'utalk-normalized');
         }
       }
       
@@ -3574,6 +3603,7 @@ export function registerChatRoutes(app: Express): void {
 
       // 📱 Enviar para WhatsApp via Evolution API
       console.log(`📱 [SEND-WHATSAPP-START] Iniciando envio ${messageType} via WhatsApp...`);
+      let deliveryOutcome: { success: boolean; error?: string; messageId?: string } | null = null;
       try {
         if (!conversation.customerId) {
           console.warn(`⚠️ [SEND-WHATSAPP] Sem customerId na conversa`);
@@ -3748,20 +3778,48 @@ export function registerChatRoutes(app: Express): void {
               }
               
               if (sendResult?.success) {
+                deliveryOutcome = { success: true, messageId: sendResult.messageId };
                 console.log(`✅ [SEND-WHATSAPP] Mensagem entregue com sucesso! ID:`, sendResult.messageId);
               } else if (sendResult) {
+                deliveryOutcome = { success: false, error: sendResult.error };
                 console.warn(`⚠️ [SEND-WHATSAPP] Erro ao enviar:`, sendResult.error);
               } else {
+                deliveryOutcome = { success: false, error: 'Nenhum resultado de envio disponivel' };
                 console.warn(`⚠️ [SEND-WHATSAPP] Nenhum resultado de envio disponível`);
               }
             }
           }
         }
       } catch (err: any) {
+        deliveryOutcome = { success: false, error: err.message };
         console.error(`❌ [SEND-WHATSAPP] Erro crítico:`, err.message);
       }
 
-      res.json(message);
+      // 📌 Refletir o status real de entrega na mensagem persistida e na resposta
+      let responseMessage: any = message;
+      try {
+        if (deliveryOutcome) {
+          const newAck = deliveryOutcome.success ? 1 : 0;
+          const newMeta = {
+            ...((message as any).metadata || {}),
+            delivery: {
+              success: deliveryOutcome.success,
+              error: deliveryOutcome.error || null,
+              providerStatus: deliveryOutcome.messageId || null,
+              at: new Date().toISOString(),
+            },
+          };
+          const updated = await storage.updateChatMessage(message.id, { ack: newAck, metadata: newMeta } as any);
+          responseMessage = updated || { ...message, ack: newAck, metadata: newMeta };
+          if (!deliveryOutcome.success) {
+            console.warn(`⚠️ [SEND-MESSAGE] Entrega NAO confirmada (ack=0): ${deliveryOutcome.error}`);
+          }
+        }
+      } catch (persistErr: any) {
+        console.error(`⚠️ [SEND-MESSAGE] Falha ao persistir status de entrega:`, persistErr.message);
+      }
+
+      res.json({ ...responseMessage, delivery: deliveryOutcome || { success: true } });
     } catch (error: any) {
       console.error("[CHAT-MESSAGE-SEND] Erro:", error);
       res.status(500).json({ error: "Erro ao enviar mensagem" });
