@@ -3332,6 +3332,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const results: any[] = [];
 
+      // Faturamento realizado a partir de billing_pipeline (billings/Omie descontinuado)
+      const pipelineRevenueResult: any = await db.execute(sql`
+        SELECT seller_id, COALESCE(SUM(sale_value), 0) AS total
+        FROM billing_pipeline
+        WHERE created_at >= ${startDate} AND created_at < (${startDate}::timestamptz + interval '1 month')
+        GROUP BY seller_id
+      `);
+      const pipelineRevenueBySeller = new Map<string, number>();
+      for (const _r of (pipelineRevenueResult.rows || [])) {
+        pipelineRevenueBySeller.set(String((_r as any).seller_id), Number((_r as any).total) || 0);
+      }
+      const pipelineRevenueForSeller = (u: any): number => {
+        const _keys = new Set([String(u.id), String(u.omieVendorCode || ''), 'omie-vendor-' + String(u.omieVendorCode || '')]);
+        let _t = 0;
+        for (const [_k, _v] of pipelineRevenueBySeller) { if (_keys.has(_k)) _t += _v; }
+        return _t;
+      };
       for (const seller of individualSellers) {
         try {
           const effectiveType = getEffectiveSellerType(seller);
@@ -3339,7 +3356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const revenueGoal = goal ? parseFloat(goal.revenueGoal || '0') : 0;
 
           const metrics = await storage.getSalesMetrics(seller.id, targetMonth, targetYear);
-          const totalRevenue = metrics.totalRevenue || 0;
+          const totalRevenue = pipelineRevenueForSeller(seller);
           const projection = workingDaysElapsed > 0
             ? (totalRevenue / workingDaysElapsed) * workingDaysInMonth
             : 0;
