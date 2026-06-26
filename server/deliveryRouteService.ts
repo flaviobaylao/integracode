@@ -704,11 +704,27 @@ async function persistRoutePlan(
       throw new Error(`Rota com coordenadas de início inválidas: lat=${route.startLatitude}, lng=${route.startLongitude}`);
     }
 
+    // Resolver dados do motorista (route_name / driver_name / driver_email sao NOT NULL no schema)
+    let driverName = route.driverName || '';
+    let driverEmail = '';
+    if (route.driverId) {
+      try {
+        const drv = await (storage as any).getDeliveryDriverById(route.driverId);
+        if (drv) { driverName = driverName || drv.name || ''; driverEmail = drv.email || ''; }
+      } catch (e) { /* segue com fallback */ }
+    }
+    if (!driverName) driverName = 'Motorista';
+    const __dateStr = (routeDate instanceof Date ? routeDate : new Date(routeDate)).toISOString().slice(0, 10);
+    const routeName = `ROTA-${__dateStr}-${driverName.toUpperCase().replace(/\s+/g, '-')}-${savedRoutes.length + 1}`;
+
     // Criar rota de entrega
     const deliveryRoute = await storage.createDeliveryRoute({
       id: nanoid(),
+      routeName,
       vehicleType: route.vehicleType,
       driverId: route.driverId,
+      driverName,
+      driverEmail,
       routeDate,
       startLatitude: route.startLatitude.toString(),
       startLongitude: route.startLongitude.toString(),
