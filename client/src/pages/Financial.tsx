@@ -92,6 +92,16 @@ function InstanceFilter({ value, onChange }: { value: string; onChange: (v: stri
 // ============================================================================
 // TAB 1: CONTAS A RECEBER
 // ============================================================================
+function useInstanceNames(): Record<string, string> {
+  const { data } = useQuery<any[]>({
+    queryKey: ['/api/omie/instances'],
+    queryFn: () => fetch('/api/omie/instances', { credentials: 'include' }).then(r => r.json()).catch(() => []),
+  });
+  const map: Record<string, string> = {};
+  (Array.isArray(data) ? data : []).forEach((i) => { if (i?.id) map[i.id] = i.displayName || i.name || i.id; });
+  return map;
+}
+
 function ReceivablesTab() {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -122,6 +132,7 @@ function ReceivablesTab() {
     return `/api/financial/receivables${qs ? `?${qs}` : ''}`;
   };
 
+  const instanceNames = useInstanceNames();
   const { data: receivables = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/financial/receivables', instanceId, statusFilter, paymentMethodFilter, startDate, endDate, dueDateStart, dueDateEnd],
     queryFn: async () => {
@@ -255,6 +266,8 @@ function ReceivablesTab() {
               <TableRow>
                 <TableHead>Título</TableHead>
                 <TableHead>Cliente</TableHead>
+                <TableHead>Vendedor</TableHead>
+                <TableHead>Categoria</TableHead>
                 <TableHead>Descrição</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead className="text-right">Valor Pago</TableHead>
@@ -267,18 +280,20 @@ function ReceivablesTab() {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
+                <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
               ) : filtered.map((r: any) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.titleNumber || '-'}</TableCell>
                   <TableCell>{r.customerName || '-'}</TableCell>
+                  <TableCell>{r.sellerName || '-'}</TableCell>
+                  <TableCell className="max-w-[160px] truncate">{r.category || '-'}</TableCell>
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(r.amountPaid)}</TableCell>
                   <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}</TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
-                  <TableCell><Badge variant="outline">{r.omieInstanceId || '-'}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{instanceNames[r.omieInstanceId] || r.omieInstanceId || '-'}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
@@ -291,7 +306,7 @@ function ReceivablesTab() {
               ))}
               {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
-                  <TableCell colSpan={3}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
+                  <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0))}</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amountPaid) || 0), 0))}</TableCell>
                   <TableCell colSpan={5} className="text-muted-foreground">Saldo a receber: {formatCurrency(filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0))}</TableCell>
@@ -512,6 +527,7 @@ function PayablesTab() {
     return `/api/financial/payables${qs ? `?${qs}` : ''}`;
   };
 
+  const instanceNames = useInstanceNames();
   const { data: payables = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/financial/payables', instanceId, statusFilter, sourceFilter, startDate, endDate, dueDateStart, dueDateEnd],
     queryFn: () => fetch(buildUrl(), { credentials: 'include' }).then(r => r.json()),
@@ -650,7 +666,7 @@ function PayablesTab() {
                   <TableCell>{getPayableStatusBadge(p.status, p.dueDate)}</TableCell>
                   <TableCell>{formatDate(p.dueDate)}</TableCell>
                   <TableCell><Badge variant="outline">{sourceLabels[p.source] || p.source || '-'}</Badge></TableCell>
-                  <TableCell><Badge variant="outline">{p.omieInstanceId || '-'}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{instanceNames[p.omieInstanceId] || p.omieInstanceId || '-'}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
