@@ -12320,13 +12320,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: string;
         operationType: string;
       }>(sql`
-        SELECT DISTINCT ON (b.id)
-          b.id,
-          b.invoice_number as "invoiceNumber",
-          b.omie_order_id as "omieOrderId",
-          b.order_number as "orderNumber",
-          COALESCE(c.id, 'billing-' || b.id) as "customerId",
-          COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
+        SELECT DISTINCT ON (bp.id)
+          bp.id,
+          bp.invoice_number as "invoiceNumber",
+          NULL as "omieOrderId",
+          bp.order_number as "orderNumber",
+          COALESCE(c.id, 'billing-' || bp.id) as "customerId",
+          COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
@@ -12336,24 +12336,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.exclusive_vehicle as "exclusiveVehicle",
           c.vehicle_types as "vehicleTypes",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-          COALESCE(b.is_urgent, false) as "isUrgent",
-          b.total_value as "saleValue",
-          b.products,
-          b.invoice_date as "scheduledDate",
-          b.payment_method as "paymentMethod",
-          b.billing_type as "operationType"
-        FROM billings b
-        LEFT JOIN customers c ON (
-          c.id = CONCAT('omie-client-', b.omie_customer_code)
-          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-        )
-        WHERE b.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
-        ORDER BY 
-          b.id, 
-          CASE WHEN c.id = CONCAT('omie-client-', b.omie_customer_code) THEN 0 ELSE 1 END,
-          c.id NULLS LAST,
-          b.invoice_date
+          false as "isUrgent",
+          bp.sale_value as "saleValue",
+          bp.products,
+          bp.created_at as "scheduledDate",
+          bp.payment_method as "paymentMethod",
+          bp.operation_type as "operationType"
+        FROM billing_pipeline bp
+        LEFT JOIN customers c ON c.id = bp.customer_id
+        WHERE bp.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
+        ORDER BY bp.id, bp.created_at
       `);
       
       const orders = billingsResult.rows;
