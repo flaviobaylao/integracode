@@ -519,6 +519,73 @@ async function sendUmblerText(toPhone: string, text: string): Promise<{ success:
   }
 }
 
+// -- Umbler Talk (app-utalk.umbler.com): API oficial com Bearer token --
+const UMBLER_TALK_BASE = (process.env.UMBLER_TALK_BASE || 'https://app-utalk.umbler.com/api').replace(/\/+$/, '');
+let _umblerTalkCfg: { orgId: string; fromPhone: string; at: number } | null = null;
+
+async function umblerTalkFetch(path: string, init?: any) {
+  const token = process.env.UMBLER_TALK_TOKEN;
+  const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, (init && init.headers) || {});
+  return fetch(UMBLER_TALK_BASE + path, Object.assign({}, init, { headers, signal: AbortSignal.timeout(30000) }));
+}
+
+async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: string } | { error: string }> {
+  const token = process.env.UMBLER_TALK_TOKEN;
+  if (!token) return { error: 'UMBLER_TALK_TOKEN ausente' };
+  if (_umblerTalkCfg && (Date.now() - _umblerTalkCfg.at) < 600000) {
+    return { orgId: _umblerTalkCfg.orgId, fromPhone: _umblerTalkCfg.fromPhone };
+  }
+  let orgId = process.env.UMBLER_TALK_ORG_ID || '';
+  let fromPhone = process.env.UMBLER_TALK_FROM_PHONE || '';
+  try {
+    if (!orgId) {
+      const meResp = await umblerTalkFetch('/v1/members/me/');
+      if (!meResp.ok) return { error: `members/me HTTP ${meResp.status}: ${(await meResp.text()).slice(0, 160)}` };
+      const me: any = await meResp.json();
+      const orgs = me && me.organizations;
+      const first = Array.isArray(orgs) ? orgs[0] : (orgs && (orgs.items || [])[0]);
+      orgId = (first && (first.id || first.organizationId || (first.organization && first.organization.id))) || '';
+      if (!orgId) return { error: 'Nao foi possivel resolver organizationId via members/me' };
+    }
+    if (!fromPhone) {
+      const chResp = await umblerTalkFetch('/v1/channels/?organizationId=' + encodeURIComponent(orgId));
+      if (!chResp.ok) return { error: `channels HTTP ${chResp.status}: ${(await chResp.text()).slice(0, 160)}` };
+      const chans: any = await chResp.json();
+      const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
+      const wa = (list || []).filter((c: any) => c && c.phoneNumber);
+      const pick = wa.find((c: any) => /whats/i.test(String(c._t || c.channelType || c.name || ''))) || wa[0];
+      fromPhone = pick ? String(pick.phoneNumber).replace(/\D/g, '') : '';
+      if (!fromPhone) return { error: 'Nenhum canal com phoneNumber encontrado' };
+    }
+    _umblerTalkCfg = { orgId, fromPhone, at: Date.now() };
+    return { orgId, fromPhone };
+  } catch (e: any) {
+    return { error: 'resolve config: ' + (e && e.message ? e.message : String(e)) };
+  }
+}
+
+async function sendUmblerTalkText(toPhone: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const token = process.env.UMBLER_TALK_TOKEN;
+  if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
+  let digits = String(toPhone || '').replace(/\D/g, '');
+  if (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) digits = '55' + digits;
+  if (!digits) return { success: false, error: 'Telefone do cliente vazio' };
+  const cfg = await resolveUmblerTalkConfig();
+  if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
+  try {
+    const body = JSON.stringify({ organizationId: cfg.orgId, fromPhone: cfg.fromPhone, toPhone: digits, message: text });
+    const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body });
+    const raw = await resp.text();
+    console.log(`[UMBLER-TALK] to=${digits} from=${cfg.fromPhone} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
+    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    let id: string | undefined;
+    try { id = JSON.parse(raw).id; } catch {}
+    return { success: true, messageId: id };
+  } catch (e: any) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -1280,10 +1347,12 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/umbler/status", (req: any, res: any) => {
     const host = req.headers.host || "integracode-production.up.railway.app";
     res.json({
+      provider: process.env.UMBLER_TALK_TOKEN ? "umbler-talk" : (process.env.UMBLER_API_KEY ? "utalk" : "evolution"),
+      umblerTalkTokenPresent: !!process.env.UMBLER_TALK_TOKEN,
       umblerKeyPresent: !!process.env.UMBLER_API_KEY,
       sendImplemented: true,
       webhookReceiverUrl: "https://" + host + "/api/chat/webhook/messages",
-      note: "Configurar este URL como webhook no painel Umbler (uTalk). Parser uTalk de recebimento ativo (shim).",
+      note: "Umbler Talk API (Bearer) preferida quando UMBLER_TALK_TOKEN setado; senao api.utalk.chat. Webhook de recebimento via shim.",
     });
   });
 
@@ -1293,8 +1362,19 @@ export function registerChatRoutes(app: Express): void {
       const to = String(req.query.to || "");
       const msg = String(req.query.msg || "Teste Umbler uTalk");
       if (!to) return res.status(400).json({ error: "informe ?to=5562999999999" });
-      const r = await sendUmblerText(to, msg);
-      res.json({ umblerKeyPresent: !!process.env.UMBLER_API_KEY, to, result: r });
+      const useTalk = !!process.env.UMBLER_TALK_TOKEN;
+      const r = useTalk ? await sendUmblerTalkText(to, msg) : await sendUmblerText(to, msg);
+      res.json({ provider: useTalk ? "umbler-talk" : "utalk", umblerTalkTokenPresent: !!process.env.UMBLER_TALK_TOKEN, umblerKeyPresent: !!process.env.UMBLER_API_KEY, to, result: r });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
+  // Diagnostico Umbler Talk: resolve organizationId + fromPhone via API (read-only)
+  app.get("/api/chat/umbler-talk/diagnose", async (req: any, res: any) => {
+    try {
+      const cfg = await resolveUmblerTalkConfig();
+      res.json({ umblerTalkTokenPresent: !!process.env.UMBLER_TALK_TOKEN, base: UMBLER_TALK_BASE, resolved: cfg });
     } catch (e: any) {
       res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
     }
@@ -3622,7 +3702,7 @@ export function registerChatRoutes(app: Express): void {
             
             console.log(`📱 [SEND-WHATSAPP] Config: instanceName=${config.instanceName}, hasKey=${!!config.apiKey}`);
             
-            if (!process.env.UMBLER_API_KEY && (!config.instanceName || !config.apiKey)) {
+            if (!process.env.UMBLER_TALK_TOKEN && !process.env.UMBLER_API_KEY && (!config.instanceName || !config.apiKey)) {
               console.warn(`⚠️ [SEND-WHATSAPP] Configuração incompleta (Evolution/Umbler)`);
             } else {
               const phoneNormalized = normalizePhoneNumber(chatCustomer.phone);
@@ -3632,7 +3712,10 @@ export function registerChatRoutes(app: Express): void {
               
               let sendResult;
               if (messageType === 'text' && content) {
-                if (process.env.UMBLER_API_KEY) {
+                if (process.env.UMBLER_TALK_TOKEN) {
+                  console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler Talk para ${chatCustomer.phone}`);
+                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content);
+                } else if (process.env.UMBLER_API_KEY) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
                   sendResult = await sendUmblerText(chatCustomer.phone, content);
                 } else {
