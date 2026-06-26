@@ -1125,6 +1125,48 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // POST /api/admin/sync/align-enums { table, dryRun? } — adiciona aos enums do 2.0 os valores presentes nos dados do 1.0.
+  // ADITIVO/SEGURO: ALTER TYPE ... ADD VALUE IF NOT EXISTS. Resolve "invalid input value for enum" no sync.
+  app.post('/api/admin/sync/align-enums', async (req: Request, res: Response) => {
+    const tbl = (req.body?.table || '') as string;
+    if (!tbl) { res.status(400).json({ error: 'informe table' }); return; }
+    const dryRun = req.body?.dryRun === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const enumColsRes = await tgt.query(`SELECT a.attname AS col, t.typname AS enumtype
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_type t ON t.oid = a.atttypid
+        WHERE n.nspname='public' AND c.relname=$1 AND a.attnum>0 AND NOT a.attisdropped AND t.typtype='e'`, [tbl]);
+      if (enumColsRes.rows.length === 0) { res.json({ table: tbl, enums: [], note: 'tabela sem colunas enum no 2.0' }); return; }
+      const report: any[] = [];
+      for (const ec of enumColsRes.rows as Array<{ col: string; enumtype: string }>) {
+        const curRes = await tgt.query(`SELECT e.enumlabel AS v FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname=$1`, [ec.enumtype]);
+        const cur = new Set((curRes.rows as any[]).map(r => r.v as string));
+        let used: string[] = [];
+        try {
+          const usedRes = await src.query(`SELECT DISTINCT "${ec.col}"::text AS v FROM "${tbl}" WHERE "${ec.col}" IS NOT NULL`);
+          used = (usedRes.rows as any[]).map(r => r.v as string);
+        } catch {}
+        const missing = used.filter(v => !cur.has(v));
+        const added: string[] = []; const errors: any[] = [];
+        if (!dryRun) {
+          for (const v of missing) {
+            try { await tgt.query(`ALTER TYPE "${ec.enumtype}" ADD VALUE IF NOT EXISTS '${String(v).replace(/'/g, "''")}'`); added.push(v); }
+            catch (e: any) { errors.push({ value: v, error: (e.message || '').substring(0, 120) }); }
+          }
+        }
+        report.push({ col: ec.col, enumtype: ec.enumtype, missing, added, errors });
+      }
+      res.json({ table: tbl, dryRun, enums: report });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
