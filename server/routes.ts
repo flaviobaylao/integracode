@@ -3334,20 +3334,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Faturamento realizado a partir de billing_pipeline (billings/Omie descontinuado)
       const pipelineRevenueResult: any = await db.execute(sql`
-        SELECT seller_id, COALESCE(SUM(sale_value), 0) AS total
+        SELECT seller_id, omie_instance_id, COALESCE(SUM(sale_value), 0) AS total
         FROM billing_pipeline
         WHERE created_at >= ${startDate} AND created_at < (${startDate}::timestamptz + interval '1 month')
-        GROUP BY seller_id
+        GROUP BY seller_id, omie_instance_id
       `);
       const pipelineRevenueBySeller = new Map<string, number>();
+      const pipelineInstanceBySeller = new Map<string, Record<string, number>>();
       for (const _r of (pipelineRevenueResult.rows || [])) {
-        pipelineRevenueBySeller.set(String((_r as any).seller_id), Number((_r as any).total) || 0);
+        const _sid = String((_r as any).seller_id);
+        const _val = Number((_r as any).total) || 0;
+        pipelineRevenueBySeller.set(_sid, (pipelineRevenueBySeller.get(_sid) || 0) + _val);
+        const _inst = (_r as any).omie_instance_id;
+        if (_inst) {
+          const _m = pipelineInstanceBySeller.get(_sid) || {};
+          _m[String(_inst)] = (_m[String(_inst)] || 0) + _val;
+          pipelineInstanceBySeller.set(_sid, _m);
+        }
       }
+      const _sellerKeys = (u: any) => new Set([String(u.id), String(u.omieVendorCode || ''), 'omie-vendor-' + String(u.omieVendorCode || '')]);
       const pipelineRevenueForSeller = (u: any): number => {
-        const _keys = new Set([String(u.id), String(u.omieVendorCode || ''), 'omie-vendor-' + String(u.omieVendorCode || '')]);
-        let _t = 0;
-        for (const [_k, _v] of pipelineRevenueBySeller) { if (_keys.has(_k)) _t += _v; }
-        return _t;
+        const keys = _sellerKeys(u); let t = 0;
+        for (const [k, v] of pipelineRevenueBySeller) { if (keys.has(k)) t += v; }
+        return t;
+      };
+      const pipelineRevByInstanceForSeller = (u: any): Record<string, number> => {
+        const keys = _sellerKeys(u); const out: Record<string, number> = {};
+        for (const [k, m] of pipelineInstanceBySeller) { if (keys.has(k)) { for (const i of Object.keys(m)) { out[i] = (out[i] || 0) + m[i]; } } }
+        return out;
       };
       for (const seller of individualSellers) {
         try {
@@ -3369,7 +3383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sellerType: effectiveType,
             revenueGoal,
             revenueActual: totalRevenue,
-            revenueByInstance: metrics.revenueByInstance || {},
+            revenueByInstance: pipelineRevByInstanceForSeller(seller),
             revenueProjected: projection,
             achievementPct: Math.round(achievementPct * 100) / 100,
             commissionRate: commission.rate,
