@@ -1494,7 +1494,7 @@ export function registerChatRoutes(app: Express): void {
   // Diagnostico: estrutura MASCARADA dos ultimos webhooks recebidos (read-only, nao vaza conteudo)
   app.get("/api/chat/umbler-talk/last-webhook", async (req: any, res: any) => {
     try {
-      const rows: any = await db.execute(sql`SELECT id, created_at, LEFT(raw_payload, 6000) as raw FROM webhook_debug_log ORDER BY created_at DESC LIMIT 5`);
+      const rows: any = await db.execute(sql`SELECT id, created_at, LEFT(raw_payload, 38000) as raw FROM webhook_debug_log ORDER BY created_at DESC LIMIT 5`);
       const mask = (v: any): any => {
         if (typeof v === 'string') return 'str(' + v.length + ')';
         if (Array.isArray(v)) return v.slice(0, 3).map(mask);
@@ -1524,7 +1524,7 @@ export function registerChatRoutes(app: Express): void {
       debugInfo.steps.push('1-parse-body');
       // Captura crua antecipada (qualquer payload, mesmo nao reconhecido) p/ diagnostico de formato
       try {
-        await db.execute(sql`INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to) VALUES (${JSON.stringify(req.body || {}).substring(0, 8000)}, ${'EARLY-RAW'}, ${String((req.headers && req.headers['content-type']) || '').substring(0, 120)}, ${String((req.headers && req.headers['content-length']) || '')}, ${false}, ${null})`);
+        await db.execute(sql`INSERT INTO webhook_debug_log (raw_payload, raw_remote_jid, extracted_phone, normalized_phone, mapping_found, mapped_to) VALUES (${JSON.stringify(req.body || {}).substring(0, 40000)}, ${'EARLY-RAW'}, ${String((req.headers && req.headers['content-type']) || '').substring(0, 120)}, ${String((req.headers && req.headers['content-length']) || '')}, ${false}, ${null})`);
       } catch {}
       
       // Suportar múltiplos formatos de webhook (Evolution API pode enviar de diferentes formas)
