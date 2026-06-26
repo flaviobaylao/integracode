@@ -1464,6 +1464,22 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Diagnostico: ultimas mensagens de audio recebidas + transcricao (read-only)
+  app.get("/api/chat/transcribe-status", async (req: any, res: any) => {
+    try {
+      const rows: any = await db.execute(sql`SELECT id, conversation_id, content, metadata, created_at FROM chat_messages WHERE message_type = 'audio' AND sender_type = 'customer' ORDER BY created_at DESC LIMIT 5`);
+      const list = (rows.rows || rows || []);
+      const out = list.map((r: any) => {
+        let meta: any = r.metadata; try { if (typeof meta === 'string') meta = JSON.parse(meta); } catch {}
+        const transcription = meta && meta.transcription ? String(meta.transcription) : null;
+        return { id: r.id, at: r.created_at, transcribed: !!transcription, content: r.content, transcription };
+      });
+      res.json({ hasOpenAIKey: !!process.env.OPENAI_API_KEY, count: out.length, items: out });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
   // Diagnostico: estrutura MASCARADA dos ultimos webhooks recebidos (read-only, nao vaza conteudo)
   app.get("/api/chat/umbler-talk/last-webhook", async (req: any, res: any) => {
     try {
