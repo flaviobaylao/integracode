@@ -6893,53 +6893,42 @@ export class DatabaseStorage implements IStorage {
             previousMonthEnd.setHours(23, 59, 59, 999);
             
             // Totais do mês anterior
-            const previousMonthTotals = await db
-              .select({
-                omieCustomerCode: billings.omieCustomerCode,
-                total: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)`.mapWith(Number),
-              })
-              .from(billings)
-              .where(
-                and(
-                  inArray(billings.omieCustomerCode, customerOmieCodes),
-                  isNotNull(billings.invoiceDate),
-                  gte(billings.invoiceDate, previousMonthStart),
-                  sql`${billings.invoiceDate} <= ${previousMonthEnd}`,
-                  eq(billings.isCancelled, false)
-                )
-              )
-              .groupBy(billings.omieCustomerCode);
-            
-            // Totais do mês atual
-            const currentMonthTotals = await db
-              .select({
-                omieCustomerCode: billings.omieCustomerCode,
-                total: sql<number>`COALESCE(SUM(${billings.totalValue}), 0)`.mapWith(Number),
-              })
-              .from(billings)
-              .where(
-                and(
-                  inArray(billings.omieCustomerCode, customerOmieCodes),
-                  isNotNull(billings.invoiceDate),
-                  gte(billings.invoiceDate, currentMonthStart),
-                  sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
-                  eq(billings.isCancelled, false)
-                )
-              )
-              .groupBy(billings.omieCustomerCode);
-            
-            // Criar mapas de totais
-            const previousMonthMap = new Map(previousMonthTotals.map(p => [p.omieCustomerCode, p.total]));
-            const currentMonthMap = new Map(currentMonthTotals.map(p => [p.omieCustomerCode, p.total]));
-            
-            // Converter para customerId
-            for (const c of customersData) {
-              if (c.omieClientCode) {
-                const prevTotal = previousMonthMap.get(c.omieClientCode) || 0;
-                const currTotal = currentMonthMap.get(c.omieClientCode) || 0;
-                monthlyTotalsMap.set(c.id, { previousMonth: prevTotal, currentMonth: currTotal });
-              }
-            }
+            const customerIds = customersData.map((c: any) => c.id).filter(Boolean);
+
+      const previousMonthTotals = customerIds.length ? await db
+        .select({
+          customerId: billingPipeline.customerId,
+          total: sql<number>`COALESCE(SUM(${billingPipeline.saleValue}), 0)`.mapWith(Number),
+        })
+        .from(billingPipeline)
+        .where(and(
+          inArray(billingPipeline.customerId, customerIds),
+          gte(billingPipeline.createdAt, previousMonthStart),
+          sql`${billingPipeline.createdAt} <= ${previousMonthEnd}`,
+        ))
+        .groupBy(billingPipeline.customerId) : [];
+
+      const currentMonthTotals = customerIds.length ? await db
+        .select({
+          customerId: billingPipeline.customerId,
+          total: sql<number>`COALESCE(SUM(${billingPipeline.saleValue}), 0)`.mapWith(Number),
+        })
+        .from(billingPipeline)
+        .where(and(
+          inArray(billingPipeline.customerId, customerIds),
+          gte(billingPipeline.createdAt, currentMonthStart),
+          sql`${billingPipeline.createdAt} <= ${currentMonthEnd}`,
+        ))
+        .groupBy(billingPipeline.customerId) : [];
+
+      const previousMonthMap = new Map(previousMonthTotals.map((p: any) => [p.customerId, p.total]));
+      const currentMonthMap = new Map(currentMonthTotals.map((p: any) => [p.customerId, p.total]));
+
+      for (const c of customersData) {
+        const prevTotal = previousMonthMap.get(c.id) || 0;
+        const currTotal = currentMonthMap.get(c.id) || 0;
+        monthlyTotalsMap.set(c.id, { previousMonth: prevTotal, currentMonth: currTotal });
+      }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
