@@ -3115,24 +3115,23 @@ export class DatabaseStorage implements IStorage {
     // Retornar dados dos billings com latitude/longitude dos clientes cadastrados
     // PRIORIDADE: fantasy_name é CRÍTICO - sempre deve retornar nome fantasia
     const result = await db.execute(sql`
-      SELECT DISTINCT ON (b.id)
-        b.id,
-        b.invoice_number as "invoiceNumber",
-        b.omie_order_id as "omieOrderId",
-        b.order_number as "orderNumber",
-        COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
-        b.customer_document as "customerDocument",
-        b.omie_customer_code,
-        b.invoice_date as "scheduledDate",
-        b.invoice_date as "invoiceDate",
-        b.total_value as "saleValue",
-        b.products,
-        b.payment_method as "paymentMethod",
-        b.billing_type as "operationType",
-        COALESCE(c.exclusive_vehicle, b.exclusive_vehicle) as "exclusiveVehicle",
-        COALESCE(c.vehicle_types::text, b.vehicle_types::text)::jsonb as "vehicleTypes",
-        b.is_urgent as "isUrgent",
-        b.delivery_weekdays as "deliveryWeekdays",
+      SELECT DISTINCT ON (bp.id)
+        bp.id,
+        bp.invoice_number as "invoiceNumber",
+        NULL as "omieOrderId",
+        bp.order_number as "orderNumber",
+        COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
+        bp.customer_document as "customerDocument",
+        bp.created_at as "scheduledDate",
+        bp.created_at as "invoiceDate",
+        bp.sale_value as "saleValue",
+        bp.products,
+        bp.payment_method as "paymentMethod",
+        bp.operation_type as "operationType",
+        COALESCE(c.exclusive_vehicle, false) as "exclusiveVehicle",
+        COALESCE(c.vehicle_types::text, '[]')::jsonb as "vehicleTypes",
+        false as "isUrgent",
+        c.delivery_weekdays as "deliveryWeekdays",
         COALESCE(c.latitude, NULL)::text as "customerLatitude",
         COALESCE(c.longitude, NULL)::text as "customerLongitude",
         COALESCE(c.address, '')::text as "customerAddress",
@@ -3144,24 +3143,18 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
         c.id as "customerId",
         c.weekdays as "customerWeekdays",
-        b.omie_instance_id as "omieInstanceId"
-      FROM billings b
-      LEFT JOIN customers c ON (
-        b.omie_customer_code::text = c.omie_client_code
-        OR b.customer_fantasy_name = c.fantasy_name 
-        OR b.omie_customer_code::text = c.cpf 
-        OR b.omie_customer_code::text = c.cnpj
-      )
-      WHERE b.invoice_stage = 'Aguardando Rota'
-        AND b.invoice_date IS NOT NULL
+        bp.omie_instance_id as "omieInstanceId"
+      FROM billing_pipeline bp
+      LEFT JOIN customers c ON c.id = bp.customer_id
+      WHERE bp.stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
         AND NOT EXISTS (
           SELECT 1 FROM delivery_route_stops drs
           JOIN delivery_routes dr ON dr.id = drs.route_id
-          WHERE drs.billing_id = b.id
+          WHERE drs.billing_id = bp.id
             AND drs.status NOT IN ('devolvida', 'cancelada', 'entregue')
             AND dr.route_date >= CURRENT_DATE
         )
-      ORDER BY b.id, b.invoice_date DESC, b.customer_fantasy_name
+      ORDER BY bp.id, bp.created_at DESC, bp.customer_name
     `);
     
     // Mapear billings para deliveries com customerId genérico
