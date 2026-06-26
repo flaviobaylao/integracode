@@ -586,6 +586,30 @@ async function sendUmblerTalkText(toPhone: string, text: string): Promise<{ succ
   }
 }
 
+async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const token = process.env.UMBLER_TALK_TOKEN;
+  if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
+  let digits = String(toPhone || '').replace(/\D/g, '');
+  if (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) digits = '55' + digits;
+  if (!digits) return { success: false, error: 'Telefone do cliente vazio' };
+  if (!fileUrl) return { success: false, error: 'URL de midia vazia' };
+  const cfg = await resolveUmblerTalkConfig();
+  if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
+  try {
+    const payload: any = { organizationId: cfg.orgId, fromPhone: cfg.fromPhone, toPhone: digits, file: fileUrl };
+    if (caption) payload.message = caption;
+    const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload) });
+    const raw = await resp.text();
+    console.log(`[UMBLER-TALK-MEDIA] to=${digits} file=${String(fileUrl).slice(0, 80)} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
+    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    let id: string | undefined;
+    try { id = JSON.parse(raw).id; } catch {}
+    return { success: true, messageId: id };
+  } catch (e: any) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 export function registerChatRoutes(app: Express): void {
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -1375,6 +1399,20 @@ export function registerChatRoutes(app: Express): void {
     try {
       const cfg = await resolveUmblerTalkConfig();
       res.json({ umblerTalkTokenPresent: !!process.env.UMBLER_TALK_TOKEN, base: UMBLER_TALK_BASE, resolved: cfg });
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
+  // Teste de envio de MIDIA via Umbler Talk (file = URL publica acessivel)
+  app.get("/api/chat/umbler-talk/test-media", async (req: any, res: any) => {
+    try {
+      const to = String(req.query.to || "");
+      const url = String(req.query.url || "");
+      const caption = String(req.query.caption || "");
+      if (!to || !url) return res.status(400).json({ error: "informe ?to=...&url=..." });
+      const r = await sendUmblerTalkMedia(to, url, caption);
+      res.json({ provider: "umbler-talk", to, url, result: r });
     } catch (e: any) {
       res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
     }
@@ -3796,6 +3834,11 @@ export function registerChatRoutes(app: Express): void {
                     content
                   );
                 }
+              } else if (mediaUrl && process.env.UMBLER_TALK_TOKEN) {
+                const host = req.headers.host || 'integracode-production.up.railway.app';
+                const absMediaUrl = /^https?:\/\//.test(mediaUrl) ? mediaUrl : ('https://' + host + mediaUrl);
+                console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} via Umbler Talk: ${absMediaUrl.substring(0, 80)}`);
+                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, mediaCaption || content || '');
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
                 
@@ -3926,6 +3969,14 @@ export function registerChatRoutes(app: Express): void {
                     { mimetype: detectedMimetype, fileName: detectedFileName }
                   );
                 }
+              } else if (messageType === 'location' && content) {
+                let lat: any = '', lng: any = '';
+                try { const o: any = typeof content === 'string' ? JSON.parse(content) : content; lat = o.lat || o.latitude; lng = o.lng || o.lon || o.longitude; } catch {}
+                if (!lat || !lng) { const m = String(content).match(/(-?\d+\.\d+)[,;\s]+(-?\d+\.\d+)/); if (m) { lat = m[1]; lng = m[2]; } }
+                const mapsUrl = (lat && lng) ? `https://maps.google.com/?q=${lat},${lng}` : String(content);
+                const locText = (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
+                if (process.env.UMBLER_TALK_TOKEN) sendResult = await sendUmblerTalkText(chatCustomer.phone, locText);
+                else sendResult = await evolutionAPIService.sendTextMessage(config.instanceName, phoneFormatted, locText);
               } else {
                 sendResult = { success: false, error: 'Tipo de mensagem não suportado' };
               }
