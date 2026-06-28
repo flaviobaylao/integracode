@@ -272,7 +272,9 @@ export const customers = pgTable("customers", {
   
   // Multi-tenant Omie: identificação da instância de origem
   omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem (ex: "GYN")
-  
+
+  icmsCsosn: varchar("icms_csosn").default('102'), // CSOSN para NF-e (Simples Nacional): '101' ou '102' (padrão 102). Só aplica a emitente Simples (INDÚSTRIA).
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
