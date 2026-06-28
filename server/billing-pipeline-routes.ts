@@ -5,6 +5,8 @@ import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -17,14 +19,44 @@ export function isInternalBillingModeActive() {
   return true;
 }
 
+// ============ Rede de seguranca: NENHUM pedido pode desaparecer ============
+// Registra TODA tentativa de envio ao pipeline (created/skipped/failed) numa tabela imutavel
+// (order_pipeline_audit, criada no boot do index.ts). Garante trilha mesmo se a insercao falhar.
+async function logOrderAudit(salesCardId: string, outcome: string, error?: string) {
+  try {
+    await db.execute(sql`INSERT INTO order_pipeline_audit (id, sales_card_id, outcome, error, created_at)
+      VALUES (gen_random_uuid(), ${salesCardId}, ${outcome}, ${error || null}, now())`);
+  } catch (e) { /* nunca bloqueia o fluxo */ }
+}
+
+// Reconciliacao: garante que TODO sales_card com venda registrada (recente) tenha item no pipeline.
+// Idempotente. E a rede de seguranca caso o envio ao vivo tenha falhado.
+export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; created: number; failed: number }> {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const orphans: any = await db.execute(sql`
+    SELECT sc.id, sc.customer_id, sc.seller_id, sc.sale_value, sc.products, sc.payment_method, sc.operation_type, sc.notes
+    FROM sales_cards sc
+    LEFT JOIN billing_pipeline bp ON bp.sales_card_id = sc.id
+    WHERE bp.id IS NULL
+      AND sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
+      AND sc.created_at >= ${since}`);
+  let created = 0, failed = 0;
+  for (const r of (orphans.rows || [])) {
+    const card = { id: r.id, customerId: r.customer_id, sellerId: r.seller_id, saleValue: r.sale_value, products: r.products, paymentMethod: r.payment_method, operationType: r.operation_type, notes: r.notes };
+    try { const res = await autoSendToBillingPipeline(card as any, 'reconcile'); if (res) created++; else failed++; }
+    catch { failed++; }
+  }
+  return { scanned: (orphans.rows || []).length, created, failed };
+}
+
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
-  if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) return null;
+  if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) { await logOrderAudit(salesCard.id, 'skipped_no_sale'); return null; }
 
   try {
     const existing = await storage.getBillingPipelineItems();
-    if (existing.find(i => i.salesCardId === salesCard.id)) return null;
+    if (existing.find(i => i.salesCardId === salesCard.id)) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
 
     const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
     const seller = salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null;
@@ -59,9 +91,11 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       createdBy: `auto (${internalBillingActivatedBy || createdByEmail})`,
     });
 
+    await logOrderAudit(salesCard.id, 'created');
     console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCard.id} auto-enviado para faturamento interno (modo ativo)`);
     return item;
   } catch (error) {
+    await logOrderAudit(salesCard.id, 'failed', String((error as any)?.message || error));
     console.error(`❌ [BILLING-PIPELINE] Erro ao auto-enviar pedido:`, error);
     return null;
   }
@@ -84,6 +118,22 @@ function isFlavioOnly(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
+
+  // Rede de seguranca: reconciliar pedidos orfaos (com venda, sem item no pipeline)
+  app.post('/api/admin/pipeline/reconcile-orphans', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try { const days = Number(req.body?.days) || 7; const r = await reconcileOrphanOrders(days); res.json({ ok: true, ...r }); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  // Monitor: quantos orfaos nos ultimos N dias + resumo da auditoria
+  app.get('/api/admin/pipeline/orphans-status', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const days = Number(req.query?.days) || 7;
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const o: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM sales_cards sc LEFT JOIN billing_pipeline bp ON bp.sales_card_id = sc.id WHERE bp.id IS NULL AND sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0 AND sc.created_at >= ${since}`);
+      const a: any = await db.execute(sql`SELECT outcome, COUNT(*)::int AS n FROM order_pipeline_audit WHERE created_at >= ${since} GROUP BY outcome ORDER BY n DESC`);
+      res.json({ days, orphans: o.rows?.[0]?.n ?? null, audit: a.rows });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
 
   // Get internal billing mode status
   app.get('/api/billing-pipeline/mode', authenticateUser, isAdminOnly, async (req: any, res) => {

@@ -161,6 +161,15 @@ run();
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
 
+  // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
+  db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
+    id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    sales_card_id varchar,
+    outcome varchar,
+    error text,
+    created_at timestamp DEFAULT now()
+  )`).catch(() => {});
+
   // ===== BOLETO BB (Cobranca v2) — emissao/diagnostico. Default HOMOLOGACAO. =====
   // Para producao: env BB_BOLETO_SANDBOX=false. Conta financeira precisa de
   // bbBoletoEnabled + bbConvenio + bbClientId/bbClientSecret/bbDevAppKey.
