@@ -321,6 +321,27 @@ run();
 
 // DIAG: compara credenciais BB (mascaradas) entre 1.0 (Neon/REPLIT_DATABASE_URL) e 2.0.
 // DIAG: testa variacoes de OAuth do BB para PIX e reporta qual o BB aceita (nao expoe segredos).
+// DIAG/TESTE: reporta presenca do certificado mTLS de PIX e tenta criar 1 cobranca PIX (mostra erro real do BB).
+  app.get("/api/admin/pix/test-charge", async (req, res) => {
+    try {
+      const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";
+      const certPresent = {
+        pfxBase64: !!(process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64),
+        pem: !!(process.env.BB_PIX_CERT_PEM && process.env.BB_PIX_KEY_PEM),
+        password: !!(process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS),
+      };
+      const pixmod: any = await import("./bb-pix-service");
+      let charge: any = null, err: any = null;
+      try {
+        const c = await pixmod.createImmediateCharge(accId, { amount: 1, debtorName: "TESTE PIX 2.0", debtorDocument: "00776212125", description: "diag mtls", expirationSeconds: 600 });
+        charge = { txid: !!c?.txid, hasCopiaECola: !!c?.pixCopiaECola };
+      } catch (e: any) {
+        err = e?.response?.data ? JSON.stringify(e.response.data).slice(0, 400) : (e?.code ? (e.code + " " + (e?.message || "")) : (e?.message || "")).slice(0, 400);
+      }
+      res.json({ accountId: accId, certPresent, chargeOk: !!charge, charge, err });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.get("/api/admin/pix/diag-oauth", async (req, res) => {
     try {
       const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";

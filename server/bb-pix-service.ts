@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import https from 'https';
 import QRCode from 'qrcode';
 import { storage } from './storage';
 import type { FinancialAccount, PixCharge } from '@shared/schema';
@@ -68,6 +69,36 @@ interface BBWebhookPayload {
 
 const tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
 
+// mTLS: BB exige certificado cliente para a API de PIX. Carrega de env (PFX base64 ou PEM cert+key).
+let _pixAgent: https.Agent | null | undefined = undefined;
+function getPixHttpsAgent(): https.Agent | undefined {
+  if (_pixAgent !== undefined) return _pixAgent || undefined;
+  try {
+    const pfxB64 = process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64;
+    const pass = process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS;
+    if (pfxB64) {
+      _pixAgent = new https.Agent({ pfx: Buffer.from(pfxB64, 'base64'), passphrase: pass || undefined });
+      console.log('[BB-PIX] mTLS agent carregado (PFX)');
+      return _pixAgent;
+    }
+    let certPem = process.env.BB_PIX_CERT_PEM;
+    let keyPem = process.env.BB_PIX_KEY_PEM;
+    if (certPem && keyPem) {
+      certPem = certPem.replace(/\\n/g, '\n');
+      keyPem = keyPem.replace(/\\n/g, '\n');
+      _pixAgent = new https.Agent({ cert: certPem, key: keyPem, passphrase: pass || undefined });
+      console.log('[BB-PIX] mTLS agent carregado (PEM)');
+      return _pixAgent;
+    }
+    _pixAgent = null;
+    return undefined;
+  } catch (e: any) {
+    console.error('[BB-PIX] erro ao montar mTLS agent:', e?.message);
+    _pixAgent = null;
+    return undefined;
+  }
+}
+
 function createApiClient(account: FinancialAccount): AxiosInstance {
   // PIX usa credenciais PROPRIAS (app BB autorizado p/ PIX) via env BB_PIX_*, com fallback p/ a conta.
   const pixDevAppKey = process.env.BB_PIX_DEV_APP_KEY || account.bbDevAppKey;
@@ -81,6 +112,7 @@ function createApiClient(account: FinancialAccount): AxiosInstance {
       'Content-Type': 'application/json',
       'gw-dev-app-key': pixDevAppKey,
     },
+    httpsAgent: getPixHttpsAgent(),
     timeout: 30000,
   });
 }
