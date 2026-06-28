@@ -242,7 +242,7 @@ run();
           try { const o: any = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
           catch (e: any) { errors.push({ id, error: e?.message }); }
         }
-        try { await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`); } catch (e) {}
+        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
         console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} paid=${paid} settled=${settled}`);
       })();
       res.json({ ok: true, started: true, candidates: ids.length });
@@ -328,8 +328,8 @@ run();
       const b = req.body || {};
       const clean = String(b.pfxBase64 || "").replace(/\s+/g, "");
       if (!clean) return res.status(400).json({ error: "pfxBase64 obrigatorio" });
-      await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('bb_pix_cert_pfx_base64', ${clean}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
-      await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('bb_pix_cert_password', ${String(b.password || "")}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('bb_pix_cert_pfx_base64', ${clean}, 'cert-upload') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('bb_pix_cert_password', ${String(b.password || "")}, 'cert-upload') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
       try { const pix: any = await import("./bb-pix-service"); pix.resetPixAgentCache?.(); } catch {}
       res.json({ ok: true, savedBytes: clean.length, hasPassword: !!b.password });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
