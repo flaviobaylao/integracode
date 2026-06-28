@@ -34,7 +34,7 @@ async function logOrderAudit(salesCardId: string, outcome: string, error?: strin
 export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; created: number; failed: number }> {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const orphans: any = await db.execute(sql`
-    SELECT sc.id, sc.customer_id, sc.seller_id, sc.sale_value, sc.products, sc.payment_method, sc.operation_type, sc.notes
+    SELECT sc.id, sc.customer_id, sc.seller_id, sc.sale_value, sc.products, sc.payment_method, sc.operation_type, sc.notes, sc.created_at
     FROM sales_cards sc
     LEFT JOIN billing_pipeline bp ON bp.sales_card_id = sc.id
     WHERE bp.id IS NULL
@@ -42,7 +42,7 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
       AND sc.created_at >= ${since}`);
   let created = 0, failed = 0;
   for (const r of (orphans.rows || [])) {
-    const card = { id: r.id, customerId: r.customer_id, sellerId: r.seller_id, saleValue: r.sale_value, products: r.products, paymentMethod: r.payment_method, operationType: r.operation_type, notes: r.notes };
+    const card = { id: r.id, customerId: r.customer_id, sellerId: r.seller_id, saleValue: r.sale_value, products: r.products, paymentMethod: r.payment_method, operationType: r.operation_type, notes: r.notes, createdAt: r.created_at };
     try { const res = await autoSendToBillingPipeline(card as any, 'reconcile'); if (res) created++; else failed++; }
     catch { failed++; }
   }
@@ -85,10 +85,12 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       omieInstanceName: omieInstanceName || null,
       stageHistory: [{
         stage: 'pedido',
-        changedAt: nowBrazil().toISOString(),
+        changedAt: (salesCard.createdAt ? new Date(salesCard.createdAt) : nowBrazil()).toISOString(),
         changedBy: `auto (${internalBillingActivatedBy || createdByEmail})`
       }],
       createdBy: `auto (${internalBillingActivatedBy || createdByEmail})`,
+      // DATA DE REGISTRO do pedido = quando o vendedor registrou (createdAt do sales_card), nao a hora da reconciliacao
+      ...(salesCard.createdAt ? { createdAt: new Date(salesCard.createdAt) } : {}),
     });
 
     await logOrderAudit(salesCard.id, 'created');
@@ -118,6 +120,20 @@ function isFlavioOnly(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
+
+  // Corrige a DATA DE CRIACAO dos itens ja reconciliados: usar a data de registro do pedido (sales_card.created_at)
+  app.post('/api/admin/pipeline/fix-registration-dates', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline bp
+        SET created_at = sc.created_at
+        FROM sales_cards sc
+        WHERE bp.sales_card_id = sc.id
+          AND sc.created_at IS NOT NULL
+          AND bp.created_by ILIKE '%reconcile%'`);
+      res.json({ ok: true, updated: r?.rowCount ?? null });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
 
   // Rede de seguranca: reconciliar pedidos orfaos (com venda, sem item no pipeline)
   app.post('/api/admin/pipeline/reconcile-orphans', authenticateUser, isAdminOnly, async (req: any, res) => {
