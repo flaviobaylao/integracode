@@ -296,29 +296,6 @@ run();
 
 // Cobranca vinculada a um recebivel (botao "Cobranca" no Contas a Receber).
 // TEST: cria recebivel + dispara o hook de cobranca (boleto/pix) como num faturamento de venda.
-  app.post("/api/admin/test/cobranca", async (req, res) => {
-    try {
-      const b = req.body || {};
-      const pm = b.paymentMethod;
-      const amount = parseFloat(b.amount || "1");
-      if (!pm) return res.status(400).json({ error: "paymentMethod (boleto|pix|a_vista) obrigatorio" });
-      const item: any = {
-        id: "test-" + Date.now(),
-        salesCardId: "test-" + Date.now(),
-        customerId: b.customerId || null,
-        customerName: b.debtorName || null,
-        customerDocument: b.debtorDocument || null,
-        saleValue: String(amount),
-        paymentMethod: pm,
-        invoiceNumber: null,
-        orderNumber: "TESTE-COBRANCA-" + pm,
-        omieInstanceId: b.omieInstanceId || "IND",
-      };
-      const receivable: any = await createReceivableFromPipelineItem(item, null, { email: "teste-cobranca" });
-      res.json({ ok: true, receivableId: receivable?.id, paymentMethod: pm, amount, note: "cobranca gerada em 2o plano; consulte /api/financial/receivables/{id}/cobranca" });
-    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
-  });
-
 // DIAG: compara credenciais BB (mascaradas) entre 1.0 (Neon/REPLIT_DATABASE_URL) e 2.0.
 // DIAG: testa variacoes de OAuth do BB para PIX e reporta qual o BB aceita (nao expoe segredos).
 // DIAG/TESTE: reporta presenca do certificado mTLS de PIX e tenta criar 1 cobranca PIX (mostra erro real do BB).
@@ -341,79 +318,6 @@ run();
 function show(msg,ok){var o=document.getElementById('out');o.style.display='block';o.className=ok?'ok':'err';o.textContent=msg;}
 function up(){var f=document.getElementById('file').files[0];if(!f){show('Selecione o arquivo .p12',false);return;}var btn=document.getElementById('btn');btn.disabled=true;btn.textContent='Enviando...';var r=new FileReader();r.onload=function(){try{var bytes=new Uint8Array(r.result);var bin='';for(var i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);var b64=btoa(bin);fetch('/api/admin/pix/cert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pfxBase64:b64,password:document.getElementById('pass').value})}).then(function(x){return x.json();}).then(function(j){btn.disabled=false;btn.textContent='Enviar certificado';if(j.ok){show('Certificado salvo com sucesso ('+j.savedBytes+' bytes, senha: '+(j.hasPassword?'sim':'nao')+'). Agora avise o Claude para validar a emissao de PIX.',true);}else{show('Erro: '+(j.error||JSON.stringify(j)),false);}}).catch(function(e){btn.disabled=false;btn.textContent='Enviar certificado';show('Erro de rede: '+e.message,false);});}catch(e){btn.disabled=false;btn.textContent='Enviar certificado';show('Erro: '+e.message,false);}};r.onerror=function(){btn.disabled=false;btn.textContent='Enviar certificado';show('Falha ao ler o arquivo',false);};r.readAsArrayBuffer(f);}
 </script></body></html>`);
-  });
-
-  app.get("/api/admin/pix/test-charge", async (req, res) => {
-    try {
-      const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";
-      const certPresent = {
-        pfxBase64: !!(process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64),
-        pem: !!(process.env.BB_PIX_CERT_PEM && process.env.BB_PIX_KEY_PEM),
-        password: !!(process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS),
-      };
-      const pixmod: any = await import("./bb-pix-service");
-      let certStatus: any = null; try { certStatus = await pixmod.pixCertStatus(); } catch (e: any) { certStatus = { err: e?.message }; }
-      let charge: any = null, err: any = null;
-      try {
-        const c = await pixmod.createImmediateCharge(accId, { amount: 1, debtorName: "TESTE PIX 2.0", debtorDocument: "00776212125", description: "diag mtls", expirationSeconds: 600 });
-        charge = { txid: !!c?.txid, hasCopiaECola: !!c?.pixCopiaECola };
-      } catch (e: any) {
-        err = e?.response?.data ? JSON.stringify(e.response.data).slice(0, 400) : (e?.code ? (e.code + " " + (e?.message || "")) : (e?.message || "")).slice(0, 400);
-      }
-      res.json({ accountId: accId, certPresent, certStatus, chargeOk: !!charge, charge, err });
-    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
-  });
-
-  app.get("/api/admin/pix/diag-oauth", async (req, res) => {
-    try {
-      const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";
-      const a: any = await db.execute(sql`SELECT bb_client_id, bb_client_secret, bb_dev_app_key FROM financial_accounts WHERE id = ${accId} LIMIT 1`);
-      const acc = a.rows?.[0] || {};
-      const mask = (v: any) => v ? ("..." + String(v).slice(-4) + " (len" + String(v).length + ")") : null;
-      const OAUTH = "https://oauth.bb.com.br/oauth/token";
-      const axiosMod: any = await import("axios");
-      const axios = axiosMod.default || axiosMod;
-      const envCid = process.env.BB_PIX_CLIENT_ID, envSec = process.env.BB_PIX_CLIENT_SECRET, envDev = process.env.BB_PIX_DEV_APP_KEY;
-      const accBasic = (acc.bb_client_id && acc.bb_client_secret) ? Buffer.from(`${acc.bb_client_id}:${acc.bb_client_secret}`).toString("base64") : null;
-      const envBasic = (envCid && envSec) ? Buffer.from(`${envCid}:${envSec}`).toString("base64") : null;
-      const variants: any[] = [];
-      if (envBasic) {
-        variants.push({ name: "PIX_ENV_basic", basic: envBasic, scope: "cob.write cob.read pix.read pix.write", headers: {} });
-        variants.push({ name: "PIX_ENV_devheader", basic: envBasic, scope: "cob.write cob.read pix.read pix.write", headers: { "gw-dev-app-key": envDev || "" } });
-      }
-      if (accBasic) variants.push({ name: "PIX_ACCT_basic", basic: accBasic, scope: "cob.write cob.read pix.read pix.write", headers: {} });
-      const results: any[] = [];
-      for (const v of variants) {
-        try {
-          const params = new URLSearchParams({ grant_type: "client_credentials", scope: v.scope });
-          const r = await axios.post(OAUTH, params.toString(), { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${v.basic}`, ...v.headers }, timeout: 15000 });
-          results.push({ variant: v.name, ok: true, status: r.status, gotToken: !!r.data?.access_token });
-        } catch (e: any) {
-          results.push({ variant: v.name, ok: false, status: e?.response?.status, code: e?.code, body: e?.response?.data ? JSON.stringify(e.response.data).slice(0, 160) : (e?.message || "").slice(0, 160) });
-        }
-      }
-      res.json({ accountId: accId, env: { hasClientId: !!envCid, clientId: mask(envCid), hasSecret: !!envSec, hasDevKey: !!envDev, devKey: mask(envDev) }, acct: { clientId: mask(acc.bb_client_id), devKey: mask(acc.bb_dev_app_key) }, results });
-    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
-  });
-
-  app.get("/api/admin/pix/diag-credentials", async (_req, res) => {
-    const mask = (v: any) => v ? (String(v).length > 4 ? "..." + String(v).slice(-4) + " (len" + String(v).length + ")" : "set(len" + String(v).length + ")") : null;
-    try {
-      const t: any = await db.execute(sql`SELECT id, name, omie_instance_id, bb_client_id, bb_dev_app_key, bb_pix_enabled, bb_boleto_enabled, (pix_key IS NOT NULL) AS has_pix_key, pix_key FROM financial_accounts ORDER BY name`);
-      const tgt = (t.rows || []).map((a: any) => ({ id: a.id, name: a.name, inst: a.omie_instance_id, clientId: mask(a.bb_client_id), devKey: mask(a.bb_dev_app_key), pixEnabled: a.bb_pix_enabled, boletoEnabled: a.bb_boleto_enabled, hasPixKey: a.has_pix_key, pixKey: mask(a.pix_key) }));
-      let src: any = null, srcErr: any = null;
-      if (process.env.REPLIT_DATABASE_URL) {
-        const pg: any = await import("pg");
-        const Client = pg.Client || pg.default?.Client;
-        const c = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-        try {
-          await c.connect();
-          const r = await c.query("SELECT id, name, omie_instance_id, bb_client_id, bb_dev_app_key, bb_pix_enabled, (pix_key IS NOT NULL) AS has_pix_key, pix_key FROM financial_accounts ORDER BY name");
-          src = (r.rows || []).map((a: any) => ({ id: a.id, name: a.name, inst: a.omie_instance_id, clientId: mask(a.bb_client_id), devKey: mask(a.bb_dev_app_key), pixEnabled: a.bb_pix_enabled, hasPixKey: a.has_pix_key, pixKey: mask(a.pix_key) }));
-        } catch (e: any) { srcErr = e?.message; } finally { try { await c.end(); } catch {} }
-      } else srcErr = "REPLIT_DATABASE_URL nao definido";
-      res.json({ target_2_0: tgt, source_1_0: src, srcErr });
-    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
