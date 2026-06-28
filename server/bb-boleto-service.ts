@@ -252,7 +252,8 @@ export async function registrarBoleto(
     body.jurosMora = { tipo: 0 };
   }
   if (account.bbMultaPercentual && parseFloat(account.bbMultaPercentual) > 0) {
-    body.multa = { tipo: 2, porcentagem: parseFloat(account.bbMultaPercentual), data: formatBBDate(params.dueDate) };
+    const multaDate = new Date(params.dueDate); multaDate.setDate(multaDate.getDate() + 1); // BB exige data da multa POSTERIOR ao vencimento
+    body.multa = { tipo: 2, porcentagem: parseFloat(account.bbMultaPercentual), data: formatBBDate(multaDate) };
   }
 
   const instrucoesLinhas = [
