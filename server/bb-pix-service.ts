@@ -2,6 +2,8 @@ import axios, { AxiosInstance } from 'axios';
 import https from 'https';
 import QRCode from 'qrcode';
 import { storage } from './storage';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
 import type { FinancialAccount, PixCharge } from '@shared/schema';
 
 const BB_OAUTH_URL_PROD = 'https://oauth.bb.com.br/oauth/token';
@@ -69,16 +71,30 @@ interface BBWebhookPayload {
 
 const tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
 
-// mTLS: BB exige certificado cliente para a API de PIX. Carrega de env (PFX base64 ou PEM cert+key).
+// mTLS: BB exige certificado cliente para a API de PIX. Carrega de ENV (PFX base64) ou do BANCO (system_settings).
 let _pixAgent: https.Agent | null | undefined = undefined;
-function getPixHttpsAgent(): https.Agent | undefined {
+export function resetPixAgentCache() { _pixAgent = undefined; }
+async function loadCertFromDb(): Promise<{ pfxB64?: string; pass?: string } | null> {
+  try {
+    const r: any = await db.execute(sql`SELECT key, value FROM system_settings WHERE key IN ('bb_pix_cert_pfx_base64','bb_pix_cert_password')`);
+    const map: any = {};
+    for (const row of (r.rows || [])) map[row.key] = row.value;
+    if (map['bb_pix_cert_pfx_base64']) return { pfxB64: map['bb_pix_cert_pfx_base64'], pass: map['bb_pix_cert_password'] };
+    return null;
+  } catch { return null; }
+}
+async function getPixHttpsAgent(): Promise<https.Agent | undefined> {
   if (_pixAgent !== undefined) return _pixAgent || undefined;
   try {
-    const pfxB64 = process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64;
-    const pass = process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS;
+    let pfxB64 = process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64;
+    let pass = process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS;
+    if (!pfxB64) {
+      const fromDb = await loadCertFromDb();
+      if (fromDb) { pfxB64 = fromDb.pfxB64; pass = pass || fromDb.pass; }
+    }
     if (pfxB64) {
       _pixAgent = new https.Agent({ pfx: Buffer.from(pfxB64, 'base64'), passphrase: pass || undefined });
-      console.log('[BB-PIX] mTLS agent carregado (PFX)');
+      console.log('[BB-PIX] mTLS agent carregado (PFX/P12)');
       return _pixAgent;
     }
     let certPem = process.env.BB_PIX_CERT_PEM;
@@ -99,13 +115,13 @@ function getPixHttpsAgent(): https.Agent | undefined {
   }
 }
 
-function createApiClient(account: FinancialAccount): AxiosInstance {
+async function createApiClient(account: FinancialAccount): Promise<AxiosInstance> {
   // PIX usa credenciais PROPRIAS (app BB autorizado p/ PIX) via env BB_PIX_*, com fallback p/ a conta.
   const pixDevAppKey = process.env.BB_PIX_DEV_APP_KEY || account.bbDevAppKey;
   if (!pixDevAppKey) {
     throw new Error('Developer Application Key do BB não configurada');
   }
-
+  const agent = await getPixHttpsAgent();
   return axios.create({
     baseURL: getApiUrl(),
     headers: {
@@ -113,7 +129,7 @@ function createApiClient(account: FinancialAccount): AxiosInstance {
     },
     // BB exige a gw-dev-app-key como QUERY PARAM na API (igual ao boleto); header sozinho da 404 "recurso inexistente".
     params: { 'gw-dev-app-key': pixDevAppKey },
-    httpsAgent: getPixHttpsAgent(),
+    httpsAgent: agent,
     timeout: 30000,
   });
 }
@@ -199,7 +215,7 @@ export async function createImmediateCharge(
   if (!account.pixKey) throw new Error('Chave PIX não configurada para esta conta');
 
   const token = await getAccessToken(account);
-  const client = createApiClient(account);
+  const client = await createApiClient(account);
   const txid = generateTxid();
 
   const body: any = {
@@ -285,7 +301,7 @@ export async function createDueDateCharge(
   if (!account.pixKey) throw new Error('Chave PIX não configurada para esta conta');
 
   const token = await getAccessToken(account);
-  const client = createApiClient(account);
+  const client = await createApiClient(account);
   const txid = generateTxid();
 
   const doc = params.debtorDocument.replace(/\D/g, '');
@@ -351,7 +367,7 @@ export async function checkChargeStatus(chargeId: string): Promise<PixCharge> {
   if (!account) throw new Error('Conta financeira não encontrada');
 
   const token = await getAccessToken(account);
-  const client = createApiClient(account);
+  const client = await createApiClient(account);
 
   const endpoint = charge.chargeType === 'com_vencimento'
     ? `/cobv/${charge.txid}`
@@ -444,7 +460,7 @@ export async function configureWebhook(accountId: string, webhookUrl: string): P
   if (!account.pixKey) throw new Error('Chave PIX não configurada');
 
   const token = await getAccessToken(account);
-  const client = createApiClient(account);
+  const client = await createApiClient(account);
 
   await client.put(`/webhook/${account.pixKey}`, {
     webhookUrl,
@@ -535,7 +551,7 @@ export async function listReceivedPix(
   if (!account) throw new Error('Conta financeira não encontrada');
 
   const token = await getAccessToken(account);
-  const client = createApiClient(account);
+  const client = await createApiClient(account);
 
   const response = await client.get('/pix', {
     headers: { Authorization: `Bearer ${token}` },

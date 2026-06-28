@@ -322,6 +322,27 @@ run();
 // DIAG: compara credenciais BB (mascaradas) entre 1.0 (Neon/REPLIT_DATABASE_URL) e 2.0.
 // DIAG: testa variacoes de OAuth do BB para PIX e reporta qual o BB aceita (nao expoe segredos).
 // DIAG/TESTE: reporta presenca do certificado mTLS de PIX e tenta criar 1 cobranca PIX (mostra erro real do BB).
+// Upload do certificado mTLS de PIX (.p12/.pfx) — pagina + endpoint. Guarda no banco (system_settings).
+  app.post("/api/admin/pix/cert", async (req, res) => {
+    try {
+      const b = req.body || {};
+      const clean = String(b.pfxBase64 || "").replace(/\s+/g, "");
+      if (!clean) return res.status(400).json({ error: "pfxBase64 obrigatorio" });
+      await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('bb_pix_cert_pfx_base64', ${clean}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('bb_pix_cert_password', ${String(b.password || "")}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      try { const pix: any = await import("./bb-pix-service"); pix.resetPixAgentCache?.(); } catch {}
+      res.json({ ok: true, savedBytes: clean.length, hasPassword: !!b.password });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  app.get("/api/admin/pix/cert-upload", async (_req, res) => {
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.send(`<!doctype html><html lang=pt-br><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Upload Certificado PIX (.p12)</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}.card{max-width:520px;margin:24px auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:18px;margin:0 0 6px}.muted{color:#666;font-size:13px;margin-bottom:14px}label{display:block;font-size:13px;font-weight:600;margin:14px 0 4px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px}button{margin-top:16px;background:#059669;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer}button:disabled{opacity:.6}#out{margin-top:14px;white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:12px;background:#f3f4f6;border-radius:8px;padding:10px;display:none}.ok{color:#065f46}.err{color:#991b1b}</style></head><body><div class=card><h1>Certificado mTLS do PIX (Banco do Brasil)</h1><div class=muted>Selecione o arquivo <b>.p12 / .pfx</b> e informe a senha. O certificado é convertido em base64 no navegador e salvo de forma segura no servidor (usado para autenticar a API de PIX). Nada é exibido aqui.</div><label>Arquivo do certificado (.p12 / .pfx)</label><input type=file id=file accept=".p12,.pfx,application/x-pkcs12"><label>Senha do certificado</label><input type=password id=pass placeholder="senha do .p12 (deixe vazio se nao tiver)"><button id=btn onclick="up()">Enviar certificado</button><div id=out></div></div><script>
+function show(msg,ok){var o=document.getElementById('out');o.style.display='block';o.className=ok?'ok':'err';o.textContent=msg;}
+function up(){var f=document.getElementById('file').files[0];if(!f){show('Selecione o arquivo .p12',false);return;}var btn=document.getElementById('btn');btn.disabled=true;btn.textContent='Enviando...';var r=new FileReader();r.onload=function(){try{var bytes=new Uint8Array(r.result);var bin='';for(var i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);var b64=btoa(bin);fetch('/api/admin/pix/cert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pfxBase64:b64,password:document.getElementById('pass').value})}).then(function(x){return x.json();}).then(function(j){btn.disabled=false;btn.textContent='Enviar certificado';if(j.ok){show('Certificado salvo com sucesso ('+j.savedBytes+' bytes, senha: '+(j.hasPassword?'sim':'nao')+'). Agora avise o Claude para validar a emissao de PIX.',true);}else{show('Erro: '+(j.error||JSON.stringify(j)),false);}}).catch(function(e){btn.disabled=false;btn.textContent='Enviar certificado';show('Erro de rede: '+e.message,false);});}catch(e){btn.disabled=false;btn.textContent='Enviar certificado';show('Erro: '+e.message,false);}};r.onerror=function(){btn.disabled=false;btn.textContent='Enviar certificado';show('Falha ao ler o arquivo',false);};r.readAsArrayBuffer(f);}
+</script></body></html>`);
+  });
+
   app.get("/api/admin/pix/test-charge", async (req, res) => {
     try {
       const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";
