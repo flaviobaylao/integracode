@@ -484,7 +484,8 @@ export async function testConnection(accountId: string): Promise<{ success: bool
 
     return { success: true, message: `Conexão com Banco do Brasil estabelecida com sucesso! (${IS_SANDBOX ? 'Sandbox' : 'Produção'})` };
   } catch (error: any) {
-    return { success: false, message: `Erro: ${error.message}` };
+    const detail = error?.response?.data ? JSON.stringify(error.response.data) : error?.message;
+    return { success: false, message: `Erro: ${detail}` };
   }
 }
 
