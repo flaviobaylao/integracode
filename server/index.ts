@@ -8,7 +8,8 @@ import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
 import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox } from "./bb-boleto-service";
+import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto } from "./bb-boleto-service";
+import { storage } from "./storage";
 
 const app = express();
 
@@ -214,6 +215,69 @@ run();
   });
 
   // Botao do pipeline: gera boleto p/ um item faturado (resolve recebivel + conta BB da instancia).
+// ===== BOLETO BB — webhook de liquidacao (BAIXA OPERACIONAL) + conciliacao =====
+  // BB faz POST aqui quando um boleto e liquidado. Sempre responder 200.
+  app.post("/api/webhooks/bb-boleto", async (req, res) => {
+    try {
+      const payload = req.body || {};
+      try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch {}
+      const out = await processBoletoWebhook(payload);
+      res.status(200).json({ ok: true, ...out });
+    } catch (e: any) { res.status(200).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // Verifica pagamento de um boleto via consulta BB e da baixa (fallback/teste/cron).
+  app.post("/api/admin/boleto/check-payment", async (req, res) => {
+    try {
+      const id = (req.body || {}).boletoChargeId;
+      if (!id) return res.status(400).json({ error: "boletoChargeId obrigatorio" });
+      res.json(await checkAndSettleBoleto(id));
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Cria e vincula um recebivel a um boleto avulso (para aparecer/baixar no Contas a Receber).
+  app.post("/api/admin/boleto/ensure-receivable", async (req, res) => {
+    try {
+      const { boletoChargeId, customerId } = req.body || {};
+      if (!boletoChargeId) return res.status(400).json({ error: "boletoChargeId obrigatorio" });
+      const r: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE id = ${boletoChargeId} LIMIT 1`);
+      const c = r.rows?.[0];
+      if (!c) return res.status(404).json({ error: "boleto nao encontrado" });
+      if (c.receivable_id) return res.json({ ok: true, alreadyLinked: true, receivableId: c.receivable_id });
+      const rec: any = await storage.createReceivable({
+        titleNumber: c.nosso_numero || null,
+        customerId: customerId || c.customer_id || null,
+        customerName: c.debtor_name || "Cliente",
+        customerDocument: c.debtor_document || null,
+        description: `Boleto BB nosso ${c.nosso_numero}`,
+        issueDate: new Date(),
+        dueDate: c.data_vencimento ? new Date(c.data_vencimento) : new Date(Date.now() + 30 * 864e5),
+        amount: String(c.valor_original || "0"),
+        amountPaid: "0",
+        status: "a_vencer" as any,
+        paymentMethod: "boleto" as any,
+        createdBy: "sistema",
+      } as any);
+      await db.execute(sql`UPDATE boleto_charges SET receivable_id = ${rec.id} WHERE id = ${boletoChargeId}`);
+      res.json({ ok: true, receivableId: rec.id });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Pagina publica de pagamento do boleto (PIX copia-e-cola + QR + linha digitavel).
+  app.get("/api/boleto-view/:id", async (req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT nosso_numero, linha_digitavel, codigo_barras, valor_original, data_vencimento, debtor_name, debtor_document, pix_copia_e_cola, pix_qr_code_base64, status FROM boleto_charges WHERE id = ${req.params.id} LIMIT 1`);
+      const c = r.rows?.[0];
+      if (!c) { res.status(404).send("Boleto nao encontrado"); return; }
+      const paid = /(liquid|pag|receb)/i.test(String(c.status || ""));
+      const qr = c.pix_qr_code_base64 ? `<img alt="QR PIX" src="data:image/png;base64,${c.pix_qr_code_base64}" width="240" height="240"/>` : "";
+      const venc = c.data_vencimento ? new Date(c.data_vencimento).toLocaleDateString("pt-BR") : "";
+      res.set("Content-Type", "text/html; charset=utf-8");
+      res.send(`<!doctype html><html lang=pt-br><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Boleto BB</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}.card{max-width:480px;margin:24px auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:18px;margin:0 0 4px}.muted{color:#666;font-size:13px}.val{font-size:30px;font-weight:700;color:#059669;margin:10px 0}.box{background:#f3f4f6;border-radius:8px;padding:12px;word-break:break-all;font-family:monospace;font-size:13px;margin:8px 0}.lbl{font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-top:16px;font-weight:600}button{background:#059669;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer;margin-top:6px}.status{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}.s-pg{background:#d1fae5;color:#065f46}.s-ab{background:#fef3c7;color:#92400e}.center{text-align:center}</style></head><body><div class=card><h1>Boleto Banco do Brasil</h1><div class=muted>Pagador: ${c.debtor_name || ""} — ${c.debtor_document || ""}</div><div class=muted>Vencimento: ${venc} · Nosso numero: ${c.nosso_numero || ""}</div><div class=val>R$ ${Number(c.valor_original || 0).toFixed(2).replace(".", ",")}</div><span class="status ${paid ? "s-pg" : "s-ab"}">${(String(c.status || "").toUpperCase()) || "EM ABERTO"}</span><div class=lbl>Pague via PIX (instantaneo)</div><div class=center>${qr}</div><div class=box id=pix>${c.pix_copia_e_cola || "(sem pix)"}</div><button onclick="navigator.clipboard.writeText(document.getElementById('pix').innerText);this.innerText='Copiado!'">Copiar PIX copia e cola</button><div class=lbl>Linha digitavel (boleto)</div><div class=box>${c.linha_digitavel || "(sem linha)"}</div></div></body></html>`);
+    } catch (e: any) { res.status(500).send("erro"); }
+  });
+
+
   app.post("/api/billing-pipeline/boleto", async (req, res) => {
     try {
       const itemId = (req.body || {}).itemId;

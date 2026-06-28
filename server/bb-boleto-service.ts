@@ -355,3 +355,155 @@ export async function testarConexaoBoleto(accountId: string): Promise<{ success:
 export function boletoIsSandbox(): boolean {
   return isSandbox();
 }
+
+
+// ============================================================================
+// Conciliacao / baixa de boleto pago — webhook BB "BAIXA OPERACIONAL" + consulta
+// ============================================================================
+
+function pick(obj: any, keys: string[]): any {
+  for (const k of keys) { if (obj && obj[k] != null && obj[k] !== '') return obj[k]; }
+  return undefined;
+}
+
+// Aceita dd.mm.aaaa, dd/mm/aaaa ou aaaa-mm-dd -> ISO (aaaa-mm-dd)
+function toISO(d: any): string | null {
+  if (!d) return null;
+  const s = String(d).trim();
+  const m = s.match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return s;
+}
+
+async function findFinancialAccountForConvenio(numeroConvenio: string | null): Promise<any | null> {
+  try {
+    const accts = await storage.getFinancialAccounts();
+    if (numeroConvenio) {
+      const m = (accts || []).find((a: any) => a.bbConvenio && digits(a.bbConvenio) === digits(numeroConvenio));
+      if (m) return m;
+    }
+    return (accts || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio) || null;
+  } catch { return null; }
+}
+
+export interface SettleResult {
+  ok: boolean;
+  alreadyPaid?: boolean;
+  boletoChargeId?: string;
+  receivableId?: string | null;
+  receivableStatus?: string;
+  amount?: number;
+  message: string;
+}
+
+// Marca o boleto como liquidado e da baixa no recebivel vinculado (conciliacao).
+// Atualiza tambem saldo da conta + movimento. Idempotente.
+export async function settleBoletoCharge(charge: any, paidAmount: number, paidAtISO: string | null, source: string): Promise<SettleResult> {
+  const already = String(charge.status || '').toLowerCase();
+  if (already === 'liquidado' || already === 'pago' || already === 'recebido') {
+    return { ok: true, alreadyPaid: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || null, message: 'Boleto ja estava liquidado' };
+  }
+  const amount = paidAmount && paidAmount > 0 ? paidAmount : parseFloat(charge.valor_original || '0');
+  const paidAt = paidAtISO ? new Date(paidAtISO) : new Date();
+
+  try { await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado' WHERE id = ${charge.id}`); } catch (e: any) { /* tolerante */ }
+
+  let receivableStatus: string | undefined;
+  if (charge.receivable_id) {
+    try {
+      const receivable: any = await storage.getReceivable(charge.receivable_id);
+      if (receivable) {
+        const account = await findFinancialAccountForConvenio(charge.numero_convenio);
+        const totalPaid = parseFloat(receivable.amountPaid || '0') + amount;
+        const totalAmount = parseFloat(receivable.amount);
+        receivableStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
+        await storage.updateReceivable(charge.receivable_id, {
+          amountPaid: totalPaid.toFixed(2),
+          status: receivableStatus as any,
+          paymentMethod: 'boleto' as any,
+          financialAccountId: account?.id || receivable.financialAccountId || null,
+        } as any);
+        try {
+          await storage.createReceivablePayment({
+            receivableId: charge.receivable_id,
+            paidAt,
+            amount: amount.toFixed(2),
+            paymentMethod: 'boleto' as any,
+            financialAccountId: account?.id || receivable.financialAccountId || null,
+            reference: charge.nosso_numero || null,
+            notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}`,
+            createdBy: 'sistema',
+          } as any);
+        } catch (e: any) { console.warn('[BB-BOLETO] createReceivablePayment falhou:', e?.message); }
+        if (account) {
+          try {
+            const cur = parseFloat(account.balance || '0'); const nb = cur + amount;
+            await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
+            await storage.createAccountMovement({
+              financialAccountId: account.id, type: 'credito', amount: amount.toFixed(2), balanceAfter: nb.toFixed(2),
+              description: `Boleto recebido BB - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}`,
+              sourceType: 'boleto_charge', sourceId: charge.id, reference: charge.nosso_numero || null,
+              omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema',
+            } as any);
+          } catch (e: any) { console.warn('[BB-BOLETO] movimento de conta falhou:', e?.message); }
+        }
+      }
+    } catch (e: any) { console.warn('[BB-BOLETO] baixa de recebivel falhou:', e?.message); }
+  }
+  console.log(`✅ [BB-BOLETO] Baixa (${source}): boleto ${charge.id} R$ ${amount.toFixed(2)} receivable=${charge.receivable_id || '-'} status=${receivableStatus || '-'}`);
+  return { ok: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || null, receivableStatus, amount, message: 'Boleto liquidado e recebivel baixado' };
+}
+
+// Acha o boleto_charges a partir do payload do webhook BB (tolerante a nomes de campo).
+async function findChargeFromWebhook(p: any): Promise<any | null> {
+  const idCand = pick(p, ['numeroTituloCliente', 'numeroTituloBeneficiario', 'id', 'nossoNumero', 'numeroOperacao', 'numeroBoletoBB', 'seuNumero']);
+  const nosso = idCand ? digits(String(idCand)) : '';
+  if (nosso) {
+    const last10 = nosso.slice(-10);
+    const r: any = await db.execute(sql`
+      SELECT * FROM boleto_charges
+      WHERE regexp_replace(COALESCE(nosso_numero,''),'[^0-9]','','g') IN (${nosso}, ${last10})
+      ORDER BY created_at DESC LIMIT 1`);
+    if (r.rows?.[0]) return r.rows[0];
+  }
+  return null;
+}
+
+// Processa o payload do webhook do BB (liquidacao). Tolerante a objeto unico ou lista.
+export async function processBoletoWebhook(payload: any): Promise<any> {
+  const list = Array.isArray(payload?.boletos) ? payload.boletos
+    : Array.isArray(payload?.data) ? payload.data
+    : Array.isArray(payload) ? payload : [payload];
+  const results: any[] = [];
+  for (const item of list) {
+    try {
+      const charge = await findChargeFromWebhook(item);
+      if (!charge) { results.push({ matched: false, id: pick(item, ['numeroTituloCliente', 'id', 'nossoNumero']) }); continue; }
+      const paid = parseFloat(String(pick(item, ['valorPagoSacado', 'valorRecebido', 'valorPago', 'valorLiquidacao', 'valor']) ?? charge.valor_original ?? '0').toString().replace(',', '.'));
+      const dt = pick(item, ['dataLiquidacao', 'dataCredito', 'dataMovimento', 'dataRecebimento']);
+      const r = await settleBoletoCharge(charge, paid, dt ? toISO(dt) : null, 'webhook');
+      results.push({ matched: true, ...r });
+    } catch (e: any) { results.push({ matched: false, error: e?.message }); }
+  }
+  return { processed: results.length, results };
+}
+
+// Consulta o boleto no BB e da baixa se estiver liquidado (fallback/teste/cron).
+export async function checkAndSettleBoleto(boletoChargeId: string): Promise<any> {
+  const r: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE id = ${boletoChargeId} LIMIT 1`);
+  const charge = r.rows?.[0];
+  if (!charge) return { ok: false, error: 'boleto_charge nao encontrado' };
+  const account = await findFinancialAccountForConvenio(charge.numero_convenio);
+  if (!account) return { ok: false, error: 'conta BB (convenio) nao encontrada' };
+  const numeroTituloCliente = '000' + pad(digits(charge.numero_convenio || account.bbConvenio), 7) + pad(digits(charge.nosso_numero), 10);
+  let bb: any;
+  try { bb = await consultarBoleto(account.id, numeroTituloCliente); }
+  catch (e: any) { return { ok: false, error: `consulta BB: ${e?.response?.data ? JSON.stringify(e.response.data) : e?.message}`, numeroTituloCliente }; }
+  const estado = String(pick(bb, ['estadoTituloCobranca', 'codigoEstadoTituloCobranca', 'situacao']) || '').toUpperCase();
+  const valorPago = parseFloat(String(pick(bb, ['valorPagoSacado', 'valorRecebido', 'valorPago']) || '0').toString().replace(',', '.'));
+  const liquidado = /LIQUID|BAIX|PAG/.test(estado) || valorPago > 0;
+  if (!liquidado) return { ok: true, paid: false, estado, numeroTituloCliente, raw: bb };
+  const dt = pick(bb, ['dataCredito', 'dataRecebimento', 'dataMovimentoLiquidacao']);
+  const res = await settleBoletoCharge(charge, valorPago || parseFloat(charge.valor_original || '0'), dt ? toISO(dt) : null, 'consulta');
+  return { ok: true, paid: true, estado, ...res };
+}
