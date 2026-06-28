@@ -312,6 +312,43 @@ run();
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+// AUDITORIA FISCAL (read-only): ultima NF por instancia/CNPJ/serie e cenarios fiscais — 1.0 (Neon) vs 2.0.
+  app.get("/api/admin/fiscal/audit", async (_req, res) => {
+    const invSql = `
+      SELECT omie_instance_id, issuer_cnpj, series, environment,
+             COUNT(*)::int AS n,
+             COUNT(*) FILTER (WHERE lower(coalesce(status,'')) LIKE '%autoriz%')::int AS n_autorizadas,
+             MAX(invoice_number) FILTER (WHERE lower(coalesce(status,'')) LIKE '%autoriz%') AS max_autorizada,
+             MAX(invoice_number) AS max_qualquer,
+             MAX(emission_date) AS ultima_emissao
+      FROM fiscal_invoices
+      WHERE invoice_number IS NOT NULL
+      GROUP BY omie_instance_id, issuer_cnpj, series, environment
+      ORDER BY omie_instance_id, issuer_cnpj, series, environment`;
+    const out: any = { invoices_2_0: null, invoices_1_0: null, scenarios_2_0: null, scenarios_1_0: null, srcErr: null };
+    try {
+      const r: any = await db.execute(sql`${sql.raw(invSql)}`);
+      out.invoices_2_0 = r.rows;
+      const sc: any = await db.execute(sql`SELECT id, name, operation_type, state_scope, cfop, tax_regime, csosn, cst_icms, cst_pis, cst_cofins, nature_of_operation, is_active FROM fiscal_scenarios ORDER BY operation_type, state_scope, cfop`);
+      out.scenarios_2_0 = sc.rows;
+    } catch (e: any) { out.err2 = e?.message; }
+    if (process.env.REPLIT_DATABASE_URL) {
+      const pg: any = await import("pg");
+      const Client = pg.Client || pg.default?.Client;
+      const c = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      try {
+        await c.connect();
+        const r = await c.query(invSql);
+        out.invoices_1_0 = r.rows;
+        try {
+          const sc = await c.query("SELECT id, name, operation_type, state_scope, cfop, tax_regime, csosn, cst_icms, cst_pis, cst_cofins, nature_of_operation, is_active FROM fiscal_scenarios ORDER BY operation_type, state_scope, cfop");
+          out.scenarios_1_0 = sc.rows;
+        } catch (e: any) { out.scenErr1 = e?.message; }
+      } catch (e: any) { out.srcErr = e?.message; } finally { try { await c.end(); } catch {} }
+    } else out.srcErr = "REPLIT_DATABASE_URL nao definido";
+    res.json(out);
+  });
+
   app.get("/api/admin/pix/cert-upload", async (_req, res) => {
     res.set("Content-Type", "text/html; charset=utf-8");
     res.send(`<!doctype html><html lang=pt-br><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Upload Certificado PIX (.p12)</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}.card{max-width:520px;margin:24px auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:18px;margin:0 0 6px}.muted{color:#666;font-size:13px;margin-bottom:14px}label{display:block;font-size:13px;font-weight:600;margin:14px 0 4px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px}button{margin-top:16px;background:#059669;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer}button:disabled{opacity:.6}#out{margin-top:14px;white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:12px;background:#f3f4f6;border-radius:8px;padding:10px;display:none}.ok{color:#065f46}.err{color:#991b1b}</style></head><body><div class=card><h1>Certificado mTLS do PIX (Banco do Brasil)</h1><div class=muted>Selecione o arquivo <b>.p12 / .pfx</b> e informe a senha. O certificado é convertido em base64 no navegador e salvo de forma segura no servidor (usado para autenticar a API de PIX). Nada é exibido aqui.</div><label>Arquivo do certificado (.p12 / .pfx)</label><input type=file id=file accept=".p12,.pfx,application/x-pkcs12"><label>Senha do certificado</label><input type=password id=pass placeholder="senha do .p12 (deixe vazio se nao tiver)"><button id=btn onclick="up()">Enviar certificado</button><div id=out></div></div><script>
