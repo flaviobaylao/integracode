@@ -118,7 +118,7 @@ async function nextNossoNumero(numeroConvenio: string): Promise<string> {
     const r: any = await db.execute(sql`
       SELECT COALESCE(MAX(NULLIF(regexp_replace(COALESCE(nosso_numero,''), '[^0-9]', '', 'g'), '')::bigint), 0) AS mx
       FROM boleto_charges
-      WHERE numero_convenio = ${numeroConvenio}
+      WHERE numero_convenio::text = ${numeroConvenio}
     `);
     const mx = BigInt((r.rows?.[0]?.mx ?? 0).toString());
     return pad((mx + 1n).toString(), 10);
@@ -151,6 +151,7 @@ export interface RegistrarBoletoResult {
   success: boolean;
   sandbox: boolean;
   error?: string;
+  persistError?: string;
   boletoChargeId?: string;
   numeroTituloCliente?: string;
   nossoNumero?: string;
@@ -293,15 +294,16 @@ export async function registrarBoleto(
 
   // Persistir em boleto_charges (colunas confirmadas via cobranca-generator do front)
   let boletoChargeId: string | undefined;
+  let persistError: string | null = null;
   try {
     const ins: any = await db.execute(sql`
       INSERT INTO boleto_charges (
-        nosso_numero, numero_convenio, numero_carteira, linha_digitavel, codigo_barras,
+        id, nosso_numero, numero_convenio, numero_carteira, linha_digitavel, codigo_barras,
         data_vencimento, valor_original, debtor_name, debtor_document, instrucoes,
         pix_copia_e_cola, pix_qr_code_base64, status,
         receivable_id, fiscal_invoice_id, customer_id, created_at
       ) VALUES (
-        ${nossoNumero}, ${numeroConvenio}, ${String(numeroCarteira)}, ${linhaDigitavel}, ${codigoBarras},
+        gen_random_uuid(), ${nossoNumero}, ${numeroConvenio}, ${String(numeroCarteira)}, ${linhaDigitavel}, ${codigoBarras},
         ${params.dueDate}, ${params.amount.toFixed(2)}, ${params.debtorName}, ${doc}, ${instrucoes},
         ${pixCopiaECola}, ${pixQrBase64}, ${'registrado'},
         ${params.receivableId || null}, ${params.fiscalInvoiceId || null}, ${params.customerId || null}, now()
@@ -311,13 +313,15 @@ export async function registrarBoleto(
     boletoChargeId = ins.rows?.[0]?.id;
   } catch (e: any) {
     // Se alguma coluna nao existir, registra o erro mas devolve os dados do BB.
-    console.error('⚠️ [BB-BOLETO] Boleto registrado no BB mas falha ao gravar boleto_charges:', e?.message);
+    persistError = e?.message || String(e);
+    console.error('⚠️ [BB-BOLETO] Boleto registrado no BB mas falha ao gravar boleto_charges:', persistError);
   }
 
   console.log(`✅ [BB-BOLETO] Boleto ${numeroTituloCliente} registrado. Linha: ${linhaDigitavel || '(sem linha)'}`);
   return {
     success: true, sandbox,
     boletoChargeId,
+    persistError: persistError || undefined,
     numeroTituloCliente,
     nossoNumero,
     linhaDigitavel: linhaDigitavel || undefined,
