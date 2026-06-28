@@ -232,7 +232,7 @@ run();
     try {
       const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 1000);
       const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
-      const r: any = await db.execute(sql`SELECT id FROM boleto_charges WHERE COALESCE(status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND created_at > now() - make_interval(days => ${days}) ORDER BY created_at DESC LIMIT ${limit}`);
+      const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables r ON r.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND r.status IN ('a_vencer','vencida') AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
       const ids = (r.rows || []).map((x: any) => x.id);
       let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
       for (const id of ids) {
