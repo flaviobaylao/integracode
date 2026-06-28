@@ -227,19 +227,33 @@ run();
   });
 
   // Verifica pagamento de um boleto via consulta BB e da baixa (fallback/teste/cron).
-  // Batch (cron-friendly, GET): varre boletos em aberto e da baixa nos pagos via consulta BB.
+  // Batch (cron-friendly, GET): dispara em 2o plano a varredura de boletos em aberto e baixa os pagos.
   app.get("/api/admin/boleto/check-open", async (req, res) => {
     try {
-      const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 1000);
+      const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 2000);
       const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
       const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables r ON r.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND r.status IN ('a_vencer','vencida') AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
       const ids = (r.rows || []).map((x: any) => x.id);
-      let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
-      for (const id of ids) {
-        try { const o = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
-        catch (e: any) { errors.push({ id, error: e?.message }); }
-      }
-      res.json({ ok: true, totalOpen: ids.length, checked, paid, settled, errors: errors.slice(0, 10) });
+      // fire-and-forget: nao bloqueia a resposta (evita timeout do gateway)
+      (async () => {
+        let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
+        for (const id of ids) {
+          try { const o: any = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
+          catch (e: any) { errors.push({ id, error: e?.message }); }
+        }
+        try { await db.execute(sql`INSERT INTO system_settings (key, value) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`); } catch (e) {}
+        console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} paid=${paid} settled=${settled}`);
+      })();
+      res.json({ ok: true, started: true, candidates: ids.length });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Le o resumo da ultima varredura check-open (gravado em system_settings).
+  app.get("/api/admin/boleto/check-open/last", async (_req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'boleto_check_open_last' LIMIT 1`);
+      const v = r.rows?.[0]?.value;
+      res.json(v ? (typeof v === 'string' ? JSON.parse(v) : v) : { none: true });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
