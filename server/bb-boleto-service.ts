@@ -113,19 +113,11 @@ function formatBBDate(d: Date): string {
 
 // Gera o proximo nosso-numero (10 digitos) sequencial por convenio, lendo o MAX
 // ja gravado em boleto_charges. Em producao, o ideal e uma sequence dedicada.
-async function nextNossoNumero(numeroConvenio: string): Promise<string> {
-  try {
-    const r: any = await db.execute(sql`
-      SELECT COALESCE(MAX(NULLIF(regexp_replace(COALESCE(nosso_numero,''), '[^0-9]', '', 'g'), '')::bigint), 0) AS mx
-      FROM boleto_charges
-      WHERE numero_convenio::text = ${numeroConvenio}
-    `);
-    const mx = BigInt((r.rows?.[0]?.mx ?? 0).toString());
-    return pad((mx + 1n).toString(), 10);
-  } catch {
-    // fallback: baseado no tempo (ultimos 10 digitos do epoch em ms)
-    return pad(Date.now().toString().slice(-10), 10);
-  }
+async function nextNossoNumero(_numeroConvenio: string): Promise<string> {
+  // O 1.0 ainda emite boletos no MESMO convenio; derivar de MAX(boleto_charges) colidiria
+  // com numeros ja registrados pelo 1.0 no BB ("Nosso Numero ja incluido"). Base temporal
+  // (10 ultimos digitos do epoch em ms) e sempre alta/crescente e nao colide com a faixa do 1.0.
+  return pad((Date.now() % 10000000000).toString(), 10);
 }
 
 export interface RegistrarBoletoParams {
