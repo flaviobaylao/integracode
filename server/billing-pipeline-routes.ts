@@ -4,6 +4,7 @@ import { nowBrazil } from './brazilTimezone';
 import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto } from './bb-boleto-service';
+import { createImmediateCharge } from './bb-pix-service';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -670,6 +671,35 @@ async function generateBoletoForReceivable(receivable: any, item: any): Promise<
   }
 }
 
+// Hook PIX BB: gera cobranca PIX para um recebivel de faturamento (forma pix ou a vista).
+// Gated por bbPixEnabled+pixKey na conta; fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
+async function generatePixForReceivable(receivable: any, item: any): Promise<void> {
+  try {
+    let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
+    let account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
+    if (!account) {
+      const all = await storage.getFinancialAccounts();
+      account = (all || []).find((a: any) => a.bbPixEnabled && a.pixKey);
+    }
+    if (!account) return; // nenhuma conta com PIX BB habilitado -> no-op silencioso
+    let customer: any = null;
+    try { if (item.customerId) customer = await storage.getCustomer(item.customerId); } catch {}
+    const r = await createImmediateCharge(account.id, {
+      amount: parseFloat(receivable.amount),
+      debtorName: receivable.customerName || customer?.name || 'Cliente',
+      debtorDocument: receivable.customerDocument || customer?.cnpj || customer?.cpf || undefined,
+      description: `Pedido ${item.orderNumber || item.salesCardId || ''}`.trim(),
+      expirationSeconds: 2592000, // 30 dias
+      receivableId: receivable.id,
+      customerId: receivable.customerId || undefined,
+      createdBy: 'auto-faturamento',
+    });
+    if (r) console.log(`[BB-PIX] hook: cobranca PIX gerada p/ receivable ${receivable.id} (txid ${r.txid})`);
+  } catch (e: any) {
+    console.warn('[BB-PIX] hook erro (ignorado):', e?.message);
+  }
+}
+
 async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
@@ -709,6 +739,8 @@ async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: stri
 
   if (item.paymentMethod === 'boleto') {
     void generateBoletoForReceivable(receivable, item);
+  } else if (item.paymentMethod === 'pix' || item.paymentMethod === 'a_vista') {
+    void generatePixForReceivable(receivable, item);
   }
 
   return receivable;
