@@ -110,8 +110,9 @@ function createApiClient(account: FinancialAccount): AxiosInstance {
     baseURL: getApiUrl(),
     headers: {
       'Content-Type': 'application/json',
-      'gw-dev-app-key': pixDevAppKey,
     },
+    // BB exige a gw-dev-app-key como QUERY PARAM na API (igual ao boleto); header sozinho da 404 "recurso inexistente".
+    params: { 'gw-dev-app-key': pixDevAppKey },
     httpsAgent: getPixHttpsAgent(),
     timeout: 30000,
   });
