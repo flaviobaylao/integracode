@@ -8,6 +8,7 @@ import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
 import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox } from "./bb-boleto-service";
 
 const app = express();
 
@@ -129,6 +130,114 @@ run();
   });
 
   const server = await registerRoutes(app);
+
+  // ===== BOLETO BB (Cobranca v2) — emissao/diagnostico. Default HOMOLOGACAO. =====
+  // Para producao: env BB_BOLETO_SANDBOX=false. Conta financeira precisa de
+  // bbBoletoEnabled + bbConvenio + bbClientId/bbClientSecret/bbDevAppKey.
+  app.get("/api/admin/boleto/status", async (_req, res) => {
+    try {
+      const accs = await db.execute(sql`
+        SELECT id, name, omie_instance_id, bb_boleto_enabled,
+               (bb_convenio IS NOT NULL AND bb_convenio <> '') AS has_convenio,
+               (bb_client_id IS NOT NULL AND bb_client_secret IS NOT NULL AND bb_dev_app_key IS NOT NULL) AS has_credentials,
+               bb_carteira, bb_variacao_carteira
+        FROM financial_accounts ORDER BY name`);
+      const tot = await db.execute(sql`SELECT COUNT(*)::int AS n FROM boleto_charges`);
+      res.json({
+        sandbox: boletoIsSandbox(),
+        envSandboxFlag: process.env.BB_BOLETO_SANDBOX ?? "(unset -> homologacao)",
+        boletosArmazenados: (tot.rows?.[0] as any)?.n ?? 0,
+        contas: accs.rows,
+      });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  app.post("/api/admin/boleto/test-connection", async (req, res) => {
+    try {
+      const accountId = (req.body || {}).accountId;
+      if (!accountId) return res.status(400).json({ error: "accountId obrigatorio" });
+      res.json(await testarConexaoBoleto(accountId));
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Resolve os dados do pagador a partir do recebivel + cliente.
+  async function boletoParamsFromReceivable(receivableId: string): Promise<any | null> {
+    const rec: any = await db.execute(sql`
+      SELECT r.id, r.amount, r.due_date, r.customer_id, r.customer_name, r.customer_document,
+             r.fiscal_invoice_id, r.billing_pipeline_id, r.omie_instance_id,
+             c.address, c.city, c.neighborhood, c.state, c.zip_code, c.cpf, c.cnpj, c.name AS c_name
+      FROM receivables r LEFT JOIN customers c ON c.id = r.customer_id
+      WHERE r.id = ${receivableId} LIMIT 1`);
+    const row = rec.rows?.[0];
+    if (!row) return null;
+    return {
+      omieInstanceId: row.omie_instance_id,
+      params: {
+        amount: parseFloat(row.amount),
+        dueDate: row.due_date ? new Date(row.due_date) : new Date(Date.now() + 30 * 864e5),
+        debtorName: row.customer_name || row.c_name || "Cliente",
+        debtorDocument: row.customer_document || row.cnpj || row.cpf || "",
+        debtorAddress: row.address, debtorCity: row.city, debtorNeighborhood: row.neighborhood,
+        debtorState: row.state, debtorZip: row.zip_code,
+        receivableId: row.id, fiscalInvoiceId: row.fiscal_invoice_id,
+        customerId: row.customer_id, billingPipelineId: row.billing_pipeline_id,
+      },
+    };
+  }
+
+  // Registra boleto por receivableId (puxa dados) OU por params crus.
+  app.post("/api/admin/boleto/registrar", async (req, res) => {
+    try {
+      const b = req.body || {};
+      if (!b.accountId) return res.status(400).json({ error: "accountId obrigatorio" });
+      let params: any;
+      if (b.receivableId) {
+        const resolved = await boletoParamsFromReceivable(b.receivableId);
+        if (!resolved) return res.status(404).json({ error: "receivable nao encontrado" });
+        params = resolved.params;
+      } else {
+        if (!b.amount || !b.debtorName || !b.debtorDocument) {
+          return res.status(400).json({ error: "informe receivableId OU (amount, debtorName, debtorDocument)" });
+        }
+        params = {
+          amount: parseFloat(b.amount),
+          dueDate: b.dueDate ? new Date(b.dueDate) : new Date(Date.now() + 30 * 864e5),
+          debtorName: b.debtorName, debtorDocument: b.debtorDocument,
+          debtorAddress: b.debtorAddress, debtorCity: b.debtorCity, debtorNeighborhood: b.debtorNeighborhood,
+          debtorState: b.debtorState, debtorZip: b.debtorZip,
+          receivableId: b.receivableId || null, customerId: b.customerId || null,
+        };
+      }
+      const r = await registrarBoleto(b.accountId, params);
+      res.status(r.success ? 200 : 422).json(r);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Botao do pipeline: gera boleto p/ um item faturado (resolve recebivel + conta BB da instancia).
+  app.post("/api/billing-pipeline/boleto", async (req, res) => {
+    try {
+      const itemId = (req.body || {}).itemId;
+      if (!itemId) return res.status(400).json({ error: "itemId obrigatorio" });
+      const recq: any = await db.execute(sql`
+        SELECT r.id AS receivable_id, r.omie_instance_id
+        FROM receivables r WHERE r.billing_pipeline_id = ${itemId}
+        ORDER BY r.created_at DESC LIMIT 1`);
+      const rrow = recq.rows?.[0];
+      if (!rrow) return res.status(404).json({ error: "recebivel do item nao encontrado (item faturado?)" });
+      const accq: any = await db.execute(sql`
+        SELECT id FROM financial_accounts
+        WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL
+        ORDER BY (omie_instance_id = ${rrow.omie_instance_id}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "nenhuma conta com boleto BB habilitado" });
+      const resolved = await boletoParamsFromReceivable(rrow.receivable_id);
+      if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado" });
+      const result = await registrarBoleto(accId, resolved.params);
+      res.status(result.success ? 200 : 422).json(result);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+
 
   // ===== Agentes de IA (config de comportamento dos agentes de WhatsApp) =====
   async function ensureAgentesTables() {
