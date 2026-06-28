@@ -227,6 +227,22 @@ run();
   });
 
   // Verifica pagamento de um boleto via consulta BB e da baixa (fallback/teste/cron).
+  // Batch (cron-friendly, GET): varre boletos em aberto e da baixa nos pagos via consulta BB.
+  app.get("/api/admin/boleto/check-open", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 1000);
+      const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
+      const r: any = await db.execute(sql`SELECT id FROM boleto_charges WHERE COALESCE(status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND created_at > now() - make_interval(days => ${days}) ORDER BY created_at DESC LIMIT ${limit}`);
+      const ids = (r.rows || []).map((x: any) => x.id);
+      let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
+      for (const id of ids) {
+        try { const o = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
+        catch (e: any) { errors.push({ id, error: e?.message }); }
+      }
+      res.json({ ok: true, totalOpen: ids.length, checked, paid, settled, errors: errors.slice(0, 10) });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.post("/api/admin/boleto/check-payment", async (req, res) => {
     try {
       const id = (req.body || {}).boletoChargeId;
