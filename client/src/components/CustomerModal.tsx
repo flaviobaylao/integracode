@@ -139,6 +139,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       sellerId: '',
       weekdays: '[]',
       visitPeriodicity: 'semanal',
+      icmsCsosn: '102',
       isActive: true,
       latitude: '',
       longitude: '',
@@ -186,6 +187,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         sellerId: customer.sellerId || '',
         weekdays: weekdaysJson,
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
+        icmsCsosn: (customer as any).icmsCsosn || '102',
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
@@ -217,6 +219,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         sellerId: '',
         weekdays: '[]',
         visitPeriodicity: 'semanal',
+      icmsCsosn: '102',
         isActive: true,
         latitude: '',
         longitude: '',
@@ -1063,6 +1066,38 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           {canManageRouteAndPeriodicity 
                             ? "Defina com que frequência o cliente deve ser visitado" 
                             : "Apenas administradores podem alterar a periodicidade"}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="icmsCsosn"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <span>CSOSN (NF-e / Simples Nacional)</span>
+                        </FormLabel>
+                        <Select
+                          value={field.value || '102'}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-icms-csosn">
+                              <SelectValue placeholder="Selecione o CSOSN" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="102">102 - Sem permissão de crédito (padrão)</SelectItem>
+                            <SelectItem value="101">101 - Com permissão de crédito de ICMS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription className="text-xs">
+                          Código de ICMS na emissão de NF-e para este cliente (aplica-se às instâncias da Indústria/Simples). Padrão 102.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
