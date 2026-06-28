@@ -76,6 +76,10 @@ import RelatoriosIA from "@/pages/RelatoriosIA";
 import AgentesIA from "@/pages/AgentesIA";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
+import TabelaPrecos from "@/pages/TabelaPrecos";
+import PrecosGrade from "@/pages/PrecosGrade";
+import Cupons from "@/pages/Cupons";
+import Fornecedores from "@/pages/Fornecedores";
 import SyncMonitor from "@/pages/SyncMonitor";
 
 function Router() {
@@ -240,6 +244,10 @@ function Router() {
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/cenarios-fiscais" component={CenariosFiscais} />
           <Route path="/telefones-clientes" component={TelefonesClientes} />
+          <Route path="/tabela-precos" component={TabelaPrecos} />
+          <Route path="/precos-grade" component={PrecosGrade} />
+          <Route path="/cupons" component={Cupons} />
+          <Route path="/fornecedores" component={Fornecedores} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
