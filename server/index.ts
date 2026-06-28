@@ -133,6 +133,31 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ============ Visualizacao read-only de tabelas SINCRONIZADAS (paridade de telas 2.0 x 1.0) ============
+  // Serve dados crus das tabelas sincronizadas do 1.0 que ainda nao tem schema drizzle/endpoint proprio.
+  // Whitelist + read-only + introspeccao de colunas (information_schema). Garante FIDELIDADE ao dado.
+  const SYNCED_VIEW_TABLES = new Set([
+    'price_tables','price_table_items','coupons','coupon_redemptions','suppliers',
+    'recovery_charges','recovery_invoices','recovery_orders','recovery_uploads',
+    'bank_statements','bank_statement_items','bank_statement_item_matches','reconciliation_patterns',
+    'communication_automations','communication_automation_logs','message_history','message_templates',
+    'raw_materials','raw_material_movements','recipes','recipe_items','production_orders','production_order_items',
+    'saved_reports','cielo_credentials','cielo_pix_charges','cielo_card_authorizations','cielo_reconciliation_records',
+    'boleto_charges','pix_charges','receivable_events','category_mappings'
+  ]);
+  app.get('/api/synced-table/:name', async (req, res) => {
+    const name = String(req.params.name || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!SYNCED_VIEW_TABLES.has(name)) return res.status(400).json({ error: 'tabela nao permitida', table: name });
+    try {
+      const cols: any = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ${name} ORDER BY ordinal_position`);
+      if (!cols.rows || cols.rows.length === 0) return res.status(404).json({ error: 'tabela inexistente', table: name });
+      const limit = Math.min(Number(req.query.limit) || 2000, 5000);
+      const cnt: any = await db.execute(sql.raw(`SELECT COUNT(*)::int AS n FROM "${name}"`));
+      const rows: any = await db.execute(sql.raw(`SELECT * FROM "${name}" LIMIT ${limit}`));
+      res.json({ table: name, total: cnt.rows?.[0]?.n ?? null, columns: cols.rows, rows: rows.rows });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e), table: name }); }
+  });
+
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
 
