@@ -69,7 +69,9 @@ interface BBWebhookPayload {
 const tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
 
 function createApiClient(account: FinancialAccount): AxiosInstance {
-  if (!account.bbDevAppKey) {
+  // PIX usa credenciais PROPRIAS (app BB autorizado p/ PIX) via env BB_PIX_*, com fallback p/ a conta.
+  const pixDevAppKey = process.env.BB_PIX_DEV_APP_KEY || account.bbDevAppKey;
+  if (!pixDevAppKey) {
     throw new Error('Developer Application Key do BB não configurada');
   }
 
@@ -77,7 +79,7 @@ function createApiClient(account: FinancialAccount): AxiosInstance {
     baseURL: getApiUrl(),
     headers: {
       'Content-Type': 'application/json',
-      'gw-dev-app-key': account.bbDevAppKey,
+      'gw-dev-app-key': pixDevAppKey,
     },
     timeout: 30000,
   });
@@ -90,11 +92,13 @@ async function getAccessToken(account: FinancialAccount): Promise<string> {
     return cached.token;
   }
 
-  if (!account.bbClientId || !account.bbClientSecret) {
+  const pixClientId = process.env.BB_PIX_CLIENT_ID || account.bbClientId;
+  const pixClientSecret = process.env.BB_PIX_CLIENT_SECRET || account.bbClientSecret;
+  if (!pixClientId || !pixClientSecret) {
     throw new Error('Client ID e Client Secret do BB não configurados');
   }
 
-  const credentials = Buffer.from(`${account.bbClientId}:${account.bbClientSecret}`).toString('base64');
+  const credentials = Buffer.from(`${pixClientId}:${pixClientSecret}`).toString('base64');
 
   const params = new URLSearchParams({
     grant_type: 'client_credentials',
