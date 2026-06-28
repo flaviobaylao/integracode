@@ -700,7 +700,7 @@ async function generatePixForReceivable(receivable: any, item: any): Promise<voi
   }
 }
 
-async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
+export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
 

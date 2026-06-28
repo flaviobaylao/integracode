@@ -10,6 +10,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto } from "./bb-boleto-service";
 import { storage } from "./storage";
+import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
 
 const app = express();
 
@@ -294,6 +295,30 @@ run();
   });
 
 // Cobranca vinculada a um recebivel (botao "Cobranca" no Contas a Receber).
+// TEST: cria recebivel + dispara o hook de cobranca (boleto/pix) como num faturamento de venda.
+  app.post("/api/admin/test/cobranca", async (req, res) => {
+    try {
+      const b = req.body || {};
+      const pm = b.paymentMethod;
+      const amount = parseFloat(b.amount || "1");
+      if (!pm) return res.status(400).json({ error: "paymentMethod (boleto|pix|a_vista) obrigatorio" });
+      const item: any = {
+        id: "test-" + Date.now(),
+        salesCardId: "test-" + Date.now(),
+        customerId: b.customerId || null,
+        customerName: b.debtorName || null,
+        customerDocument: b.debtorDocument || null,
+        saleValue: String(amount),
+        paymentMethod: pm,
+        invoiceNumber: null,
+        orderNumber: "TESTE-COBRANCA-" + pm,
+        omieInstanceId: b.omieInstanceId || "IND",
+      };
+      const receivable: any = await createReceivableFromPipelineItem(item, null, { email: "teste-cobranca" });
+      res.json({ ok: true, receivableId: receivable?.id, paymentMethod: pm, amount, note: "cobranca gerada em 2o plano; consulte /api/financial/receivables/{id}/cobranca" });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
     try {
       const id = req.params.id;
