@@ -319,6 +319,27 @@ run();
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+// DIAG: compara credenciais BB (mascaradas) entre 1.0 (Neon/REPLIT_DATABASE_URL) e 2.0.
+  app.get("/api/admin/pix/diag-credentials", async (_req, res) => {
+    const mask = (v: any) => v ? (String(v).length > 4 ? "..." + String(v).slice(-4) + " (len" + String(v).length + ")" : "set(len" + String(v).length + ")") : null;
+    try {
+      const t: any = await db.execute(sql`SELECT id, name, omie_instance_id, bb_client_id, bb_dev_app_key, bb_pix_enabled, bb_boleto_enabled, (pix_key IS NOT NULL) AS has_pix_key, pix_key FROM financial_accounts ORDER BY name`);
+      const tgt = (t.rows || []).map((a: any) => ({ id: a.id, name: a.name, inst: a.omie_instance_id, clientId: mask(a.bb_client_id), devKey: mask(a.bb_dev_app_key), pixEnabled: a.bb_pix_enabled, boletoEnabled: a.bb_boleto_enabled, hasPixKey: a.has_pix_key, pixKey: mask(a.pix_key) }));
+      let src: any = null, srcErr: any = null;
+      if (process.env.REPLIT_DATABASE_URL) {
+        const pg: any = await import("pg");
+        const Client = pg.Client || pg.default?.Client;
+        const c = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        try {
+          await c.connect();
+          const r = await c.query("SELECT id, name, omie_instance_id, bb_client_id, bb_dev_app_key, bb_pix_enabled, (pix_key IS NOT NULL) AS has_pix_key, pix_key FROM financial_accounts ORDER BY name");
+          src = (r.rows || []).map((a: any) => ({ id: a.id, name: a.name, inst: a.omie_instance_id, clientId: mask(a.bb_client_id), devKey: mask(a.bb_dev_app_key), pixEnabled: a.bb_pix_enabled, hasPixKey: a.has_pix_key, pixKey: mask(a.pix_key) }));
+        } catch (e: any) { srcErr = e?.message; } finally { try { await c.end(); } catch {} }
+      } else srcErr = "REPLIT_DATABASE_URL nao definido";
+      res.json({ target_2_0: tgt, source_1_0: src, srcErr });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
     try {
       const id = req.params.id;
