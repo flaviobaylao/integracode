@@ -191,6 +191,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-comments',
       items: [
         { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
+        { id: 'telefones-clientes', label: 'Telefones de Clientes', icon: 'fas fa-address-book', available: canAccessReports || isTelemarketing, badge: null },
         { id: 'central-atendimento', label: 'Central de Atendimento', icon: 'fas fa-headset', available: isTelemarketing, badge: null },
         { id: 'telemarketing', label: 'Central de Telemarketing', icon: 'fas fa-comments', available: canAccessReports, badge: null },
         { id: 'telemarketing-dashboard', label: 'Central de Atendimento', icon: 'fas fa-comments', available: canAccessReports, badge: null },
@@ -198,6 +199,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'telemarketing-whatsapp', label: 'Templates Rápidos', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
         { id: 'telemarketing-telegram', label: 'Análises', icon: 'fab fa-telegram', available: canAccessReports, badge: null },
         { id: 'telemarketing-deliveries', label: 'Entregas Chat', icon: 'fas fa-truck', available: canAccessReports, badge: null },
+        { id: 'telemarketing-disparo', label: 'Disparo em Massa', icon: 'fas fa-bullhorn', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -238,6 +240,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
+        { id: 'admin-system', label: 'Administração do Sistema', icon: 'fas fa-cogs', available: canAccessUsers, badge: null },
+        { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
       ],
     },
   ];
@@ -281,6 +285,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       'telemarketing-analysis': '/telemarketing/conversas',
       'central-atendimento': '/telemarketing/atendimento',
       'sdr-digital': '/telemarketing/sdr-digital',
+      'telemarketing-disparo': '/telemarketing/disparo-em-massa',
     };
 
     if (telemarketingRoutes[itemId]) {
@@ -305,7 +310,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
@@ -314,6 +319,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
+      return;
+    }
+
+    if (itemId === 'admin-system') {
+      navigate('/admin/system');
       return;
     }
 
