@@ -3,6 +3,7 @@ import { storage } from './storage';
 import { nowBrazil } from './brazilTimezone';
 import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
+import { registrarBoleto } from './bb-boleto-service';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -632,6 +633,43 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   return invoice;
 }
 
+
+// Hook boleto BB: gera boleto p/ um recebivel de faturamento.
+// Gated por bbBoletoEnabled na conta financeira; default HOMOLOGACAO (BB_BOLETO_SANDBOX).
+// Fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
+async function generateBoletoForReceivable(receivable: any, item: any): Promise<void> {
+  try {
+    let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
+    let account = (accounts || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio);
+    if (!account) {
+      const all = await storage.getFinancialAccounts();
+      account = (all || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio);
+    }
+    if (!account) return; // nenhuma conta com boleto BB habilitado -> no-op silencioso
+    let customer: any = null;
+    try { if (item.customerId) customer = await storage.getCustomer(item.customerId); } catch {}
+    const r = await registrarBoleto(account.id, {
+      amount: parseFloat(receivable.amount),
+      dueDate: receivable.dueDate ? new Date(receivable.dueDate) : new Date(Date.now() + 30 * 864e5),
+      debtorName: receivable.customerName || customer?.name || 'Cliente',
+      debtorDocument: receivable.customerDocument || customer?.cnpj || customer?.cpf || '',
+      debtorAddress: customer?.address,
+      debtorCity: customer?.city,
+      debtorNeighborhood: customer?.neighborhood,
+      debtorState: customer?.state,
+      debtorZip: customer?.zipCode,
+      receivableId: receivable.id,
+      fiscalInvoiceId: receivable.fiscalInvoiceId,
+      customerId: receivable.customerId,
+      billingPipelineId: item.id,
+    });
+    if (r.success) console.log(`[BB-BOLETO] hook: boleto gerado p/ receivable ${receivable.id} (${r.sandbox ? 'homolog' : 'PRODUCAO'})`);
+    else console.warn(`[BB-BOLETO] hook: nao gerou boleto (${r.error})`);
+  } catch (e: any) {
+    console.warn('[BB-BOLETO] hook erro (ignorado):', e?.message);
+  }
+}
+
 async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
@@ -668,6 +706,10 @@ async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: stri
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
   });
+
+  if (item.paymentMethod === 'boleto') {
+    void generateBoletoForReceivable(receivable, item);
+  }
 
   return receivable;
 }
