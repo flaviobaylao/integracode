@@ -344,6 +344,38 @@ run();
           const sc = await c.query("SELECT id, name, operation_type, state_scope, cfop, tax_regime, csosn, cst_icms, cst_pis, cst_cofins, nature_of_operation, is_active FROM fiscal_scenarios ORDER BY operation_type, state_scope, cfop");
           out.scenarios_1_0 = sc.rows;
         } catch (e: any) { out.scenErr1 = e?.message; }
+        // distribuicao real de status (p/ identificar o valor de "autorizada")
+        try {
+          const st = await c.query("SELECT environment, status, COUNT(*)::int AS n FROM fiscal_invoices WHERE invoice_number IS NOT NULL GROUP BY environment, status ORDER BY n DESC");
+          out.status_dist_1_0 = st.rows;
+        } catch (e: any) { out.statusErr1 = e?.message; }
+        // codigos fiscais REALMENTE emitidos por CNPJ (verdade de campo do que o SEFAZ aceitou)
+        try {
+          const it = await c.query(`
+            SELECT fi.issuer_cnpj, fi.uf AS issuer_uf, ii.cfop,
+                   ii.csosn, ii.cst_icms, ii.cst_pis, ii.cst_cofins,
+                   COUNT(*)::int AS n,
+                   MAX(fi.invoice_number) AS max_nf
+            FROM fiscal_invoice_items ii
+            JOIN fiscal_invoices fi ON fi.id = ii.invoice_id
+            WHERE fi.environment = 'producao'
+            GROUP BY fi.issuer_cnpj, fi.uf, ii.cfop, ii.csosn, ii.cst_icms, ii.cst_pis, ii.cst_cofins
+            ORDER BY fi.issuer_cnpj, n DESC`);
+          out.items_by_cnpj_1_0 = it.rows;
+        } catch (e: any) {
+          out.itemsErr1 = e?.message;
+          // fallback sem fi.uf caso a coluna nao exista
+          try {
+            const it2 = await c.query(`
+              SELECT fi.issuer_cnpj, ii.cfop, ii.csosn, ii.cst_icms, ii.cst_pis, ii.cst_cofins,
+                     COUNT(*)::int AS n, MAX(fi.invoice_number) AS max_nf
+              FROM fiscal_invoice_items ii JOIN fiscal_invoices fi ON fi.id = ii.invoice_id
+              WHERE fi.environment = 'producao'
+              GROUP BY fi.issuer_cnpj, ii.cfop, ii.csosn, ii.cst_icms, ii.cst_pis, ii.cst_cofins
+              ORDER BY fi.issuer_cnpj, n DESC`);
+            out.items_by_cnpj_1_0 = it2.rows;
+          } catch (e2: any) { out.itemsErr1b = e2?.message; }
+        }
       } catch (e: any) { out.srcErr = e?.message; } finally { try { await c.end(); } catch {} }
     } else out.srcErr = "REPLIT_DATABASE_URL nao definido";
     res.json(out);
