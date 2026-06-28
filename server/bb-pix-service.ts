@@ -8,7 +8,7 @@ import type { FinancialAccount, PixCharge } from '@shared/schema';
 
 const BB_OAUTH_URL_PROD = 'https://oauth.bb.com.br/oauth/token';
 const BB_OAUTH_URL_SANDBOX = 'https://oauth.sandbox.bb.com.br/oauth/token';
-const BB_API_URL_PROD = 'https://api.bb.com.br/pix/v2';
+const BB_API_URL_PROD = 'https://api-pix.bb.com.br/pix/v2';
 const BB_API_URL_SANDBOX = 'https://api.sandbox.bb.com.br/pix/v2';
 
 const IS_SANDBOX = process.env.BB_PIX_SANDBOX === 'true';
