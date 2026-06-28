@@ -325,32 +325,31 @@ run();
     try {
       const accId = (req.query as any).accountId || "4920fb8d-02ee-403f-a8f7-d2d464046bf4";
       const a: any = await db.execute(sql`SELECT bb_client_id, bb_client_secret, bb_dev_app_key FROM financial_accounts WHERE id = ${accId} LIMIT 1`);
-      const acc = a.rows?.[0];
-      if (!acc) return res.status(404).json({ error: "conta nao encontrada" });
-      const cid = acc.bb_client_id, csec = acc.bb_client_secret, dev = acc.bb_dev_app_key;
-      if (!cid || !csec) return res.status(400).json({ error: "credenciais ausentes" });
-      const basic = Buffer.from(`${cid}:${csec}`).toString("base64");
+      const acc = a.rows?.[0] || {};
+      const mask = (v: any) => v ? ("..." + String(v).slice(-4) + " (len" + String(v).length + ")") : null;
       const OAUTH = "https://oauth.bb.com.br/oauth/token";
       const axiosMod: any = await import("axios");
       const axios = axiosMod.default || axiosMod;
-      const variants: any[] = [
-        { name: "pix_basic", url: OAUTH, scope: "cob.write cob.read pix.read pix.write", headers: {} },
-        { name: "pix_devkey_query", url: OAUTH + "?gw-dev-app-key=" + encodeURIComponent(dev || ""), scope: "cob.write cob.read pix.read pix.write", headers: {} },
-        { name: "pix_devkey_header", url: OAUTH, scope: "cob.write cob.read pix.read pix.write", headers: { "gw-dev-app-key": dev || "" } },
-        { name: "pix_full", url: OAUTH, scope: "cob.write cob.read pix.read pix.write payloadlocation.write payloadlocation.read", headers: {} },
-        { name: "boleto_control", url: OAUTH, scope: "cobrancas.boletos-info cobrancas.boletos-requisicao", headers: {} },
-      ];
+      const envCid = process.env.BB_PIX_CLIENT_ID, envSec = process.env.BB_PIX_CLIENT_SECRET, envDev = process.env.BB_PIX_DEV_APP_KEY;
+      const accBasic = (acc.bb_client_id && acc.bb_client_secret) ? Buffer.from(`${acc.bb_client_id}:${acc.bb_client_secret}`).toString("base64") : null;
+      const envBasic = (envCid && envSec) ? Buffer.from(`${envCid}:${envSec}`).toString("base64") : null;
+      const variants: any[] = [];
+      if (envBasic) {
+        variants.push({ name: "PIX_ENV_basic", basic: envBasic, scope: "cob.write cob.read pix.read pix.write", headers: {} });
+        variants.push({ name: "PIX_ENV_devheader", basic: envBasic, scope: "cob.write cob.read pix.read pix.write", headers: { "gw-dev-app-key": envDev || "" } });
+      }
+      if (accBasic) variants.push({ name: "PIX_ACCT_basic", basic: accBasic, scope: "cob.write cob.read pix.read pix.write", headers: {} });
       const results: any[] = [];
       for (const v of variants) {
         try {
           const params = new URLSearchParams({ grant_type: "client_credentials", scope: v.scope });
-          const r = await axios.post(v.url, params.toString(), { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${basic}`, ...v.headers }, timeout: 15000 });
-          results.push({ variant: v.name, scope: v.scope, ok: true, status: r.status, gotToken: !!r.data?.access_token });
+          const r = await axios.post(OAUTH, params.toString(), { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${v.basic}`, ...v.headers }, timeout: 15000 });
+          results.push({ variant: v.name, ok: true, status: r.status, gotToken: !!r.data?.access_token });
         } catch (e: any) {
-          results.push({ variant: v.name, scope: v.scope, ok: false, status: e?.response?.status, body: e?.response?.data ? JSON.stringify(e.response.data).slice(0, 160) : e?.message });
+          results.push({ variant: v.name, ok: false, status: e?.response?.status, code: e?.code, body: e?.response?.data ? JSON.stringify(e.response.data).slice(0, 160) : (e?.message || "").slice(0, 160) });
         }
       }
-      res.json({ accountId: accId, hasDevKey: !!dev, results });
+      res.json({ accountId: accId, env: { hasClientId: !!envCid, clientId: mask(envCid), hasSecret: !!envSec, hasDevKey: !!envDev, devKey: mask(envDev) }, acct: { clientId: mask(acc.bb_client_id), devKey: mask(acc.bb_dev_app_key) }, results });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
