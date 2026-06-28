@@ -293,6 +293,49 @@ run();
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+// Cobranca vinculada a um recebivel (botao "Cobranca" no Contas a Receber).
+  app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const b: any = await db.execute(sql`SELECT id, status FROM boleto_charges WHERE receivable_id = ${id} ORDER BY created_at DESC LIMIT 1`);
+      if (b.rows?.[0]) { const bc = b.rows[0]; return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}` }); }
+      const p: any = await db.execute(sql`SELECT id, status FROM pix_charges WHERE receivable_id = ${id} ORDER BY created_at DESC LIMIT 1`);
+      if (p.rows?.[0]) { const pc = p.rows[0]; return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}` }); }
+      res.json({ hasCharge: false });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Emite um boleto (hibrido boleto+PIX) para um recebivel e devolve a viewUrl.
+  app.post("/api/financial/receivables/:id/emit-boleto", async (req, res) => {
+    try {
+      const recId = req.params.id;
+      const ex: any = await db.execute(sql`SELECT id FROM boleto_charges WHERE receivable_id = ${recId} ORDER BY created_at DESC LIMIT 1`);
+      if (ex.rows?.[0]) return res.json({ ok: true, alreadyExists: true, boletoChargeId: ex.rows[0].id, viewUrl: `/api/boleto-view/${ex.rows[0].id}` });
+      const resolved = await boletoParamsFromReceivable(recId);
+      if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado" });
+      const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "nenhuma conta com boleto BB habilitado" });
+      const result: any = await registrarBoleto(accId, resolved.params);
+      if (result.success && result.boletoChargeId) result.viewUrl = `/api/boleto-view/${result.boletoChargeId}`;
+      res.status(result.success ? 200 : 422).json(result);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Pagina publica de visualizacao de cobranca PIX (espelha a do boleto).
+  app.get("/api/pix-view/:id", async (req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT txid, amount, status, debtor_name, debtor_document, description, pix_copia_e_cola, qr_code_base64, due_date FROM pix_charges WHERE id = ${req.params.id} LIMIT 1`);
+      const c = r.rows?.[0];
+      if (!c) { res.status(404).send("PIX nao encontrado"); return; }
+      const paid = /(conclu|pag|receb|liquid)/i.test(String(c.status || ""));
+      const qr = c.qr_code_base64 ? `<img alt="QR PIX" src="data:image/png;base64,${c.qr_code_base64}" width="240" height="240"/>` : "";
+      const venc = c.due_date ? new Date(c.due_date).toLocaleDateString("pt-BR") : "";
+      res.set("Content-Type", "text/html; charset=utf-8");
+      res.send(`<!doctype html><html lang=pt-br><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Cobranca PIX</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}.card{max-width:480px;margin:24px auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:18px;margin:0 0 4px}.muted{color:#666;font-size:13px}.val{font-size:30px;font-weight:700;color:#059669;margin:10px 0}.box{background:#f3f4f6;border-radius:8px;padding:12px;word-break:break-all;font-family:monospace;font-size:13px;margin:8px 0}.lbl{font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-top:16px;font-weight:600}button{background:#059669;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer;margin-top:6px}.status{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}.s-pg{background:#d1fae5;color:#065f46}.s-ab{background:#fef3c7;color:#92400e}.center{text-align:center}</style></head><body><div class=card><h1>Cobranca PIX</h1><div class=muted>Pagador: ${c.debtor_name || ""} ${c.debtor_document ? "&mdash; " + c.debtor_document : ""}</div><div class=muted>${c.description || ""} ${venc ? "&middot; Venc.: " + venc : ""}</div><div class=val>R$ ${Number(c.amount || 0).toFixed(2).replace(".", ",")}</div><span class="status ${paid ? "s-pg" : "s-ab"}">${(String(c.status || "").toUpperCase()) || "ATIVA"}</span><div class=lbl>Pague via PIX</div><div class=center>${qr}</div><div class=box id=pix>${c.pix_copia_e_cola || "(sem pix)"}</div><button onclick="navigator.clipboard.writeText(document.getElementById('pix').innerText);this.innerText='Copiado!'">Copiar PIX copia e cola</button></div></body></html>`);
+    } catch (e: any) { res.status(500).send("erro"); }
+  });
+
   // Pagina publica de pagamento do boleto (PIX copia-e-cola + QR + linha digitavel).
   app.get("/api/boleto-view/:id", async (req, res) => {
     try {
