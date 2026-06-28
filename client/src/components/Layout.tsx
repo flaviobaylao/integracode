@@ -108,6 +108,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'clientes-virtuais-hoje', label: 'Clientes Virtuais do Dia', icon: 'fas fa-phone', available: !isMotorista, badge: null },
         { id: 'leads', label: 'LEADs', icon: 'fas fa-crosshairs', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
+        { id: 'tabela-precos', label: 'Tabela de Preços', icon: 'fas fa-tags', available: canAccessReports, badge: null },
+        { id: 'precos-grade', label: 'Preços (Grade)', icon: 'fas fa-table', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -142,6 +144,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports, badge: null },
         { id: 'hotsite-orders', label: 'Pedidos do Site', icon: 'fas fa-shopping-bag', available: canAccessReports || isTelemarketing, badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null },
         { id: 'estoque', label: 'Gestão de Estoque', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
+        { id: 'cupons', label: 'Cupons de Desconto', icon: 'fas fa-ticket-alt', available: canAccessReports, badge: null },
+        { id: 'fornecedores', label: 'Fornecedores', icon: 'fas fa-truck-loading', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -310,7 +314,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
