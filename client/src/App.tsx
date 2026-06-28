@@ -80,6 +80,15 @@ import TabelaPrecos from "@/pages/TabelaPrecos";
 import PrecosGrade from "@/pages/PrecosGrade";
 import Cupons from "@/pages/Cupons";
 import Fornecedores from "@/pages/Fornecedores";
+import RecuperacaoFaturamento from "@/pages/RecuperacaoFaturamento";
+import ConciliacaoBancaria from "@/pages/ConciliacaoBancaria";
+import AuditoriaCobrancas from "@/pages/AuditoriaCobrancas";
+import AutomacoesComunicacao from "@/pages/AutomacoesComunicacao";
+import Cielo from "@/pages/Cielo";
+import IndustriaDados from "@/pages/IndustriaDados";
+import TodasAsContas from "@/pages/TodasAsContas";
+import FluxoCaixa from "@/pages/FluxoCaixa";
+import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
 import SyncMonitor from "@/pages/SyncMonitor";
 
 function Router() {
@@ -248,6 +257,15 @@ function Router() {
           <Route path="/precos-grade" component={PrecosGrade} />
           <Route path="/cupons" component={Cupons} />
           <Route path="/fornecedores" component={Fornecedores} />
+          <Route path="/recuperacao-faturamento" component={RecuperacaoFaturamento} />
+          <Route path="/conciliacao-bancaria" component={ConciliacaoBancaria} />
+          <Route path="/auditoria-cobrancas" component={AuditoriaCobrancas} />
+          <Route path="/automacoes-comunicacao" component={AutomacoesComunicacao} />
+          <Route path="/cielo" component={Cielo} />
+          <Route path="/industria-dados" component={IndustriaDados} />
+          <Route path="/todas-as-contas" component={TodasAsContas} />
+          <Route path="/fluxo-caixa" component={FluxoCaixa} />
+          <Route path="/conferencia-pagamentos" component={ConferenciaPagamentos} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
