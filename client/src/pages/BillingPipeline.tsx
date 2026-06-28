@@ -31,6 +31,7 @@ interface BillingPipelineItem {
   orderNumber: string | null;
   invoiceNumber: string | null;
   saleValue: string | null;
+  fiscalStatus?: string | null;
   paymentMethod: string | null;
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
@@ -548,6 +549,7 @@ export default function BillingPipeline() {
         <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 120px)' }}>
           {STAGES.map((stage) => {
             const stageItems = groupedByStage[stage.key] || [];
+            const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             const StageIcon = stage.icon;
             const stageIds = stageItems.map(i => i.id);
             const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
@@ -566,7 +568,10 @@ export default function BillingPipeline() {
                     <StageIcon className="h-4 w-4" />
                     <span className="font-semibold text-sm">{stage.label}</span>
                   </div>
-                  <Badge className="bg-white/20 text-white text-xs">{stageItems.length}</Badge>
+                  <div className="flex flex-col items-end leading-tight">
+                    <Badge className="bg-white/20 text-white text-xs">{stageItems.length} {stageItems.length === 1 ? 'pedido' : 'pedidos'}</Badge>
+                    <span className="text-[10px] font-semibold text-white/90 mt-0.5">{formatCurrency(stageTotal)}</span>
+                  </div>
                 </div>
                 <div className="bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 min-h-[200px]">
                   {stageItems.length === 0 && (
@@ -886,9 +891,19 @@ function KanbanCard({
   isLast: boolean;
   isMoving: boolean;
 }) {
+  const fs = (item.fiscalStatus || '').toLowerCase();
+  const isCancelled = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'].includes(fs) || stage.key === 'bloqueado';
+  const isBilledOk = !isCancelled && (fs === 'authorized' || fs === 'autorizada' || (!!item.invoiceNumber && stage.key !== 'bloqueado'));
+  const statusBg = selected
+    ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20'
+    : isCancelled
+      ? 'bg-red-50 dark:bg-red-900/20 border border-red-300'
+      : isBilledOk
+        ? 'bg-green-50 dark:bg-green-900/20 border border-green-300'
+        : '';
   return (
     <Card
-      className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${selected ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
+      className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${statusBg}`}
       style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}
       onClick={onViewDetail}
     >
