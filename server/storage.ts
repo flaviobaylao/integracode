@@ -8214,10 +8214,26 @@ export class DatabaseStorage implements IStorage {
   async getBillingPipelineItems(filters?: { stage?: string }): Promise<BillingPipeline[]> {
     const conditions = [];
     if (filters?.stage) conditions.push(eq(billingPipeline.stage, filters.stage as any));
-    if (conditions.length > 0) {
-      return db.select().from(billingPipeline).where(and(...conditions)).orderBy(desc(billingPipeline.createdAt));
-    }
-    return db.select().from(billingPipeline).orderBy(desc(billingPipeline.createdAt));
+    const rows = conditions.length > 0
+      ? await db.select().from(billingPipeline).where(and(...conditions)).orderBy(desc(billingPipeline.createdAt))
+      : await db.select().from(billingPipeline).orderBy(desc(billingPipeline.createdAt));
+    // Enriquece com o status fiscal da NF (autorizada/cancelada/rejeitada) p/ colorir o card no pipeline.
+    try {
+      const nums = Array.from(new Set(
+        (rows as any[]).map(r => String(r.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean).map(Number)
+      ));
+      if (nums.length > 0) {
+        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status })
+          .from(fiscalInvoices).where(inArray(fiscalInvoices.invoiceNumber, nums as any));
+        const map = new Map<string, string>();
+        for (const f of fis as any[]) if (f.n != null) map.set(String(f.n), f.st);
+        for (const r of rows as any[]) {
+          const k = String(r.invoiceNumber || '').replace(/\D/g, '');
+          if (k && map.has(k)) r.fiscalStatus = map.get(k);
+        }
+      }
+    } catch {}
+    return rows as any;
   }
 
   async getBillingPipelineItem(id: string): Promise<BillingPipeline | undefined> {
