@@ -569,7 +569,7 @@ export interface IStorage {
   // Fiscal Invoices
   getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]>;
   getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
-  getNextInvoiceNumber(series?: string): Promise<number>;
+  getNextInvoiceNumber(series?: string, issuerCnpj?: string): Promise<number>;
   createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice>;
   updateFiscalInvoice(id: string, data: Partial<InsertFiscalInvoice>): Promise<FiscalInvoice>;
   deleteFiscalInvoice(id: string): Promise<void>;
@@ -8026,7 +8026,30 @@ export class DatabaseStorage implements IStorage {
     return invoice;
   }
 
-  async getNextInvoiceNumber(series: string = '1'): Promise<number> {
+  async getNextInvoiceNumber(series: string = '1', issuerCnpj?: string): Promise<number> {
+    // Numeracao de NF-e por CNPJ EMITENTE + serie: cada CNPJ tem sequencia SEFAZ propria.
+    // Base = notas de PRODUCAO desse CNPJ (ignora rascunhos/homologacao). Normaliza o CNPJ (so digitos),
+    // pois ele e gravado em 2 formatos (com mascara e so digitos).
+    if (issuerCnpj && issuerCnpj.replace(/\D/g, '').length >= 11) {
+      const digits = issuerCnpj.replace(/\D/g, '');
+      const prod: any = await db.execute(sql`
+        SELECT COALESCE(MAX(invoice_number), 0) AS max_num
+        FROM fiscal_invoices
+        WHERE series = ${series}
+          AND environment = 'producao'
+          AND regexp_replace(COALESCE(issuer_cnpj, ''), '[^0-9]', '', 'g') = ${digits}`);
+      let maxNum = Number(prod?.rows?.[0]?.max_num || 0);
+      if (!maxNum) {
+        const anyEnv: any = await db.execute(sql`
+          SELECT COALESCE(MAX(invoice_number), 0) AS max_num
+          FROM fiscal_invoices
+          WHERE series = ${series}
+            AND regexp_replace(COALESCE(issuer_cnpj, ''), '[^0-9]', '', 'g') = ${digits}`);
+        maxNum = Number(anyEnv?.rows?.[0]?.max_num || 0);
+      }
+      return maxNum + 1;
+    }
+    // Fallback legado (sem CNPJ): numera por serie (comportamento antigo).
     const result = await db.select({ maxNum: sql<number>`COALESCE(MAX(invoice_number), 0)` })
       .from(fiscalInvoices)
       .where(eq(fiscalInvoices.series, series));

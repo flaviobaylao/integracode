@@ -553,7 +553,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   }
 
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
-  const nextNumber = await storage.getNextInvoiceNumber('1');
+  const nextNumber = await storage.getNextInvoiceNumber('1', issuerCnpj);
 
   const invoice = await storage.createFiscalInvoice({
     invoiceNumber: nextNumber,

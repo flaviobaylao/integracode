@@ -550,7 +550,6 @@ export function registerNfeRoutes(app: Express) {
       }
 
       const { items, ...invoiceFields } = parsed.data;
-      const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1');
 
       if (invoiceFields.omieInstanceId && !invoiceFields.issuerName) {
         const instances = await storage.getOmieInstances();
@@ -567,6 +566,9 @@ export function registerNfeRoutes(app: Express) {
           invoiceFields.issuerPhone = cd.phone;
         }
       }
+
+      // Numeracao por CNPJ emitente + serie (cada CNPJ tem sequencia SEFAZ propria).
+      const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1', (invoiceFields as any).issuerCnpj);
       
       // Ambiente de emissao por instancia (system_settings: fiscal_env_<id>). Default homologacao ate cutover.
       try {
