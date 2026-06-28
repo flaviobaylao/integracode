@@ -164,6 +164,9 @@ export class SefazService {
     const emissionDate = invoice.emissionDate || nowBrazil();
     const cNF = crypto.randomInt(10000000, 99999999).toString();
     const uf = this.config?.uf || 'GO';
+    // Regime tributario por CNPJ emitente: PURO SERVICOS (52921727...) = Normal (CRT 3); demais (PURO INDUSTRIA) = Simples Nacional (CRT 1).
+    const issuerCnpjDigits = (this.config?.cnpj || (invoice as any).issuerCnpj || '').replace(/\D/g, '');
+    const issuerCrt = issuerCnpjDigits.startsWith('52921727') ? '3' : '1';
     const cUF = UF_CODES[uf] || '52';
 
     const nfeData: Record<string, any> = {
@@ -201,7 +204,7 @@ export class SefazService {
           xNome: this.config?.razaoSocial || 'Empresa Emitente',
           xFant: this.config?.nomeFantasia || '',
           IE: this.config?.inscricaoEstadual || '',
-          CRT: '3',
+          CRT: issuerCrt,
           enderEmit: this.config?.endereco ? {
             xLgr: this.config.endereco.logradouro,
             nro: this.config.endereco.numero,
@@ -248,28 +251,31 @@ export class SefazService {
             vDesc: parseFloat(item.discount?.toString() || '0') > 0 ? item.discount?.toString() : undefined,
           },
           imposto: {
-            ICMS: {
-              ICMS00: item.cstIcms === '00' ? {
-                orig: '0',
-                CST: item.cstIcms || '00',
-                modBC: '3',
-                vBC: item.baseIcms?.toString() || '0.00',
-                pICMS: item.aliqIcms?.toString() || '0.00',
-                vICMS: item.valorIcms?.toString() || '0.00',
-              } : undefined,
-              ICMS60: item.cstIcms === '60' ? {
-                orig: '0',
-                CST: '60',
-                vBCSTRet: '0.00',
-                pST: '0.00',
-                vICMSSubstituto: '0.00',
-                vICMSSTRet: '0.00',
-              } : undefined,
-              ICMSSN102: (!item.cstIcms || item.cstIcms === '102') ? {
-                orig: '0',
-                CSOSN: scenario?.csosn || '102',
-              } : undefined,
-            },
+            ICMS: (() => {
+              // Regime Normal (CRT 3) -> CST. Venda tributada integralmente = CST 00 (ICMS60 se ST).
+              if (issuerCrt === '3') {
+                if (item.cstIcms === '60') {
+                  return { ICMS60: { orig: '0', CST: '60', vBCSTRet: '0.00', pST: '0.00', vICMSSubstituto: '0.00', vICMSSTRet: '0.00' } };
+                }
+                return { ICMS00: {
+                  orig: '0', CST: '00', modBC: '3',
+                  vBC: item.baseIcms?.toString() || '0.00',
+                  pICMS: item.aliqIcms?.toString() || '0.00',
+                  vICMS: item.valorIcms?.toString() || '0.00',
+                } };
+              }
+              // Simples Nacional (CRT 1) -> CSOSN. Padrao 102; 101 quando escolhido no cadastro do cliente
+              // (item.csosn === '101') e com aliquota de credito informada (item.aliqIcms = pCredSN). Sem ela, cai p/ 102.
+              const chosen = (item.csosn === '101') ? '101' : '102';
+              if (chosen === '101') {
+                const pCred = parseFloat(item.aliqIcms?.toString() || '0') || 0;
+                if (pCred > 0) {
+                  const vProd = parseFloat(item.totalPrice?.toString() || '0') || 0;
+                  return { ICMSSN101: { orig: '0', CSOSN: '101', pCredSN: pCred.toFixed(4), vCredICMSSN: (vProd * pCred / 100).toFixed(2) } };
+                }
+              }
+              return { ICMSSN102: { orig: '0', CSOSN: (item.csosn === '101' ? '102' : (item.csosn || '102')) } };
+            })(),
             PIS: {
               PISAliq: item.cstPis === '01' ? {
                 CST: item.cstPis || '01',

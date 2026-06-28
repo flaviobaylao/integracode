@@ -590,6 +590,17 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     createdBy: user?.email || null,
   });
 
+  // CSOSN do cliente (Simples): padrao '102'; '101' se marcado no cadastro. pCredSN (p/ 101) vem de system_settings 'fiscal_pcredsn'.
+  const custCsosn = ((customer as any)?.icmsCsosn === '101') ? '101' : '102';
+  let custPcred = '0';
+  if (custCsosn === '101') {
+    try {
+      const settings = await storage.getSystemSettings();
+      const v = (settings || []).find((x: any) => x.key === 'fiscal_pcredsn')?.value;
+      if (v) custPcred = String(v).replace(/"/g, '');
+    } catch {}
+  }
+
   const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   if (products && products.length > 0) {
     for (let i = 0; i < products.length; i++) {
@@ -619,6 +630,8 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
         unitPrice: p.unitPrice.toString(),
         totalPrice: p.totalPrice.toString(),
         discount: '0',
+        csosn: custCsosn,
+        aliqIcms: custPcred,
       });
     }
   }
