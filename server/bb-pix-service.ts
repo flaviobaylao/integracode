@@ -98,7 +98,7 @@ async function getAccessToken(account: FinancialAccount): Promise<string> {
 
   const params = new URLSearchParams({
     grant_type: 'client_credentials',
-    scope: 'cob.write cob.read cobv.write cobv.read pix.read pix.write webhook.read webhook.write',
+    scope: 'cob.write cob.read pix.read pix.write',
   });
 
   const response = await axios.post<BBTokenResponse>(getOAuthUrl(), params.toString(), {
