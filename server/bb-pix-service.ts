@@ -74,6 +74,14 @@ const tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
 // mTLS: BB exige certificado cliente para a API de PIX. Carrega de ENV (PFX base64) ou do BANCO (system_settings).
 let _pixAgent: https.Agent | null | undefined = undefined;
 export function resetPixAgentCache() { _pixAgent = undefined; }
+export async function pixCertStatus(): Promise<any> {
+  const envPfx = !!(process.env.BB_PIX_CERT_PFX_BASE64 || process.env.BB_PIX_CERT_BASE64);
+  let dbPfx = false, dbLen = 0, dbErr: any = null;
+  try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'bb_pix_cert_pfx_base64' LIMIT 1`); const v = r.rows?.[0]?.value; if (v) { dbPfx = true; dbLen = String(v).length; } } catch (e: any) { dbErr = e?.message; }
+  let agentBuilt = false, agentErr: any = null;
+  try { resetPixAgentCache(); const ag = await getPixHttpsAgent(); agentBuilt = !!ag; } catch (e: any) { agentErr = e?.message; }
+  return { envPfx, dbPfx, dbLen, dbErr, agentBuilt, agentErr };
+}
 async function loadCertFromDb(): Promise<{ pfxB64?: string; pass?: string } | null> {
   try {
     const r: any = await db.execute(sql`SELECT key, value FROM system_settings WHERE key IN ('bb_pix_cert_pfx_base64','bb_pix_cert_password')`);

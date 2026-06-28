@@ -352,6 +352,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         password: !!(process.env.BB_PIX_CERT_PASSWORD || process.env.BB_PIX_CERT_PASS),
       };
       const pixmod: any = await import("./bb-pix-service");
+      let certStatus: any = null; try { certStatus = await pixmod.pixCertStatus(); } catch (e: any) { certStatus = { err: e?.message }; }
       let charge: any = null, err: any = null;
       try {
         const c = await pixmod.createImmediateCharge(accId, { amount: 1, debtorName: "TESTE PIX 2.0", debtorDocument: "00776212125", description: "diag mtls", expirationSeconds: 600 });
@@ -359,7 +360,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       } catch (e: any) {
         err = e?.response?.data ? JSON.stringify(e.response.data).slice(0, 400) : (e?.code ? (e.code + " " + (e?.message || "")) : (e?.message || "")).slice(0, 400);
       }
-      res.json({ accountId: accId, certPresent, chargeOk: !!charge, charge, err });
+      res.json({ accountId: accId, certPresent, certStatus, chargeOk: !!charge, charge, err });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
