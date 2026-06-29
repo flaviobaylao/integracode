@@ -352,12 +352,13 @@ export async function planDailyRoute(
 
   // PRIORIDADE: Buscar clientes das VISITAS PLANEJADAS (visitAgenda)
   // Isso garante que usamos os dados da aba Clientes Ativos
-  let customersScheduled = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
-  
+  // Rota do dia = PERIODICIDADE do cadastro (decisão do Flavio; alinhada 2.0=1.0).
+  // Agora com última-visita sincronizada (customers.last_sale_date), o vencimento de
+  // quinzenal/mensal fica seletivo e coincide com o 1.0.
+  let customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
   if (customersScheduled.length === 0) {
-    // FALLBACK: Se não houver visitas planejadas, usar cálculo de periodicidade
-    console.log(`   ⚠️ Nenhuma visita planejada encontrada, usando cálculo de periodicidade...`);
-    customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
+    // fallback: se a periodicidade não retornar nada, tentar visitas planejadas
+    customersScheduled = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
   }
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);

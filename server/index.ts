@@ -133,6 +133,36 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== Sincronizar ULTIMA VISITA do 1.0 -> 2.0 (customers.last_sale_date) p/ rota por periodicidade =====
+  // Lê o MAX(completed/scheduled) dos sales_cards concluidos do 1.0 por cliente e grava em customers.last_sale_date no 2.0.
+  // dryRun por padrao; {apply:true} aplica.
+  app.post('/api/admin/sync/last-visit', async (req: any, res) => {
+    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: '1.0 nao configurado' });
+    const apply = req.body?.apply === true;
+    const pgMod: any = await import('pg');
+    const Client = pgMod.Client || pgMod.default?.Client;
+    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const r1 = await src.query(`
+        SELECT customer_id, MAX(COALESCE(completed_date, scheduled_date)) AS last_visit
+        FROM sales_cards
+        WHERE status IN ('completed','invoiced') AND customer_id IS NOT NULL
+        GROUP BY customer_id`);
+      const map = new Map<string, string>();
+      for (const row of r1.rows) if (row.last_visit) map.set(row.customer_id, new Date(row.last_visit).toISOString());
+      let updated = 0, failed = 0;
+      if (apply) {
+        for (const [cid, dt] of map.entries()) {
+          try { await db.execute(sql`UPDATE customers SET last_sale_date = ${dt} WHERE id = ${cid}`); updated++; }
+          catch { failed++; }
+        }
+      }
+      res.json({ srcCustomersWithVisit: map.size, applied: apply, updated, failed });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+    finally { try { await src.end(); } catch {} }
+  });
+
   // ===== Sincronizar COORDENADAS do 1.0 (Neon) -> 2.0 (corrige rotas do dia) =====
   // dryRun por padrao (quantifica). {apply:true} aplica. {onlyNull:true} só preenche nulos (nao mexe nos divergentes).
   app.post('/api/admin/sync/coordinates', async (req: any, res) => {

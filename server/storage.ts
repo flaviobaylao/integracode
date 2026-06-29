@@ -1164,7 +1164,8 @@ export class DatabaseStorage implements IStorage {
     for (const customer of activeCustomers) {
       try {
         // Pegar última visita (se existir)
-        const lastCompletedDate = lastVisitMap.get(customer.id);
+        // Preferir a ultima venda/visita sincronizada do 1.0 (customers.last_sale_date); senao, derivar dos sales_cards locais.
+        const lastCompletedDate = (customer as any).lastSaleDate ? new Date((customer as any).lastSaleDate) : lastVisitMap.get(customer.id);
         
         // Normalizar weekdays: pode vir como string JSON ou array
         let weekdaysArray: string[] = [];
