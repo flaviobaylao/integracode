@@ -264,6 +264,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
+        { id: 'customer-payments', label: 'Pagamento Clientes', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
         { id: 'admin-system', label: 'Administração do Sistema', icon: 'fas fa-cogs', available: canAccessUsers, badge: null },
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
@@ -359,6 +360,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'agentes-ia') {
       navigate('/admin/agentes');
+      return;
+    }
+
+    if (itemId === 'customer-payments') {
+      navigate('/pagamento-clientes');
       return;
     }
 
