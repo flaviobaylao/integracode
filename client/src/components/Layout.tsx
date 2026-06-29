@@ -95,6 +95,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports, badge: null },
         { id: 'minha-agenda', label: 'Minha Agenda', icon: 'fas fa-calendar-day', available: true, badge: null },
+        { id: 'visitas-dia', label: 'Visitas', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -378,6 +379,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'minha-agenda') {
       navigate('/minha-agenda');
+      return;
+    }
+
+    if (itemId === 'visitas-dia') {
+      navigate('/visitas');
       return;
     }
 
