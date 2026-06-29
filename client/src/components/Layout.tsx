@@ -93,6 +93,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
+        { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports, badge: null },
+        { id: 'minha-agenda', label: 'Minha Agenda', icon: 'fas fa-calendar-day', available: true, badge: null },
       ],
     },
     {
@@ -191,6 +193,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'conferencia-pagamentos', label: 'Conferência de Pagamentos', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
         { id: 'auditoria-cobrancas', label: 'Auditoria de Cobranças', icon: 'fas fa-user-shield', available: canAccessReports, badge: null },
         { id: 'radar-compras', label: 'Radar de Compras', icon: 'fas fa-satellite-dish', available: canAccessReports, badge: null },
+        { id: 'pix-charges', label: 'PIX', icon: 'fas fa-qrcode', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -365,6 +368,21 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'customer-payments') {
       navigate('/pagamento-clientes');
+      return;
+    }
+
+    if (itemId === 'repescagem') {
+      navigate('/repescagem');
+      return;
+    }
+
+    if (itemId === 'minha-agenda') {
+      navigate('/minha-agenda');
+      return;
+    }
+
+    if (itemId === 'pix-charges') {
+      navigate('/pix-charges');
       return;
     }
 
