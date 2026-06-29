@@ -270,6 +270,11 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       status: isFromMe ? conversation.status : 'new'
     });
 
+    // Runtime de Agentes de IA (auto-resposta) — gate de seguranca interno (system_settings agents_runtime_mode: off/test/on)
+    if (!isFromMe && finalContent && finalContent.trim()) {
+      import('./agent-runtime').then(({ maybeRunAgent }) => maybeRunAgent({ phone: normalizedPhone, conversationId: conversation.id, incomingText: finalContent, sendText: sendUmblerTalkText })).catch(() => {});
+    }
+
     console.log(`✅ [PROCESS] Mensagem salva: ${normalizedPhone} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
     return true;
 

@@ -133,6 +133,34 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== Controle do RUNTIME dos Agentes de IA (auto-resposta no ChatCenter) =====
+  app.get('/api/admin/agentes/runtime', async (_req, res) => {
+    try {
+      const get = async (k: string, d: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key=${k} LIMIT 1`); const v = r.rows?.[0]?.value; return v == null ? d : String(v).replace(/^"|"$/g, ''); };
+      res.json({ mode: await get('agents_runtime_mode', 'off'), defaultAgent: await get('agents_default', 'sdr'), testNumbers: await get('agents_test_numbers', '5562995782812'), hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  app.post('/api/admin/agentes/runtime', async (req: any, res) => {
+    try {
+      const b = req.body || {};
+      const setK = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, ${'agent-runtime-admin'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); };
+      if (b.mode != null) { if (!['off','test','on'].includes(b.mode)) return res.status(400).json({ error: 'mode invalido' }); await setK('agents_runtime_mode', b.mode); }
+      if (b.defaultAgent != null) await setK('agents_default', String(b.defaultAgent));
+      if (b.testNumbers != null) await setK('agents_test_numbers', String(b.testNumbers));
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  // Testar um agente SEM enviar WhatsApp (retorna a resposta gerada)
+  app.post('/api/admin/agentes/test', async (req: any, res) => {
+    try {
+      const { agentId, message } = req.body || {};
+      if (!agentId || !message) return res.status(400).json({ error: 'agentId e message obrigatorios' });
+      const { generateAgentReply } = await import('./agent-runtime');
+      const r = await generateAgentReply(String(agentId), [{ role: 'user', content: String(message) }]);
+      res.json(r);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // ===== Sincronizar VISITAS PLANEJADAS (visit_agenda) FUTURAS do 1.0 -> 2.0 (corrige rota do dia) =====
   // A rota do dia usa o visit_agenda; o do 2.0 está incompleto p/ datas futuras. dryRun por padrao; {apply:true} insere.
   app.post('/api/admin/sync/visit-agenda', async (req: any, res) => {
