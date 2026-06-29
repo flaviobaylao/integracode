@@ -135,6 +135,45 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+    app.post("/api/admin/financial/reconcile", async (req, res) => {
+    try {
+      const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
+      const result: any = { cancelled: 0, backfilled: { receivables: 0, payables: 0 }, errors: [] };
+      for (const id of cancelIds) {
+        try { await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now() WHERE id = ${id}`); result.cancelled++; }
+        catch (e: any) { result.errors.push("cancel " + id + ": " + e?.message); }
+      }
+      const pgMod: any = await import("pg");
+      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      await src.connect();
+      for (const table of ["receivables", "payables"]) {
+        try {
+          const colsRes: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name = ${table} ORDER BY ordinal_position`);
+          const cols = (colsRes.rows || colsRes).map((r: any) => r.column_name);
+          const tgtIdsRes: any = await db.execute(sql.raw(`SELECT id FROM ${table}`));
+          const tgtIds = new Set((tgtIdsRes.rows || tgtIdsRes).map((r: any) => r.id));
+          const colList = cols.map((c: string) => `"${c}"`).join(", ");
+          const srcRows = (await src.query(`SELECT ${colList} FROM ${table}`)).rows;
+          const missing = srcRows.filter((r: any) => !tgtIds.has(r.id));
+          for (const row of missing) {
+            try {
+              const idents = cols.map((c: string) => sql.identifier(c));
+              const vals = cols.map((c: string) => {
+                let v: any = row[c];
+                if (v !== null && typeof v === "object" && !(v instanceof Date)) v = JSON.stringify(v);
+                return sql`${v}`;
+              });
+              await db.execute(sql`INSERT INTO ${sql.identifier(table)} (${sql.join(idents, sql`, `)}) VALUES (${sql.join(vals, sql`, `)}) ON CONFLICT (id) DO NOTHING`);
+              result.backfilled[table]++;
+            } catch (e: any) { result.errors.push(table + " ins: " + e?.message); }
+          }
+        } catch (e: any) { result.errors.push(table + ": " + e?.message); }
+      }
+      await src.end();
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e?.message }); }
+  });
+
   app.post("/api/admin/financial/totals", async (req, res) => {
     try {
       const pgMod: any = await import("pg");
