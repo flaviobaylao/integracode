@@ -96,6 +96,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports, badge: null },
         { id: 'minha-agenda', label: 'Minha Agenda', icon: 'fas fa-calendar-day', available: true, badge: null },
         { id: 'visitas-dia', label: 'Visitas', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
+        { id: 'resumo-visitas', label: 'Resumo de Visitas', icon: 'fas fa-calendar-check', available: canAccessReports, badge: null },
       ],
     },
     {
@@ -384,6 +385,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'visitas-dia') {
       navigate('/visitas');
+      return;
+    }
+
+    if (itemId === 'resumo-visitas') {
+      navigate('/resumo-visitas');
       return;
     }
 
