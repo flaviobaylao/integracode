@@ -135,6 +135,27 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  app.post("/api/admin/financial/totals", async (req, res) => {
+    try {
+      const pgMod: any = await import("pg");
+      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      await src.connect();
+      const out: any = {};
+      for (const t of ["receivables", "payables"]) {
+        const q = `SELECT status, COUNT(*)::int AS n, COALESCE(SUM(amount),0)::float8 AS amount, COALESCE(SUM(amount_paid),0)::float8 AS paid FROM ${t} GROUP BY status ORDER BY status`;
+        const s = await src.query(q);
+        const tg: any = await db.execute(sql.raw(q));
+        const tgRows = tg.rows || tg;
+        const sum = (rows: any[]) => rows.reduce((a, r) => ({ n: a.n + Number(r.n), amount: Math.round((a.amount + Number(r.amount)) * 100) / 100, paid: Math.round((a.paid + Number(r.paid)) * 100) / 100 }), { n: 0, amount: 0, paid: 0 });
+        out[t] = { src: { byStatus: s.rows, total: sum(s.rows) }, tgt: { byStatus: tgRows, total: sum(tgRows) } };
+      }
+      await src.end();
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // ===== Controle do RUNTIME dos Agentes de IA (auto-resposta no ChatCenter) =====
   app.get('/api/admin/agente-runtime', async (_req, res) => {
     try {
