@@ -57,6 +57,16 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
   } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
 }
 
+// Roteamento por palavras-chave: escolhe o agente conforme o conteúdo recente.
+// Configurável por system_settings 'agents_routing' = 'keyword' (padrão) ou 'fixed' (usa sempre o default).
+function pickAgentByKeyword(text: string, defId: string): string {
+  const t = (text || '').toLowerCase();
+  const has = (arr: string[]) => arr.some(k => t.includes(k));
+  if (has(['boleto', '2 via', '2a via', 'segunda via', 'pagar', 'pagamento', 'fatura', 'vencid', 'em atraso', 'débito', 'debito', 'cobran', 'pix', 'linha digitável', 'codigo de barras'])) return 'cobranca';
+  if (has(['comprar', 'pedido', 'preço', 'preco', 'orçamento', 'orcamento', 'quero', 'valor', 'encomend', 'cardápio', 'cardapio', 'tabela', 'suco'])) return 'vendas';
+  return defId;
+}
+
 // Chamado pelo webhook após salvar mensagem RECEBIDA (não fromMe). Fire-and-forget.
 export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; }): Promise<void> {
   try {
@@ -70,16 +80,23 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
     const defId = await getSetting('agents_default', 'sdr');
+    const routing = await getSetting('agents_routing', 'keyword');
     // histórico recente (10) p/ contexto
     const h: any = await db.execute(sql`SELECT sender_type, content FROM chat_messages WHERE conversation_id = ${opts.conversationId} ORDER BY created_at DESC LIMIT 10`);
     const hist = (h.rows || []).reverse().map((m: any) => ({ role: m.sender_type === 'customer' ? 'user' : 'assistant', content: String(m.content || '') }));
     if (!hist.length || hist[hist.length - 1].role !== 'user') hist.push({ role: 'user', content: opts.incomingText });
-    const gen = await generateAgentReply(defId, hist);
+    // Roteamento: escolhe o agente pelo conteúdo (cobranca/vendas) ou usa o default (sdr). Só agentes ATIVOS.
+    let chosenId = routing === 'keyword' ? pickAgentByKeyword(opts.incomingText, defId) : defId;
+    try {
+      const chk: any = await db.execute(sql`SELECT id FROM agentes_config WHERE id = ${chosenId} AND ativo = true LIMIT 1`);
+      if (!chk.rows?.[0]) chosenId = defId;
+    } catch { chosenId = defId; }
+    const gen = await generateAgentReply(chosenId, hist);
     if (!gen.ok || !gen.reply) return;
     const sent = await opts.sendText(opts.phone, gen.reply);
     try {
       const { storage } = await import('./storage');
-      await storage.createChatMessage({ conversationId: opts.conversationId, senderId: 'agent:' + defId, senderType: 'system', content: gen.reply, messageType: 'text', metadata: { agent: defId, auto: true, delivery: sent } as any });
+      await storage.createChatMessage({ conversationId: opts.conversationId, senderId: 'agent:' + chosenId, senderType: 'system', content: gen.reply, messageType: 'text', metadata: { agent: chosenId, auto: true, delivery: sent } as any });
     } catch {}
   } catch (e: any) { console.error('[AGENT-RUNTIME]', e?.message || e); }
 }
