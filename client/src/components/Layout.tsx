@@ -215,6 +215,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
     {
+      groupLabel: 'Agentes IA',
+      color: 'bg-violet-500',
+      bgColor: 'bg-violet-50',
+      textColor: 'text-violet-700',
+      hexColor: '#8b5cf6',
+      icon: 'fas fa-robot',
+      items: [
+        { id: 'agentes-ia', label: 'Agentes IA', icon: 'fas fa-robot', available: canAccessReports, badge: null },
+      ],
+    },
+    {
       groupLabel: 'Indústria',
       color: 'bg-emerald-600',
       bgColor: 'bg-emerald-50',
