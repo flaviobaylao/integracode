@@ -216,6 +216,66 @@ function AgenteEditor({
   );
 }
 
+function RuntimeControl() {
+  const [mode, setMode] = useState<string>("");
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [testNumbers, setTestNumbers] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    try { const j = await apiGet("/api/admin/agente-runtime"); setMode(j.mode); setHasKey(!!j.hasAnthropicKey); setTestNumbers(j.testNumbers || ""); }
+    catch (e: any) { setMsg("erro: " + e.message); }
+  };
+  useEffect(() => { load(); }, []);
+  const setRuntimeMode = async (m: string) => {
+    setBusy(true); setMsg("");
+    try { await apiSend("/api/admin/agente-runtime", "POST", { mode: m }); setMode(m); setMsg("Modo alterado para: " + m.toUpperCase()); }
+    catch (e: any) { setMsg("erro: " + e.message); }
+    finally { setBusy(false); }
+  };
+  const label = mode === "on" ? "LIGADO (todos os clientes)" : mode === "test" ? "MODO TESTE (só nº de teste)" : "DESLIGADO";
+  const color = mode === "on" ? "text-green-600" : mode === "test" ? "text-amber-600" : "text-gray-500";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <i className="fas fa-power-off text-muted-foreground" /> Auto-resposta dos Agentes
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="text-sm">Status atual: <b className={color}>{label}</b></div>
+        {hasKey === false && (
+          <div className="text-sm text-red-600">
+            ⚠️ ANTHROPIC_API_KEY não configurada — os agentes não respondem até adicionar a chave no Railway e dar deploy.
+          </div>
+        )}
+        {!!testNumbers && <div className="text-xs text-muted-foreground">Número(s) de teste: {testNumbers}</div>}
+        <div className="flex flex-wrap gap-2">
+          <Button variant={mode === "off" ? "default" : "outline"} disabled={busy} onClick={() => setRuntimeMode("off")}>
+            Desligar
+          </Button>
+          <Button variant={mode === "test" ? "default" : "outline"} disabled={busy} onClick={() => setRuntimeMode("test")}>
+            Modo Teste
+          </Button>
+          <Button
+            variant={mode === "on" ? "default" : "outline"}
+            disabled={busy}
+            className={mode === "on" ? "" : "bg-green-600 hover:bg-green-700 text-white"}
+            onClick={() => { if (confirm("Ligar a auto-resposta para TODOS os clientes? Os agentes responderão automaticamente no WhatsApp.")) setRuntimeMode("on"); }}
+          >
+            Ligar p/ todos
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={load}>Atualizar</Button>
+        </div>
+        {msg && <div className={"text-sm " + (msg.startsWith("erro") ? "text-red-600" : "text-green-600")}>{msg}</div>}
+        <p className="text-xs text-muted-foreground">
+          OFF = não responde ninguém. TESTE = responde só o número de teste (validação no WhatsApp). LIGADO = responde todos os clientes.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AgentesIA() {
   const { data, isLoading, refetch } = useQuery<{ baseComum: string | null; agentes: Agente[] }>({
     queryKey: ["/api/admin/agentes"],
@@ -263,6 +323,8 @@ export default function AgentesIA() {
           recebe é a BASE_COMUM + o bloco do agente. Edição salva direto no banco (sem deploy).
         </p>
       </div>
+
+      <RuntimeControl />
 
       <Card>
         <CardHeader>
