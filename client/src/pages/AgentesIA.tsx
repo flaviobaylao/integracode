@@ -216,25 +216,112 @@ function AgenteEditor({
   );
 }
 
-function RuntimeControl() {
+function RuntimeControl({ agentes }: { agentes: Agente[] }) {
   const [mode, setMode] = useState<string>("");
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [testNumbers, setTestNumbers] = useState<string>("");
+  const [numbersTxt, setNumbersTxt] = useState<string>("");
+  const [defaultAgent, setDefaultAgent] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [savingCfg, setSavingCfg] = useState(false);
   const [msg, setMsg] = useState("");
+  const [cfgMsg, setCfgMsg] = useState("");
+
+  // testador de resposta (não envia WhatsApp)
+  const [testAgent, setTestAgent] = useState<string>("");
+  const [testMsgInput, setTestMsgInput] = useState<string>("");
+  const [testPhone, setTestPhone] = useState<string>("");
+  const [withTools, setWithTools] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testReply, setTestReply] = useState<string>("");
+  const [testTools, setTestTools] = useState<string>("");
+
+  const splitNums = (s: string) =>
+    (s || "").split(/[,\n;\s]+/).map((x) => x.trim()).filter(Boolean);
+
   const load = async () => {
-    try { const j = await apiGet("/api/admin/agente-runtime"); setMode(j.mode); setHasKey(!!j.hasAnthropicKey); setTestNumbers(j.testNumbers || ""); }
-    catch (e: any) { setMsg("erro: " + e.message); }
+    try {
+      const j = await apiGet("/api/admin/agente-runtime");
+      setMode(j.mode);
+      setHasKey(!!j.hasAnthropicKey);
+      setTestNumbers(j.testNumbers || "");
+      setNumbersTxt(splitNums(j.testNumbers || "").join("\n"));
+      setDefaultAgent(j.defaultAgent || "");
+    } catch (e: any) {
+      setMsg("erro: " + e.message);
+    }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
+
   const setRuntimeMode = async (m: string) => {
-    setBusy(true); setMsg("");
-    try { await apiSend("/api/admin/agente-runtime", "POST", { mode: m }); setMode(m); setMsg("Modo alterado para: " + m.toUpperCase()); }
-    catch (e: any) { setMsg("erro: " + e.message); }
-    finally { setBusy(false); }
+    setBusy(true);
+    setMsg("");
+    try {
+      await apiSend("/api/admin/agente-runtime", "POST", { mode: m });
+      setMode(m);
+      setMsg("Modo alterado para: " + m.toUpperCase());
+    } catch (e: any) {
+      setMsg("erro: " + e.message);
+    } finally {
+      setBusy(false);
+    }
   };
-  const label = mode === "on" ? "LIGADO (todos os clientes)" : mode === "test" ? "MODO TESTE (só nº de teste)" : "DESLIGADO";
-  const color = mode === "on" ? "text-green-600" : mode === "test" ? "text-amber-600" : "text-gray-500";
+
+  const salvarConfig = async () => {
+    setSavingCfg(true);
+    setCfgMsg("");
+    const nums = splitNums(numbersTxt).join(",");
+    try {
+      await apiSend("/api/admin/agente-runtime", "POST", {
+        testNumbers: nums,
+        defaultAgent,
+      });
+      setTestNumbers(nums);
+      setNumbersTxt(splitNums(nums).join("\n"));
+      setCfgMsg("✓ salvo");
+    } catch (e: any) {
+      setCfgMsg("erro: " + e.message);
+    } finally {
+      setSavingCfg(false);
+    }
+  };
+
+  const rodarTeste = async () => {
+    if (!testMsgInput.trim()) {
+      setTestReply("erro: digite uma mensagem para testar");
+      return;
+    }
+    setTesting(true);
+    setTestReply("");
+    setTestTools("");
+    try {
+      const j = await apiSend("/api/admin/agente-test", "POST", {
+        agentId: testAgent || defaultAgent || "sdr",
+        message: testMsgInput,
+        withTools,
+        phone: testPhone || undefined,
+      });
+      setTestReply(j.reply || j.text || j.response || j.message || JSON.stringify(j));
+      const tools = j.usedTools || j.tools || [];
+      if (Array.isArray(tools) && tools.length) setTestTools(tools.join(", "));
+    } catch (e: any) {
+      setTestReply("erro: " + e.message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const label =
+    mode === "on"
+      ? "LIGADO (todos os clientes)"
+      : mode === "test"
+        ? "MODO TESTE (só nº de teste)"
+        : "DESLIGADO";
+  const color =
+    mode === "on" ? "text-green-600" : mode === "test" ? "text-amber-600" : "text-gray-500";
+
   return (
     <Card>
       <CardHeader>
@@ -242,34 +329,173 @@ function RuntimeControl() {
           <i className="fas fa-power-off text-muted-foreground" /> Auto-resposta dos Agentes
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="text-sm">Status atual: <b className={color}>{label}</b></div>
+      <CardContent className="space-y-4">
+        <div className="text-sm">
+          Status atual: <b className={color}>{label}</b>
+        </div>
         {hasKey === false && (
           <div className="text-sm text-red-600">
-            ⚠️ ANTHROPIC_API_KEY não configurada — os agentes não respondem até adicionar a chave no Railway e dar deploy.
+            ⚠️ ANTHROPIC_API_KEY não configurada — os agentes não respondem até adicionar a chave no
+            Railway e dar deploy.
           </div>
         )}
-        {!!testNumbers && <div className="text-xs text-muted-foreground">Número(s) de teste: {testNumbers}</div>}
         <div className="flex flex-wrap gap-2">
-          <Button variant={mode === "off" ? "default" : "outline"} disabled={busy} onClick={() => setRuntimeMode("off")}>
+          <Button
+            variant={mode === "off" ? "default" : "outline"}
+            disabled={busy}
+            onClick={() => setRuntimeMode("off")}
+          >
             Desligar
           </Button>
-          <Button variant={mode === "test" ? "default" : "outline"} disabled={busy} onClick={() => setRuntimeMode("test")}>
+          <Button
+            variant={mode === "test" ? "default" : "outline"}
+            disabled={busy}
+            className={mode === "test" ? "" : "bg-amber-500 hover:bg-amber-600 text-white"}
+            onClick={() => setRuntimeMode("test")}
+          >
             Modo Teste
           </Button>
           <Button
             variant={mode === "on" ? "default" : "outline"}
             disabled={busy}
             className={mode === "on" ? "" : "bg-green-600 hover:bg-green-700 text-white"}
-            onClick={() => { if (confirm("Ligar a auto-resposta para TODOS os clientes? Os agentes responderão automaticamente no WhatsApp.")) setRuntimeMode("on"); }}
+            onClick={() => {
+              if (
+                confirm(
+                  "Ligar a auto-resposta para TODOS os clientes? Os agentes responderão automaticamente no WhatsApp.",
+                )
+              )
+                setRuntimeMode("on");
+            }}
           >
             Ligar p/ todos
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={load}>Atualizar</Button>
+          <Button variant="ghost" disabled={busy} onClick={load}>
+            Atualizar
+          </Button>
         </div>
-        {msg && <div className={"text-sm " + (msg.startsWith("erro") ? "text-red-600" : "text-green-600")}>{msg}</div>}
-        <p className="text-xs text-muted-foreground">
-          OFF = não responde ninguém. TESTE = responde só o número de teste (validação no WhatsApp). LIGADO = responde todos os clientes.
+        {msg && (
+          <div className={"text-sm " + (msg.startsWith("erro") ? "text-red-600" : "text-green-600")}>
+            {msg}
+          </div>
+        )}
+
+        <div className="border-t pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label className="text-sm">Números de teste (um por linha)</Label>
+            <Textarea
+              className="font-mono text-xs"
+              rows={5}
+              placeholder="5562995782812"
+              value={numbersTxt}
+              onChange={(e) => setNumbersTxt(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              No MODO TESTE, os agentes respondem apenas a estes números. Formato: 55 + DDD + número
+              (ex.: 5562995782812).
+            </p>
+          </div>
+          <div>
+            <Label className="text-sm">Agente padrão</Label>
+            <select
+              className="w-full border rounded-md h-9 px-2 bg-background text-sm"
+              value={defaultAgent}
+              onChange={(e) => setDefaultAgent(e.target.value)}
+            >
+              {agentes.length === 0 && <option value={defaultAgent}>{defaultAgent || "—"}</option>}
+              {agentes.map((ag) => (
+                <option key={ag.id} value={ag.id}>
+                  {ag.id} — {ag.nome}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Usado quando o roteamento por palavra-chave não identifica um agente específico.
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <Button onClick={salvarConfig} disabled={savingCfg}>
+                {savingCfg ? "Salvando..." : "Salvar números e agente padrão"}
+              </Button>
+              {cfgMsg && (
+                <span
+                  className={
+                    "text-sm " + (cfgMsg.startsWith("erro") ? "text-red-600" : "text-green-600")
+                  }
+                >
+                  {cfgMsg}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t pt-4 space-y-3">
+          <Label className="text-sm font-semibold">
+            Testar resposta de um agente (não envia WhatsApp)
+          </Label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <Label className="text-xs">Agente</Label>
+              <select
+                className="w-full border rounded-md h-9 px-2 bg-background text-sm"
+                value={testAgent}
+                onChange={(e) => setTestAgent(e.target.value)}
+              >
+                <option value="">(roteamento automático)</option>
+                {agentes.map((ag) => (
+                  <option key={ag.id} value={ag.id}>
+                    {ag.id} — {ag.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs">Telefone (opcional, p/ ferramentas)</Label>
+              <Input
+                placeholder="5562995782812"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex items-center gap-2">
+                <Switch id="withTools" checked={withTools} onCheckedChange={setWithTools} />
+                <Label htmlFor="withTools" className="text-xs">
+                  Usar ferramentas
+                </Label>
+              </div>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Mensagem do cliente</Label>
+            <Textarea
+              rows={2}
+              placeholder="oi, quero comprar sucos"
+              value={testMsgInput}
+              onChange={(e) => setTestMsgInput(e.target.value)}
+            />
+          </div>
+          <Button onClick={rodarTeste} disabled={testing} variant="outline">
+            {testing ? "Testando..." : "Testar resposta"}
+          </Button>
+          {testReply && (
+            <div>
+              <Label className="text-xs">
+                Resposta do agente{testTools ? " — ferramentas: " + testTools : ""}
+              </Label>
+              <Textarea
+                readOnly
+                rows={6}
+                className={"text-sm " + (testReply.startsWith("erro") ? "text-red-600" : "")}
+                value={testReply}
+              />
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground border-t pt-3">
+          OFF = não responde ninguém. TESTE = responde só os números de teste (validação no
+          WhatsApp). LIGADO = responde todos os clientes.
         </p>
       </CardContent>
     </Card>
@@ -324,7 +550,7 @@ export default function AgentesIA() {
         </p>
       </div>
 
-      <RuntimeControl />
+      <RuntimeControl agentes={agentes} />
 
       <Card>
         <CardHeader>
