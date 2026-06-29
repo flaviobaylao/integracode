@@ -1,3 +1,4 @@
+import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, log } from "./vite";
@@ -132,6 +133,7 @@ run();
   });
 
   const server = await registerRoutes(app);
+  registerPaymentVerificationRoutes(app);
 
   // ===== Controle do RUNTIME dos Agentes de IA (auto-resposta no ChatCenter) =====
   app.get('/api/admin/agente-runtime', async (_req, res) => {
