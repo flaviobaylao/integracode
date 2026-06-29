@@ -133,6 +133,42 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== Sincronizar COORDENADAS do 1.0 (Neon) -> 2.0 (corrige rotas do dia) =====
+  // dryRun por padrao (quantifica). {apply:true} aplica. {onlyNull:true} só preenche nulos (nao mexe nos divergentes).
+  app.post('/api/admin/sync/coordinates', async (req: any, res) => {
+    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: '1.0 (REPLIT_DATABASE_URL) nao configurado' });
+    const apply = req.body?.apply === true;
+    const onlyNull = req.body?.onlyNull === true;
+    const pgMod: any = await import('pg');
+    const Client = pgMod.Client || pgMod.default?.Client;
+    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const r1 = await src.query("SELECT id, latitude, longitude FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL");
+      const map = new Map<string, { lat: string; lng: string }>();
+      for (const row of r1.rows) map.set(row.id, { lat: String(row.latitude), lng: String(row.longitude) });
+      const r2: any = await db.execute(sql`SELECT id, latitude, longitude FROM customers`);
+      let missing = 0, differ = 0, updated = 0, failed = 0;
+      const toUpdate: Array<{ id: string; lat: string; lng: string }> = [];
+      for (const row of (r2.rows || [])) {
+        const sc = map.get(row.id);
+        if (!sc) continue;
+        const has = row.latitude != null && row.longitude != null && Number(row.latitude) !== 0 && Number(row.longitude) !== 0;
+        const same = has && Math.abs(Number(row.latitude) - Number(sc.lat)) < 1e-5 && Math.abs(Number(row.longitude) - Number(sc.lng)) < 1e-5;
+        if (!has) { missing++; toUpdate.push({ id: row.id, ...sc }); }
+        else if (!same) { differ++; if (!onlyNull) toUpdate.push({ id: row.id, ...sc }); }
+      }
+      if (apply) {
+        for (const u of toUpdate) {
+          try { await db.execute(sql`UPDATE customers SET latitude = ${u.lat}, longitude = ${u.lng} WHERE id = ${u.id}`); updated++; }
+          catch { failed++; }
+        }
+      }
+      res.json({ srcWithCoords: map.size, tgtTotal: (r2.rows || []).length, missingInTgt: missing, differ, toUpdate: toUpdate.length, applied: apply, onlyNull, updated, failed });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+    finally { try { await src.end(); } catch {} }
+  });
+
   // ============ Visualizacao read-only de tabelas SINCRONIZADAS (paridade de telas 2.0 x 1.0) ============
   // Serve dados crus das tabelas sincronizadas do 1.0 que ainda nao tem schema drizzle/endpoint proprio.
   // Whitelist + read-only + introspeccao de colunas (information_schema). Garante FIDELIDADE ao dado.
