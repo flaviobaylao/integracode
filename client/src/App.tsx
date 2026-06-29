@@ -78,6 +78,7 @@ import Repescagem from "@/pages/Repescagem";
 import MinhaAgenda from "@/pages/MinhaAgenda";
 import PixCharges from "@/pages/PixCharges";
 import Visitas from "@/pages/Visitas";
+import ResumoVisitas from "@/pages/ResumoVisitas";
 import AgentesIA from "@/pages/AgentesIA";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
@@ -286,6 +287,7 @@ function Router() {
           <Route path="/minha-agenda" component={MinhaAgenda} />
           <Route path="/pix-charges" component={PixCharges} />
           <Route path="/visitas" component={Visitas} />
+          <Route path="/resumo-visitas" component={ResumoVisitas} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
