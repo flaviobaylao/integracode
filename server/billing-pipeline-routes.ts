@@ -31,22 +31,13 @@ async function logOrderAudit(salesCardId: string, outcome: string, error?: strin
 
 // Reconciliacao: garante que TODO sales_card com venda registrada (recente) tenha item no pipeline.
 // Idempotente. E a rede de seguranca caso o envio ao vivo tenha falhado.
-export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; created: number; failed: number }> {
-  const since = new Date(Date.now() - days * 86400000).toISOString();
-  const orphans: any = await db.execute(sql`
-    SELECT sc.id, sc.customer_id, sc.seller_id, sc.sale_value, sc.products, sc.payment_method, sc.operation_type, sc.notes, sc.created_at
-    FROM sales_cards sc
-    LEFT JOIN billing_pipeline bp ON bp.sales_card_id = sc.id
-    WHERE bp.id IS NULL
-      AND sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
-      AND sc.created_at >= ${since}`);
-  let created = 0, failed = 0;
-  for (const r of (orphans.rows || [])) {
-    const card = { id: r.id, customerId: r.customer_id, sellerId: r.seller_id, saleValue: r.sale_value, products: r.products, paymentMethod: r.payment_method, operationType: r.operation_type, notes: r.notes, createdAt: r.created_at };
-    try { const res = await autoSendToBillingPipeline(card as any, 'reconcile'); if (res) created++; else failed++; }
-    catch { failed++; }
-  }
-  return { scanned: (orphans.rows || []).length, created, failed };
+export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; created: number; failed: number; disabled?: boolean }> {
+  // DESABILITADO (28/jun/2026): a recriacao a partir de sales_cards criava PEDIDOS FANTASMAS.
+  // Motivo (descoberto com o Flavio): muitos sales_cards "pending" no 2.0 ja foram FATURADOS/entregues no 1.0
+  // (sairam do pipeline ativo do 1.0). O pipeline do 1.0 SINCRONIZA corretamente p/ o 2.0 (contagens batem),
+  // entao "sales_card com venda fora do pipeline" NAO significa pedido perdido. A garantia de "pedido nao some"
+  // fica com: (a) autoSendToBillingPipeline ao CRIAR pedido novo no 2.0 (ao vivo) + (b) sync do pipeline do 1.0.
+  return { scanned: 0, created: 0, failed: 0, disabled: true };
 }
 
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
@@ -120,6 +111,14 @@ function isFlavioOnly(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
+
+  // Remove os itens criados pela reconciliacao (pedidos fantasmas: ja faturados/entregues no 1.0)
+  app.post('/api/admin/pipeline/remove-reconciled', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`DELETE FROM billing_pipeline WHERE created_by ILIKE '%reconcile%'`);
+      res.json({ ok: true, removed: r?.rowCount ?? null });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
 
   // Corrige a DATA DE CRIACAO dos itens ja reconciliados: usar a data de registro do pedido (sales_card.created_at)
   app.post('/api/admin/pipeline/fix-registration-dates', authenticateUser, isAdminOnly, async (req: any, res) => {
