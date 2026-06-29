@@ -134,13 +134,13 @@ run();
   const server = await registerRoutes(app);
 
   // ===== Controle do RUNTIME dos Agentes de IA (auto-resposta no ChatCenter) =====
-  app.get('/api/admin/agentes/runtime', async (_req, res) => {
+  app.get('/api/admin/agente-runtime', async (_req, res) => {
     try {
       const get = async (k: string, d: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key=${k} LIMIT 1`); const v = r.rows?.[0]?.value; return v == null ? d : String(v).replace(/^"|"$/g, ''); };
       res.json({ mode: await get('agents_runtime_mode', 'off'), defaultAgent: await get('agents_default', 'sdr'), testNumbers: await get('agents_test_numbers', '5562995782812'), hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
-  app.post('/api/admin/agentes/runtime', async (req: any, res) => {
+  app.post('/api/admin/agente-runtime', async (req: any, res) => {
     try {
       const b = req.body || {};
       const setK = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, ${'agent-runtime-admin'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); };
@@ -151,7 +151,7 @@ run();
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
   // Testar um agente SEM enviar WhatsApp (retorna a resposta gerada)
-  app.post('/api/admin/agentes/test', async (req: any, res) => {
+  app.post('/api/admin/agente-test', async (req: any, res) => {
     try {
       const { agentId, message } = req.body || {};
       if (!agentId || !message) return res.status(400).json({ error: 'agentId e message obrigatorios' });
