@@ -133,6 +133,47 @@ run();
 
   const server = await registerRoutes(app);
 
+  // ===== Sincronizar VISITAS PLANEJADAS (visit_agenda) FUTURAS do 1.0 -> 2.0 (corrige rota do dia) =====
+  // A rota do dia usa o visit_agenda; o do 2.0 está incompleto p/ datas futuras. dryRun por padrao; {apply:true} insere.
+  app.post('/api/admin/sync/visit-agenda', async (req: any, res) => {
+    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: '1.0 nao configurado' });
+    const apply = req.body?.apply === true;
+    const days = Math.min(Number(req.body?.days) || 90, 180);
+    const pgMod: any = await import('pg');
+    const Client = pgMod.Client || pgMod.default?.Client;
+    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const until = new Date(Date.now() + days * 86400000).toISOString();
+      const r1 = await src.query(`
+        SELECT id, customer_id, seller_id, scheduled_date, route_day, recurrence_type,
+               COALESCE(is_virtual,false) AS is_virtual, COALESCE(visit_status,'pending') AS visit_status,
+               customer_name, sales_card_id, customer_latitude, customer_longitude, customer_address
+        FROM visit_agenda
+        WHERE scheduled_date >= CURRENT_DATE AND scheduled_date <= $1`, [until]);
+      const srcRows = r1.rows;
+      // ids ja existentes no 2.0
+      const idset = new Set<string>();
+      const cur: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= CURRENT_DATE`);
+      for (const x of (cur.rows || [])) idset.add(x.id);
+      let inserted = 0, skipped = 0, failed = 0;
+      if (apply) {
+        for (const r of srcRows) {
+          if (idset.has(r.id)) { skipped++; continue; }
+          try {
+            await db.execute(sql`INSERT INTO visit_agenda
+              (id, customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, sales_card_id, customer_latitude, customer_longitude, customer_address)
+              VALUES (${r.id}, ${r.customer_id}, ${r.seller_id}, ${r.scheduled_date}, ${r.route_day || 'segunda'}, ${r.recurrence_type || 'semanal'}, ${r.is_virtual}, ${r.visit_status}, ${r.customer_name || 'Cliente'}, ${r.sales_card_id}, ${r.customer_latitude}, ${r.customer_longitude}, ${r.customer_address})
+              ON CONFLICT (id) DO NOTHING`);
+            inserted++;
+          } catch { failed++; }
+        }
+      }
+      res.json({ srcFuturas: srcRows.length, tgtFuturasAntes: idset.size, applied: apply, inserted, skipped, failed });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+    finally { try { await src.end(); } catch {} }
+  });
+
   // ===== Sincronizar ULTIMA VISITA do 1.0 -> 2.0 (customers.last_sale_date) p/ rota por periodicidade =====
   // Lê o MAX(completed/scheduled) dos sales_cards concluidos do 1.0 por cliente e grava em customers.last_sale_date no 2.0.
   // dryRun por padrao; {apply:true} aplica.
