@@ -301,7 +301,7 @@ run();
     'communication_automations','communication_automation_logs','message_history','message_templates',
     'raw_materials','raw_material_movements','recipes','recipe_items','production_orders','production_order_items',
     'saved_reports','cielo_credentials','cielo_pix_charges','cielo_card_authorizations','cielo_reconciliation_records',
-    'boleto_charges','pix_charges','receivable_events','category_mappings'
+    'boleto_charges','pix_charges','receivable_events','category_mappings','personal_agenda_items','repescagem_assignments','repescagem_attendants'
   ]);
   app.get('/api/synced-table/:name', async (req, res) => {
     const name = String(req.params.name || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
