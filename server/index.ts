@@ -153,10 +153,20 @@ run();
   // Testar um agente SEM enviar WhatsApp (retorna a resposta gerada)
   app.post('/api/admin/agente-test', async (req: any, res) => {
     try {
-      const { agentId, message } = req.body || {};
+      const { agentId, message, phone, documento, withTools } = req.body || {};
       if (!agentId || !message) return res.status(400).json({ error: 'agentId e message obrigatorios' });
       const { generateAgentReply } = await import('./agent-runtime');
-      const r = await generateAgentReply(String(agentId), [{ role: 'user', content: String(message) }]);
+      // ctx habilita as ferramentas; resolve cliente por documento/telefone se informado
+      let ctx: any = undefined;
+      if (withTools || phone || documento) {
+        let customerId: string | null = null;
+        try {
+          if (documento) { const d = String(documento).replace(/\D/g, ''); const r1: any = await db.execute(sql`SELECT id FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${d} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${d} LIMIT 1`); customerId = r1.rows?.[0]?.id || null; }
+          if (!customerId && phone) { const d = String(phone).replace(/\D/g, ''); const r2: any = await db.execute(sql`SELECT id FROM customers WHERE regexp_replace(COALESCE(phone,''),'[^0-9]','','g') LIKE ${'%' + d.slice(-8)} LIMIT 1`); customerId = r2.rows?.[0]?.id || null; }
+        } catch {}
+        ctx = { conversationId: null, customerId, phone: phone || null };
+      }
+      const r = await generateAgentReply(String(agentId), [{ role: 'user', content: String(message) }], ctx);
       res.json(r);
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
