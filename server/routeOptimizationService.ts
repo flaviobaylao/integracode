@@ -352,23 +352,13 @@ export async function planDailyRoute(
 
   // PRIORIDADE: Buscar clientes das VISITAS PLANEJADAS (visitAgenda)
   // Isso garante que usamos os dados da aba Clientes Ativos
-  // CORREÇÃO (28/jun/2026): UNIR visitas planejadas (visit_agenda) COM o cálculo de
-  // periodicidade do cadastro — antes a periodicidade só era usada se o visit_agenda
-  // estivesse VAZIO, o que descartava clientes devidos e fazia a rota do 2.0 ficar menor
-  // que a do 1.0 (ex.: 14 vs 31). A união garante que nenhum cliente devido fique de fora.
-  const fromPlanned = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
-  let fromPeriodicity: any[] = [];
-  try {
-    fromPeriodicity = await storage.getCustomersForDate(sellerId, routeDate);
-  } catch (e) {
-    console.warn('⚠️ getCustomersForDate falhou na união:', e);
+  let customersScheduled = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
+  
+  if (customersScheduled.length === 0) {
+    // FALLBACK: Se não houver visitas planejadas, usar cálculo de periodicidade
+    console.log(`   ⚠️ Nenhuma visita planejada encontrada, usando cálculo de periodicidade...`);
+    customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
   }
-  const _seenIds = new Set<string>();
-  let customersScheduled: any[] = [];
-  for (const c of [...fromPlanned, ...fromPeriodicity]) {
-    if (c && c.id && !_seenIds.has(c.id)) { _seenIds.add(c.id); customersScheduled.push(c); }
-  }
-  console.log(`   📋 União de fontes: ${fromPlanned.length} planejadas (visit_agenda) + ${fromPeriodicity.length} periodicidade = ${customersScheduled.length} clientes únicos`);
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
