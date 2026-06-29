@@ -354,7 +354,10 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'sync-monitor') {
       navigate('/admin/sync-monitor');
-    if (itemId === 'agentes-ia')
+      return;
+    }
+
+    if (itemId === 'agentes-ia') {
       navigate('/admin/agentes');
       return;
     }
