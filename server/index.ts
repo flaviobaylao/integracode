@@ -169,7 +169,18 @@ run();
           } catch { failed++; }
         }
       }
-      res.json({ srcFuturas: srcRows.length, tgtFuturasAntes: idset.size, applied: apply, inserted, skipped, failed });
+      // PRUNE: remover do 2.0 as visit_agenda FUTURAS pending/scheduled que NAO existem no 1.0
+      // (excesso que empurra clientes p/ fora da "janela das proximas 3 visitas" e diverge a rota).
+      let pruned = 0;
+      if (req.body?.prune === true) {
+        const srcIds = new Set<string>(srcRows.map((x: any) => x.id));
+        const tgt: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= CURRENT_DATE AND visit_status IN ('pending','scheduled')`);
+        const toDelete = (tgt.rows || []).map((x: any) => x.id).filter((id: string) => !srcIds.has(id));
+        for (const id of toDelete) {
+          try { await db.execute(sql`DELETE FROM visit_agenda WHERE id = ${id}`); pruned++; } catch {}
+        }
+      }
+      res.json({ srcFuturas: srcRows.length, tgtFuturasAntes: idset.size, applied: apply, inserted, skipped, failed, pruned });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
     finally { try { await src.end(); } catch {} }
   });
