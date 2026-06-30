@@ -1028,8 +1028,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // Campos operacionais; junta por id; trata null/'' como iguais; normaliza weekdays (JSON ordenado).
   // Apply: 2.0 := 1.0 nos applyFields onde divergem, NUNCA apagando dado do 2.0 com vazio do 1.0.
   app.post('/api/admin/audit/customer-fields', async (req: Request, res: Response) => {
-    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone'];
-    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone']);
+    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj'];
+    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj']);
     const applyFields: string[] = Array.isArray(req.body?.applyFields)
       ? req.body.applyFields.filter((f: string) => FIELDS.includes(f) && SAFE.has(f)) : [];
     const ENUM_CAST: Record<string, string> = { visit_periodicity: '::visit_periodicity', virtual_service: '::boolean' };
@@ -1070,7 +1070,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (applyFields.length > 0) {
         for (const f of applyFields) {
           // só aplica onde 1.0 tem valor (direction != erase_block) → nunca apaga dado do 2.0
-          const rows = diffs.filter((d) => d.field === f && d.direction !== 'erase_block');
+          const DOC_FILL_ONLY = new Set(['cpf', 'cnpj']);
+          const rows = diffs.filter((d) => d.field === f && (DOC_FILL_ONLY.has(f) ? d.direction === 'fill' : d.direction !== 'erase_block'));
           if (rows.length === 0) { applied[f] = 0; continue; }
           const cast = ENUM_CAST[f] || '';
           const params: any[] = [];
