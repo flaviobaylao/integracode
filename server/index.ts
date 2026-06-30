@@ -135,6 +135,41 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Dedup de clientes por DOCUMENTO no 2.0: mantem 1 registro ativo por cpf/cnpj; re-aponta FKs dos duplicados p/ o primario e desativa os duplicados (is_active=false, reversivel, NAO apaga).
+  app.post('/api/admin/customers/dedup', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    try {
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const rowsR: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, name, fantasy_name, is_active, seller_id, created_at FROM customers"));
+      const rows = (rowsR.rows || rowsR) as any[];
+      const groups = new Map<string, any[]>();
+      for (const c of rows) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; if (!groups.has(d)) groups.set(d, []); groups.get(d)!.push(c); }
+      const dupGroups = [...groups.entries()].filter(([_d, m]) => m.length > 1);
+      // tabelas com coluna customer_id
+      const fkR: any = await db.execute(sql.raw("SELECT table_name FROM information_schema.columns WHERE column_name='customer_id' AND table_schema='public' AND table_name <> 'customers'"));
+      const fkTables = (fkR.rows || fkR).map((r: any) => r.table_name);
+      const result: any = { totalCustomers: rows.length, dupGroups: dupGroups.length, dupExtraRows: dupGroups.reduce((a, [_d, m]) => a + (m.length - 1), 0), fkTables, apply, merged: 0, repointed: {}, deactivated: 0, errors: [] };
+      // amostra (mascarada)
+      result.sample = dupGroups.slice(0, 8).map(([d, m]) => ({ docMask: '***' + d.slice(-4), n: m.length, membros: m.map((c) => ({ idP: String(c.id).slice(0, 8), ativo: c.is_active === true, seller: String(c.seller_id || '').slice(0, 12), criado: c.created_at })) }));
+      if (apply) {
+        for (const [_d, members] of dupGroups) {
+          // primario: ativo primeiro, depois mais antigo
+          const sorted = [...members].sort((a, b) => { const aw = (a.is_active === true ? 0 : 1); const bw = (b.is_active === true ? 0 : 1); if (aw !== bw) return aw - bw; return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(); });
+          const primary = sorted[0]; const dups = sorted.slice(1);
+          for (const dup of dups) {
+            for (const t of fkTables) {
+              try { const u: any = await db.execute(sql`UPDATE ${sql.identifier(t)} SET customer_id = ${primary.id} WHERE customer_id = ${dup.id}`); result.repointed[t] = (result.repointed[t] || 0) + (u.rowCount || 0); }
+              catch (e2: any) { result.errors.push(t + ': ' + String(e2.message).slice(0, 60)); }
+            }
+            try { await db.execute(sql`UPDATE customers SET is_active = false, omie_status = 'inativo', updated_at = now() WHERE id = ${dup.id}`); result.deactivated++; } catch (e: any) { result.errors.push('deact ' + String(dup.id).slice(0, 8) + ': ' + String(e.message).slice(0, 60)); }
+          }
+          result.merged++;
+        }
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
+  });
+
   // Sincroniza seller_id 2.0:=1.0 por DOCUMENTO (cobre clientes com id divergente que o audit-por-id nao pega).
   app.post('/api/admin/sync/seller-by-doc', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
