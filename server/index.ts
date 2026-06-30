@@ -135,6 +135,45 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // [TEMP TESTE 30/jun/2026] validar auto-cobranca pix/a_vista — REMOVER apos validar
+  app.post("/api/admin/test/cobranca", async (req, res) => {
+    try {
+      const cleanupIds: string[] = Array.isArray(req.body?.cleanupIds) ? req.body.cleanupIds : [];
+      if (cleanupIds.length) {
+        let cancelled = 0;
+        for (const id of cleanupIds) {
+          try { await db.execute(sql`UPDATE receivables SET status='cancelada', amount_paid='0.00', updated_at=now() WHERE id=${id}`); cancelled++; } catch {}
+        }
+        return res.json({ ok: true, cleanup: true, cancelled });
+      }
+      const paymentMethod = (req.body?.paymentMethod || 'pix');
+      const amount = req.body?.amount || 1;
+      const item: any = {
+        id: null,
+        saleValue: String(amount),
+        paymentMethod,
+        customerId: req.body?.customerId || null,
+        customerName: req.body?.customerName || 'TESTE Cobranca 30jun',
+        customerDocument: req.body?.customerDocument || null,
+        omieInstanceId: 'IND',
+        salesCardId: null,
+        invoiceNumber: null,
+        orderNumber: 'TESTE-' + Date.now(),
+      };
+      const receivable = await createReceivableFromPipelineItem(item, null, { email: 'teste-cobranca' });
+      await new Promise((r) => setTimeout(r, 7000));
+      let charge: any = { pix: null, boleto: null };
+      if (receivable) {
+        const pix: any = await db.execute(sql`SELECT id, status, txid, amount FROM pix_charges WHERE receivable_id = ${receivable.id} LIMIT 1`);
+        const bol: any = await db.execute(sql`SELECT id, status, nosso_numero FROM boleto_charges WHERE receivable_id = ${receivable.id} LIMIT 1`);
+        charge = { pix: (pix.rows || pix)[0] || null, boleto: (bol.rows || bol)[0] || null };
+      }
+      res.json({ ok: true, receivableId: receivable?.id || null, paymentMethod, charge });
+    } catch (e: any) {
+      res.json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
