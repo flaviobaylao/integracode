@@ -6982,10 +6982,27 @@ export class DatabaseStorage implements IStorage {
         console.error('❌ Erro ao buscar próximas visitas:', err);
       }
       
+      // Fallback por DOCUMENTO p/ linhas cujo customerId nao resolve no 2.0 (conflito de identidade 1.0/2.0)
+      const _digits = (x: any) => String(x || '').replace(/\D/g, '');
+      const customerByDoc = new Map<string, any>();
+      try {
+        const _unresolved = active.filter((ac) => (!ac.customerId || !customerMap.has(ac.customerId)) && (ac as any).document);
+        if (_unresolved.length > 0) {
+          const _allUsers = await db.select().from(users);
+          const _uById = new Map<string, any>(); const _uByCode = new Map<string, any>();
+          const _nm = (u: any) => ((`${u.firstName || ''} ${u.lastName || ''}`.trim()) || (u.email ? String(u.email).split('@')[0] : '') || undefined);
+          for (const u of _allUsers) { _uById.set(u.id, u); if ((u as any).omieVendorCode) _uByCode.set(String((u as any).omieVendorCode), u); }
+          const _resolveSeller = (sid: any) => { if (!sid) return undefined; const str = String(sid); const u = _uById.get(str) || _uByCode.get(str) || _uByCode.get(str.replace('omie-vendor-', '')); return u ? _nm(u) : undefined; };
+          const _allCusts = await db.select().from(customers);
+          for (const c of _allCusts) { const d = _digits((c as any).cnpj) || _digits((c as any).cpf); if (d && d.length >= 11 && !customerByDoc.has(d)) customerByDoc.set(d, { ...c, sellerName: c.sellerId ? _resolveSeller(c.sellerId) : undefined }); }
+        }
+      } catch (e) { /* fallback best-effort */ }
+
       // Retornar dados com clientes disponíveis
       const result: ActiveCustomerWithVisits[] = active.map((ac) => {
         const visits = ac.customerId ? (visitMap.get(ac.customerId) || []) : [];
-        const customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
+        let customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
+        if (!customer && (ac as any).document) customer = customerByDoc.get(_digits((ac as any).document));
         
         // Adicionar dados de positivação e última atividade
         const isPositivated = ac.customerId ? (positivationMap.get(ac.customerId) || false) : false;
