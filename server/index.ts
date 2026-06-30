@@ -154,9 +154,15 @@ run();
         const recIds = recRows.map((r: any) => r.id);
         const fids = recRows.map((r: any) => r.fiscal_invoice_id).filter(Boolean);
         let byFiscal: any[] = [];
-        if (has('fiscal_invoice_id') && fids.length) {
-          const q: any = await db.execute(sql`SELECT id, receivable_id, fiscal_invoice_id, nosso_numero, status FROM boleto_charges WHERE fiscal_invoice_id = ANY(${fids}) LIMIT 20`);
-          byFiscal = (q.rows || q).map((b: any) => ({ idP: String(b.id).slice(0, 8), recMatch: recIds.includes(b.receivable_id), recIdP: String(b.receivable_id || '').slice(0, 8), status: b.status }));
+        if (has('fiscal_invoice_id')) {
+          for (const fid of fids) {
+            const q: any = await db.execute(sql`SELECT id, receivable_id, status FROM boleto_charges WHERE fiscal_invoice_id = ${fid} LIMIT 20`);
+            for (const b of (q.rows || q)) {
+              let recTitle = null;
+              if (b.receivable_id) { const rr: any = await db.execute(sql`SELECT title_number FROM receivables WHERE id = ${b.receivable_id} LIMIT 1`); recTitle = (rr.rows || rr)[0]?.title_number ?? '(inexistente)'; }
+              byFiscal.push({ idP: String(b.id).slice(0, 8), recMatchUI: recIds.includes(b.receivable_id), recIdP: String(b.receivable_id || '').slice(0, 8), recTitle, status: b.status });
+            }
+          }
         }
         invDiag = { recCount: recRows.length, recIdsP: recIds.map((x: any) => String(x).slice(0, 8)), fiscalIdsP: fids.map((x: any) => String(x).slice(0, 8)), boletosByFiscal: byFiscal };
       }
