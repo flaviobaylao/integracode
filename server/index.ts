@@ -186,7 +186,7 @@ run();
               const row2 = (t2.rows || t2)[0];
               let recExists2 = false;
               if (row2?.receivable_id) { const e: any = await db.execute(sql`SELECT 1 FROM receivables WHERE id = ${row2.receivable_id} LIMIT 1`); recExists2 = !!(e.rows || e)[0]; }
-              traced.push({ boletoIdP: String(b.id).slice(0,8), in2_0: !!row2, recId2P: String(row2?.receivable_id||'').slice(0,8), recId2ExistsInReceivables: recExists2, recId1matchesUIrec: recIds.includes(row2?.receivable_id), fid1P: String(b.fiscal_invoice_id||'').slice(0,8), status1: b.status });
+              traced.push({ boletoIdP: String(b.id).slice(0,8), in2_0: !!row2, recId2P: String(row2?.receivable_id||'').slice(0,8), recId2ExistsInReceivables: recExists2, fid1P: String(b.fiscal_invoice_id||'').slice(0,8), status1: b.status });
             }
             src1 = { recCount1_0: rr.rows.length, recIds1P: recIds1.map((x:any)=>String(x).slice(0,8)), fids1P: fids1.map((x:any)=>String(x).slice(0,8)), boletosByRec1: bRecv.length, boletosByFiscal1: bFisc.length, traced };
           } finally { await src.end().catch(()=>{}); }
