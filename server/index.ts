@@ -166,7 +166,33 @@ run();
         }
         invDiag = { recCount: recRows.length, recIdsP: recIds.map((x: any) => String(x).slice(0, 8)), fiscalIdsP: fids.map((x: any) => String(x).slice(0, 8)), boletosByFiscal: byFiscal };
       }
-      res.json({ boletoCols: cols, pixCols: pcols, boletoLink: { linked: linked.rows[0].n, orphanRecId: orphan.rows[0].n, nullRecId: nullrec.rows[0].n }, invDiag });
+      let src1: any = null;
+      if (inv) {
+        try {
+          const pgMod = await import('pg');
+          const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          await src.connect();
+          try {
+            const rr: any = await src.query("SELECT id, fiscal_invoice_id FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=$1 LIMIT 20", [inv]);
+            const recIds1 = rr.rows.map((x: any) => x.id);
+            const fids1 = rr.rows.map((x: any) => x.fiscal_invoice_id).filter(Boolean);
+            const bRecv = recIds1.length ? (await src.query('SELECT id, receivable_id, fiscal_invoice_id, nosso_numero, status FROM boleto_charges WHERE receivable_id = ANY($1::text[])', [recIds1])).rows : [];
+            const bFisc = fids1.length ? (await src.query('SELECT id, receivable_id, fiscal_invoice_id, status FROM boleto_charges WHERE fiscal_invoice_id = ANY($1::text[])', [fids1])).rows : [];
+            // para cada boleto do 1.0 achado, ver se existe no 2.0 e qual receivable_id tem la
+            const all1 = [...bRecv, ...bFisc];
+            const traced: any[] = [];
+            for (const b of all1) {
+              const t2: any = await db.execute(sql`SELECT receivable_id, fiscal_invoice_id FROM boleto_charges WHERE id = ${b.id} LIMIT 1`);
+              const row2 = (t2.rows || t2)[0];
+              let recExists2 = false;
+              if (row2?.receivable_id) { const e: any = await db.execute(sql`SELECT 1 FROM receivables WHERE id = ${row2.receivable_id} LIMIT 1`); recExists2 = !!(e.rows || e)[0]; }
+              traced.push({ boletoIdP: String(b.id).slice(0,8), in2_0: !!row2, recId2P: String(row2?.receivable_id||'').slice(0,8), recId2ExistsInReceivables: recExists2, recId1matchesUIrec: recIds.includes(row2?.receivable_id), fid1P: String(b.fiscal_invoice_id||'').slice(0,8), status1: b.status });
+            }
+            src1 = { recCount1_0: rr.rows.length, recIds1P: recIds1.map((x:any)=>String(x).slice(0,8)), fids1P: fids1.map((x:any)=>String(x).slice(0,8)), boletosByRec1: bRecv.length, boletosByFiscal1: bFisc.length, traced };
+          } finally { await src.end().catch(()=>{}); }
+        } catch (e: any) { src1 = { error: (e?.message||String(e)).slice(0,160) }; }
+      }
+      res.json({ boletoCols: cols, pixCols: pcols, boletoLink: { linked: linked.rows[0].n, orphanRecId: orphan.rows[0].n, nullRecId: nullrec.rows[0].n }, invDiag, src1 });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
