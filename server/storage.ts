@@ -8403,14 +8403,9 @@ export class DatabaseStorage implements IStorage {
         const sm = new Map(pipes.map((p) => [p.id, p.sellerName]));
         for (const r of rows) { r.sellerName = sm.get(r.billingPipelineId) || null; }
       }
-      // Fallback (paridade c/ 1.0): vendedor a partir do cadastro do cliente p/ recebiveis sem pipeline
-      const needSeller = rows.filter((r) => !r.sellerName && r.customerId);
+      // Fallback (paridade c/ 1.0): vendedor a partir do cadastro do cliente (por id OU por documento) p/ recebiveis sem pipeline
+      const needSeller = rows.filter((r) => !r.sellerName);
       if (needSeller.length > 0) {
-        const custIds = Array.from(new Set(needSeller.map((r) => r.customerId).filter(Boolean))) as string[];
-        const custs = custIds.length > 0
-          ? await db.select({ id: customers.id, sellerId: customers.sellerId }).from(customers).where(inArray(customers.id, custIds))
-          : [];
-        const custSeller = new Map(custs.map((c) => [c.id, c.sellerId]));
         const allUsers = await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email, omieVendorCode: users.omieVendorCode }).from(users);
         const nameOf = (u: any) => (`${u.firstName || ''} ${u.lastName || ''}`.trim()) || u.email || null;
         const byId = new Map<string, any>(); const byCode = new Map<string, any>();
@@ -8421,7 +8416,20 @@ export class DatabaseStorage implements IStorage {
           const u = byId.get(str) || byCode.get(str) || byCode.get(str.replace('omie-vendor-', ''));
           return u ? nameOf(u) : null;
         };
-        for (const r of needSeller) { const nm = resolveSeller(custSeller.get(r.customerId)); if (nm) r.sellerName = nm; }
+        const digitsOnly = (x: any) => String(x || '').replace(/\D/g, '');
+        const allCusts = await db.select({ id: customers.id, cnpj: customers.cnpj, cpf: customers.cpf, sellerId: customers.sellerId }).from(customers);
+        const sellerById = new Map<string, any>(); const sellerByDoc = new Map<string, any>();
+        for (const c of allCusts) {
+          if (c.id) sellerById.set(c.id, c.sellerId);
+          const d = digitsOnly(c.cnpj) || digitsOnly(c.cpf);
+          if (d && d.length >= 11 && c.sellerId && !sellerByDoc.has(d)) sellerByDoc.set(d, c.sellerId);
+        }
+        for (const r of needSeller) {
+          let sid: any = r.customerId ? sellerById.get(r.customerId) : null;
+          if (!sid && (r as any).customerDocument) sid = sellerByDoc.get(digitsOnly((r as any).customerDocument));
+          const nm = resolveSeller(sid);
+          if (nm) r.sellerName = nm;
+        }
       }
     } catch (e) { /* enrich sellerName: best-effort */ }
     return rows;
