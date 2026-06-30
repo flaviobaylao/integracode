@@ -135,45 +135,6 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
-  // [TEMP DIAG 30/jun] receivable-detail 1.0 vs 2.0 — REMOVER apos diagnostico
-  app.get("/api/admin/diag/receivable-detail", async (req, res) => {
-    try {
-      const title = String((req.query as any).title || '').trim();
-      const norm = title.replace(/\D/g, '');
-      const pgMod = await import('pg');
-      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-      await src.connect();
-      const out: any = {};
-      try {
-        const cols2R: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='receivables'`);
-        const c2 = (cols2R.rows || cols2R).map((r: any) => r.column_name);
-        const c1 = (await src.query("SELECT column_name FROM information_schema.columns WHERE table_name='receivables'")).rows.map((r: any) => r.column_name);
-        out.colsOnlyIn1_0 = c1.filter((c: string) => !c2.includes(c));
-        out.colsOnlyIn2_0 = c2.filter((c: string) => !c1.includes(c));
-        const want = ['id','title_number','customer_name','customer_document','category','seller_name','payment_method','amount','amount_paid','status','due_date','billing_pipeline_id','fiscal_invoice_id','omie_instance_id'];
-        const sel2 = want.filter((c) => c2.includes(c));
-        const sel1 = want.filter((c) => c1.includes(c));
-        const r2: any = await db.execute(sql.raw("SELECT " + sel2.map((c) => '"' + c + '"').join(',') + " FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')='" + norm + "' LIMIT 5"));
-        const rows2 = r2.rows || r2;
-        const rows1 = (await src.query("SELECT " + sel1.map((c) => '"' + c + '"').join(',') + " FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=$1 LIMIT 5", [norm])).rows;
-        const mask = (row: any) => { const o: any = { ...row }; for (const k of Object.keys(o)) { if (o[k] && /document/.test(k)) o[k] = '***' + String(o[k]).slice(-2); if (o[k] && (k === 'id' || k === 'billing_pipeline_id' || k === 'fiscal_invoice_id')) o[k] = String(o[k]).slice(0, 8); } return o; };
-        out.rec2_0 = rows2.map(mask);
-        out.rec1_0 = rows1.map(mask);
-        const ids2 = rows2.map((r: any) => r.id);
-        const ids1 = rows1.map((r: any) => r.id);
-        const b2: any[] = [];
-        for (const id of ids2) { const q: any = await db.execute(sql`SELECT id, status FROM boleto_charges WHERE receivable_id = ${id}`); for (const b of (q.rows || q)) b2.push({ idP: String(b.id).slice(0, 8), status: b.status }); }
-        out.boleto2_0 = b2;
-        const b1 = ids1.length ? (await src.query('SELECT id, status, receivable_id FROM boleto_charges WHERE receivable_id = ANY($1::text[])', [ids1])).rows : [];
-        out.boleto1_0 = b1.map((b: any) => ({ idP: String(b.id).slice(0, 8), status: b.status, recIdP: String(b.receivable_id).slice(0, 8) }));
-        out.idsMatch = (ids1.length && ids2.length) ? ids1.every((x: string) => ids2.includes(x)) : null;
-        out.ids1P = ids1.map((x: string) => String(x).slice(0, 8));
-        out.ids2P = ids2.map((x: string) => String(x).slice(0, 8));
-      } finally { await src.end().catch(() => {}); }
-      res.json(out);
-    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
-  });
-
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
