@@ -135,6 +135,35 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // [TEMP DIAG 30/jun] vinculo de cobrancas 1.0->2.0 — REMOVER apos diagnostico
+  app.get("/api/admin/diag/cobranca-link", async (req, res) => {
+    try {
+      const inv = String((req.query as any).invoice || '').replace(/\D/g, '');
+      const colsR: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='boleto_charges'`);
+      const cols = (colsR.rows || colsR).map((r: any) => r.column_name);
+      const has = (c: string) => cols.includes(c);
+      const linked: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges b WHERE b.receivable_id IS NOT NULL AND EXISTS (SELECT 1 FROM receivables r WHERE r.id=b.receivable_id)`);
+      const orphan: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges b WHERE b.receivable_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receivables r WHERE r.id=b.receivable_id)`);
+      const nullrec: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges WHERE receivable_id IS NULL`);
+      const pixCols: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='pix_charges'`);
+      const pcols = (pixCols.rows || pixCols).map((r: any) => r.column_name);
+      let invDiag: any = null;
+      if (inv) {
+        const recs: any = await db.execute(sql`SELECT id, fiscal_invoice_id FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=${inv} LIMIT 20`);
+        const recRows = recs.rows || recs;
+        const recIds = recRows.map((r: any) => r.id);
+        const fids = recRows.map((r: any) => r.fiscal_invoice_id).filter(Boolean);
+        let byFiscal: any[] = [];
+        if (has('fiscal_invoice_id') && fids.length) {
+          const q: any = await db.execute(sql`SELECT id, receivable_id, fiscal_invoice_id, nosso_numero, status FROM boleto_charges WHERE fiscal_invoice_id = ANY(${fids}) LIMIT 20`);
+          byFiscal = (q.rows || q).map((b: any) => ({ idP: String(b.id).slice(0, 8), recMatch: recIds.includes(b.receivable_id), recIdP: String(b.receivable_id || '').slice(0, 8), status: b.status }));
+        }
+        invDiag = { recCount: recRows.length, recIdsP: recIds.map((x: any) => String(x).slice(0, 8)), fiscalIdsP: fids.map((x: any) => String(x).slice(0, 8)), boletosByFiscal: byFiscal };
+      }
+      res.json({ boletoCols: cols, pixCols: pcols, boletoLink: { linked: linked.rows[0].n, orphanRecId: orphan.rows[0].n, nullRecId: nullrec.rows[0].n }, invDiag });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
@@ -1028,8 +1057,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // Campos operacionais; junta por id; trata null/'' como iguais; normaliza weekdays (JSON ordenado).
   // Apply: 2.0 := 1.0 nos applyFields onde divergem, NUNCA apagando dado do 2.0 com vazio do 1.0.
   app.post('/api/admin/audit/customer-fields', async (req: Request, res: Response) => {
-    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj'];
-    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj']);
+    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone'];
+    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone']);
     const applyFields: string[] = Array.isArray(req.body?.applyFields)
       ? req.body.applyFields.filter((f: string) => FIELDS.includes(f) && SAFE.has(f)) : [];
     const ENUM_CAST: Record<string, string> = { visit_periodicity: '::visit_periodicity', virtual_service: '::boolean' };
@@ -1070,8 +1099,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (applyFields.length > 0) {
         for (const f of applyFields) {
           // só aplica onde 1.0 tem valor (direction != erase_block) → nunca apaga dado do 2.0
-          const DOC_FILL_ONLY = new Set(['cpf', 'cnpj']);
-          const rows = diffs.filter((d) => d.field === f && (DOC_FILL_ONLY.has(f) ? d.direction === 'fill' : d.direction !== 'erase_block'));
+          const rows = diffs.filter((d) => d.field === f && d.direction !== 'erase_block');
           if (rows.length === 0) { applied[f] = 0; continue; }
           const cast = ENUM_CAST[f] || '';
           const params: any[] = [];
