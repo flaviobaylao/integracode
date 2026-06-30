@@ -135,67 +135,6 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
-  // [TEMP DIAG 30/jun] vinculo de cobrancas 1.0->2.0 — REMOVER apos diagnostico
-  app.get("/api/admin/diag/cobranca-link", async (req, res) => {
-    try {
-      const inv = String((req.query as any).invoice || '').replace(/\D/g, '');
-      const colsR: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='boleto_charges'`);
-      const cols = (colsR.rows || colsR).map((r: any) => r.column_name);
-      const has = (c: string) => cols.includes(c);
-      const linked: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges b WHERE b.receivable_id IS NOT NULL AND EXISTS (SELECT 1 FROM receivables r WHERE r.id=b.receivable_id)`);
-      const orphan: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges b WHERE b.receivable_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM receivables r WHERE r.id=b.receivable_id)`);
-      const nullrec: any = await db.execute(sql`SELECT count(*)::int n FROM boleto_charges WHERE receivable_id IS NULL`);
-      const pixCols: any = await db.execute(sql`SELECT column_name FROM information_schema.columns WHERE table_name='pix_charges'`);
-      const pcols = (pixCols.rows || pixCols).map((r: any) => r.column_name);
-      let invDiag: any = null;
-      if (inv) {
-        const recs: any = await db.execute(sql`SELECT id, fiscal_invoice_id FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=${inv} LIMIT 20`);
-        const recRows = recs.rows || recs;
-        const recIds = recRows.map((r: any) => r.id);
-        const fids = recRows.map((r: any) => r.fiscal_invoice_id).filter(Boolean);
-        let byFiscal: any[] = [];
-        if (has('fiscal_invoice_id')) {
-          for (const fid of fids) {
-            const q: any = await db.execute(sql`SELECT id, receivable_id, status FROM boleto_charges WHERE fiscal_invoice_id = ${fid} LIMIT 20`);
-            for (const b of (q.rows || q)) {
-              let recTitle = null;
-              if (b.receivable_id) { const rr: any = await db.execute(sql`SELECT title_number FROM receivables WHERE id = ${b.receivable_id} LIMIT 1`); recTitle = (rr.rows || rr)[0]?.title_number ?? '(inexistente)'; }
-              byFiscal.push({ idP: String(b.id).slice(0, 8), recMatchUI: recIds.includes(b.receivable_id), recIdP: String(b.receivable_id || '').slice(0, 8), recTitle, status: b.status });
-            }
-          }
-        }
-        invDiag = { recCount: recRows.length, recIdsP: recIds.map((x: any) => String(x).slice(0, 8)), fiscalIdsP: fids.map((x: any) => String(x).slice(0, 8)), boletosByFiscal: byFiscal };
-      }
-      let src1: any = null;
-      if (inv) {
-        try {
-          const pgMod = await import('pg');
-          const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-          await src.connect();
-          try {
-            const rr: any = await src.query("SELECT id, fiscal_invoice_id FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=$1 LIMIT 20", [inv]);
-            const recIds1 = rr.rows.map((x: any) => x.id);
-            const fids1 = rr.rows.map((x: any) => x.fiscal_invoice_id).filter(Boolean);
-            const bRecv = recIds1.length ? (await src.query('SELECT id, receivable_id, fiscal_invoice_id, nosso_numero, status FROM boleto_charges WHERE receivable_id = ANY($1::text[])', [recIds1])).rows : [];
-            const bFisc = fids1.length ? (await src.query('SELECT id, receivable_id, fiscal_invoice_id, status FROM boleto_charges WHERE fiscal_invoice_id = ANY($1::text[])', [fids1])).rows : [];
-            // para cada boleto do 1.0 achado, ver se existe no 2.0 e qual receivable_id tem la
-            const all1 = [...bRecv, ...bFisc];
-            const traced: any[] = [];
-            for (const b of all1) {
-              const t2: any = await db.execute(sql`SELECT receivable_id, fiscal_invoice_id FROM boleto_charges WHERE id = ${b.id} LIMIT 1`);
-              const row2 = (t2.rows || t2)[0];
-              let recExists2 = false;
-              if (row2?.receivable_id) { const e: any = await db.execute(sql`SELECT 1 FROM receivables WHERE id = ${row2.receivable_id} LIMIT 1`); recExists2 = !!(e.rows || e)[0]; }
-              traced.push({ boletoIdP: String(b.id).slice(0,8), in2_0: !!row2, recId2P: String(row2?.receivable_id||'').slice(0,8), recId2ExistsInReceivables: recExists2, fid1P: String(b.fiscal_invoice_id||'').slice(0,8), status1: b.status });
-            }
-            src1 = { recCount1_0: rr.rows.length, recIds1P: recIds1.map((x:any)=>String(x).slice(0,8)), fids1P: fids1.map((x:any)=>String(x).slice(0,8)), boletosByRec1: bRecv.length, boletosByFiscal1: bFisc.length, traced };
-          } finally { await src.end().catch(()=>{}); }
-        } catch (e: any) { src1 = { error: (e?.message||String(e)).slice(0,160) }; }
-      }
-      res.json({ boletoCols: cols, pixCols: pcols, boletoLink: { linked: linked.rows[0].n, orphanRecId: orphan.rows[0].n, nullRecId: nullrec.rows[0].n }, invDiag, src1 });
-    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
-  });
-
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
@@ -1089,8 +1028,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // Campos operacionais; junta por id; trata null/'' como iguais; normaliza weekdays (JSON ordenado).
   // Apply: 2.0 := 1.0 nos applyFields onde divergem, NUNCA apagando dado do 2.0 com vazio do 1.0.
   app.post('/api/admin/audit/customer-fields', async (req: Request, res: Response) => {
-    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone'];
-    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone']);
+    const FIELDS = ['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj'];
+    const SAFE = new Set(['weekdays', 'visit_periodicity', 'seller_id', 'virtual_service', 'route', 'contact', 'phone', 'cpf', 'cnpj']);
     const applyFields: string[] = Array.isArray(req.body?.applyFields)
       ? req.body.applyFields.filter((f: string) => FIELDS.includes(f) && SAFE.has(f)) : [];
     const ENUM_CAST: Record<string, string> = { visit_periodicity: '::visit_periodicity', virtual_service: '::boolean' };
@@ -1131,7 +1070,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (applyFields.length > 0) {
         for (const f of applyFields) {
           // só aplica onde 1.0 tem valor (direction != erase_block) → nunca apaga dado do 2.0
-          const rows = diffs.filter((d) => d.field === f && d.direction !== 'erase_block');
+          const DOC_FILL_ONLY = new Set(['cpf', 'cnpj']);
+          const rows = diffs.filter((d) => d.field === f && (DOC_FILL_ONLY.has(f) ? d.direction === 'fill' : d.direction !== 'erase_block'));
           if (rows.length === 0) { applied[f] = 0; continue; }
           const cast = ENUM_CAST[f] || '';
           const params: any[] = [];
@@ -1367,7 +1307,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
   // -- Backfill genérico: sincroniza TODAS as tabelas comuns neondb->Railway (full upsert por id) --
-  app.post('/api/admin/sync/backfill-all', async (_req: Request, res: Response) => {
+  app.post('/api/admin/sync/backfill-all', async (req: Request, res: Response) => {
     res.json({ started: true, note: 'backfill rodando em background; ver /api/admin/sync/backfill-status' });
     (async () => {
       const pgMod = await import('pg');
@@ -1380,7 +1320,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
-        const tables = sTabs.filter((t: string) => tTabs.has(t) && !block.has(t));
+        const only: string[] = Array.isArray((req.body as any)?.tables) ? (req.body as any).tables : [];
+        const tables = sTabs.filter((t: string) => tTabs.has(t) && !block.has(t) && (only.length === 0 || only.includes(t)));
         for (const t of tables) {
           try {
             const tcols = (await tgt.query("SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", [t])).rows as any[];
