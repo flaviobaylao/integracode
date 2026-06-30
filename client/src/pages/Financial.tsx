@@ -198,6 +198,7 @@ function ReceivablesTab() {
 
   return (
     <div className="space-y-4">
+      <ReconcileButton table="receivables" />
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <Label className="text-xs">Instância</Label>
@@ -591,6 +592,7 @@ function PayablesTab() {
 
   return (
     <div className="space-y-4">
+      <ReconcileButton table="payables" />
       <div className="flex flex-wrap gap-3 items-end">
         <div><Label className="text-xs">Instância</Label><InstanceFilter value={instanceId} onChange={setInstanceId} /></div>
         <div>
@@ -2494,8 +2496,8 @@ export default function Financial() {
           {isFullAccess && <TabsTrigger value="sped" className="gap-1"><Database className="h-4 w-4" />SPED Fiscal</TabsTrigger>}
         </TabsList>
 
-        {isFullAccess && <TabsContent value="receivables"><ReconcileButton table="receivables" /><ReceivablesTab /></TabsContent>}
-        {isFullAccess && <TabsContent value="payables"><ReconcileButton table="payables" /><PayablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="receivables"><ReceivablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="payables"><PayablesTab /></TabsContent>}
         <TabsContent value="overdue"><OverdueDebtsManagement /></TabsContent>
         <TabsContent value="blocked"><BlockedOrdersManagement user={user as any} /></TabsContent>
         {isFullAccess && <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>}
