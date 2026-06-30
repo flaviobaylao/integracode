@@ -135,6 +135,36 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Sincroniza seller_id 2.0:=1.0 por DOCUMENTO (cobre clientes com id divergente que o audit-por-id nao pega).
+  app.post('/api/admin/sync/seller-by-doc', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const s1 = (await src.query("SELECT cnpj, cpf, seller_id FROM customers WHERE seller_id IS NOT NULL AND seller_id <> ''")).rows;
+      const docToSeller = new Map<string, string>();
+      for (const r of s1 as any[]) { const d = dg(r.cnpj) || dg(r.cpf); if (d && d.length >= 11 && !docToSeller.has(d)) docToSeller.set(d, r.seller_id); }
+      const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
+      const rows2 = (t2.rows || t2) as any[];
+      const toFix: Array<{ id: string; val: string }> = [];
+      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
+      const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
+      const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
+      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      if (apply && toFix.length) {
+        let upd = 0;
+        for (const d of toFix) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${d.val}, updated_at = now() WHERE id = ${d.id}`); upd += (u.rowCount || 0); } catch (e) {} }
+        result.updated = upd;
+        const radAfter: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
+        result.radiltonDepois = (radAfter.rows || radAfter)[0].n;
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
   app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
