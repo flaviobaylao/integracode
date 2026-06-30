@@ -138,6 +138,10 @@ run();
   // [TEMP TESTE 30/jun/2026] validar auto-cobranca pix/a_vista — REMOVER apos validar
   app.post("/api/admin/test/cobranca", async (req, res) => {
     try {
+      if (req.body?.cleanupMarker) {
+        const u: any = await db.execute(sql`UPDATE receivables SET status='cancelada', amount_paid='0.00', updated_at=now() WHERE created_by='teste-cobranca' AND status <> 'cancelada'`);
+        return res.json({ ok: true, cleanupMarker: true, cancelled: u.rowCount ?? null });
+      }
       const cleanupIds: string[] = Array.isArray(req.body?.cleanupIds) ? req.body.cleanupIds : [];
       if (cleanupIds.length) {
         let cancelled = 0;
