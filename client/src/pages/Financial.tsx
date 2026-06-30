@@ -1,3 +1,4 @@
+import ReconcileButton from "@/components/ReconcileButton";
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearch } from 'wouter';
@@ -2493,8 +2494,8 @@ export default function Financial() {
           {isFullAccess && <TabsTrigger value="sped" className="gap-1"><Database className="h-4 w-4" />SPED Fiscal</TabsTrigger>}
         </TabsList>
 
-        {isFullAccess && <TabsContent value="receivables"><ReceivablesTab /></TabsContent>}
-        {isFullAccess && <TabsContent value="payables"><PayablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="receivables"><ReconcileButton table="receivables" /><ReceivablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="payables"><ReconcileButton table="payables" /><PayablesTab /></TabsContent>}
         <TabsContent value="overdue"><OverdueDebtsManagement /></TabsContent>
         <TabsContent value="blocked"><BlockedOrdersManagement user={user as any} /></TabsContent>
         {isFullAccess && <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>}
