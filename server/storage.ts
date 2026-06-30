@@ -8384,7 +8384,13 @@ export class DatabaseStorage implements IStorage {
   async getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]> {
     const conditions = [];
     if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
-    if (filters?.status) conditions.push(eq(receivables.status, filters.status as any));
+    if (filters?.status === 'vencida') {
+      conditions.push(or(eq(receivables.status, 'vencida' as any), and(eq(receivables.status, 'a_vencer' as any), lt(receivables.dueDate, new Date())))!);
+    } else if (filters?.status === 'a_vencer') {
+      conditions.push(and(eq(receivables.status, 'a_vencer' as any), gte(receivables.dueDate, new Date()))!);
+    } else if (filters?.status) {
+      conditions.push(eq(receivables.status, filters.status as any));
+    }
     if (filters?.instanceId) conditions.push(eq(receivables.omieInstanceId, filters.instanceId));
     if (filters?.startDate) conditions.push(gte(receivables.issueDate, filters.startDate));
     if (filters?.endDate) conditions.push(lte(receivables.issueDate, filters.endDate));
@@ -8396,6 +8402,13 @@ export class DatabaseStorage implements IStorage {
     const rows = conditions.length > 0
       ? await db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt))
       : await db.select().from(receivables).orderBy(desc(receivables.createdAt));
+    // Recomputa status exibido por DATA (paridade c/ 1.0): a_vencer com vencimento passado => vencida
+    const _hojeRec = new Date();
+    for (const r of rows) {
+      if ((r.status as any) === 'a_vencer' && r.dueDate && new Date(r.dueDate) < _hojeRec) {
+        (r as any).status = 'vencida';
+      }
+    }
     try {
       const pipeIds = Array.from(new Set(rows.map((r) => r.billingPipelineId).filter(Boolean)));
       if (pipeIds.length > 0) {
