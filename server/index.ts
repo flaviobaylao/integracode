@@ -135,29 +135,6 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
-  // [TEMP DIAG 30/jun] comparar status recebivel 1.0 vs 2.0 — REMOVER
-  app.get("/api/admin/diag/status-cmp", async (req, res) => {
-    try {
-      const titles = String((req.query as any).titles || '').split(',').map((t) => t.trim().replace(/\D/g, '')).filter(Boolean);
-      const pgMod = await import('pg');
-      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-      await src.connect();
-      const out: any[] = [];
-      try {
-        for (const t of titles) {
-          const r1 = (await src.query("SELECT title_number, status, due_date FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')=$1 LIMIT 3", [t])).rows;
-          const r2q: any = await db.execute(sql.raw("SELECT title_number, status, due_date FROM receivables WHERE regexp_replace(coalesce(title_number,''),'[^0-9]','','g')='" + t + "' LIMIT 3"));
-          const r2 = r2q.rows || r2q;
-          out.push({ t, in1_0: r1.map((x: any) => ({ st: x.status, due: x.due_date })), in2_0: r2.map((x: any) => ({ st: x.status, due: x.due_date })) });
-        }
-        // contagem por status no 1.0 (overdue em aberto)
-        const cnt1: any = (await src.query("SELECT status, count(*)::int n FROM receivables GROUP BY status ORDER BY n DESC")).rows;
-        out.push({ statusCount1_0: cnt1 });
-      } finally { await src.end().catch(() => {}); }
-      res.json({ cmp: out });
-    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
-  });
-
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
