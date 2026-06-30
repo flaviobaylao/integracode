@@ -135,6 +135,52 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
+  app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const colQ = "SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='active_customers'";
+      const [sc, tc] = await Promise.all([src.query(colQ), tgt.query(colQ)]);
+      const tgtCols = new Map((tc.rows as any[]).map((r) => [r.column_name, r.udt_name]));
+      const cols = (sc.rows as any[]).map((r) => r.column_name).filter((c) => tgtCols.has(c));
+      const jsonCols = new Set((tc.rows as any[]).filter((r) => r.udt_name === 'json' || r.udt_name === 'jsonb').map((r) => r.column_name));
+      const srcRows = (await src.query('SELECT ' + cols.map((c) => '"' + c + '"').join(',') + ' FROM active_customers')).rows;
+      const srcIds = new Set(srcRows.map((r: any) => String(r.id)));
+      const tgtIdsRes = await tgt.query('SELECT id::text AS id, is_active FROM active_customers');
+      const tgtActiveExtras = (tgtIdsRes.rows as any[]).filter((r) => !srcIds.has(String(r.id)));
+      const extrasAtivos = tgtActiveExtras.filter((r) => r.is_active === true || r.is_active === 't').length;
+      const result: any = { srcCount: srcRows.length, tgtCount: tgtIdsRes.rows.length, srcOnlyToUpsert: srcRows.length, tgtExtras: tgtActiveExtras.length, tgtExtrasAtivos: extrasAtivos, apply, upserted: 0, deactivated: 0, errors: [] };
+      if (apply) {
+        const colsSql = cols.map((c) => '"' + c + '"').join(',');
+        const setSql = cols.filter((c) => c !== 'id').map((c) => '"' + c + '"=EXCLUDED."' + c + '"').join(',');
+        const enc = (row: any) => cols.map((c) => { const v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; });
+        for (let i = 0; i < srcRows.length; i += 200) {
+          const batch = srcRows.slice(i, i + 200);
+          const ph = batch.map((_: any, ri: number) => '(' + cols.map((_: any, ci: number) => '$' + (ri * cols.length + ci + 1)).join(',') + ')').join(',');
+          const flat = batch.flatMap((row: any) => enc(row));
+          try { await tgt.query('INSERT INTO active_customers (' + colsSql + ') VALUES ' + ph + ' ON CONFLICT ("id") DO UPDATE SET ' + setSql, flat); result.upserted += batch.length; }
+          catch (be: any) { for (const row of batch) { try { const rph = cols.map((_: any, k: number) => '$' + (k + 1)).join(','); await tgt.query('INSERT INTO active_customers (' + colsSql + ') VALUES (' + rph + ') ON CONFLICT ("id") DO UPDATE SET ' + setSql, enc(row)); result.upserted++; } catch (re: any) { result.errors.push(String(re.message).slice(0, 80)); } } }
+        }
+        // desativa extras (reversivel)
+        const extraIds = tgtActiveExtras.map((r) => String(r.id));
+        for (let i = 0; i < extraIds.length; i += 500) {
+          const chunk = extraIds.slice(i, i + 500);
+          const ph = chunk.map((_: any, k: number) => '$' + (k + 1)).join(',');
+          try { const u: any = await tgt.query('UPDATE active_customers SET is_active=false WHERE id::text IN (' + ph + ') AND is_active=true', chunk); result.deactivated += (u.rowCount || 0); }
+          catch (ue: any) { result.errors.push('deact: ' + String(ue.message).slice(0, 80)); }
+        }
+        const after = await tgt.query('SELECT count(*)::int n, count(*) FILTER (WHERE is_active) AS ativos FROM active_customers');
+        result.tgtAfter = after.rows[0];
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
+    finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
+  });
+
     app.post("/api/admin/financial/reconcile", async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
