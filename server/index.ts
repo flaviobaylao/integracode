@@ -135,6 +135,24 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Read-only: clientes ATIVOS (nao-lead) SEM cpf/cnpj, todas as instancias, com vendedor resolvido.
+  app.get('/api/admin/customers/no-document', async (_req: Request, res: Response) => {
+    try {
+      const usR: any = await db.execute(sql.raw("SELECT id, first_name, last_name, email, omie_vendor_code FROM users"));
+      const us = (usR.rows || usR) as any[];
+      const byId = new Map<string, any>(); const byCode = new Map<string, any>();
+      const nm = (u: any) => ((`${u.first_name || ''} ${u.last_name || ''}`.trim()) || u.email || u.id);
+      for (const u of us) { byId.set(u.id, u); if (u.omie_vendor_code) byCode.set(String(u.omie_vendor_code), u); }
+      const sellerName = (sid: any) => { if (!sid) return '(sem vendedor)'; const t = String(sid); const u = byId.get(t) || byCode.get(t) || byCode.get(t.replace('omie-vendor-', '')); return u ? nm(u) : ('(cod ' + t + ')'); };
+      const cR: any = await db.execute(sql.raw("SELECT name, fantasy_name, city, neighborhood, seller_id, omie_instance_id FROM customers WHERE coalesce(is_active,true)=true AND coalesce(is_lead,false)=false AND length(regexp_replace(coalesce(cnpj,''),'[^0-9]','','g')) < 11 AND length(regexp_replace(coalesce(cpf,''),'[^0-9]','','g')) < 11"));
+      const rows = (cR.rows || cR) as any[];
+      const grp: Record<string, any[]> = {};
+      for (const c of rows) { const v = sellerName(c.seller_id); (grp[v] = grp[v] || []).push({ nome: c.name || c.fantasy_name || '(sem nome)', cidade: c.city || '', bairro: c.neighborhood || '', instancia: c.omie_instance_id || '' }); }
+      const porVendedor = Object.entries(grp).map(([v, l]) => ({ vendedor: v, n: l.length })).sort((a, b) => b.n - a.n);
+      res.json({ total: rows.length, porVendedor, grupos: grp });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
+  });
+
   // Dedup de clientes por DOCUMENTO no 2.0: mantem 1 registro ativo por cpf/cnpj; re-aponta FKs dos duplicados p/ o primario e desativa os duplicados (is_active=false, reversivel, NAO apaga).
   app.post('/api/admin/customers/dedup', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
