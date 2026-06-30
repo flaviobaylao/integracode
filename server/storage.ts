@@ -8403,6 +8403,26 @@ export class DatabaseStorage implements IStorage {
         const sm = new Map(pipes.map((p) => [p.id, p.sellerName]));
         for (const r of rows) { r.sellerName = sm.get(r.billingPipelineId) || null; }
       }
+      // Fallback (paridade c/ 1.0): vendedor a partir do cadastro do cliente p/ recebiveis sem pipeline
+      const needSeller = rows.filter((r) => !r.sellerName && r.customerId);
+      if (needSeller.length > 0) {
+        const custIds = Array.from(new Set(needSeller.map((r) => r.customerId).filter(Boolean))) as string[];
+        const custs = custIds.length > 0
+          ? await db.select({ id: customers.id, sellerId: customers.sellerId }).from(customers).where(inArray(customers.id, custIds))
+          : [];
+        const custSeller = new Map(custs.map((c) => [c.id, c.sellerId]));
+        const allUsers = await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email, omieVendorCode: users.omieVendorCode }).from(users);
+        const nameOf = (u: any) => (`${u.firstName || ''} ${u.lastName || ''}`.trim()) || u.email || null;
+        const byId = new Map<string, any>(); const byCode = new Map<string, any>();
+        for (const u of allUsers) { byId.set(u.id, u); if (u.omieVendorCode) byCode.set(String(u.omieVendorCode), u); }
+        const resolveSeller = (sid: any): string | null => {
+          if (!sid) return null;
+          const str = String(sid);
+          const u = byId.get(str) || byCode.get(str) || byCode.get(str.replace('omie-vendor-', ''));
+          return u ? nameOf(u) : null;
+        };
+        for (const r of needSeller) { const nm = resolveSeller(custSeller.get(r.customerId)); if (nm) r.sellerName = nm; }
+      }
     } catch (e) { /* enrich sellerName: best-effort */ }
     return rows;
   }
