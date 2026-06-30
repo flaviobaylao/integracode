@@ -135,33 +135,6 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
-  // [TEMP DIAG 30/jun] mapa vendedor 1.0 (Radilton) — REMOVER
-  app.get("/api/admin/diag/seller-map", async (req, res) => {
-    try {
-      const term = String((req.query as any).q || 'radilton').toLowerCase();
-      const pgMod = await import('pg');
-      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-      await src.connect();
-      const out: any = {};
-      try {
-        const u1 = (await src.query("SELECT id, first_name, last_name, omie_vendor_code FROM users WHERE lower(coalesce(first_name,'')||' '||coalesce(last_name,'')) LIKE $1", ['%' + term + '%'])).rows;
-        out.users1_0 = u1.map((u: any) => ({ idP: String(u.id).slice(0, 8), nome: ((u.first_name || '') + ' ' + (u.last_name || '')).trim(), omieVendorCode: u.omie_vendor_code }));
-        if (u1[0]) {
-          const uid = u1[0].id; const code = u1[0].omie_vendor_code;
-          const cnt = (await src.query("SELECT count(*)::int n FROM customers WHERE is_active = true AND coalesce(is_lead,false)=false AND (seller_id = $1 OR seller_id = $2 OR seller_id = $3)", [uid, 'omie-vendor-' + code, code])).rows[0].n;
-          out.radClientes1_0 = cnt;
-          // distribuicao do seller_id dos clientes do radilton no 1.0
-          const dist = (await src.query("SELECT seller_id, count(*)::int n FROM customers WHERE is_active=true AND coalesce(is_lead,false)=false AND (seller_id=$1 OR seller_id=$2 OR seller_id=$3) GROUP BY seller_id", [uid, 'omie-vendor-' + code, code])).rows;
-          out.radSellerIdValues = dist.map((d: any) => ({ sellerIdPrefix: String(d.seller_id).slice(0, 16), n: d.n }));
-        }
-        // como o 2.0 ve o mesmo user
-        const u2: any = await db.execute(sql.raw("SELECT id, omie_vendor_code FROM users WHERE lower(coalesce(first_name,'')||' '||coalesce(last_name,'')) LIKE '%" + term + "%'"));
-        out.users2_0 = (u2.rows || u2).map((u: any) => ({ idP: String(u.id).slice(0, 8), omieVendorCode: u.omie_vendor_code }));
-      } finally { await src.end().catch(() => {}); }
-      res.json(out);
-    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
-  });
-
   // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
   app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
