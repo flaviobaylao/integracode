@@ -146,6 +146,16 @@ run();
         }
         return res.json({ ok: true, cleanup: true, cancelled });
       }
+      if (req.body?.diagPix) {
+        try {
+          const pixMod: any = await import("./bb-pix-service");
+          const acctId = req.body?.accountId || '4920fb8d-02ee-403f-a8f7-d2d464046bf4';
+          const charge = await pixMod.createImmediateCharge(acctId, { amount: 1, description: 'diag pix 30jun', expirationSeconds: 3600, createdBy: 'diag-pix' });
+          return res.json({ ok: true, diagPix: true, txidPresent: !!charge?.txid, status: charge?.status });
+        } catch (e: any) {
+          return res.json({ ok: false, diagPix: true, error: (e?.message || String(e)).slice(0, 300) });
+        }
+      }
       const paymentMethod = (req.body?.paymentMethod || 'pix');
       const amount = req.body?.amount || 1;
       const item: any = {
