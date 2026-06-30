@@ -43,11 +43,11 @@ const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 // naturalKey (opcional): quando o INSERT por id falha por conflito de chave
 // única natural (mesma entidade com id diferente entre 1.0 e 2.0), faz UPDATE
 // da linha existente no 2.0 casada por essa chave — sem alterar id/FKs.
-const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; naturalKey?: string }> = [
+const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; naturalKey?: string | string[] }> = [
 { table: "omie_instances", pk: "id", hasUpdatedAt: true },
 { table: "users", pk: "id", hasUpdatedAt: true },
 { table: "routes", pk: "id", hasUpdatedAt: true },
-{ table: "customers", pk: "id", hasUpdatedAt: true, naturalKey: "cpf" },
+{ table: "customers", pk: "id", hasUpdatedAt: true, naturalKey: ["cpf", "cnpj"] },
 { table: "billings", pk: "id", hasUpdatedAt: false, naturalKey: "omie_order_id" },
   { table: "receivables", pk: "id", hasUpdatedAt: true },
   { table: "receivable_payments", pk: "id", hasUpdatedAt: true },
@@ -174,7 +174,8 @@ async function syncTable(
   );
   const jsonbCols = new Set<string>(tgtJsonColsRes.rows.map((r: any) => r.column_name as string));
   // naturalKey só é usável se a coluna existir no target
-  const naturalKey = cfg.naturalKey && targetColSet.has(cfg.naturalKey) ? cfg.naturalKey : undefined;
+  const naturalKeyList: string[] = (Array.isArray(cfg.naturalKey) ? cfg.naturalKey : (cfg.naturalKey ? [cfg.naturalKey] : []))
+    .filter((k) => targetColSet.has(k));
 
 
   // Busca com paginação — percorre TODAS as páginas até esgotar os registros
@@ -253,30 +254,32 @@ const valuePlaceholders = batch.map((_, ri) =>
             } catch (rowErr: any) {
               // Merge por chave natural (ex: cpf, omie_order_id): a mesma entidade já
               // existe no 2.0 com id diferente — atualiza a linha existente sem mexer no id.
-              if (naturalKey && row[naturalKey] != null) {
+              // Merge por chave natural: tenta cada chave (ex.: cpf, depois cnpj) com valor nao-vazio.
+              // Casa a MESMA entidade no 2.0 (id diferente) pelo documento e atualiza sem mexer no id/FKs.
+              let merged = false;
+              for (const nk of naturalKeyList) {
+                const nkVal = row[nk];
+                if (nkVal == null || String(nkVal).trim() === '') continue;
                 try {
-                  const upCols = cols!.filter(c => c !== cfg.pk && c !== naturalKey);
+                  const upCols = cols!.filter(c => c !== cfg.pk && c !== nk);
                   const setExpr = upCols.map((c, idx) => `"${c}" = $${idx + 1}`).join(", ");
                   const upVals = upCols.map(c => {
                     const v = row[c];
                     if (v !== null && jsonbCols.has(c) && typeof v === 'object') return JSON.stringify(v);
                     return v;
                   });
-                  upVals.push(row[naturalKey]);
+                  upVals.push(nkVal);
                   const upRes = await target.query(
-                    `UPDATE "${cfg.table}" SET ${setExpr} WHERE "${naturalKey}" = $${upCols.length + 1}`,
+                    `UPDATE "${cfg.table}" SET ${setExpr} WHERE "${nk}" = $${upCols.length + 1}`,
                     upVals
                   );
-                  if (upRes.rowCount && upRes.rowCount > 0) {
-                    upserted++;
-                  } else {
-                    logger.warn({ table: cfg.table, id: row[cfg.pk] }, "Linha pulada (chave natural não encontrada)");
-                  }
+                  if (upRes.rowCount && upRes.rowCount > 0) { upserted++; merged = true; break; }
                 } catch (nkErr: any) {
-                  logger.warn({ table: cfg.table, id: row[cfg.pk], err: nkErr.message }, "Linha pulada (merge por chave natural falhou)");
+                  logger.warn({ table: cfg.table, id: row[cfg.pk], nk, err: nkErr.message }, "Merge por chave natural falhou");
                 }
-              } else {
-                logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "Linha pulada");
+              }
+              if (!merged) {
+                logger.warn({ table: cfg.table, id: row[cfg.pk], err: rowErr.message }, "Linha pulada (sem chave natural casavel)");
               }
             }
           }
