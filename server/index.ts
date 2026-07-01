@@ -284,7 +284,8 @@ run();
       // conta duplicatas por documento NO 1.0 (mesmo cpf/cnpj em >1 linha do 1.0)
       const srcDocCount = new Map<string, number>();
       for (const a of s1) { const dd = (dg(a.cnpj).length>=11)?dg(a.cnpj):(dg(a.cpf).length>=11?dg(a.cpf):''); if (dd) srcDocCount.set(dd, (srcDocCount.get(dd)||0)+1); }
-      let srcDupDocs = 0; for (const [,n] of srcDocCount) if (n>1) srcDupDocs++;
+      let srcDupDocs = 0; const dupDist: Record<string, number> = {}; let maxMult = 0; let docsMult2a4 = 0, docsMult5plus = 0, rowsInMult5plus = 0;
+      for (const [,n] of srcDocCount) { if (n>1) { srcDupDocs++; const key = n>=10 ? '10+' : String(n); dupDist[key]=(dupDist[key]||0)+1; if (n>maxMult) maxMult=n; if (n<=4) docsMult2a4++; else { docsMult5plus++; rowsInMult5plus+=n; } } }
       let realOnDup = 0, realOnUnique = 0;
       const trimWs = (t: string) => t.replace(/\s+/g, ' ').trim();
       const strong = (t: string) => trimWs(t).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -321,7 +322,7 @@ run();
       let totalReal = 0;
       for (const [k,v] of Object.entries(buckets)) { summary[k] = v; totalReal += (v as any).real; }
       const sorted = Object.entries(summary).sort((x:any,y:any)=> (y[1].real - x[1].real) || (y[1].total - x[1].total)).reduce((o:any,[k,v])=>(o[k]=v,o),{});
-      res.json({ casados: matched, srcDupDocs, realOnDup, realOnUnique, totalReal, campos: sorted, realExamples: (req.query.examples==='1' ? realEx : realEx.length) });
+      res.json({ casados: matched, srcDupDocs, docsMult2a4, docsMult5plus, rowsInMult5plus, maxMult, dupDist, realOnDup, realOnUnique, totalReal, campos: sorted, realExamples: (req.query.examples==='1' ? realEx : realEx.length) });
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
