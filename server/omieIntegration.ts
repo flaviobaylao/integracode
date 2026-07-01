@@ -3604,10 +3604,9 @@ export class OmieService {
                     existingCustomer.phone.length >= 10;
                   const finalPhone = hasValidExistingPhone ? existingCustomer.phone : converted.phone;
 
-                  const finalSellerId = resolvedSellerId || existingCustomer.sellerId;
-                  if (resolvedSellerId && resolvedSellerId !== existingCustomer.sellerId) {
-                    console.log(`🔄 [SYNC] Vendedor atualizado para ${converted.name}: ${existingCustomer.sellerId} → ${resolvedSellerId}`);
-                  }
+                  // FIX (01/jul): PRESERVAR o vendedor existente (fonte de verdade = 1.0/seller-by-doc).
+                  // Antes: resolvedSellerId(Omie) sobrescrevia e revertia o vendedor correto. Agora só preenche se vazio.
+                  const finalSellerId = (existingCustomer.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : resolvedSellerId;
 
                   await this.storage.updateCustomer(existingCustomer.id, {
                     name: converted.name,
