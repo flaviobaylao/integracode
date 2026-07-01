@@ -166,6 +166,17 @@ run();
         const docCount = new Map<string, number>();
         for (const c of active) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11) docCount.set(d, (docCount.get(d) || 0) + 1); }
         out.totalDocsDuplicadosNo1_0 = [...docCount.values()].filter((n) => n > 1).length;
+        // Comparar os docs do Radilton com o 2.0
+        const t2: any = await db.execute(sql.raw("SELECT cnpj, cpf, seller_id FROM customers"));
+        const rows2 = (t2.rows || t2) as any[];
+        const doc2seller = new Map<string, string>();
+        for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11 && !doc2seller.has(d)) doc2seller.set(d, String(c.seller_id || '')); }
+        let existe2 = 0, ausente2 = 0, com2Rad = 0, com2Outro = 0;
+        for (const d of radDocs) { if (doc2seller.has(d)) { existe2++; if (doc2seller.get(d) === RAD) com2Rad++; else com2Outro++; } else { ausente2++; } }
+        out.radDocs_existentesNo2_0 = existe2;
+        out.radDocs_AUSENTES_no2_0 = ausente2;
+        out.radDocs_no2_0_comSellerRad = com2Rad;
+        out.radDocs_no2_0_comOutroSeller = com2Outro;
       } finally { await src.end().catch(() => {}); }
       res.json(out);
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
