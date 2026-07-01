@@ -135,6 +135,92 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // CHECAGEM DE PARIDADE do cadastro de clientes 1.0 x 2.0, casado por DOCUMENTO. Reporta diffs por campo.
+  app.get('/api/admin/sync/customers-parity', async (_req: Request, res: Response) => {
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const nz = (v: any) => (v === null || v === undefined) ? '' : String(v).trim();
+      const colQ = "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers'";
+      const sCols = new Set((await src.query(colQ)).rows.map((r: any) => r.column_name));
+      const tCols = new Set((await tgt.query(colQ)).rows.map((r: any) => r.column_name));
+      const EXCLUDE = new Set(['id', 'created_at', 'updated_at']);
+      const cmpCols = [...sCols].filter((c: any) => tCols.has(c) && !EXCLUDE.has(c));
+      const sel = 'SELECT ' + ['cnpj','cpf',...cmpCols.filter((c)=>c!=='cnpj'&&c!=='cpf')].map((c)=>'"'+c+'"::text AS "'+c+'"').join(',') + ' FROM customers';
+      const s1 = (await src.query(sel)).rows as any[];
+      const t2 = (await tgt.query(sel)).rows as any[];
+      const t2doc = new Map<string, any>();
+      for (const c of t2) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11 && !t2doc.has(d)) t2doc.set(d, c); }
+      const perField: Record<string, number> = {};
+      let matched = 0, only1 = 0, semDoc1 = 0;
+      for (const a of s1) {
+        const d = dg(a.cnpj) || dg(a.cpf);
+        if (!(d && d.length >= 11)) { semDoc1++; continue; }
+        const b = t2doc.get(d);
+        if (!b) { only1++; continue; }
+        matched++;
+        for (const c of cmpCols) { if (nz(a[c]) !== nz(b[c])) perField[c] = (perField[c] || 0) + 1; }
+      }
+      const perFieldSorted = Object.entries(perField).sort((x, y) => y[1] - x[1]).reduce((o: any, [k, v]) => (o[k] = v, o), {});
+      res.json({ src1_0: s1.length, tgt2_0: t2.length, casadosPorDoc: matched, so_no_1_0: only1, no_1_0_sem_doc: semDoc1, diffsPorCampo: perFieldSorted });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
+  });
+
+  // IMPORTAÇÃO COMPLETA do cadastro de clientes 1.0 -> 2.0 por DOCUMENTO (chave confiável). Traz TODOS os campos comuns.
+  // Match: por documento (cnpj/cpf normalizado); senão por id; senão INSERT. dryRun/apply. + checagem de paridade.
+  app.post('/api/admin/sync/import-all-customers', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      await src.query("SET TIME ZONE 'UTC'"); await tgt.query("SET TIME ZONE 'UTC'");
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const colQ = "SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers'";
+      const sc = (await src.query(colQ)).rows as any[];
+      const tc = (await tgt.query(colQ)).rows as any[];
+      const tgtCols = new Map(tc.map((r) => [r.column_name, r.udt_name]));
+      const EXCLUDE = new Set(['id', 'created_at', 'updated_at']);
+      const cols = sc.map((r) => r.column_name).filter((c) => tgtCols.has(c) && !EXCLUDE.has(c));
+      const jsonCols = new Set(tc.filter((r) => r.udt_name === 'json' || r.udt_name === 'jsonb').map((r) => r.column_name));
+      const enumCols = new Set(tc.filter((r) => !['text','varchar','bpchar','int4','int8','numeric','bool','timestamp','timestamptz','date','float8','json','jsonb','uuid'].includes(r.udt_name)).map((r) => r.column_name));
+      const s1 = (await src.query('SELECT * FROM customers')).rows as any[];
+      // index 2.0 por doc e por id
+      const t2 = (await tgt.query('SELECT id, cnpj, cpf FROM customers')).rows as any[];
+      const docToId = new Map<string, string>(); const idSet = new Set<string>();
+      for (const c of t2) { idSet.add(String(c.id)); const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); }
+      const result: any = { srcCustomers: s1.length, colsImportadas: cols.length, apply, updated: 0, inserted: 0, skipped: 0, errors: [] as string[] };
+      const enc = (row: any, c: string) => { let v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; };
+      for (const row of s1) {
+        const d = dg(row.cnpj) || dg(row.cpf);
+        const targetId = (d && d.length >= 11 && docToId.has(d)) ? docToId.get(d)! : (idSet.has(String(row.id)) ? String(row.id) : null);
+        if (!apply) { if (targetId) result.updated++; else result.inserted++; continue; }
+        try {
+          if (targetId) {
+            const setCols = cols;
+            const setSql = setCols.map((c, i) => '"' + c + '" = $' + (i + 1) + (enumCols.has(c) ? '::text::"' + tc.find((x)=>x.column_name===c)!.udt_name + '"' : '')).join(', ');
+            const vals = setCols.map((c) => enc(row, c)); vals.push(targetId);
+            await tgt.query('UPDATE customers SET ' + setSql + ' WHERE id = $' + (setCols.length + 1), vals);
+            result.updated++;
+          } else {
+            const insCols = ['id', ...cols];
+            const ph = insCols.map((c, i) => '$' + (i + 1) + (enumCols.has(c) ? '::text::"' + (tc.find((x)=>x.column_name===c)?.udt_name||'text') + '"' : '')).join(', ');
+            const vals = [row.id, ...cols.map((c) => enc(row, c))];
+            await tgt.query('INSERT INTO customers (' + insCols.map((c)=>'"'+c+'"').join(',') + ') VALUES (' + ph + ')', vals);
+            result.inserted++;
+          }
+        } catch (e: any) { result.skipped++; if (result.errors.length < 12) result.errors.push(String(e.message).slice(0, 120)); }
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
+  });
+
   // Reconcilia seller_id de TODOS os clientes 2.0:=1.0 casando por DOCUMENTO e, quando nao ha doc-match, por NOME+CIDADE (nao-ambiguo).
   app.post('/api/admin/sync/reconcile-customers', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
