@@ -494,6 +494,22 @@ run();
     finally { await src.end().catch(() => {}); }
   });
 
+  app.get('/api/admin/routes/day-check', async (req: Request, res: Response) => {
+    try {
+      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const dateStr = raw.replace(/[^0-9-]/g, '');
+      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 8";
+      const ag: any = await db.execute(sql.raw(q));
+      const rowsAg = (ag.rows || ag) as any[];
+      const out: any[] = [];
+      for (const r of rowsAg) {
+        const rota = await storage.getCustomersForDate(String(r.sid), new Date(dateStr + 'T12:00:00Z'));
+        out.push({ seller: String(r.sid), agenda: Number(r.n), rota: rota.length, bate: rota.length === Number(r.n) });
+      }
+      res.json({ data: dateStr, comparacao: out });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
+  });
+
   app.get('/api/admin/visits/generate-from-1-0/status', async (_req: Request, res: Response) => {
     try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'visits_seed_last'`); const row = (r.rows || r)[0]; res.json(row ? JSON.parse(row.value) : { pending: true }); }
     catch (e: any) { res.status(500).json({ error: String(e).slice(0, 200) }); }
