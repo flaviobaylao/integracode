@@ -335,6 +335,74 @@ run();
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
 
+  // DIAGNOSTICO: compara a ROTA DO DIA (getCustomersForDate) 1.0 x 2.0 p/ varios vendedores x dias.
+  app.post('/api/admin/routes/compare-1-0', async (req: Request, res: Response) => {
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    const days = Math.max(1, Math.min(21, Number(req.body?.days) || 10));
+    const onlySellers: string[] | null = Array.isArray(req.body?.sellers) && req.body.sellers.length ? req.body.sellers.map((x: any) => String(x)) : null;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const docOf = (c: any) => (dg(c.cnpj).length >= 11 ? dg(c.cnpj) : (dg(c.cpf).length >= 11 ? dg(c.cpf) : ('id:' + c.id)));
+      // candidatos: ativos, com coordenadas, weekdays e periodicidade
+      const candSql = `SELECT id, seller_id, cnpj, cpf, weekdays, visit_periodicity, service_start_date, last_sale_date
+        FROM customers WHERE (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL
+        AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND (is_active = true OR omie_status = 'ativo')`;
+      const scSql = `SELECT customer_id, MAX(COALESCE(completed_date, scheduled_date)) AS last_c FROM sales_cards WHERE status IN ('completed','invoiced') GROUP BY customer_id`;
+      const load = async (q: (x: string) => Promise<any>) => {
+        const cust = (await q(candSql)).rows as any[];
+        const sc = (await q(scSql)).rows as any[];
+        const scMap = new Map<string, any>(); for (const r of sc) scMap.set(String(r.customer_id), r.last_c);
+        return { cust, scMap };
+      };
+      const q2 = async (x: string) => await db.execute(sql.raw(x)).then((r: any) => ({ rows: r.rows || r }));
+      const q1 = async (x: string) => await src.query(x);
+      const S2 = await load(q2 as any);
+      const S1 = await load(q1 as any);
+      const parseWk = (w: any) => { let x = w; if (typeof x === 'string') { const t = x.trim(); if (t.startsWith('[')) { try { x = JSON.parse(t); } catch (e) { return []; } } else return t ? [t] : []; } return Array.isArray(x) ? x : []; };
+      const dueOn = (c: any, scMap: Map<string, any>, dateStr: string): boolean => {
+        const wk = parseWk(c.weekdays); if (wk.length === 0) return false;
+        const ref = new Date(dateStr + 'T00:00:00');
+        if (c.service_start_date) { const ss = new Date(c.service_start_date); ss.setHours(0,0,0,0); if (ref < ss) return false; }
+        const last = c.last_sale_date ? new Date(c.last_sale_date) : (scMap.get(String(c.id)) ? new Date(scMap.get(String(c.id))) : undefined);
+        let r; try { r = calculateNextVisitDate({ weekdays: wk, periodicity: (c.visit_periodicity || 'semanal') as any, lastCompletedDate: last, referenceDate: ref }); } catch (e) { return false; }
+        const nd = r.nextDate.toISOString().split('T')[0];
+        return nd <= dateStr;
+      };
+      const routeSet = (side: any, sellerId: string, dateStr: string) => {
+        const set = new Set<string>();
+        for (const c of side.cust) { if (String(c.seller_id) !== sellerId) continue; if (dueOn(c, side.scMap, dateStr)) set.add(docOf(c)); }
+        return set;
+      };
+      // vendedores a testar: os presentes no 2.0 (ou lista informada)
+      const sellers2 = new Set<string>(); for (const c of S2.cust) if (c.seller_id) sellers2.add(String(c.seller_id));
+      let sellers = [...sellers2]; if (onlySellers) sellers = sellers.filter((s) => onlySellers.includes(s));
+      // datas: proximos N dias
+      const dates: string[] = []; const base = new Date(); base.setHours(0,0,0,0);
+      for (let i = 0; i < days; i++) { const d = new Date(base); d.setDate(base.getDate() + i); dates.push(d.toISOString().split('T')[0]); }
+      let combos = 0, comDiverg = 0, totOnly1 = 0, totOnly2 = 0, somaIguais = 0;
+      const porVendedor: Record<string, any> = {};
+      const amostras: any[] = [];
+      for (const s0 of sellers) {
+        let n1 = 0, n2 = 0, o1 = 0, o2 = 0;
+        for (const ds of dates) {
+          const r1 = routeSet(S1, s0, ds), r2 = routeSet(S2, s0, ds);
+          combos++; n1 += r1.size; n2 += r2.size;
+          const only1 = [...r1].filter((x) => !r2.has(x)); const only2 = [...r2].filter((x) => !r1.has(x));
+          o1 += only1.length; o2 += only2.length; totOnly1 += only1.length; totOnly2 += only2.length;
+          if (only1.length || only2.length) { comDiverg++; if (amostras.length < 25) amostras.push({ seller: s0, data: ds, n1_0: r1.size, n2_0: r2.size, so1_0: only1.length, so2_0: only2.length }); }
+          else somaIguais++;
+        }
+        porVendedor[s0] = { total1_0: n1, total2_0: n2, only1_0: o1, only2_0: o2 };
+      }
+      const topDiverg = Object.entries(porVendedor).map(([k, v]: any) => ({ seller: k, ...v, diverg: v.only1_0 + v.only2_0 })).filter((x) => x.diverg > 0).sort((a, b) => b.diverg - a.diverg).slice(0, 20);
+      res.json({ vendedores: sellers.length, dias: days, datas: [dates[0], dates[dates.length-1]], combos, combosIguais: somaIguais, combosComDivergencia: comDiverg, totalSoNo1_0: totOnly1, totalSoNo2_0: totOnly2, topVendedoresDivergentes: topDiverg, amostras });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // ROTINA: gera agendamentos no 2.0 ancorando na ULTIMA VISITA AGENDADA no 1.0 (pre go-live).
   // Regra: proxima = ultima agendada(1.0) + intervalo (7/14/28/56), no dia da semana do cliente,
   // pulando atrasos ate a proxima data FUTURA na cadencia. Sem ancora -> comeca de hoje.
