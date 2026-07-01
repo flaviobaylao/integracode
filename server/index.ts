@@ -308,7 +308,12 @@ run();
             // Cliente do 1.0 ausente no 2.0 -> INSERE com uuid PROPRIO (nao o id do Omie), chave = documento
             const insCols = cols; // sem 'id' -> default gen_random_uuid()
             const ph = insCols.map((c, i) => '$' + (i + 1) + (enumCols.has(c) ? '::text::"' + (tc.find((x)=>x.column_name===c)?.udt_name||'text') + '"' : '')).join(', ');
-            const vals = cols.map((c) => enc(row, c));
+            const vals = cols.map((c) => {
+              // nulifica documento invalido/vazio p/ nao colidir no unique (NULL nao colide)
+              if (c === 'cpf') return (dp && dp.length >= 11) ? row.cpf : null;
+              if (c === 'cnpj') return (dc && dc.length >= 11) ? row.cnpj : null;
+              return enc(row, c);
+            });
             await tgt.query('INSERT INTO customers (' + insCols.map((c)=>'"'+c+'"').join(',') + ') VALUES (' + ph + ')', vals);
             const dk = (dc && dc.length >= 11) ? dc : dp!;
             docToId.set(dk, '__inserted__');
