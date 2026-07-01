@@ -287,9 +287,16 @@ run();
       const enc = (row: any, c: string) => { let v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; };
       for (const row of s1) {
         const dc = dg(row.cnpj), dp = dg(row.cpf);
+        // CHAVE = DOCUMENTO (cpf/cnpj). SEM vinculo/ID do Omie.
         const dkey = (dc && dc.length >= 11 && docToId.has(dc)) ? dc : ((dp && dp.length >= 11 && docToId.has(dp)) ? dp : null);
-        const targetId = dkey ? docToId.get(dkey)! : (idSet.has(String(row.id)) ? String(row.id) : null);
-        if (!apply) { if (targetId) result.updated++; else result.inserted++; continue; }
+        const targetId = dkey ? docToId.get(dkey)! : null;
+        const hasValidDoc = (dc && dc.length >= 11) || (dp && dp.length >= 11);
+        if (!apply) {
+          if (targetId) result.updated++;
+          else if (hasValidDoc) result.inserted++;
+          else result.skipped++;
+          continue;
+        }
         try {
           if (targetId) {
             const setCols = cols.filter((c) => c !== 'cpf' && c !== 'cnpj');
@@ -297,12 +304,17 @@ run();
             const vals = setCols.map((c) => enc(row, c)); vals.push(targetId);
             await tgt.query('UPDATE customers SET ' + setSql + ' WHERE id = $' + (setCols.length + 1), vals);
             result.updated++;
-          } else {
-            const insCols = ['id', ...cols];
+          } else if (hasValidDoc) {
+            // Cliente do 1.0 ausente no 2.0 -> INSERE com uuid PROPRIO (nao o id do Omie), chave = documento
+            const insCols = cols; // sem 'id' -> default gen_random_uuid()
             const ph = insCols.map((c, i) => '$' + (i + 1) + (enumCols.has(c) ? '::text::"' + (tc.find((x)=>x.column_name===c)?.udt_name||'text') + '"' : '')).join(', ');
-            const vals = [row.id, ...cols.map((c) => enc(row, c))];
+            const vals = cols.map((c) => enc(row, c));
             await tgt.query('INSERT INTO customers (' + insCols.map((c)=>'"'+c+'"').join(',') + ') VALUES (' + ph + ')', vals);
+            const dk = (dc && dc.length >= 11) ? dc : dp!;
+            docToId.set(dk, '__inserted__');
             result.inserted++;
+          } else {
+            result.skipped++;
           }
         } catch (e: any) { result.skipped++; if (result.errors.length < 12) result.errors.push(String(e.message).slice(0, 120)); }
       }
