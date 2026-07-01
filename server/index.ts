@@ -335,6 +335,91 @@ run();
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
 
+  // ROTINA: gera agendamentos no 2.0 ancorando na ULTIMA VISITA AGENDADA no 1.0 (pre go-live).
+  // Regra: proxima = ultima agendada(1.0) + intervalo (7/14/28/56), no dia da semana do cliente,
+  // pulando atrasos ate a proxima data FUTURA na cadencia. Sem ancora -> comeca de hoje.
+  app.post('/api/admin/visits/generate-from-1-0', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const count = Math.max(1, Math.min(6, Number(req.body?.count) || 4));
+    const replaceFuture = req.body?.replaceFuture !== false; // default true no apply
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      // 1) ultima visita AGENDADA por documento no 1.0
+      const q = await src.query(`SELECT c.cnpj AS cnpj, c.cpf AS cpf, MAX(va.scheduled_date) AS last_sched
+        FROM visit_agenda va JOIN customers c ON c.id = va.customer_id
+        GROUP BY c.cnpj, c.cpf`);
+      const lastByDoc = new Map<string, Date>();
+      for (const r of q.rows as any[]) {
+        if (!r.last_sched) continue;
+        for (const d of [dg(r.cnpj), dg(r.cpf)]) {
+          if (d && d.length >= 11) { const prev = lastByDoc.get(d); const dt = new Date(r.last_sched); if (!prev || dt > prev) lastByDoc.set(d, dt); }
+        }
+      }
+      // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
+      const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address
+        FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND (is_active = true OR omie_status = 'ativo')`);
+      const cust = (custR.rows || custR) as any[];
+      // cadencia
+      const INTERVAL: any = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
+      const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
+      const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const snapFwd = (date: Date, targets: number[]) => { for (let i = 0; i <= 7; i++) { const t = new Date(date); t.setDate(date.getDate() + i); if (targets.includes(t.getDay())) { t.setHours(8, 0, 0, 0); return t; } } const t = new Date(date); t.setHours(8, 0, 0, 0); return t; };
+      const nextFrom = (a: Date, targets: number[], iv: number) => { const t = new Date(a); t.setDate(t.getDate() + iv); return snapFwd(t, targets); };
+      const parseWk = (w: any) => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => ABBR[String(d)]).filter((n: any) => n != null); };
+      const result: any = { apply, count, totalClientes: cust.length, comAncora1_0: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
+      // batching de inserts
+      const insertRows: any[] = [];
+      for (const c of cust) {
+        try {
+          const targets = parseWk(c.weekdays);
+          if (targets.length === 0) { result.semDiaValido++; continue; }
+          const iv = INTERVAL[String(c.visit_periodicity)] || 7;
+          const doc = (dg(c.cnpj).length >= 11) ? dg(c.cnpj) : (dg(c.cpf).length >= 11 ? dg(c.cpf) : '');
+          const anchor = doc ? lastByDoc.get(doc) : undefined;
+          let dates: Date[] = [];
+          if (anchor) {
+            result.comAncora1_0++;
+            let d = new Date(anchor); d.setHours(0, 0, 0, 0); let guard = 0;
+            do { d = nextFrom(d, targets, iv); guard++; } while (d < today && guard < 1000);
+            dates.push(d);
+          } else {
+            result.semAncora++;
+            dates.push(snapFwd(today, targets));
+          }
+          for (let i = 1; i < count; i++) dates.push(nextFrom(dates[i - 1], targets, iv));
+          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targets.map((n: number) => DOW[n]).join(','), ancora1_0: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
+          for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
+        } catch (e) { result.erros++; }
+      }
+      if (apply) {
+        // remove futuras pendentes (nunca mexe em passado/concluidas)
+        if (replaceFuture) {
+          const ids = cust.map((c) => c.id);
+          for (let i = 0; i < ids.length; i += 500) {
+            const chunk = ids.slice(i, i + 500);
+            const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE visit_status = 'pending' AND scheduled_date >= ${today.toISOString()} AND customer_id IN (${sql.join(chunk.map((x) => sql`${x}`), sql`, `)})`);
+            result.futurasRemovidas += (del.rowCount || 0);
+          }
+        }
+        // insere em lotes
+        for (let i = 0; i < insertRows.length; i += 400) {
+          const batch = insertRows.slice(i, i + 400);
+          const vals = batch.map((b) => sql`(${b.cid}, ${b.sid}, ${b.sd}, ${b.rd}, ${b.rec}, ${b.iv}, 'pending', ${b.name}, ${b.lat}, ${b.lng}, ${b.addr})`);
+          await db.execute(sql`INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT DO NOTHING`);
+          result.visitasInseridas += batch.length;
+        }
+      } else {
+        result.visitasInseridas = insertRows.length; // seria inserido
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // RELATORIO: carteira por vendedor (cliente + periodicidade + dias de rota). Read-only, dados do 2.0.
   app.get('/api/admin/report/carteira', async (_req: Request, res: Response) => {
     try {
