@@ -371,7 +371,7 @@ run();
   });
 
   // RELATORIO XLSX: carteira por vendedor, UMA ABA por vendedor. Download direto (server-side).
-  app.get('/api/admin/report/carteira.xlsx', async (_req: Request, res: Response) => {
+  app.get('/api/admin/report/carteira-planilha', async (req: Request, res: Response) => {
     try {
       const XLSX: any = await import('xlsx');
       const usersR: any = await db.execute(sql`SELECT id, first_name, last_name, email, omie_vendor_code FROM users`);
@@ -391,8 +391,10 @@ run();
         periodicidade: c.visit_periodicity || '', diasRota: parseWk(c.weekdays),
         ativo: (c.is_active === true || String(c.omie_status).toLowerCase() === 'ativo') ? 'Sim' : 'Não',
         fornecedor: c.is_supplier === true ? 'Sim' : 'Não' }; });
+      const soAtivos = String(req.query.ativos || '') === '1';
+      const rowsF = soAtivos ? rows.filter((r) => r.ativo === 'Sim') : rows;
       const bySeller = new Map<string, any[]>();
-      for (const r of rows) { if (!bySeller.has(r.vendedor)) bySeller.set(r.vendedor, []); bySeller.get(r.vendedor)!.push(r); }
+      for (const r of rowsF) { if (!bySeller.has(r.vendedor)) bySeller.set(r.vendedor, []); bySeller.get(r.vendedor)!.push(r); }
       const sellers = [...bySeller.keys()].sort((a, b) => a.localeCompare(b));
       const wb = XLSX.utils.book_new();
       // aba resumo
@@ -411,7 +413,7 @@ run();
       }
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename="Carteira_por_Vendedor.xlsx"');
+      res.setHeader('Content-Disposition', 'attachment; filename="Carteira_por_Vendedor' + (soAtivos ? '_ATIVOS' : '') + '.xlsx"');
       res.send(buf);
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
   });
