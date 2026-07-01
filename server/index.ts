@@ -153,16 +153,18 @@ run();
       const s1 = (await src.query(sel)).rows as any[];
       const t2 = (await tgt.query(sel)).rows as any[];
       const t2doc = new Map<string, any>();
-      for (const c of t2) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11 && !t2doc.has(d)) t2doc.set(d, c); }
+      for (const c of t2) { for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !t2doc.has(d)) t2doc.set(d, c); } }
       const perField: Record<string, number> = {};
       let matched = 0, only1 = 0, semDoc1 = 0;
       for (const a of s1) {
-        const d = dg(a.cnpj) || dg(a.cpf);
-        if (!(d && d.length >= 11)) { semDoc1++; continue; }
-        const b = t2doc.get(d);
+        const dc = dg(a.cnpj), dp = dg(a.cpf);
+        if (!((dc && dc.length >= 11) || (dp && dp.length >= 11))) { semDoc1++; continue; }
+        const b = t2doc.get((dc && dc.length>=11 && t2doc.has(dc)) ? dc : dp);
         if (!b) { only1++; continue; }
         matched++;
-        for (const c of cmpCols) { if (nz(a[c]) !== nz(b[c])) perField[c] = (perField[c] || 0) + 1; }
+        const numEq = (x: any, y: any) => { const nx = parseFloat(x), ny = parseFloat(y); if (!isNaN(nx) && !isNaN(ny)) return Math.abs(nx - ny) < 0.0000015; return null; };
+        const normVal = (v: any) => { const t = nz(v); if (t.startsWith('[') || t.startsWith('{')) { try { return JSON.stringify(JSON.parse(t)); } catch (e) {} } return t; };
+        for (const c of cmpCols) { const av = a[c], bv = b[c]; const ne = numEq(av, bv); if (ne === true) continue; if (ne === false) { perField[c] = (perField[c] || 0) + 1; continue; } if (normVal(av) !== normVal(bv)) perField[c] = (perField[c] || 0) + 1; }
       }
       const perFieldSorted = Object.entries(perField).sort((x, y) => y[1] - x[1]).reduce((o: any, [k, v]) => (o[k] = v, o), {});
       res.json({ src1_0: s1.length, tgt2_0: t2.length, casadosPorDoc: matched, so_no_1_0: only1, no_1_0_sem_doc: semDoc1, diffsPorCampo: perFieldSorted });
@@ -193,12 +195,13 @@ run();
       // index 2.0 por doc e por id
       const t2 = (await tgt.query('SELECT id, cnpj, cpf FROM customers')).rows as any[];
       const docToId = new Map<string, string>(); const idSet = new Set<string>();
-      for (const c of t2) { idSet.add(String(c.id)); const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); }
+      for (const c of t2) { idSet.add(String(c.id)); for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); } }
       const result: any = { srcCustomers: s1.length, colsImportadas: cols.length, apply, updated: 0, inserted: 0, skipped: 0, errors: [] as string[] };
       const enc = (row: any, c: string) => { let v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; };
       for (const row of s1) {
-        const d = dg(row.cnpj) || dg(row.cpf);
-        const targetId = (d && d.length >= 11 && docToId.has(d)) ? docToId.get(d)! : (idSet.has(String(row.id)) ? String(row.id) : null);
+        const dc = dg(row.cnpj), dp = dg(row.cpf);
+        const dkey = (dc && dc.length >= 11 && docToId.has(dc)) ? dc : ((dp && dp.length >= 11 && docToId.has(dp)) ? dp : null);
+        const targetId = dkey ? docToId.get(dkey)! : (idSet.has(String(row.id)) ? String(row.id) : null);
         if (!apply) { if (targetId) result.updated++; else result.inserted++; continue; }
         try {
           if (targetId) {
