@@ -371,8 +371,9 @@ run();
       const nextFrom = (a: Date, targets: number[], iv: number) => { const t = new Date(a); t.setDate(t.getDate() + iv); return snapFwd(t, targets); };
       const parseWk = (w: any) => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => ABBR[String(d)]).filter((n: any) => n != null); };
       const result: any = { apply, count, totalClientes: cust.length, comAncora1_0: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
-      // batching de inserts
+      // por cliente: guarda ancoraThreshold p/ delete seletivo (preserva visitas ate a ancora)
       const insertRows: any[] = [];
+      const delThreshold: Record<string, string> = {}; // customerId -> ISO (apaga futuras pendentes > este)
       for (const c of cust) {
         try {
           const targets = parseWk(c.weekdays);
@@ -390,34 +391,44 @@ run();
             result.semAncora++;
             dates.push(snapFwd(today, targets));
           }
+          // limite de exclusao: se ancora futura, preserva ate ela (apaga > ancora); senao apaga tudo futuro (> ontem)
+          const aDate = anchor ? new Date(anchor) : null; if (aDate) aDate.setHours(23,59,59,0);
+          delThreshold[c.id] = (aDate && aDate >= today) ? aDate.toISOString() : new Date(today.getTime() - 86400000).toISOString();
           for (let i = 1; i < count; i++) dates.push(nextFrom(dates[i - 1], targets, iv));
           if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targets.map((n: number) => DOW[n]).join(','), ancora1_0: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
           for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
         } catch (e) { result.erros++; }
       }
-      if (apply) {
-        // remove futuras pendentes (nunca mexe em passado/concluidas)
-        if (replaceFuture) {
-          const ids = cust.map((c) => c.id);
-          for (let i = 0; i < ids.length; i += 500) {
-            const chunk = ids.slice(i, i + 500);
-            const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE visit_status = 'pending' AND scheduled_date >= ${today.toISOString()} AND customer_id IN (${sql.join(chunk.map((x) => sql`${x}`), sql`, `)})`);
-            result.futurasRemovidas += (del.rowCount || 0);
-          }
-        }
-        // insere em lotes
-        for (let i = 0; i < insertRows.length; i += 400) {
-          const batch = insertRows.slice(i, i + 400);
-          const vals = batch.map((b) => sql`(${b.cid}, ${b.sid}, ${b.sd}, ${b.rd}, ${b.rec}, ${b.iv}, 'pending', ${b.name}, ${b.lat}, ${b.lng}, ${b.addr})`);
-          await db.execute(sql`INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT DO NOTHING`);
-          result.visitasInseridas += batch.length;
-        }
-      } else {
+      if (!apply) {
         result.visitasInseridas = insertRows.length; // seria inserido
+        return res.json(result);
       }
-      res.json(result);
+      // APPLY em segundo plano (evita timeout do gateway). Status em system_settings 'visits_seed_last'.
+      res.json({ started: true, ...result, visitasPlanejadas: insertRows.length, msg: 'Gerando em segundo plano. Consulte /api/admin/visits/generate-from-1-0/status' });
+      (async () => {
+        let removed = 0, inserted = 0, errs = 0;
+        try {
+          if (replaceFuture) {
+            for (const c of cust) {
+              const th = delThreshold[c.id]; if (!th) continue;
+              try { const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${today.toISOString()} AND scheduled_date > ${th}`); removed += (del.rowCount || 0); } catch (e) { errs++; }
+            }
+          }
+          for (let i = 0; i < insertRows.length; i += 400) {
+            const batch = insertRows.slice(i, i + 400);
+            const vals = batch.map((b) => sql`(${b.cid}, ${b.sid}, ${b.sd}, ${b.rd}, ${b.rec}, ${b.iv}, 'pending', ${b.name}, ${b.lat}, ${b.lng}, ${b.addr})`);
+            try { await db.execute(sql`INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT DO NOTHING`); inserted += batch.length; } catch (e) { errs++; }
+          }
+        } catch (e) { errs++; }
+        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('visits_seed_last', ${JSON.stringify({ at: new Date().toISOString(), clientes: cust.length, comAncora1_0: result.comAncora1_0, semAncora: result.semAncora, semDiaValido: result.semDiaValido, futurasRemovidas: removed, visitasInseridas: inserted, erros: errs })}, 'visits-seed') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+      })();
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
     finally { await src.end().catch(() => {}); }
+  });
+
+  app.get('/api/admin/visits/generate-from-1-0/status', async (_req: Request, res: Response) => {
+    try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'visits_seed_last'`); const row = (r.rows || r)[0]; res.json(row ? JSON.parse(row.value) : { pending: true }); }
+    catch (e: any) { res.status(500).json({ error: String(e).slice(0, 200) }); }
   });
 
   // RELATORIO: carteira por vendedor (cliente + periodicidade + dias de rota). Read-only, dados do 2.0.
