@@ -348,7 +348,7 @@ run();
       const docOf = (c: any) => (dg(c.cnpj).length >= 11 ? dg(c.cnpj) : (dg(c.cpf).length >= 11 ? dg(c.cpf) : ('id:' + c.id)));
       // candidatos: ativos, com coordenadas, weekdays e periodicidade
       const candSql = `SELECT id, seller_id, cnpj, cpf, weekdays, visit_periodicity, service_start_date, last_sale_date
-        FROM customers WHERE (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL
+        FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL
         AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND (is_active = true OR omie_status = 'ativo')`;
       const scSql = `SELECT customer_id, MAX(COALESCE(completed_date, scheduled_date)) AS last_c FROM sales_cards WHERE status IN ('completed','invoiced') GROUP BY customer_id`;
       const load = async (q: (x: string) => Promise<any>) => {
