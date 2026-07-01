@@ -642,11 +642,12 @@ export default function ActiveCustomers() {
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/admin/recalculate-delivery-days", {
+      // PRE GO-LIVE: ancora na ULTIMA VISITA AGENDADA no Integra 1.0 e gera as futuras no 2.0 (cadencia 7/14/28/56).
+      const response = await fetch("/api/admin/visits/generate-from-1-0", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ dryRun: false })
+        body: JSON.stringify({ apply: true, count: 4, replaceFuture: true })
       });
       if (!response.ok) {
         const error = await response.text();
@@ -655,12 +656,12 @@ export default function ActiveCustomers() {
       return response.json();
     },
     onSuccess: (data: any) => {
-      console.log('✅ Sucesso ao regenerar agendamentos:', data);
+      console.log('✅ Geração de agendamentos iniciada:', data);
       toast({ 
-        title: "✅ Agendamentos regenerados!", 
-        description: "Próximas 3 visitas foram recalculadas para todos os clientes!"
+        title: "✅ Gerando agendamentos!", 
+        description: `Ancorado na última visita do Integra 1.0 (${data?.comAncora1_0 ?? 0} clientes). As próximas visitas estão sendo criadas em segundo plano.`
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] }), 8000);
     },
     onError: (error: any) => {
       console.error('❌ Erro ao regenerar agendamentos:', error);
