@@ -352,7 +352,23 @@ run();
       for (const c of t2) { idSet.add(String(c.id)); for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); } }
       const result: any = { srcCustomers: s1.length, colsImportadas: cols.length, apply, updated: 0, inserted: 0, skipped: 0, errors: [] as string[] };
       const enc = (row: any, c: string) => { let v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; };
+      // DEDUP no 1.0: quando o mesmo documento aparece em >1 linha do 1.0, escolhe a MELHOR (ativa + mais campos preenchidos).
+      const nonEmpty = (r: any) => cols.reduce((n: number, c: string) => { const v = r[c]; const t = (v === null || v === undefined) ? '' : String(v).trim(); return n + ((t !== '' && t !== '[]' && t !== '{}') ? 1 : 0); }, 0);
+      const activeScore = (r: any) => ((String(r.omie_status || '').toLowerCase() === 'ativo' ? 1 : 0) + ((r.is_active === true || String(r.is_active) === 'true') ? 1 : 0));
+      const bestByDoc = new Map<string, any>(); const noDocRows: any[] = [];
       for (const row of s1) {
+        const dc0 = dg(row.cnpj), dp0 = dg(row.cpf);
+        const d0 = (dc0 && dc0.length >= 11) ? dc0 : ((dp0 && dp0.length >= 11) ? dp0 : '');
+        if (!d0) { noDocRows.push(row); continue; }
+        const prev = bestByDoc.get(d0);
+        if (!prev) { bestByDoc.set(d0, row); continue; }
+        const sPrev = activeScore(prev) * 1000 + nonEmpty(prev);
+        const sCur = activeScore(row) * 1000 + nonEmpty(row);
+        if (sCur > sPrev) bestByDoc.set(d0, row);
+      }
+      const s1dedup = [...bestByDoc.values(), ...noDocRows];
+      result.srcDupCollapsed = s1.length - s1dedup.length;
+      for (const row of s1dedup) {
         const dc = dg(row.cnpj), dp = dg(row.cpf);
         // CHAVE = DOCUMENTO (cpf/cnpj). SEM vinculo/ID do Omie.
         const dkey = (dc && dc.length >= 11 && docToId.has(dc)) ? dc : ((dp && dp.length >= 11 && docToId.has(dp)) ? dp : null);
