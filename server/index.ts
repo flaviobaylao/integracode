@@ -135,6 +135,52 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Reconcilia seller_id de TODOS os clientes 2.0:=1.0 casando por DOCUMENTO e, quando nao ha doc-match, por NOME+CIDADE (nao-ambiguo).
+  app.post('/api/admin/sync/reconcile-customers', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const norm = (x: any) => String(x || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const s1 = (await src.query("SELECT cnpj, cpf, name, fantasy_name, city, seller_id FROM customers WHERE seller_id IS NOT NULL AND seller_id <> ''")).rows as any[];
+      const docSeller = new Map<string, string>();
+      const nameCity = new Map<string, string | null>(); // null = ambiguo
+      for (const c of s1) {
+        const d = dg(c.cnpj) || dg(c.cpf);
+        if (d && d.length >= 11 && !docSeller.has(d)) docSeller.set(d, c.seller_id);
+        const nk = norm(c.name || c.fantasy_name) + '|' + norm(c.city);
+        if (norm(c.name || c.fantasy_name).length >= 4) {
+          if (!nameCity.has(nk)) nameCity.set(nk, c.seller_id);
+          else if (nameCity.get(nk) !== c.seller_id) nameCity.set(nk, null); // conflito -> ambiguo
+        }
+      }
+      const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, name, fantasy_name, city, seller_id FROM customers"));
+      const rows2 = (t2.rows || t2) as any[];
+      const toFixDoc: any[] = []; const toFixName: any[] = [];
+      for (const c of rows2) {
+        const d = dg(c.cnpj) || dg(c.cpf);
+        let want: string | null | undefined = (d && d.length >= 11) ? docSeller.get(d) : undefined;
+        let via = 'doc';
+        if (!want) { const nk = norm(c.name || c.fantasy_name) + '|' + norm(c.city); const nv = nameCity.get(nk); if (nv) { want = nv; via = 'name'; } }
+        if (want && String(c.seller_id || '') !== String(want)) { (via === 'doc' ? toFixDoc : toFixName).push({ id: c.id, val: want }); }
+      }
+      const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
+      const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
+      const result: any = { srcSellers: s1.length, docKeys: docSeller.size, nameKeys: nameCity.size, corrigirPorDoc: toFixDoc.length, corrigirPorNome: toFixName.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      if (apply) {
+        let upd = 0;
+        for (const f of [...toFixDoc, ...toFixName]) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${f.val}, updated_at = now() WHERE id = ${f.id}`); upd += (u.rowCount || 0); } catch (e) {} }
+        result.updated = upd;
+        const radAfter: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
+        result.radiltonDepois = (radAfter.rows || radAfter)[0].n;
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // [DIAG] Analisa dados do 1.0 p/ um vendedor: duplicatas de documento e vendedor conflitante. REMOVER apos uso.
   app.get('/api/admin/diag/seller-1v2', async (req: Request, res: Response) => {
     try {
