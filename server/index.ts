@@ -135,6 +135,44 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Reconciliacao de DOCUMENTO: preenche customers.cpf/cnpj do 2.0 a partir do 1.0 (casa MESMO cliente por id), com protecao a colisao unique.
+  // Assim a aba Clientes Ativos (que traz o documento do 1.0) casa o cliente por cpf/cnpj.
+  app.post('/api/admin/sync/fix-documents', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const s1 = (await src.query("SELECT id, cnpj, cpf FROM customers")).rows as any[];
+      const t2r: any = await db.execute(sql.raw("SELECT id, cnpj, cpf FROM customers"));
+      const t2 = (t2r.rows || t2r) as any[];
+      const t2ById = new Map<string, any>(); const docExists = new Set<string>();
+      for (const c of t2) { t2ById.set(String(c.id), c); for (const d of [dg(c.cnpj), dg(c.cpf)]) if (d && d.length >= 11) docExists.add(d); }
+      const result: any = { srcCustomers: s1.length, apply, cnpjPreenchido: 0, cpfPreenchido: 0, colisao: 0, semParById: 0, jaOk: 0 };
+      for (const a of s1) {
+        const t = t2ById.get(String(a.id));
+        if (!t) { result.semParById++; continue; }
+        // CNPJ
+        const s_cnpj = dg(a.cnpj), t_cnpj = dg(t.cnpj);
+        if (s_cnpj && s_cnpj.length >= 11 && s_cnpj !== t_cnpj) {
+          if (docExists.has(s_cnpj)) { result.colisao++; }
+          else if (apply) { try { await db.execute(sql`UPDATE customers SET cnpj = ${a.cnpj}, updated_at = now() WHERE id = ${a.id}`); result.cnpjPreenchido++; docExists.add(s_cnpj); } catch (e) { result.colisao++; } }
+          else { result.cnpjPreenchido++; }
+        }
+        // CPF
+        const s_cpf = dg(a.cpf), t_cpf = dg(t.cpf);
+        if (s_cpf && s_cpf.length >= 11 && s_cpf !== t_cpf) {
+          if (docExists.has(s_cpf)) { result.colisao++; }
+          else if (apply) { try { await db.execute(sql`UPDATE customers SET cpf = ${a.cpf}, updated_at = now() WHERE id = ${a.id}`); result.cpfPreenchido++; docExists.add(s_cpf); } catch (e) { result.colisao++; } }
+          else { result.cpfPreenchido++; }
+        }
+      }
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(()=>{}); }
+  });
+
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
   app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
