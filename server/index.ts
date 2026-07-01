@@ -281,6 +281,11 @@ run();
       const t2 = (await tgt.query(sel)).rows as any[];
       const t2doc = new Map<string, any>();
       for (const c of t2) { for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !t2doc.has(d)) t2doc.set(d, c); } }
+      // conta duplicatas por documento NO 1.0 (mesmo cpf/cnpj em >1 linha do 1.0)
+      const srcDocCount = new Map<string, number>();
+      for (const a of s1) { const dd = (dg(a.cnpj).length>=11)?dg(a.cnpj):(dg(a.cpf).length>=11?dg(a.cpf):''); if (dd) srcDocCount.set(dd, (srcDocCount.get(dd)||0)+1); }
+      let srcDupDocs = 0; for (const [,n] of srcDocCount) if (n>1) srcDupDocs++;
+      let realOnDup = 0, realOnUnique = 0;
       const trimWs = (t: string) => t.replace(/\s+/g, ' ').trim();
       const strong = (t: string) => trimWs(t).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const jnorm = (t: string) => { const x = trimWs(t); if (x.startsWith('[') || x.startsWith('{')) { try { const o = JSON.parse(x); const so=(v:any):any=>Array.isArray(v)?v.map(so).slice().sort():(v&&typeof v==='object'?Object.keys(v).sort().reduce((a:any,k)=>(a[k]=so(v[k]),a),{}):v); return JSON.stringify(so(o)); } catch(e){} } return null; };
@@ -308,14 +313,15 @@ run();
           if (strong(av) === strong(bv)) { bk.caseAccent++; continue; }
           bk.real++;
           const doc = (dc && dc.length>=11) ? dc : dp;
-          if (realEx.length < 400) realEx.push({ documento: doc, campo: c, v1_0: av.slice(0,120), v2_0: bv.slice(0,120) });
+          if ((srcDocCount.get(doc)||0) > 1) realOnDup++; else realOnUnique++;
+          if (realEx.length < 400) realEx.push({ documento: doc, campo: c, dupNo1_0: (srcDocCount.get(doc)||0), v1_0: av.slice(0,120), v2_0: bv.slice(0,120) });
         }
       }
       const summary: Record<string, any> = {};
       let totalReal = 0;
       for (const [k,v] of Object.entries(buckets)) { summary[k] = v; totalReal += (v as any).real; }
       const sorted = Object.entries(summary).sort((x:any,y:any)=> (y[1].real - x[1].real) || (y[1].total - x[1].total)).reduce((o:any,[k,v])=>(o[k]=v,o),{});
-      res.json({ casados: matched, totalReal, campos: sorted, realExamples: (req.query.examples==='1' ? realEx : realEx.length) });
+      res.json({ casados: matched, srcDupDocs, realOnDup, realOnUnique, totalReal, campos: sorted, realExamples: (req.query.examples==='1' ? realEx : realEx.length) });
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
