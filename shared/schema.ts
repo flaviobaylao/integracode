@@ -275,6 +275,9 @@ export const customers = pgTable("customers", {
 
   icmsCsosn: varchar("icms_csosn").default('102'), // CSOSN para NF-e (Simples Nacional): '101' ou '102' (padrão 102). Só aplica a emitente Simples (INDÚSTRIA).
 
+  // Fornecedor: cadastro que NÃO é cliente. Fica no cadastro, mas NÃO entra em rota de visitas.
+  isSupplier: boolean("is_supplier").default(false),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
