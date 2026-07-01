@@ -335,6 +335,41 @@ run();
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
 
+  // RELATORIO: carteira por vendedor (cliente + periodicidade + dias de rota). Read-only, dados do 2.0.
+  app.get('/api/admin/report/carteira', async (_req: Request, res: Response) => {
+    try {
+      const usersR: any = await db.execute(sql`SELECT id, first_name, last_name, email, omie_vendor_code FROM users`);
+      const users = (usersR.rows || usersR) as any[];
+      const nmeU = (u: any) => ((`${u.first_name || ''} ${u.last_name || ''}`.trim()) || u.email || u.id);
+      const byId = new Map<string, any>(); const byVendor = new Map<string, any>();
+      for (const u of users) { byId.set(String(u.id), u); if (u.omie_vendor_code) byVendor.set(String(u.omie_vendor_code), u); }
+      const custR: any = await db.execute(sql`SELECT name, company_name, fantasy_name, cnpj, cpf, city, neighborhood, route, visit_periodicity, weekdays, is_active, omie_status, is_supplier, seller_id FROM customers`);
+      const cust = (custR.rows || custR) as any[];
+      const resolveSeller = (sid: any) => {
+        const s0 = String(sid || '');
+        if (!s0) return null;
+        return byId.get(s0) || byVendor.get(s0) || byVendor.get(s0.replace('omie-vendor-', '')) || null;
+      };
+      const parseWk = (w: any) => { if (w == null) return ''; let x = w; if (typeof x === 'string') { const t = x.trim(); if (t.startsWith('[')) { try { x = JSON.parse(t); } catch (e) { return t; } } else return t; } return Array.isArray(x) ? x.join(', ') : String(x); };
+      const rows = cust.map((c) => {
+        const u = resolveSeller(c.seller_id);
+        return {
+          vendedor: u ? nmeU(u) : 'SEM VENDEDOR',
+          vendedorId: String(c.seller_id || ''),
+          cliente: c.fantasy_name || c.company_name || c.name || '',
+          documento: (c.cnpj && String(c.cnpj).trim()) ? String(c.cnpj) : (c.cpf ? String(c.cpf) : ''),
+          cidade: c.city || '', bairro: c.neighborhood || '', rota: c.route || '',
+          periodicidade: c.visit_periodicity || '',
+          diasRota: parseWk(c.weekdays),
+          ativo: (c.is_active === true || String(c.omie_status).toLowerCase() === 'ativo') ? 'Sim' : 'Não',
+          fornecedor: c.is_supplier === true ? 'Sim' : 'Não',
+        };
+      });
+      rows.sort((a, b) => (a.vendedor.localeCompare(b.vendedor)) || (a.cliente.localeCompare(b.cliente)));
+      res.json({ total: rows.length, rows });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+
   // IMPORTAÇÃO COMPLETA do cadastro de clientes 1.0 -> 2.0 por DOCUMENTO (chave confiável). Traz TODOS os campos comuns.
   // Match: por documento (cnpj/cpf normalizado); senão por id; senão INSERT. dryRun/apply. + checagem de paridade.
   app.post('/api/admin/sync/import-all-customers', async (req: Request, res: Response) => {
