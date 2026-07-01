@@ -205,7 +205,7 @@ run();
         if (!apply) { if (targetId) result.updated++; else result.inserted++; continue; }
         try {
           if (targetId) {
-            const setCols = cols;
+            const setCols = cols.filter((c) => c !== 'cpf' && c !== 'cnpj');
             const setSql = setCols.map((c, i) => '"' + c + '" = $' + (i + 1) + (enumCols.has(c) ? '::text::"' + tc.find((x)=>x.column_name===c)!.udt_name + '"' : '')).join(', ');
             const vals = setCols.map((c) => enc(row, c)); vals.push(targetId);
             await tgt.query('UPDATE customers SET ' + setSql + ' WHERE id = $' + (setCols.length + 1), vals);
