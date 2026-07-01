@@ -135,6 +135,33 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // [DIAG] Auditoria de escrita em customers.seller_id via TRIGGER (pega o writer no flagrante). REMOVER apos diagnostico.
+  app.post('/api/admin/diag/seller-audit/install', async (_req: Request, res: Response) => {
+    try {
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS seller_id_audit (id bigserial primary key, customer_id text, old_seller text, new_seller text, query text, app_name text, changed_at timestamptz default now())"));
+      await db.execute(sql.raw("CREATE OR REPLACE FUNCTION trg_seller_id_audit() RETURNS trigger AS $f$ BEGIN IF (NEW.seller_id IS DISTINCT FROM OLD.seller_id) THEN INSERT INTO seller_id_audit(customer_id, old_seller, new_seller, query, app_name) VALUES (NEW.id, OLD.seller_id, NEW.seller_id, left(current_query(),400), current_setting('application_name', true)); END IF; RETURN NEW; END; $f$ LANGUAGE plpgsql"));
+      await db.execute(sql.raw("DROP TRIGGER IF EXISTS seller_id_audit_trg ON customers"));
+      await db.execute(sql.raw("CREATE TRIGGER seller_id_audit_trg AFTER UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION trg_seller_id_audit()"));
+      res.json({ ok: true, installed: true });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+  app.get('/api/admin/diag/seller-audit', async (_req: Request, res: Response) => {
+    try {
+      const cnt: any = await db.execute(sql.raw("SELECT count(*)::int n FROM seller_id_audit"));
+      const recent: any = await db.execute(sql.raw("SELECT customer_id, old_seller, new_seller, left(query,200) AS query, app_name, changed_at FROM seller_id_audit ORDER BY changed_at DESC LIMIT 30"));
+      // agrupa por query (fonte)
+      const byQ: any = await db.execute(sql.raw("SELECT left(query,120) AS q, app_name, count(*)::int n, max(changed_at) AS ultima FROM seller_id_audit GROUP BY left(query,120), app_name ORDER BY n DESC LIMIT 15"));
+      res.json({ total: (cnt.rows||cnt)[0].n, porQuery: (byQ.rows||byQ), recentes: (recent.rows||recent) });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+  app.post('/api/admin/diag/seller-audit/uninstall', async (_req: Request, res: Response) => {
+    try {
+      await db.execute(sql.raw("DROP TRIGGER IF EXISTS seller_id_audit_trg ON customers"));
+      await db.execute(sql.raw("DROP FUNCTION IF EXISTS trg_seller_id_audit()"));
+      res.json({ ok: true, uninstalled: true, note: 'tabela seller_id_audit mantida (dados). DROP manual se quiser.' });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+
   // Read-only: clientes ATIVOS (nao-lead) SEM cpf/cnpj, todas as instancias, com vendedor resolvido.
   app.get('/api/admin/customers/no-document', async (_req: Request, res: Response) => {
     try {
