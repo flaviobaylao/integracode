@@ -1319,7 +1319,7 @@ export default function ActiveCustomers() {
                             key={ac.id} 
                             data-testid={`row-customer-${ac.id}`}
                             onClick={(e) => handleActionClick(e, ac)}
-                            className="cursor-pointer hover:bg-muted/50 transition-colors"
+                            className={`cursor-pointer transition-colors ${((ac.nextThreeVisits?.length ?? 0) === 0) ? 'bg-red-100 hover:bg-red-200' : 'hover:bg-muted/50'}`}
                           >
                             <TableCell>
                               {ac.matchStatus === "matched" ? (
