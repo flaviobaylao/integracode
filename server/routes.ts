@@ -7592,7 +7592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
               
               // Prioridade: Omie (resolvido) > Existente > Default (NUNCA sobrescrever vendedor existente)
-              const finalSellerId = resolvedSellerId || existingCustomer?.sellerId || defaultSellerId || '';
+              const finalSellerId = (existingCustomer?.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : (resolvedSellerId || defaultSellerId || '');
               
               // Normalizar weekdays e calcular dias de entrega automaticamente
               // ✅ CORREÇÃO: Não usar fallback de "todos os dias" se weekdays não estiver definido
@@ -7647,7 +7647,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   state: systemClient.state,
                   zipCode: systemClient.zipCode,
                   // ✅ CORREÇÃO: Usar sellerId resolvido em vez de converted.sellerId
-                  sellerId: resolvedSellerId || existingCustomer.sellerId, // Usa ID real do vendedor
+                  sellerId: (existingCustomer.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : resolvedSellerId, // FIX(01/jul): preserva vendedor existente (nao reverter p/ default Omie)
                   isActive: systemClient.isActive,
                   omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao,
