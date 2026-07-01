@@ -140,6 +140,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       weekdays: '[]',
       visitPeriodicity: 'semanal',
       icmsCsosn: '102',
+      isSupplier: false,
       isActive: true,
       latitude: '',
       longitude: '',
@@ -188,6 +189,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         weekdays: weekdaysJson,
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
         icmsCsosn: (customer as any).icmsCsosn || '102',
+        isSupplier: (customer as any).isSupplier || false,
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
@@ -220,6 +222,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         weekdays: '[]',
         visitPeriodicity: 'semanal',
       icmsCsosn: '102',
+      isSupplier: false,
         isActive: true,
         latitude: '',
         longitude: '',
@@ -1168,6 +1171,39 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                     />
                   </div>
                 )}
+
+                {/* Fornecedor - não entra em rota/agenda de visitas */}
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="isSupplier"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base flex items-center space-x-2">
+                            <i className="fas fa-truck text-amber-600"></i>
+                            <span>Fornecedor</span>
+                          </FormLabel>
+                          <FormDescription>
+                            Marque se este cadastro é um FORNECEDOR (não é cliente).
+                            Fornecedores permanecem no cadastro, mas NÃO entram em rota nem em agenda de visitas.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={field.onChange}
+                              className="rounded border-gray-300 text-amber-600 focus:ring-amber-600"
+                              data-testid="checkbox-is-supplier"
+                            />
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </CardContent>
             </Card>
 
