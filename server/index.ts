@@ -135,6 +135,44 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
+  app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
+    const apply = req.body?.apply === true;
+    try {
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
+      const cr: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
+      const cust = (cr.rows || cr) as any[];
+      const docToId = new Map<string, string>(); const sellerById = new Map<string, string>();
+      for (const c of cust) { sellerById.set(String(c.id), String(c.seller_id || '')); for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); } }
+      const ar: any = await db.execute(sql.raw("SELECT id, document, customer_id, is_active FROM active_customers"));
+      const acs = (ar.rows || ar) as any[];
+      let relink = 0, jaOk = 0, semMatch = 0, ativos = 0;
+      const toFix: Array<{ id: string; cid: string }> = [];
+      for (const a of acs) {
+        if (a.is_active === true) ativos++;
+        const d = dg(a.document);
+        const cid = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        if (!cid) { semMatch++; continue; }
+        if (String(a.customer_id || '') === cid) { jaOk++; } else { toFix.push({ id: String(a.id), cid }); }
+      }
+      const result: any = { totalActive: acs.length, ativosOn: ativos, jaVinculadosOk: jaOk, aReligar: toFix.length, semMatchDoc: semMatch, apply, relinked: 0 };
+      if (apply) {
+        for (const f of toFix) { try { const u: any = await db.execute(sql`UPDATE active_customers SET customer_id = ${f.cid}, match_status = 'matched', updated_at = now() WHERE id = ${f.id}`); relink += (u.rowCount || 0); } catch (e) {} }
+        result.relinked = relink;
+      }
+      // Radilton: linhas ATIVAS cujo cliente vinculado (por doc) tem seller = RAD
+      let radAtivo = 0;
+      for (const a of acs) {
+        if (a.is_active !== true) continue;
+        const d = dg(a.document); const cid = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        if (cid && sellerById.get(cid) === RAD) radAtivo++;
+      }
+      result.radiltonAtivosPorDoc = radAtivo;
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+
   // CHECAGEM DE PARIDADE do cadastro de clientes 1.0 x 2.0, casado por DOCUMENTO. Reporta diffs por campo.
   app.get('/api/admin/sync/customers-parity', async (_req: Request, res: Response) => {
     const pgMod = await import('pg');
