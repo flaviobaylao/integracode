@@ -1100,142 +1100,43 @@ export class DatabaseStorage implements IStorage {
 
   async getCustomersForDate(sellerId: string, date: Date): Promise<Customer[]> {
     const BRAZIL_TZ = 'America/Sao_Paulo';
-    
-    // Construir data BRT corretamente (sem deslocamento)
-    // Se date é "2025-11-12T00:00:00.000Z", queremos 2025-11-12 00:00 em BRT
-    const dateStr = date.toISOString().split('T')[0]; // "2025-11-12"
-    // fromZonedTime converte "2025-11-12 00:00:00" BRT → "2025-11-12T03:00:00.000Z" UTC
-    const targetDateBRT = fromZonedTime(new Date(`${dateStr}T00:00:00`), BRAZIL_TZ);
-    
-    // Buscar clientes ativos do vendedor com coordenadas
-    const activeCustomers = await db
+    const dateStr = date.toISOString().split('T')[0];
+    const startOfDay = fromZonedTime(new Date(`${dateStr}T00:00:00`), BRAZIL_TZ);
+    const endOfDay = fromZonedTime(new Date(`${dateStr}T23:59:59.999`), BRAZIL_TZ);
+
+    // OPÇÃO A (01/jul/2026): a ROTA DO DIA vem da AGENDA (visit_agenda), que é ancorada na
+    // ÚLTIMA VISITA AGENDADA do 1.0 (via gerar-agendamentos). Cliente entra na rota do dia
+    // quando tem visita PENDENTE agendada nesse dia. (Antes recalculava por last_sale_date.)
+    const scheduled = await db
+      .select({ customerId: visitAgenda.customerId })
+      .from(visitAgenda)
+      .where(
+        and(
+          eq(visitAgenda.visitStatus, 'pending'),
+          gte(visitAgenda.scheduledDate, startOfDay),
+          lte(visitAgenda.scheduledDate, endOfDay)
+        )
+      );
+    const scheduledIds = Array.from(new Set(scheduled.map(sv => sv.customerId).filter(Boolean)));
+    if (scheduledIds.length === 0) {
+      console.log(`📅 getCustomersForDate: 0 visitas agendadas em ${dateStr} (vendedor ${sellerId})`);
+      return [];
+    }
+    // Restringe aos clientes ATIVOS desse vendedor, com coordenadas (necessário p/ otimização).
+    const custs = await db
       .select()
       .from(customers)
       .where(
         and(
+          inArray(customers.id, scheduledIds),
           eq(customers.sellerId, sellerId),
           eq(customers.omieStatus, 'ativo'),
-          sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao entra em rota de visitas
           isNotNull(customers.latitude),
-          isNotNull(customers.longitude),
-          isNotNull(customers.weekdays),
-          isNotNull(customers.visitPeriodicity)
+          isNotNull(customers.longitude)
         )
       );
-    
-    console.log(`📅 getCustomersForDate: Encontrados ${activeCustomers.length} clientes ativos com coordenadas para vendedor ${sellerId}`);
-    
-    // Buscar última visita completada de cada cliente
-    const customerIds = activeCustomers.map(c => c.id);
-    
-    if (customerIds.length === 0) {
-      return [];
-    }
-    
-    // Query para pegar última visita de cada cliente usando salesCards
-    // Usa completedDate se disponível, senão scheduledDate (para compatibilidade)
-    const lastVisits = await db
-      .select({
-        customerId: salesCards.customerId,
-        lastCompletedDate: sql<Date>`MAX(COALESCE(${salesCards.completedDate}, ${salesCards.scheduledDate}))`.as('last_completed_date')
-      })
-      .from(salesCards)
-      .where(
-        and(
-          inArray(salesCards.customerId, customerIds),
-          or(
-            eq(salesCards.status, 'completed'),
-            eq(salesCards.status, 'invoiced')
-          )
-        )
-      )
-      .groupBy(salesCards.customerId);
-    
-    const lastVisitMap = new Map(
-      lastVisits.map(v => [v.customerId, v.lastCompletedDate])
-    );
-    
-    console.log(`📊 getCustomersForDate: Encontradas ${lastVisits.length} últimas visitas completadas`);
-    
-    // Filtrar clientes que devem ser visitados na data alvo
-    const customersToVisit: Customer[] = [];
-    
-    let clientsWithoutServiceStartDate = 0;
-    
-    for (const customer of activeCustomers) {
-      try {
-        // Pegar última visita (se existir)
-        // Preferir a ultima venda/visita sincronizada do 1.0 (customers.last_sale_date); senao, derivar dos sales_cards locais.
-        const lastCompletedDate = (customer as any).lastSaleDate ? new Date((customer as any).lastSaleDate) : lastVisitMap.get(customer.id);
-        
-        // Normalizar weekdays: pode vir como string JSON ou array
-        let weekdaysArray: string[] = [];
-        if (customer.weekdays) {
-          if (typeof customer.weekdays === 'string') {
-            try {
-              weekdaysArray = JSON.parse(customer.weekdays);
-            } catch {
-              console.warn(`⚠️ weekdays inválido para cliente ${customer.fantasyName}: ${customer.weekdays}`);
-              continue; // Pular cliente com dados inválidos
-            }
-          } else if (Array.isArray(customer.weekdays)) {
-            weekdaysArray = customer.weekdays;
-          }
-        }
-        
-        if (weekdaysArray.length === 0) {
-          console.warn(`⚠️ Cliente ${customer.fantasyName} sem dias da semana configurados`);
-          continue;
-        }
-        
-        // ✅ CORREÇÃO (Nov 13, 2025): NÃO usar serviceStartDate como lastCompletedDate
-        // serviceStartDate é data de início do contrato, NÃO última visita
-        // Filtrar apenas clientes cuja data de início já passou
-        if (customer.serviceStartDate) {
-          const serviceStart = new Date(customer.serviceStartDate);
-          serviceStart.setHours(0, 0, 0, 0);
-          const targetNormalized = new Date(targetDateBRT);
-          targetNormalized.setHours(0, 0, 0, 0);
-          
-          // Se a rota é ANTES do início do serviço, pular cliente
-          if (targetNormalized < serviceStart) {
-            continue; // Contrato ainda não iniciou
-          }
-        } else {
-          // Log clientes sem serviceStartDate
-          clientsWithoutServiceStartDate++;
-        }
-        
-        // Calcular próxima visita - lastCompletedDate APENAS de visitas reais
-        // Se não há visitas anteriores, calculateNextVisitDate retorna o primeiro dia válido
-        const scheduleResult = calculateNextVisitDate({
-          weekdays: weekdaysArray,
-          periodicity: customer.visitPeriodicity || 'semanal',
-          lastCompletedDate: lastCompletedDate, // undefined se não há visitas
-          referenceDate: targetDateBRT
-        });
-        
-        // Normalizar ambas as datas para comparação simples (YYYY-MM-DD)
-        // Ignora timezone completamente, compara apenas a data calendário
-        const nextDateStr = scheduleResult.nextDate.toISOString().split('T')[0];
-        const targetDateStr = targetDateBRT.toISOString().split('T')[0];
-        
-        // Incluir visitas atrasadas e da data alvo (nextVisitDate <= targetDate)
-        if (nextDateStr <= targetDateStr) {
-          customersToVisit.push(customer);
-        }
-      } catch (error: any) {
-        console.warn(`⚠️ Erro ao calcular próxima visita para cliente ${customer.fantasyName}: ${error.message}`);
-      }
-    }
-    
-    if (clientsWithoutServiceStartDate > 0) {
-      console.warn(`⚠️ ${clientsWithoutServiceStartDate} clientes sem serviceStartDate (usando createdAt ou data atual como fallback)`);
-    }
-    
-    console.log(`✅ getCustomersForDate: ${customersToVisit.length} clientes devem ser visitados em ${targetDateBRT.toLocaleDateString('pt-BR')}`);
-    
-    return customersToVisit;
+    console.log(`✅ getCustomersForDate: ${custs.length} clientes com visita agendada em ${dateStr} para vendedor ${sellerId}`);
+    return custs;
   }
 
   // NOVA FUNÇÃO: Buscar clientes das visitas planejadas (visitAgenda) 
