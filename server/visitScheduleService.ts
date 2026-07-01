@@ -1,6 +1,6 @@
 import { db } from './db';
 import { customers, visitAgenda } from '../shared/schema';
-import { eq, and, gte, lte, isNotNull } from 'drizzle-orm';
+import { eq, and, gte, lte, isNotNull, sql } from 'drizzle-orm';
 import { nowBrazil, toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
 
 // Função para calcular a próxima data de visita baseada na periodicidade
@@ -257,6 +257,7 @@ export async function generateVisitAgenda(): Promise<{ processed: number; genera
       .where(
         and(
           eq(customers.isActive, true),
+          sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao gera agenda de visitas
           isNotNull(customers.serviceStartDate),
           isNotNull(customers.sellerId)
         )

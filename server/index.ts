@@ -820,6 +820,8 @@ run();
 
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
+  // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (

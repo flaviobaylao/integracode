@@ -1115,6 +1115,7 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(customers.sellerId, sellerId),
           eq(customers.omieStatus, 'ativo'),
+          sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao entra em rota de visitas
           isNotNull(customers.latitude),
           isNotNull(customers.longitude),
           isNotNull(customers.weekdays),
