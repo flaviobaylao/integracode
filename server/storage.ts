@@ -6900,11 +6900,34 @@ export class DatabaseStorage implements IStorage {
         }
       } catch (e) { /* fallback best-effort */ }
 
+      // Buscar visitas tambem para clientes resolvidos por DOCUMENTO (id diferente de ac.customerId)
+      try {
+        const effIds = new Set<string>();
+        for (const ac of active) {
+          let cust = ac.customerId ? customerMap.get(ac.customerId) : undefined;
+          if (!cust && (ac as any).document) cust = customerByDoc.get(_digits((ac as any).document));
+          const eid = (cust as any)?.id || ac.customerId;
+          if (eid && !visitMap.has(eid)) effIds.add(eid);
+        }
+        if (effIds.size > 0) {
+          const extra = await db.select({ customerId: visitAgenda.customerId, scheduledDate: visitAgenda.scheduledDate, visitStatus: visitAgenda.visitStatus })
+            .from(visitAgenda)
+            .where(and(inArray(visitAgenda.customerId, Array.from(effIds)), gte(visitAgenda.scheduledDate, today)))
+            .orderBy(asc(visitAgenda.scheduledDate));
+          for (const visit of extra) {
+            if (!visitMap.has(visit.customerId)) visitMap.set(visit.customerId, []);
+            const vs = visitMap.get(visit.customerId)!;
+            if (vs.length < 3) { const d = new Date(visit.scheduledDate); const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; vs.push({ date: ds, status: visit.visitStatus || 'pending' }); }
+          }
+        }
+      } catch (e) { /* best-effort */ }
+
       // Retornar dados com clientes disponíveis
       const result: ActiveCustomerWithVisits[] = active.map((ac) => {
-        const visits = ac.customerId ? (visitMap.get(ac.customerId) || []) : [];
         let customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
         if (!customer && (ac as any).document) customer = customerByDoc.get(_digits((ac as any).document));
+        const _effId = (customer as any)?.id || ac.customerId;
+        const visits = _effId ? (visitMap.get(_effId) || []) : [];
         
         // Adicionar dados de positivação e última atividade
         const isPositivated = ac.customerId ? (positivationMap.get(ac.customerId) || false) : false;
