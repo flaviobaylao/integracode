@@ -7508,6 +7508,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota NOVA e SIMPLES para sincronizar APENAS CLIENTES ATIVOS do Omie
   app.post('/api/omie/sync-active-clients', authenticateUser, async (req: any, res) => {
     try {
+      // DESLIGADO (01/jul/2026): cadastro de clientes gerido no 2.0 (import do 1.0). Omie nao sobrescreve clientes.
+      return res.json({ disabled: true, message: 'Sincronizacao de clientes do Omie desligada. Cadastro gerido no INTEGRA 2.0.' });
       const { defaultSellerId, omieInstanceId } = req.body;
       
       let omieService: OmieService | null;

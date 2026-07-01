@@ -47,7 +47,7 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; nat
 { table: "omie_instances", pk: "id", hasUpdatedAt: true },
 { table: "users", pk: "id", hasUpdatedAt: true },
 { table: "routes", pk: "id", hasUpdatedAt: true },
-{ table: "customers", pk: "id", hasUpdatedAt: true, naturalKey: ["cpf", "cnpj"] },
+// { table: "customers", ... } DESLIGADO (01/jul): cadastro gerido no 2.0, sem sync do 1.0.
 { table: "billings", pk: "id", hasUpdatedAt: false, naturalKey: "omie_order_id" },
   { table: "receivables", pk: "id", hasUpdatedAt: true },
   { table: "receivable_payments", pk: "id", hasUpdatedAt: true },

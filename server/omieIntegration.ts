@@ -3565,6 +3565,8 @@ export class OmieService {
         return result;
       }
 
+      // DESLIGADO (01/jul/2026): cadastro de clientes gerido no 2.0 (import do 1.0 como base). Omie NAO sincroniza mais clientes.
+      return result;
       console.log('🔄 Iniciando sincronização COMPLETA de clientes com atualização de vendedores...');
 
       await this.preloadAllSellersCache();
