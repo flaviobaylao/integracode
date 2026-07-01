@@ -135,6 +135,42 @@ run();
   const server = await registerRoutes(app);
   registerPaymentVerificationRoutes(app);
 
+  // [DIAG] Analisa dados do 1.0 p/ um vendedor: duplicatas de documento e vendedor conflitante. REMOVER apos uso.
+  app.get('/api/admin/diag/seller-1v2', async (req: Request, res: Response) => {
+    try {
+      const RAD = String((req.query as any).seller || 'e9149282-adfc-448e-8d0e-a07765a06637');
+      const pgMod = await import('pg');
+      const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+      await src.connect();
+      const out: any = {};
+      try {
+        const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+        const all = (await src.query("SELECT id, cnpj, cpf, seller_id, is_active, coalesce(is_lead,false) AS is_lead, created_at FROM customers")).rows as any[];
+        const active = all.filter((c) => c.is_active === true && c.is_lead === false);
+        const rad = active.filter((c) => String(c.seller_id || '') === RAD);
+        out.radClientes1_0_ativos = rad.length;
+        const radDocs = new Set<string>();
+        for (const c of rad) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11) radDocs.add(d); }
+        out.radDocsDistintos = radDocs.size;
+        out.radSemDoc = rad.filter((c) => { const d = dg(c.cnpj) || dg(c.cpf); return !(d && d.length >= 11); }).length;
+        // mapa doc -> conjunto de sellers (em TODOS os customers ativos do 1.0)
+        const docSellers = new Map<string, Set<string>>();
+        const docFirst = new Map<string, string>(); // first-match como o seller-by-doc (ordem do SELECT)
+        for (const c of active) { const d = dg(c.cnpj) || dg(c.cpf); if (!(d && d.length >= 11)) continue; if (!docSellers.has(d)) docSellers.set(d, new Set()); if (c.seller_id) docSellers.get(d)!.add(String(c.seller_id)); if (c.seller_id && !docFirst.has(d)) docFirst.set(d, String(c.seller_id)); }
+        let docsConflitantes = 0, firstDaOutro = 0, firstDoRad = 0;
+        for (const d of radDocs) { const set = docSellers.get(d) || new Set(); if (set.size > 1) docsConflitantes++; if (docFirst.get(d) === RAD) firstDoRad++; else firstDaOutro++; }
+        out.radDocsComVendedorConflitante_no1_0 = docsConflitantes;
+        out.radDocs_firstMatchApontaRad = firstDoRad;
+        out.radDocs_firstMatchApontaOutro = firstDaOutro;
+        // duplicatas de documento no 1.0 (qualquer doc com >1 customer ativo)
+        const docCount = new Map<string, number>();
+        for (const c of active) { const d = dg(c.cnpj) || dg(c.cpf); if (d && d.length >= 11) docCount.set(d, (docCount.get(d) || 0) + 1); }
+        out.totalDocsDuplicadosNo1_0 = [...docCount.values()].filter((n) => n > 1).length;
+      } finally { await src.end().catch(() => {}); }
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+  });
+
   // [DIAG] Auditoria de escrita em customers.seller_id via TRIGGER (pega o writer no flagrante). REMOVER apos diagnostico.
   app.post('/api/admin/diag/seller-audit/install', async (_req: Request, res: Response) => {
     try {
