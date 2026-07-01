@@ -143,17 +143,28 @@ run();
       const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
       const cr: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
       const cust = (cr.rows || cr) as any[];
-      const docToId = new Map<string, string>(); const sellerById = new Map<string, string>();
+      const norm = (x: any) => String(x || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const docToId = new Map<string, string>(); const sellerById = new Map<string, string>(); const nameToId = new Map<string, string | null>();
+      const cnR: any = await db.execute(sql.raw("SELECT id, name, fantasy_name FROM customers"));
+      const nameRows = (cnR.rows || cnR) as any[];
       for (const c of cust) { sellerById.set(String(c.id), String(c.seller_id || '')); for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id)); } }
-      const ar: any = await db.execute(sql.raw("SELECT id, document, customer_id, is_active FROM active_customers"));
+      for (const c of nameRows) { for (const nm of [norm(c.name), norm(c.fantasy_name)]) { if (nm.length >= 5) { if (!nameToId.has(nm)) nameToId.set(nm, String(c.id)); else if (nameToId.get(nm) !== String(c.id)) nameToId.set(nm, null); } } }
+      const ar: any = await db.execute(sql.raw("SELECT id, document, customer_id, is_active, fantasy_name_imported FROM active_customers"));
       const acs = (ar.rows || ar) as any[];
-      let relink = 0, jaOk = 0, semMatch = 0, ativos = 0;
+      let relink = 0, jaOk = 0, semMatch = 0, ativos = 0, viaNome = 0;
       const toFix: Array<{ id: string; cid: string }> = [];
+      const cidOf = (a: any): string | undefined => {
+        const d = dg(a.document);
+        let cid = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        if (!cid) { const nm = norm(a.fantasy_name_imported); if (nm.length >= 5) { const v = nameToId.get(nm); if (v) cid = v; } }
+        return cid;
+      };
       for (const a of acs) {
         if (a.is_active === true) ativos++;
-        const d = dg(a.document);
-        const cid = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        const d = dg(a.document); const byDoc = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        const cid = cidOf(a);
         if (!cid) { semMatch++; continue; }
+        if (!byDoc && cid) viaNome++;
         if (String(a.customer_id || '') === cid) { jaOk++; } else { toFix.push({ id: String(a.id), cid }); }
       }
       const result: any = { totalActive: acs.length, ativosOn: ativos, jaVinculadosOk: jaOk, aReligar: toFix.length, semMatchDoc: semMatch, apply, relinked: 0 };
@@ -165,10 +176,10 @@ run();
       let radAtivo = 0;
       for (const a of acs) {
         if (a.is_active !== true) continue;
-        const d = dg(a.document); const cid = (d && d.length >= 11) ? docToId.get(d) : undefined;
+        const cid = cidOf(a);
         if (cid && sellerById.get(cid) === RAD) radAtivo++;
       }
-      result.radiltonAtivosPorDoc = radAtivo;
+      result.radiltonAtivos = radAtivo; result.viaNome = viaNome;
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
   });
