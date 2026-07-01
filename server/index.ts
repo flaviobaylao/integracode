@@ -259,6 +259,67 @@ run();
     finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
   });
 
+  // DIAGNOSTICO campo-a-campo: classifica cada divergencia (cosmetica x REAL) p/ achar erros de fidelidade 1.0->2.0.
+  app.get('/api/admin/sync/customers-parity-detail', async (req: Request, res: Response) => {
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const tgt = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    try {
+      await src.connect(); await tgt.connect();
+      const onlyField = (req.query.field ? String(req.query.field) : '').trim();
+      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+      const nz = (v: any) => (v === null || v === undefined) ? '' : String(v);
+      const colQ = "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers'";
+      const sCols = new Set((await src.query(colQ)).rows.map((r: any) => r.column_name));
+      const tCols = new Set((await tgt.query(colQ)).rows.map((r: any) => r.column_name));
+      // ignora id/timestamps e os campos exclusivos do Omie (2.0 sem Omie)
+      const EXCLUDE = new Set(['id','created_at','updated_at','omie_client_code','omie_instance_id']);
+      let cmpCols = [...sCols].filter((c: any) => tCols.has(c) && !EXCLUDE.has(c));
+      if (onlyField) cmpCols = cmpCols.filter((c) => c === onlyField);
+      const sel = 'SELECT ' + ['cnpj','cpf',...cmpCols.filter((c)=>c!=='cnpj'&&c!=='cpf')].map((c)=>'"'+c+'"::text AS "'+c+'"').join(',') + ' FROM customers';
+      const s1 = (await src.query(sel)).rows as any[];
+      const t2 = (await tgt.query(sel)).rows as any[];
+      const t2doc = new Map<string, any>();
+      for (const c of t2) { for (const d of [dg(c.cnpj), dg(c.cpf)]) { if (d && d.length >= 11 && !t2doc.has(d)) t2doc.set(d, c); } }
+      const trimWs = (t: string) => t.replace(/\s+/g, ' ').trim();
+      const strong = (t: string) => trimWs(t).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const jnorm = (t: string) => { const x = trimWs(t); if (x.startsWith('[') || x.startsWith('{')) { try { const o = JSON.parse(x); const so=(v:any):any=>Array.isArray(v)?v.map(so).slice().sort():(v&&typeof v==='object'?Object.keys(v).sort().reduce((a:any,k)=>(a[k]=so(v[k]),a),{}):v); return JSON.stringify(so(o)); } catch(e){} } return null; };
+      const buckets: Record<string, any> = {};
+      const realEx: any[] = [];
+      let matched = 0;
+      for (const a of s1) {
+        const dc = dg(a.cnpj), dp = dg(a.cpf);
+        if (!((dc && dc.length >= 11) || (dp && dp.length >= 11))) continue;
+        const b = t2doc.get((dc && dc.length>=11 && t2doc.has(dc)) ? dc : dp);
+        if (!b) continue;
+        matched++;
+        for (const c of cmpCols) {
+          const av = nz(a[c]), bv = nz(b[c]);
+          if (av === bv) continue; // identico
+          const bk = buckets[c] || (buckets[c] = { total:0, whitespace:0, caseAccent:0, jsonbOrder:0, numeric:0, srcEmptyTgtHas:0, srcHasTgtEmpty:0, real:0 });
+          bk.total++;
+          if (av === '' && bv !== '') { bk.srcEmptyTgtHas++; continue; }
+          if (av !== '' && bv === '') { bk.srcHasTgtEmpty++; continue; }
+          const na = parseFloat(av), nb = parseFloat(bv);
+          if (!isNaN(na) && !isNaN(nb) && /^[-0-9.,]+$/.test(av) && /^[-0-9.,]+$/.test(bv)) { if (Math.abs(na-nb) < 0.0000015) { bk.numeric++; continue; } }
+          const ja = jnorm(av), jb = jnorm(bv);
+          if (ja !== null && jb !== null) { if (ja === jb) { bk.jsonbOrder++; continue; } }
+          if (trimWs(av) === trimWs(bv)) { bk.whitespace++; continue; }
+          if (strong(av) === strong(bv)) { bk.caseAccent++; continue; }
+          bk.real++;
+          const doc = (dc && dc.length>=11) ? dc : dp;
+          if (realEx.length < 400) realEx.push({ documento: doc, campo: c, v1_0: av.slice(0,120), v2_0: bv.slice(0,120) });
+        }
+      }
+      const summary: Record<string, any> = {};
+      let totalReal = 0;
+      for (const [k,v] of Object.entries(buckets)) { summary[k] = v; totalReal += (v as any).real; }
+      const sorted = Object.entries(summary).sort((x:any,y:any)=> (y[1].real - x[1].real) || (y[1].total - x[1].total)).reduce((o:any,[k,v])=>(o[k]=v,o),{});
+      res.json({ casados: matched, totalReal, campos: sorted, realExamples: (req.query.examples==='1' ? realEx : realEx.length) });
+    } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
+    finally { await src.end().catch(()=>{}); await tgt.end().catch(()=>{}); }
+  });
+
   // IMPORTAÇÃO COMPLETA do cadastro de clientes 1.0 -> 2.0 por DOCUMENTO (chave confiável). Traz TODOS os campos comuns.
   // Match: por documento (cnpj/cpf normalizado); senão por id; senão INSERT. dryRun/apply. + checagem de paridade.
   app.post('/api/admin/sync/import-all-customers', async (req: Request, res: Response) => {
