@@ -510,6 +510,67 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
   });
 
+  // REBUILD de rotas do dia a partir da agenda (02/jul/2026): apaga daily_routes sem checkpoint
+  // na(s) data(s) e regenera pela visit_agenda (planDailyRoute corrigido p/ Opcao A).
+  app.post('/api/admin/routes/rebuild-day', async (req: Request, res: Response) => {
+    try {
+      const raw = String((req.body && req.body.date) || new Date().toISOString().split('T')[0]);
+      const dateStr = raw.replace(/[^0-9-]/g, '');
+      const days = Math.min(Math.max(parseInt(String((req.body && req.body.days) || '1'), 10) || 1, 1), 14);
+      res.json({ ok: true, started: true, date: dateStr, days });
+      (async () => {
+        const summary: any[] = [];
+        const { generateDailyRoute } = await import('./routeOptimizationService');
+        for (let d = 0; d < days; d++) {
+          const dt = new Date(dateStr + 'T00:00:00.000Z');
+          dt.setUTCDate(dt.getUTCDate() + d);
+          const ds = dt.toISOString().split('T')[0];
+          const day: any = { date: ds, deleted: 0, regenerated: 0, keptWithCheckpoints: 0, errors: [] };
+          try {
+            const rq = "SELECT dr.id::text AS id, (SELECT COUNT(*) FROM route_checkpoints rc WHERE rc.daily_route_id = dr.id)::int AS cps FROM daily_routes dr WHERE dr.route_date >= '" + ds + " 00:00:00' AND dr.route_date <= '" + ds + " 23:59:59'";
+            const rr: any = await db.execute(sql.raw(rq));
+            for (const r of ((rr.rows || rr) as any[])) {
+              if (Number(r.cps) > 0) { day.keptWithCheckpoints++; continue; }
+              await db.execute(sql.raw("DELETE FROM daily_routes WHERE id = '" + String(r.id).replace(/[^0-9a-fA-F-]/g, '') + "'"));
+              day.deleted++;
+            }
+            const sq = "SELECT c.seller_id AS sid FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + ds + " 00:00:00' AND va.scheduled_date <= '" + ds + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.seller_id IS NOT NULL GROUP BY c.seller_id";
+            const sr: any = await db.execute(sql.raw(sq));
+            for (const s of ((sr.rows || sr) as any[])) {
+              const sid = String(s.sid || '');
+              if (!sid) continue;
+              try {
+                const routeDate = new Date(ds + 'T00:00:00.000Z');
+                const existing = await storage.getDailyRouteBySellerAndDate(sid, routeDate);
+                if (existing) continue;
+                await generateDailyRoute(storage as any, sid, routeDate);
+                day.regenerated++;
+              } catch (e: any) { if (day.errors.length < 6) day.errors.push(sid + ': ' + String((e && e.message) || e).slice(0, 90)); }
+            }
+          } catch (e: any) { day.errors.push(String((e && e.message) || e).slice(0, 140)); }
+          summary.push(day);
+        }
+        try {
+          const payload = JSON.stringify({ at: new Date().toISOString(), summary });
+          const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'routes_rebuild_last'"));
+          if (((ex.rows || ex) as any[]).length > 0) {
+            await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'routes_rebuild_last'`);
+          } else {
+            await db.execute(sql`INSERT INTO system_settings (key, value, description) VALUES ('routes_rebuild_last', ${payload}, 'ultimo rebuild de rotas do dia')`);
+          }
+        } catch (e) { console.error('rebuild-day: erro ao salvar resumo', e); }
+      })().catch((e) => console.error('rebuild-day: erro geral', e));
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
+  app.get('/api/admin/routes/rebuild-day/status', async (_req: Request, res: Response) => {
+    try {
+      const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'routes_rebuild_last'"));
+      const rows = (r.rows || r) as any[];
+      res.json(rows.length ? JSON.parse(rows[0].value) : { none: true });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
   app.get('/api/admin/visits/generate-from-1-0/status', async (_req: Request, res: Response) => {
     try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'visits_seed_last'`); const row = (r.rows || r)[0]; res.json(row ? JSON.parse(row.value) : { pending: true }); }
     catch (e: any) { res.status(500).json({ error: String(e).slice(0, 200) }); }
