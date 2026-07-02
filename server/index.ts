@@ -428,7 +428,7 @@ run();
       }
       // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
       const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address
-        FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND (is_active = true OR omie_status = 'ativo')`);
+        FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
       const cust = (custR.rows || custR) as any[];
       // cadencia
       const INTERVAL: any = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
@@ -576,6 +576,22 @@ run();
       const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'routes_rebuild_last'"));
       const rows = (r.rows || r) as any[];
       res.json(rows.length ? JSON.parse(rows[0].value) : { none: true });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
+  // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
+  app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
+    try {
+      const apply = !!(req.body && req.body.apply);
+      const cond = "va.visit_status = 'pending' AND va.scheduled_date >= (now() at time zone 'utc')::date AND NOT EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = va.customer_id AND ac.is_active IS TRUE)";
+      const cnt: any = await db.execute(sql.raw("SELECT COUNT(*)::int AS n, COUNT(DISTINCT va.customer_id)::int AS clientes FROM visit_agenda va WHERE " + cond));
+      const row = ((cnt.rows || cnt) as any[])[0] || {};
+      let deleted = 0;
+      if (apply) {
+        const del: any = await db.execute(sql.raw("DELETE FROM visit_agenda va WHERE " + cond));
+        deleted = Number((del && del.rowCount) || 0);
+      }
+      res.json({ apply, visitasPendentesForaDaLista: Number(row.n || 0), clientes: Number(row.clientes || 0), deleted });
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
