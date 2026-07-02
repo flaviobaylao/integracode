@@ -579,6 +579,72 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
+  // AVISO ROTA DO DIA (02/jul/2026): clientes com visita pendente no dia SEM coordenada (ficam fora da rota otimizada)
+  app.get('/api/admin/routes/missing-coords', async (req: Request, res: Response) => {
+    try {
+      const sellerId = String(req.query.sellerId || '');
+      const dateStr = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      if (!sellerId || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) { res.status(400).json({ error: 'sellerId e date (YYYY-MM-DD) obrigatorios' }); return; }
+      const r: any = await db.execute(sql`SELECT DISTINCT c.id, c.name, c.city FROM visit_agenda va JOIN customers c ON c.id = va.customer_id LEFT JOIN users u ON u.id = ${sellerId} WHERE va.visit_status = 'pending' AND va.scheduled_date >= ${dateStr + ' 00:00:00'}::timestamp AND va.scheduled_date <= ${dateStr + ' 23:59:59'}::timestamp AND (va.is_virtual IS NOT TRUE) AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND (c.seller_id = ${sellerId} OR (u.omie_vendor_code IS NOT NULL AND (c.seller_id = u.omie_vendor_code OR c.seller_id = ('omie-vendor-' || u.omie_vendor_code)))) ORDER BY c.name`);
+      const rows = ((r.rows || r) as any[]).map((x) => ({ id: x.id, name: x.name, city: x.city }));
+      res.json({ count: rows.length, customers: rows });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
+  // GEOCODIFICACAO (02/jul/2026): preenche lat/long por endereco (Nominatim/OSM) p/ clientes da lista de Ativos sem coordenada.
+  // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro. Fire-and-forget (resumo em geocode_missing_last).
+  app.post('/api/admin/customers/geocode-missing', async (req: Request, res: Response) => {
+    try {
+      const apply = !!(req.body && req.body.apply);
+      const limit = Math.min(Number((req.body && req.body.limit) || 80), 200);
+      const sel: any = await db.execute(sql`SELECT c.id, c.name, c.address, c.city FROM customers c WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND COALESCE(TRIM(c.address), '') <> '' AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE) ORDER BY c.name LIMIT ${limit}`);
+      const cands = ((sel.rows || sel) as any[]);
+      res.json({ ok: true, started: true, apply, candidates: cands.length });
+      (async () => {
+        const norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+        const results: any[] = [];
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0;
+        for (const c of cands) {
+          try {
+            const q = [c.address, c.city, 'Brasil'].filter(Boolean).join(', ');
+            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+            const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
+            const arr: any = resp.ok ? await resp.json() : [];
+            const hit = Array.isArray(arr) && arr.length ? arr[0] : null;
+            if (!hit) { notFound++; results.push({ id: c.id, name: c.name, status: 'nao_encontrado' }); }
+            else {
+              const cityToken = norm(c.city).split(' ')[0] || '';
+              const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
+              if (cityOk && apply) {
+                await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
+                updated++; results.push({ id: c.id, name: c.name, status: 'atualizado', lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, status: 'ok_dry_run', lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, status: 'cidade_nao_confere', display: String(hit.display_name).slice(0, 90) }); }
+            }
+          } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
+          await new Promise((rs) => setTimeout(rs, 1200));
+        }
+        try {
+          const payload = JSON.stringify({ at: new Date().toISOString(), apply, candidates: cands.length, updated, dryOk, unverified, notFound, errors, results });
+          const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_missing_last'"));
+          if (((ex.rows || ex) as any[]).length > 0) {
+            await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_missing_last'`);
+          } else {
+            await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('geocode_missing_last', ${payload}, 'ultima geocodificacao em lote', 'geocode-missing')`);
+          }
+        } catch (e) { console.error('geocode-missing: erro ao salvar resumo', e); }
+      })().catch((e) => console.error('geocode-missing: erro geral', e));
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
+  app.get('/api/admin/customers/geocode-missing/status', async (_req: Request, res: Response) => {
+    try {
+      const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'geocode_missing_last'"));
+      const rows = (r.rows || r) as any[];
+      res.json(rows.length ? JSON.parse(rows[0].value) : { none: true });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
   // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
