@@ -1099,10 +1099,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCustomersForDate(sellerId: string, date: Date): Promise<Customer[]> {
-    const BRAZIL_TZ = 'America/Sao_Paulo';
+    // Janela por DIA CALENDARIO UTC (02/jul/2026): scheduled_date tem horarios mistos
+    // (00:00Z sync do 1.0, 03:00Z seed generate-from-1-0, 08:00 gerador antigo) e todos
+    // pertencem ao MESMO dia calendario. A janela BRT (fromZonedTime) jogava as visitas
+    // de 00:00Z para o dia anterior (faltavam hoje / sobravam amanha).
     const dateStr = date.toISOString().split('T')[0];
-    const startOfDay = fromZonedTime(new Date(`${dateStr}T00:00:00`), BRAZIL_TZ);
-    const endOfDay = fromZonedTime(new Date(`${dateStr}T23:59:59.999`), BRAZIL_TZ);
+    const startOfDay = new Date(dateStr + 'T00:00:00.000Z');
+    const endOfDay = new Date(dateStr + 'T23:59:59.999Z');
 
     // OPÇÃO A (01/jul/2026): a ROTA DO DIA vem da AGENDA (visit_agenda), que é ancorada na
     // ÚLTIMA VISITA AGENDADA do 1.0 (via gerar-agendamentos). Cliente entra na rota do dia
