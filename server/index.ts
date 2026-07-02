@@ -498,7 +498,7 @@ run();
     try {
       const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
       const dateStr = raw.replace(/[^0-9-]/g, '');
-      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
+      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
       const ag: any = await db.execute(sql.raw(q));
       const rowsAg = (ag.rows || ag) as any[];
       const out: any[] = [];
@@ -542,7 +542,7 @@ run();
               await db.execute(sql.raw("DELETE FROM daily_routes WHERE id = '" + String(r.id).replace(/[^0-9a-fA-F-]/g, '') + "'"));
               day.deleted++;
             }
-            const sq = "SELECT c.seller_id AS sid FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + ds + " 00:00:00' AND va.scheduled_date <= '" + ds + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.seller_id IS NOT NULL GROUP BY c.seller_id";
+            const sq = "SELECT c.seller_id AS sid FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + ds + " 00:00:00' AND va.scheduled_date <= '" + ds + " 23:59:59' AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.seller_id IS NOT NULL GROUP BY c.seller_id";
             const sr: any = await db.execute(sql.raw(sq));
             for (const s of ((sr.rows || sr) as any[])) {
               const sid = String(s.sid || '');
