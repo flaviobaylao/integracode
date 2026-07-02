@@ -18253,34 +18253,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const plan = await planDailyRoute(storage, targetSellerId, routeDate);
         console.log(`🔍 DEBUG: Após planDailyRoute - plan.optimizedOrder.length: ${plan.optimizedOrder.length}`);
         
-        // NOVO: Mesclar optimizedOrder - preservar clientes com checkpoints + adicionar novos
-        const existingOptimizedOrder = existingRoute.optimizedOrder || [];
+        // SUBSTITUICAO (02/jul/2026): rota regenerada = EXATAMENTE o plano novo (agenda do dia).
+        // Preserva apenas clientes que ja tem checkpoint (trabalho de campo iniciado) e que
+        // sairam do plano; todo o resto e substituido (o merge antigo acumulava clientes).
         const newPlannedCustomers = plan.optimizedOrder || [];
-        
-        // Identificar clientes que devem ser preservados (têm checkpoints)
-        const preservedFromExisting = existingOptimizedOrder.filter((id: string) => 
-          customerIdsWithCheckpoints.has(id)
+        const existingOptimizedOrder = existingRoute.optimizedOrder || [];
+        const plannedSet = new Set(newPlannedCustomers);
+        const preservedNotInPlan = existingOptimizedOrder.filter((id: string) =>
+          customerIdsWithCheckpoints.has(id) && !plannedSet.has(id)
         );
-        
-        // Adicionar novos clientes que não estavam na rota original
-        const existingCustomerSet = new Set(existingOptimizedOrder);
-        const newCustomersToAdd = newPlannedCustomers.filter((id: string) => 
-          !existingCustomerSet.has(id)
-        );
-        
-        // Combinar: clientes preservados (com checkpoints) + clientes existentes sem checkpoints + novos
-        const preservedSet = new Set(preservedFromExisting);
-        const existingWithoutCheckpoints = existingOptimizedOrder.filter((id: string) => 
-          !preservedSet.has(id)
-        );
-        
         const mergedOptimizedOrder = [
-          ...preservedFromExisting,
-          ...existingWithoutCheckpoints,
-          ...newCustomersToAdd
+          ...preservedNotInPlan,
+          ...newPlannedCustomers
         ];
         
-        console.log(`📊 [MERGE] Resultado: ${preservedFromExisting.length} preservados + ${existingWithoutCheckpoints.length} existentes + ${newCustomersToAdd.length} novos = ${mergedOptimizedOrder.length} total`);
+        console.log(`[REPLACE] ${preservedNotInPlan.length} preservados (checkpoint) + ${newPlannedCustomers.length} do plano = ${mergedOptimizedOrder.length} total`);
         
         // Atualizar rota existente com dados mesclados (PRESERVA ID e checkpoints)
         const updatedRoute = await storage.updateDailyRoute(existingRoute.id, {
@@ -18313,8 +18300,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalEstimatedDistance: plan.totalDistance,
           warnings: plan.warnings || [],
           suspiciousCoordinates: plan.customersWithSuspiciousCoords || [],
-          preservedCustomers: preservedFromExisting.length,
-          newCustomers: newCustomersToAdd.length
+          preservedCustomers: preservedNotInPlan.length,
+          newCustomers: newPlannedCustomers.length
         });
       }
 
