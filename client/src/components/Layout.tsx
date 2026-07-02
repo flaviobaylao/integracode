@@ -200,6 +200,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
     {
+      groupLabel: 'Dashboard Financeiro',
+      color: 'bg-emerald-500',
+      bgColor: 'bg-emerald-50',
+      textColor: 'text-emerald-700',
+      hexColor: '#10b981',
+      icon: 'fas fa-chart-pie',
+      items: [
+        { id: 'dashboard-financeiro', label: 'Dashboard Financeiro', icon: 'fas fa-chart-pie', available: canAccessReports, badge: null },
+      ],
+    },
+    {
       groupLabel: 'Comunicação',
       color: 'bg-teal-500',
       bgColor: 'bg-teal-50',
