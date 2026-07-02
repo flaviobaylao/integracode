@@ -1319,7 +1319,7 @@ export default function ActiveCustomers() {
                             key={ac.id} 
                             data-testid={`row-customer-${ac.id}`}
                             onClick={(e) => handleActionClick(e, ac)}
-                            className={`cursor-pointer transition-colors ${((ac.nextThreeVisits?.length ?? 0) === 0) ? 'bg-red-100 hover:bg-red-200' : 'hover:bg-muted/50'}`}
+                            className={`cursor-pointer transition-colors ${((ac.nextThreeVisits?.length ?? 0) === 0) ? 'bg-red-100 hover:bg-red-200' : 'hover:bg-muted/50'}${(ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude)) ? ' text-red-600' : ''}`}
                           >
                             <TableCell>
                               {ac.matchStatus === "matched" ? (
@@ -1341,6 +1341,9 @@ export default function ActiveCustomers() {
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                                 </div>
                                 <OmieInstanceBadge instanceId={(ac.customer as any)?.omieInstanceId} />
+                                {ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude) && (
+                                  <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap" title="Sem coordenadas no cadastro - nao entra na rota do dia">SEM COORDENADA</span>
+                                )}
                               </div>
                               {ac.customer?.address && (
                                 <div className="text-xs text-muted-foreground truncate max-w-[200px]">
