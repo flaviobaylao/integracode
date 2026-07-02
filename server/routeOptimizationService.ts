@@ -350,15 +350,11 @@ export async function planDailyRoute(
   
   console.log(`📅 Planejando rota para ${seller.firstName} ${seller.lastName || ''} - ${targetWeekdayFull} ${routeDate.toLocaleDateString('pt-BR')}`);
 
-  // PRIORIDADE: Buscar clientes das VISITAS PLANEJADAS (visitAgenda)
-  // Isso garante que usamos os dados da aba Clientes Ativos
-  let customersScheduled = await storage.getCustomersFromPlannedVisits(sellerId, routeDate);
-  
-  if (customersScheduled.length === 0) {
-    // FALLBACK: Se não houver visitas planejadas, usar cálculo de periodicidade
-    console.log(`   ⚠️ Nenhuma visita planejada encontrada, usando cálculo de periodicidade...`);
-    customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
-  }
+  // ROTA DO DIA = AGENDA DO DIA (Opcao A, 02/jul/2026)
+  // A rota le SOMENTE a visit_agenda (visitas pendentes na data, ancoradas no 1.0), via getCustomersForDate.
+  // Removida a prioridade de getCustomersFromPlannedVisits, cujos filtros extras (vinculo em
+  // active_customers + limite de 3 proximas visitas) derrubavam clientes e divergiam da agenda.
+  const customersScheduled = await storage.getCustomersForDate(sellerId, routeDate);
 
   console.log(`   📋 ${customersScheduled.length} clientes encontrados para a data`);
   
