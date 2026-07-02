@@ -188,6 +188,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'fin-dre', label: 'DRE', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'fin-xml', label: 'XMLs', icon: 'fas fa-file-code', available: canAccessReports, badge: null },
         { id: 'fin-sped', label: 'SPED Fiscal', icon: 'fas fa-database', available: canAccessReports, badge: null },
+        { id: 'dashboard-financeiro', label: 'Dashboard Financeiro', icon: 'fas fa-chart-pie', available: canAccessReports, badge: null },
         { id: 'todas-as-contas', label: 'Todas as Contas', icon: 'fas fa-list', available: canAccessReports, badge: null },
         { id: 'fluxo-caixa', label: 'Fluxo de Caixa', icon: 'fas fa-chart-area', available: canAccessReports, badge: null },
         { id: 'recuperacao-faturamento', label: 'Recuperação de Faturamento', icon: 'fas fa-rotate-left', available: canAccessReports, badge: null },
@@ -341,7 +342,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos'];
+    const routePages = ['sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
