@@ -1134,6 +1134,8 @@ export class DatabaseStorage implements IStorage {
           inArray(customers.id, scheduledIds),
           eq(customers.sellerId, sellerId),
           eq(customers.omieStatus, 'ativo'),
+          eq(customers.isActive, true), // cliente desativado no cadastro nao entra na rota (02/jul/2026)
+          sql`(${customers.isSupplier} IS NOT TRUE)`,
           isNotNull(customers.latitude),
           isNotNull(customers.longitude)
         )
