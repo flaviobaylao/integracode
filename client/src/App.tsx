@@ -74,6 +74,7 @@ import Reports from "@/pages/Reports";
 import PurchaseRadar from "@/pages/PurchaseRadar";
 import RelatoriosIA from "@/pages/RelatoriosIA";
 import PagamentoClientes from "@/pages/PagamentoClientes";
+import DashboardFinanceiro from "@/pages/DashboardFinanceiro";
 import Repescagem from "@/pages/Repescagem";
 import MinhaAgenda from "@/pages/MinhaAgenda";
 import PixCharges from "@/pages/PixCharges";
@@ -283,6 +284,7 @@ function Router() {
           <Route path="/radar-compras" component={PurchaseRadar} />
           <Route path="/relatorios-ia" component={RelatoriosIA} />
           <Route path="/pagamento-clientes" component={PagamentoClientes} />
+      <Route path="/dashboard-financeiro" component={DashboardFinanceiro} />
           <Route path="/repescagem" component={Repescagem} />
           <Route path="/minha-agenda" component={MinhaAgenda} />
           <Route path="/pix-charges" component={PixCharges} />
