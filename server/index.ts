@@ -498,13 +498,21 @@ run();
     try {
       const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
       const dateStr = raw.replace(/[^0-9-]/g, '');
-      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 8";
+      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
       const ag: any = await db.execute(sql.raw(q));
       const rowsAg = (ag.rows || ag) as any[];
       const out: any[] = [];
       for (const r of rowsAg) {
-        const rota = await storage.getCustomersForDate(String(r.sid), new Date(dateStr + 'T12:00:00Z'));
-        out.push({ seller: String(r.sid), agenda: Number(r.n), rota: rota.length, bate: rota.length === Number(r.n) });
+        const sid = String(r.sid);
+        const rota = await storage.getCustomersForDate(sid, new Date(dateStr + 'T12:00:00.000Z'));
+        let gravada: any = null;
+        try {
+          const dr: any = await db.execute(sql.raw("SELECT total_visits FROM daily_routes WHERE seller_id = '" + sid.replace(/[^0-9a-zA-Z-]/g, '') + "' AND route_date >= '" + dateStr + " 00:00:00' AND route_date <= '" + dateStr + " 23:59:59' LIMIT 1"));
+          const drr = (dr.rows || dr) as any[];
+          gravada = drr.length ? Number(drr[0].total_visits) : null;
+        } catch {}
+        const esperadaFisica = Number(r.n) - Number(r.virt || 0);
+        out.push({ seller: sid, agenda: Number(r.n), virtuais: Number(r.virt || 0), rotaCalc: rota.length, rotaGravada: gravada, esperadaFisica, bate: rota.length === Number(r.n) });
       }
       res.json({ data: dateStr, comparacao: out });
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
@@ -556,7 +564,7 @@ run();
           if (((ex.rows || ex) as any[]).length > 0) {
             await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'routes_rebuild_last'`);
           } else {
-            await db.execute(sql`INSERT INTO system_settings (key, value, description) VALUES ('routes_rebuild_last', ${payload}, 'ultimo rebuild de rotas do dia')`);
+            await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('routes_rebuild_last', ${payload}, 'ultimo rebuild de rotas do dia', 'rebuild-day')`);
           }
         } catch (e) { console.error('rebuild-day: erro ao salvar resumo', e); }
       })().catch((e) => console.error('rebuild-day: erro geral', e));
