@@ -199,6 +199,19 @@ export default function RotaDoDia() {
   const virtualServiceCount = virtualServiceData?.count || 0;
   const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
 
+  // Clientes com visita no dia SEM coordenada (ficam fora da rota otimizada)
+  interface MissingCoordsData { count: number; customers: { id: string; name: string; city: string | null }[] }
+  const { data: missingCoords } = useQuery<MissingCoordsData>({
+    queryKey: ['/api/admin/routes/missing-coords', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/routes/missing-coords?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!res.ok) return { count: 0, customers: [] };
+      return res.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+    staleTime: 60000,
+  });
+
   const generateFromPlannedVisitsMutation = useMutation({
     mutationFn: async () => {
       if (!selectedSellerId || !selectedDate) throw new Error('Vendedor e data são obrigatórios');
@@ -725,6 +738,12 @@ export default function RotaDoDia() {
           </Card>
         )}
       </div>
+
+      {!!missingCoords && missingCoords.count > 0 && (
+        <div className="mb-6 p-4 rounded-md border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200 text-sm" data-testid="banner-missing-coords">
+          <strong>{missingCoords.count} cliente(s) da agenda deste dia SEM coordenada</strong> — ficam fora da rota otimizada. Atualize o cadastro (lat/long): {missingCoords.customers.map((c) => c.name).join(', ')}
+        </div>
+      )}
 
       {!selectedSellerId ? (
         <Card>
