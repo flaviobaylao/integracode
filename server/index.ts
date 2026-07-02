@@ -595,6 +595,48 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
+  // DASHBOARD FINANCEIRO (02/jul/2026): agregados de contas a receber/pagar p/ a tela /dashboard-financeiro
+  app.get('/api/admin/financial/dashboard', async (_req: Request, res: Response) => {
+    try {
+      const HOJE = "(now() at time zone 'America/Sao_Paulo')::date";
+      const openRec = "FROM receivables WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
+      const openPay = "FROM payables WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
+      const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
+      const one = async (q: string) => (await many(q))[0] || {};
+      const kq = (base: string) => "SELECT COUNT(*)::int AS n, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v, COUNT(*) FILTER (WHERE due_date::date < " + HOJE + ")::int AS n_venc, COALESCE(SUM(amount - COALESCE(amount_paid,0)) FILTER (WHERE due_date::date < " + HOJE + "),0)::float AS v_venc, COUNT(*) FILTER (WHERE due_date::date = " + HOJE + ")::int AS n_hoje, COALESCE(SUM(amount - COALESCE(amount_paid,0)) FILTER (WHERE due_date::date = " + HOJE + "),0)::float AS v_hoje " + base;
+      const kr = await one(kq(openRec));
+      const kp = await one(kq(openPay));
+      const winRec = openRec + " AND due_date >= date_trunc('month', " + HOJE + ") - interval '2 months' AND due_date < date_trunc('month', " + HOJE + ") + interval '7 months'";
+      const winPay = openPay + " AND due_date >= date_trunc('month', " + HOJE + ") - interval '2 months' AND due_date < date_trunc('month', " + HOJE + ") + interval '7 months'";
+      const fluxoRec = await many("SELECT to_char(due_date, 'YYYY-MM') AS mes, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v " + winRec + " GROUP BY 1 ORDER BY 1");
+      const fluxoPay = await many("SELECT to_char(due_date, 'YYYY-MM') AS mes, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v " + winPay + " GROUP BY 1 ORDER BY 1");
+      const meses = Array.from(new Set([...fluxoRec.map((r: any) => r.mes), ...fluxoPay.map((r: any) => r.mes)])).sort();
+      const fr = new Map(fluxoRec.map((r: any) => [r.mes, Number(r.v)]));
+      const fp = new Map(fluxoPay.map((r: any) => [r.mes, Number(r.v)]));
+      const fluxo = meses.map((m) => ({ mes: m, entradas: fr.get(m) || 0, saidas: fp.get(m) || 0 }));
+      const pagarHoje = await many("SELECT title_number AS titulo, supplier_name AS fornecedor, description AS descricao, due_date AS vencimento, (amount - COALESCE(amount_paid,0))::float AS saldo " + openPay + " AND due_date::date = " + HOJE + " ORDER BY saldo DESC LIMIT 100");
+      const pagarVencidas = await many("SELECT title_number AS titulo, supplier_name AS fornecedor, description AS descricao, due_date AS vencimento, (amount - COALESCE(amount_paid,0))::float AS saldo " + openPay + " AND due_date::date < " + HOJE + " ORDER BY due_date ASC LIMIT 100");
+      const receberHoje = await many("SELECT title_number AS titulo, customer_name AS cliente, (amount - COALESCE(amount_paid,0))::float AS saldo " + openRec + " AND due_date::date = " + HOJE + " ORDER BY saldo DESC LIMIT 100");
+      const agingQ = (base: string) => "SELECT CASE WHEN (" + HOJE + " - due_date::date) <= 30 THEN '1-30' WHEN (" + HOJE + " - due_date::date) <= 60 THEN '31-60' WHEN (" + HOJE + " - due_date::date) <= 90 THEN '61-90' ELSE '90+' END AS faixa, COUNT(*)::int AS n, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS valor " + base + " AND due_date::date < " + HOJE + " GROUP BY 1 ORDER BY 1";
+      const agingReceber = await many(agingQ(openRec));
+      const agingPagar = await many(agingQ(openPay));
+      const topDevedores = await many("SELECT COALESCE(customer_name,'(sem nome)') AS cliente, COUNT(*)::int AS n, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS valor " + openRec + " AND due_date::date < " + HOJE + " GROUP BY 1 ORDER BY valor DESC LIMIT 10");
+      const hojeR: any = await one("SELECT (" + HOJE + ")::text AS d");
+      res.json({
+        hoje: hojeR.d,
+        kpis: {
+          receberAberto: Number(kr.v || 0), receberAbertoN: Number(kr.n || 0),
+          pagarAberto: Number(kp.v || 0), pagarAbertoN: Number(kp.n || 0),
+          receberVencido: Number(kr.v_venc || 0), receberVencidoN: Number(kr.n_venc || 0),
+          pagarVencido: Number(kp.v_venc || 0), pagarVencidoN: Number(kp.n_venc || 0),
+          receberHoje: Number(kr.v_hoje || 0), receberHojeN: Number(kr.n_hoje || 0),
+          pagarHoje: Number(kp.v_hoje || 0), pagarHojeN: Number(kp.n_hoje || 0)
+        },
+        fluxo, pagarHoje, pagarVencidas, receberHoje, agingReceber, agingPagar, topDevedores
+      });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
+  });
+
   app.get('/api/admin/visits/generate-from-1-0/status', async (_req: Request, res: Response) => {
     try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'visits_seed_last'`); const row = (r.rows || r)[0]; res.json(row ? JSON.parse(row.value) : { pending: true }); }
     catch (e: any) { res.status(500).json({ error: String(e).slice(0, 200) }); }
