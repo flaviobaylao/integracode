@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { useState } from "react";
 import { parseISO } from "date-fns";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
@@ -86,6 +87,9 @@ export default function CustomerManagement() {
   const [weekdayFilter, setWeekdayFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active');
   const [sellerFilter, setSellerFilter] = useState('all');
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [sortAZ, setSortAZ] = useState(false);
   const [routeDateFilter, setRouteDateFilter] = useState('');
   const [positivationFilter, setPositivationFilter] = useState('all');
   const { toast } = useToast();
@@ -243,8 +247,10 @@ export default function CustomerManagement() {
                                (positivationFilter === 'yes' && customer.isPositivatedThisMonth) ||
                                (positivationFilter === 'no' && !customer.isPositivatedThisMonth);
     
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesRouteDate && matchesPositivation;
+    const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller((customer as any).sellerName || customer.sellerId));
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation;
   }) || [];
+  if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -426,19 +432,9 @@ export default function CustomerManagement() {
                 <SelectItem value="no">NÃO</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={sellerFilter} onValueChange={setSellerFilter}>
-              <SelectTrigger data-testid="select-seller-filter">
-                <SelectValue placeholder="Todos os vendedores" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os vendedores</SelectItem>
-                {users?.map((user: User) => (
-                  <SelectItem key={user.id} value={user.id}>
-                    {user.firstName} {user.lastName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
+            <Button variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-customers">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
+            <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: c.omieStatus, Periodicidade: c.visitPeriodicity })), "clientes")} />
             <Input
               type="date"
               placeholder="Data da rota"
@@ -456,7 +452,7 @@ export default function CustomerManagement() {
       {/* Customers Table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[70vh] [&_th]:sticky [&_th]:top-0 [&_th]:bg-gray-50 [&_th]:z-10">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
