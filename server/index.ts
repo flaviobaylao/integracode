@@ -611,6 +611,45 @@ run();
     }
   });
 
+  // VIGIA 1C (03/jul/2026): resumo executivo (texto PT) p/ WhatsApp do gestor — 7h/19h
+  app.get('/api/admin/exec-summary-text', async (req: Request, res: Response) => {
+    try {
+      const port = process.env.PORT || '8080';
+      const base = 'http://127.0.0.1:' + port;
+      const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
+      const jget = async (p: string) => { try { const r = await fetch(base + p); return await r.json(); } catch (e) { return null; } };
+      const d2: any = await jget('/api/dashboard2/full');
+      const fin: any = await jget('/api/admin/financial/dashboard');
+      const exq: any = await jget('/api/admin/routes/execution?date=' + d);
+      const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const parts = d.split('-');
+      const hora = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date());
+      let text = '*Resumo Executivo — ' + parts[2] + '/' + parts[1] + '/' + parts[0] + ' ' + hora + '*\n';
+      if (d2 && d2.stats) {
+        text += '\n💰 Vendas hoje: R$ ' + br(d2.stats.todaySales) + ' (ontem R$ ' + br(d2.stats.yesterdaySales) + ' · mês R$ ' + br(d2.stats.monthSales) + ')';
+      }
+      if (d2 && d2.ordersOverview) {
+        const ov: any = d2.ordersOverview;
+        const cnt = (a: any) => Array.isArray(a) ? a.length : 0;
+        text += '\n📦 Pedidos: bloqueados ' + cnt(ov.blocked) + ' · a faturar ' + cnt(ov.aFaturar || ov.unbilled) + ' · NFs hoje ' + cnt(ov.nfsHoje || ov.todayInvoices);
+      }
+      if (exq && exq.ok && exq.totais) {
+        const t: any = exq.totais;
+        text += '\n🗺️ Rota: cobertura ' + (t.cobertura === null ? '—' : t.cobertura + '%') + ' (' + t.atendidos + '/' + t.planejados + ') · check-ins ' + t.checkins + ' · vendas ' + t.vendas + ' (R$ ' + br(t.valorVendas) + ') · não-vendas ' + t.naoVendas;
+        const fracos = (exq.sellers || []).filter((s: any) => s.planejados > 0 && s.cobertura !== null && s.cobertura < 60);
+        if (fracos.length) text += '\n  ⚠️ Cobertura <60%: ' + fracos.slice(0, 10).map((s: any) => s.sellerName + ' (' + s.cobertura + '%)').join(', ');
+      }
+      if (fin && fin.kpis) {
+        const k: any = fin.kpis;
+        text += '\n💳 Receber: hoje ' + (k.receberHojeN || 0) + ' (R$ ' + br(k.receberHoje) + ') · vencidas ' + (k.receberVencidoN || 0) + ' (R$ ' + br(k.receberVencido) + ')';
+        text += '\n💸 Pagar: hoje ' + (k.pagarHojeN || 0) + ' (R$ ' + br(k.pagarHoje) + ') · vencidas ' + (k.pagarVencidoN || 0) + ' (R$ ' + br(k.pagarVencido) + ')';
+      }
+      res.json({ ok: true, date: d, text });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
