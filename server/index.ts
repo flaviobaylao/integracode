@@ -820,6 +820,28 @@ run();
     }
   });
 
+  // VIGIA 2C (03/jul/2026): cobertura de rota agregada dos ultimos N dias por vendedor (user id). SO EXIBICAO — nao toca comissao.
+  // planejado = SUM(daily_routes.total_visits); atendido = clientes-dia com venda (billing_pipeline). cobertura = atendido/planejado.
+  app.get('/api/admin/routes/coverage-weekly', async (req: Request, res: Response) => {
+    try {
+      const days = Math.min(Math.max(parseInt(String(req.query.days || '7'), 10) || 7, 1), 90);
+      const end = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      const startD = new Date(end + 'T12:00:00Z'); startD.setUTCDate(startD.getUTCDate() - (days - 1));
+      const start = startD.toISOString().split('T')[0];
+      const planQ = "SELECT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = dr.seller_id OR u.omie_vendor_code = replace(COALESCE(dr.seller_id,''),'omie-vendor-','') OR u.id = dr.seller_id LIMIT 1), dr.seller_id) AS uid, SUM(dr.total_visits)::int AS planejados FROM daily_routes dr WHERE (dr.route_date AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (dr.route_date AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date GROUP BY 1";
+      const atendQ = "SELECT uid, COUNT(*)::int AS atendidos FROM (SELECT DISTINCT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = bp.seller_id OR u.omie_vendor_code = replace(COALESCE(bp.seller_id,''),'omie-vendor-','') OR u.id = bp.seller_id LIMIT 1), bp.seller_id) AS uid, bp.customer_id AS cid, (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS d FROM billing_pipeline bp WHERE bp.customer_id IS NOT NULL AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date) t GROUP BY uid";
+      const pr: any = await db.execute(sql.raw(planQ));
+      const ar: any = await db.execute(sql.raw(atendQ));
+      const byUser: Record<string, any> = {};
+      for (const r of ((pr.rows || pr) as any[])) { const k = String(r.uid || ''); if (!k) continue; byUser[k] = { planejados: Number(r.planejados) || 0, atendidos: 0, cobertura: null }; }
+      for (const r of ((ar.rows || ar) as any[])) { const k = String(r.uid || ''); if (!k) continue; if (!byUser[k]) byUser[k] = { planejados: 0, atendidos: 0, cobertura: null }; byUser[k].atendidos = Number(r.atendidos) || 0; }
+      for (const k of Object.keys(byUser)) { const v = byUser[k]; v.cobertura = v.planejados > 0 ? Math.min(100, Math.round((v.atendidos / v.planejados) * 100)) : null; }
+      res.json({ ok: true, days, start, end, byUser });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
