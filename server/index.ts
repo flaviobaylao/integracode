@@ -534,6 +534,68 @@ run();
     }
   });
 
+  // VIGIA 1B (03/jul/2026): texto de fechamento de rota (PT) — reusa o endpoint execution
+  app.get('/api/admin/routes/execution/summary-text', async (req: Request, res: Response) => {
+    try {
+      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const d = raw.replace(/[^0-9-]/g, '');
+      const port = process.env.PORT || '8080';
+      const r = await fetch('http://127.0.0.1:' + port + '/api/admin/routes/execution?date=' + d);
+      const j: any = await r.json();
+      if (!j || !j.ok) return res.status(500).json({ error: 'execution falhou' });
+      const br = (n: number) => (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const parts = d.split('-');
+      let text = '*Fechamento de Rota — ' + parts[2] + '/' + parts[1] + '/' + parts[0] + '*\n';
+      const t = j.totais || {};
+      text += 'Cobertura: ' + (t.cobertura === null ? '—' : t.cobertura + '%') + ' (' + t.atendidos + '/' + t.planejados + ') · Check-ins: ' + t.checkins + ' · Vendas: ' + t.vendas + ' (R$ ' + br(t.valorVendas) + ') · Não-vendas: ' + t.naoVendas + '\n';
+      for (const s of (j.sellers || [])) {
+        if (!s.planejados && !s.vendas) continue;
+        text += '\n' + s.sellerName + ': ' + s.atendidos + '/' + s.planejados + (s.cobertura === null ? '' : ' (' + s.cobertura + '%)') + ' · vendas ' + s.vendas + ' (R$ ' + br(s.valorVendas) + ')';
+        const pend = (s.pendentes || []);
+        if (pend.length) {
+          const nomes = pend.slice(0, 8).map((p: any) => p.nome).join(', ');
+          text += '\n  ⚠️ Faltou visitar (' + pend.length + '): ' + nomes + (pend.length > 8 ? ' +' + (pend.length - 8) : '');
+        }
+      }
+      res.json({ ok: true, date: d, text });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  // VIGIA 1B: envia texto ao WhatsApp do GESTOR via Umbler Talk (nunca a cliente)
+  app.post('/api/admin/notify/gestor', async (req: Request, res: Response) => {
+    try {
+      const text = String((req.body && req.body.text) || '').slice(0, 3500);
+      if (!text) return res.status(400).json({ error: 'text obrigatorio' });
+      const token = process.env.UMBLER_TALK_TOKEN || '';
+      const from = process.env.UMBLER_TALK_FROM_PHONE || '5562992682630';
+      if (!token) return res.status(400).json({ error: 'UMBLER_TALK_TOKEN ausente' });
+      let to = '5562995782812';
+      try {
+        const rs: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'gestor_whatsapp' LIMIT 1"));
+        const rows = (rs.rows || rs) as any[];
+        if (rows.length && rows[0].value) { const v = String(rows[0].value).replace(/[^0-9]/g, ''); if (v.length >= 10) to = v; }
+      } catch (e) {}
+      const g: any = global as any;
+      if (!g.__umblerOrgId) {
+        const mr = await fetch('https://app-utalk.umbler.com/api/v1/members/me/', { headers: { Authorization: 'Bearer ' + token } });
+        const mj: any = await mr.json().catch(() => null);
+        g.__umblerOrgId = mj && mj.organizations && mj.organizations[0] ? mj.organizations[0].id : null;
+      }
+      if (!g.__umblerOrgId) return res.status(500).json({ error: 'organizationId nao resolvido' });
+      const sr = await fetch('https://app-utalk.umbler.com/api/v1/messages/simplified/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ fromPhone: from, toPhone: to, organizationId: g.__umblerOrgId, message: text })
+      });
+      const sj: any = await sr.json().catch(() => ({}));
+      res.json({ ok: sr.ok, status: sr.status, messageId: sj && sj.id ? sj.id : null, to });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
