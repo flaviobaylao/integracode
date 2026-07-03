@@ -571,11 +571,14 @@ run();
       const token = process.env.UMBLER_TALK_TOKEN || '';
       const from = process.env.UMBLER_TALK_FROM_PHONE || '5562992682630';
       if (!token) return res.status(400).json({ error: 'UMBLER_TALK_TOKEN ausente' });
-      let to = '5562995782812';
+      let tos: string[] = ['5562995782812'];
       try {
         const rs: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'gestor_whatsapp' LIMIT 1"));
         const rows = (rs.rows || rs) as any[];
-        if (rows.length && rows[0].value) { const v = String(rows[0].value).replace(/[^0-9]/g, ''); if (v.length >= 10) to = v; }
+        if (rows.length && rows[0].value) {
+          const list = String(rows[0].value).split(',').map((x: string) => x.replace(/[^0-9]/g, '')).filter((x: string) => x.length >= 10);
+          if (list.length) tos = list;
+        }
       } catch (e) {}
       const g: any = global as any;
       if (!g.__umblerOrgId) {
@@ -595,17 +598,19 @@ run();
         rest = rest.slice(cut).replace(/^\n+/, '');
       }
       const results: any[] = [];
-      for (const part of chunks) {
-        const sr = await fetch('https://app-utalk.umbler.com/api/v1/messages/simplified/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-          body: JSON.stringify({ fromPhone: from, toPhone: to, organizationId: g.__umblerOrgId, message: part })
-        });
-        const sj: any = await sr.json().catch(() => ({}));
-        results.push({ ok: sr.ok, status: sr.status, messageId: sj && sj.id ? sj.id : null });
-        await new Promise((rs) => setTimeout(rs, 800));
+      for (const to of tos) {
+        for (const part of chunks) {
+          const sr = await fetch('https://app-utalk.umbler.com/api/v1/messages/simplified/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ fromPhone: from, toPhone: to, organizationId: g.__umblerOrgId, message: part })
+          });
+          const sj: any = await sr.json().catch(() => ({}));
+          results.push({ to, ok: sr.ok, status: sr.status, messageId: sj && sj.id ? sj.id : null });
+          await new Promise((rs2) => setTimeout(rs2, 800));
+        }
       }
-      res.json({ ok: results.length > 0 && results.every((x: any) => x.ok), parts: results.length, results, to });
+      res.json({ ok: results.length > 0 && results.every((x: any) => x.ok), parts: chunks.length, recipients: tos, results });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
@@ -648,6 +653,25 @@ run();
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
+  });
+
+  // VIGIA: configura numeros do gestor p/ notificacoes (CSV) em system_settings gestor_whatsapp
+  app.get('/api/admin/notify/gestor-config', async (_req: Request, res: Response) => {
+    try {
+      const rs: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'gestor_whatsapp' LIMIT 1"));
+      const rows = (rs.rows || rs) as any[];
+      res.json({ ok: true, numbers: rows.length ? String(rows[0].value || '') : '', default: '5562995782812' });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 200) }); }
+  });
+  app.post('/api/admin/notify/gestor-config', async (req: Request, res: Response) => {
+    try {
+      const v = String((req.body && req.body.numbers) || '').replace(/[^0-9,]/g, '');
+      if (!v) return res.status(400).json({ error: 'numbers obrigatorio (CSV de telefones)' });
+      const upd: any = await db.execute(sql.raw("UPDATE system_settings SET value = '" + v + "', updated_by = 'vigia-config', updated_at = now() WHERE key = 'gestor_whatsapp'"));
+      const n = (upd && typeof upd.rowCount === 'number') ? upd.rowCount : (upd && upd.rows ? upd.rows.length : 0);
+      if (!n) await db.execute(sql.raw("INSERT INTO system_settings (key, value, updated_by) VALUES ('gestor_whatsapp', '" + v + "', 'vigia-config')"));
+      res.json({ ok: true, numbers: v });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 200) }); }
   });
 
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
