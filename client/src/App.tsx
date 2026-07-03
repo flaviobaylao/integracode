@@ -83,6 +83,7 @@ import ResumoVisitas from "@/pages/ResumoVisitas";
 import ExecucaoRota from "@/pages/ExecucaoRota";
 import RadarChurn from "@/pages/RadarChurn";
 import FilaResgate from "@/pages/FilaResgate";
+import Justificativas from "@/pages/Justificativas";
 import AgentesIA from "@/pages/AgentesIA";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
@@ -296,6 +297,7 @@ function Router() {
           <Route path="/execucao-rota" component={ExecucaoRota} />
           <Route path="/radar-churn" component={RadarChurn} />
           <Route path="/fila-resgate" component={FilaResgate} />
+          <Route path="/justificativas" component={Justificativas} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
