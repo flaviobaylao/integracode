@@ -684,7 +684,10 @@ run();
 
       const q = "WITH base AS (SELECT c.id AS customer_id, c.name AS nome, c.city AS cidade, COALESCE(c.visit_periodicity::text, 'semanal') AS periodicidade, c.seller_id AS seller_id, NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id) WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)), buys AS (SELECT customer_id, MAX(created_at) AS last_created, COALESCE(SUM(sale_value::numeric), 0) AS total_hist, COUNT(*)::int AS n_pedidos FROM billing_pipeline WHERE customer_id IS NOT NULL GROUP BY customer_id) SELECT b.customer_id, b.nome, b.cidade, b.periodicidade, b.seller_id, b.seller_name, bu.last_created, COALESCE(bu.total_hist, 0) AS total_hist, COALESCE(bu.n_pedidos, 0) AS n_pedidos FROM base b LEFT JOIN buys bu ON bu.customer_id = b.customer_id";
       const r: any = await db.execute(sql.raw(q));
-      const rows = (r.rows || r) as any[];
+      const rowsRaw = (r.rows || r) as any[];
+      // dedupe por cliente: o LEFT JOIN users pode casar >1 usuario (codigos repetidos) e duplicar a linha
+      const _seen = new Set<string>();
+      const rows = rowsRaw.filter((x: any) => { const k = String(x.customer_id); if (_seen.has(k)) return false; _seen.add(k); return true; });
 
       const interval: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
       const rank: Record<string, number> = { em_dia: 0, esfriando: 1, em_risco: 2, perdido: 3, sem_historico: 2 };
