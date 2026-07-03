@@ -584,13 +584,28 @@ run();
         g.__umblerOrgId = mj && mj.organizations && mj.organizations[0] ? mj.organizations[0].id : null;
       }
       if (!g.__umblerOrgId) return res.status(500).json({ error: 'organizationId nao resolvido' });
-      const sr = await fetch('https://app-utalk.umbler.com/api/v1/messages/simplified/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ fromPhone: from, toPhone: to, organizationId: g.__umblerOrgId, message: text })
-      });
-      const sj: any = await sr.json().catch(() => ({}));
-      res.json({ ok: sr.ok, status: sr.status, messageId: sj && sj.id ? sj.id : null, to });
+      // Umbler simplified limita ~2000 chars — divide em partes (quebra em linha) e envia em sequencia
+      const chunks: string[] = [];
+      let rest = text;
+      while (rest.length > 0) {
+        if (rest.length <= 1800) { chunks.push(rest); break; }
+        let cut = rest.lastIndexOf('\n', 1800);
+        if (cut < 400) cut = 1800;
+        chunks.push(rest.slice(0, cut));
+        rest = rest.slice(cut).replace(/^\n+/, '');
+      }
+      const results: any[] = [];
+      for (const part of chunks) {
+        const sr = await fetch('https://app-utalk.umbler.com/api/v1/messages/simplified/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ fromPhone: from, toPhone: to, organizationId: g.__umblerOrgId, message: part })
+        });
+        const sj: any = await sr.json().catch(() => ({}));
+        results.push({ ok: sr.ok, status: sr.status, messageId: sj && sj.id ? sj.id : null });
+        await new Promise((rs) => setTimeout(rs, 800));
+      }
+      res.json({ ok: results.length > 0 && results.every((x: any) => x.ok), parts: results.length, results, to });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
