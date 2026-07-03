@@ -626,6 +626,7 @@ run();
       const d2: any = await jget('/api/dashboard2/full');
       const fin: any = await jget('/api/admin/financial/dashboard');
       const exq: any = await jget('/api/admin/routes/execution?date=' + d);
+      const churn: any = await jget('/api/admin/churn/radar?snapshot=1');
       const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const parts = d.split('-');
       const hora = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date());
@@ -648,6 +649,14 @@ run();
         const k: any = fin.kpis;
         text += '\n💳 Receber: hoje ' + (k.receberHojeN || 0) + ' (R$ ' + br(k.receberHoje) + ') · vencidas ' + (k.receberVencidoN || 0) + ' (R$ ' + br(k.receberVencido) + ')';
         text += '\n💸 Pagar: hoje ' + (k.pagarHojeN || 0) + ' (R$ ' + br(k.pagarHoje) + ') · vencidas ' + (k.pagarVencidoN || 0) + ' (R$ ' + br(k.pagarVencido) + ')';
+      }
+      if (churn && churn.ok && churn.resumo) {
+        const cr: any = churn.resumo;
+        text += '\n🔻 Churn: em risco ' + cr.em_risco + ' · perdido ' + cr.perdido + ' · R$ ' + br(cr.valorEmRisco) + ' em risco';
+        const nv: any[] = (churn.transicoes && churn.transicoes.novosEmRisco) || [];
+        if (nv.length) {
+          text += '\n  ⚠️ Entraram em risco hoje (' + nv.length + '): ' + nv.slice(0, 10).map((n: any) => n.nome + ' (' + n.sellerName + ', R$ ' + br(n.valorHistorico) + ')').join('; ') + (nv.length > 10 ? ' +' + (nv.length - 10) : '');
+        }
       }
       res.json({ ok: true, date: d, text });
     } catch (e: any) {
