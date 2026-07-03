@@ -674,6 +674,94 @@ run();
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 200) }); }
   });
 
+  // VIGIA 2A (03/jul/2026): Radar de Churn por cadencia — clientes ativos por faixa de risco.
+  // faixa = ciclos perdidos (dias_sem_compra / intervalo da periodicidade). ?snapshot=1 grava churn_snapshots do dia.
+  app.get('/api/admin/churn/radar', async (req: Request, res: Response) => {
+    try {
+      const doSnap = /^(1|true)$/i.test(String(req.query.snapshot || ''));
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS churn_snapshots (snapshot_date date NOT NULL, customer_id text NOT NULL, faixa text NOT NULL, seller_id text, valor_hist numeric, created_at timestamptz DEFAULT now(), PRIMARY KEY (snapshot_date, customer_id))"));
+
+      const q = "WITH base AS (SELECT c.id AS customer_id, c.name AS nome, c.city AS cidade, COALESCE(c.visit_periodicity::text, 'semanal') AS periodicidade, c.seller_id AS seller_id, NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id) WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)), buys AS (SELECT customer_id, MAX(created_at) AS last_created, COALESCE(SUM(sale_value::numeric), 0) AS total_hist, COUNT(*)::int AS n_pedidos FROM billing_pipeline WHERE customer_id IS NOT NULL GROUP BY customer_id) SELECT b.customer_id, b.nome, b.cidade, b.periodicidade, b.seller_id, b.seller_name, bu.last_created, COALESCE(bu.total_hist, 0) AS total_hist, COALESCE(bu.n_pedidos, 0) AS n_pedidos FROM base b LEFT JOIN buys bu ON bu.customer_id = b.customer_id";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+
+      const interval: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
+      const rank: Record<string, number> = { em_dia: 0, esfriando: 1, em_risco: 2, perdido: 3, sem_historico: 2 };
+      const now = Date.now();
+
+      const clientes = rows.map((x: any) => {
+        const per = String(x.periodicidade || 'semanal');
+        const intv = interval[per] || 7;
+        let dias: number | null = null;
+        let ciclos: number | null = null;
+        let faixa = 'sem_historico';
+        if (x.last_created) {
+          dias = Math.floor((now - new Date(x.last_created).getTime()) / 86400000);
+          ciclos = Math.round((dias / intv) * 100) / 100;
+          if (ciclos < 1) faixa = 'em_dia';
+          else if (ciclos < 2) faixa = 'esfriando';
+          else if (ciclos < 3) faixa = 'em_risco';
+          else faixa = 'perdido';
+        }
+        const skRaw = String(x.seller_id || '');
+        const sName = x.seller_name || (skRaw ? skRaw : 'Sem vendedor');
+        return {
+          customerId: String(x.customer_id), nome: x.nome, cidade: x.cidade || '',
+          sellerId: skRaw, sellerName: sName,
+          periodicidade: per, intervalo: intv,
+          ultimaCompra: x.last_created ? new Date(x.last_created).toISOString() : null,
+          diasSemCompra: dias, ciclos,
+          valorHistorico: Math.round(Number(x.total_hist || 0) * 100) / 100,
+          nPedidos: Number(x.n_pedidos || 0), faixa,
+        };
+      });
+
+      const prev = new Map<string, string>();
+      try {
+        const pr: any = await db.execute(sql.raw("SELECT DISTINCT ON (customer_id) customer_id, faixa FROM churn_snapshots WHERE snapshot_date < '" + today + "' ORDER BY customer_id, snapshot_date DESC"));
+        for (const p of ((pr.rows || pr) as any[])) prev.set(String(p.customer_id), String(p.faixa));
+      } catch (e) {}
+      const novosEmRisco: any[] = [];
+      for (const c of clientes) {
+        const before = prev.get(c.customerId);
+        const piora = (c.faixa === 'em_risco' || c.faixa === 'perdido') && before !== undefined && rank[c.faixa] > (rank[before] ?? -1);
+        if (piora) novosEmRisco.push({ customerId: c.customerId, nome: c.nome, sellerName: c.sellerName, faixa: c.faixa, faixaAnterior: before, valorHistorico: c.valorHistorico });
+      }
+
+      let snapshotGravado = false;
+      if (doSnap && clientes.length) {
+        try {
+          for (let i = 0; i < clientes.length; i += 500) {
+            const batch = clientes.slice(i, i + 500);
+            const vals = batch.map((c) => sql`(${today}::date, ${c.customerId}, ${c.faixa}, ${c.sellerId}, ${c.valorHistorico})`);
+            await db.execute(sql`INSERT INTO churn_snapshots (snapshot_date, customer_id, faixa, seller_id, valor_hist) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT (snapshot_date, customer_id) DO UPDATE SET faixa = EXCLUDED.faixa, seller_id = EXCLUDED.seller_id, valor_hist = EXCLUDED.valor_hist`);
+          }
+          snapshotGravado = true;
+        } catch (e) {}
+      }
+
+      const zero = () => ({ em_dia: 0, esfriando: 0, em_risco: 0, perdido: 0, sem_historico: 0 });
+      const resumo: any = { total: clientes.length, ...zero(), valorEmRisco: 0 };
+      const bySeller = new Map<string, any>();
+      for (const c of clientes) {
+        resumo[c.faixa]++;
+        if (c.faixa === 'em_risco' || c.faixa === 'perdido') resumo.valorEmRisco += c.valorHistorico;
+        const key = c.sellerName;
+        if (!bySeller.has(key)) bySeller.set(key, { sellerId: c.sellerId, sellerName: c.sellerName, total: 0, ...zero(), valorEmRisco: 0 });
+        const sv = bySeller.get(key);
+        sv.total++; sv[c.faixa]++;
+        if (c.faixa === 'em_risco' || c.faixa === 'perdido') sv.valorEmRisco += c.valorHistorico;
+      }
+      resumo.valorEmRisco = Math.round(resumo.valorEmRisco * 100) / 100;
+      const por_vendedor = Array.from(bySeller.values()).map((s: any) => ({ ...s, valorEmRisco: Math.round(s.valorEmRisco * 100) / 100 })).sort((a: any, b: any) => (b.em_risco + b.perdido) - (a.em_risco + a.perdido) || b.total - a.total);
+
+      res.json({ ok: true, date: today, snapshotGravado, resumo, por_vendedor, transicoes: { count: novosEmRisco.length, novosEmRisco }, clientes });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
