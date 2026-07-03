@@ -691,7 +691,7 @@ run();
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
       await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS churn_snapshots (snapshot_date date NOT NULL, customer_id text NOT NULL, faixa text NOT NULL, seller_id text, valor_hist numeric, created_at timestamptz DEFAULT now(), PRIMARY KEY (snapshot_date, customer_id))"));
 
-      const q = "WITH base AS (SELECT c.id AS customer_id, c.name AS nome, c.city AS cidade, COALESCE(c.visit_periodicity::text, 'semanal') AS periodicidade, c.seller_id AS seller_id, NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id) WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)), buys AS (SELECT customer_id, MAX(created_at) AS last_created, COALESCE(SUM(sale_value::numeric), 0) AS total_hist, COUNT(*)::int AS n_pedidos FROM billing_pipeline WHERE customer_id IS NOT NULL GROUP BY customer_id) SELECT b.customer_id, b.nome, b.cidade, b.periodicidade, b.seller_id, b.seller_name, bu.last_created, COALESCE(bu.total_hist, 0) AS total_hist, COALESCE(bu.n_pedidos, 0) AS n_pedidos FROM base b LEFT JOIN buys bu ON bu.customer_id = b.customer_id";
+      const q = "WITH base AS (SELECT c.id AS customer_id, c.name AS nome, c.city AS cidade, COALESCE(c.visit_periodicity::text, 'semanal') AS periodicidade, c.seller_id AS seller_id, NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id) WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)), buys AS (SELECT customer_id, MAX(created_at) AS last_created, COALESCE(SUM(sale_value::numeric), 0) AS total_hist, COALESCE(SUM(sale_value::numeric) FILTER (WHERE created_at >= (now() - interval '6 months')), 0) AS total_6m, COUNT(*)::int AS n_pedidos FROM billing_pipeline WHERE customer_id IS NOT NULL GROUP BY customer_id) SELECT b.customer_id, b.nome, b.cidade, b.periodicidade, b.seller_id, b.seller_name, bu.last_created, COALESCE(bu.total_hist, 0) AS total_hist, COALESCE(bu.total_6m, 0) AS total_6m, COALESCE(bu.n_pedidos, 0) AS n_pedidos FROM base b LEFT JOIN buys bu ON bu.customer_id = b.customer_id";
       const r: any = await db.execute(sql.raw(q));
       const rowsRaw = (r.rows || r) as any[];
       // dedupe por cliente: o LEFT JOIN users pode casar >1 usuario (codigos repetidos) e duplicar a linha
@@ -725,6 +725,7 @@ run();
           ultimaCompra: x.last_created ? new Date(x.last_created).toISOString() : null,
           diasSemCompra: dias, ciclos,
           valorHistorico: Math.round(Number(x.total_hist || 0) * 100) / 100,
+          valorHistorico6m: Math.round(Number(x.total_6m || 0) * 100) / 100,
           nPedidos: Number(x.n_pedidos || 0), faixa,
         };
       });
