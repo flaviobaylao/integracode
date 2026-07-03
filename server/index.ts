@@ -1011,6 +1011,72 @@ run();
     }
   });
 
+  // VIGIA 3B (03/jul/2026): Justificativa de nao-atendimento — pendencias do dia anterior (visita planejada sem check-in e sem venda).
+  async function ensureJustifTable() {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS visit_justifications (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), visit_date date NOT NULL, customer_id text NOT NULL, seller_id text NOT NULL, reason text NOT NULL, notes text, created_at timestamptz DEFAULT now(), created_by varchar)"));
+    await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_visit_justif ON visit_justifications (visit_date, customer_id, seller_id)"));
+  }
+  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'outro'];
+
+  // lista pendencias (nao atendidas) de uma data p/ um vendedor, que ainda NAO foram justificadas
+  app.get('/api/vendedor/justificativas/pendentes', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      const seller = String(req.query.sellerId || '');
+      if (!seller) return res.status(400).json({ error: 'sellerId obrigatorio' });
+      // data padrao = ontem (BRT)
+      let date = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const y = new Date(Date.now() - 86400000);
+        date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(y);
+      }
+      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE sc.seller_id = '" + seller.replace(/'/g, "") + "' AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.customer_id ORDER BY MAX(c.name)";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = ((r.rows || r) as any[]).map((x: any) => ({ customerId: String(x.cid), nome: x.nome, cidade: x.cidade || '' }));
+      res.json({ ok: true, date, sellerId: seller, total: rows.length, pendentes: rows, motivos: JUSTIF_MOTIVOS });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  app.post('/api/vendedor/justificativas', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      const b = req.body || {};
+      const date = String(b.date || '').replace(/[^0-9-]/g, '');
+      const customerId = String(b.customerId || '');
+      const seller = String(b.sellerId || '');
+      const reason = JUSTIF_MOTIVOS.includes(String(b.reason)) ? String(b.reason) : null;
+      const notes = b.notes != null ? String(b.notes).slice(0, 500) : null;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !customerId || !seller || !reason) return res.status(400).json({ error: 'date, customerId, sellerId e reason (motivo valido) obrigatorios' });
+      await db.execute(sql`INSERT INTO visit_justifications (visit_date, customer_id, seller_id, reason, notes, created_by) VALUES (${date}, ${customerId}, ${seller}, ${reason}, ${notes}, ${seller}) ON CONFLICT (visit_date, customer_id, seller_id) DO UPDATE SET reason = EXCLUDED.reason, notes = EXCLUDED.notes`);
+      res.json({ ok: true, date, customerId, reason });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  // relatorio semanal por vendedor (justificativas por motivo nos ultimos N dias)
+  app.get('/api/admin/justificativas/semana', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      const days = Math.min(Math.max(parseInt(String(req.query.days || '7'), 10) || 7, 1), 60);
+      const q = "SELECT vj.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS nome, vj.reason AS motivo, COUNT(*)::int AS n FROM visit_justifications vj WHERE vj.visit_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - " + days + " GROUP BY vj.seller_id, vj.reason ORDER BY vj.seller_id";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+      const bySeller: Record<string, any> = {};
+      for (const x of rows) {
+        const nome = x.nome || x.sid || 'Sem vendedor';
+        if (!bySeller[nome]) bySeller[nome] = { sellerId: x.sid, sellerName: nome, total: 0, motivos: {} };
+        bySeller[nome].motivos[x.motivo] = Number(x.n);
+        bySeller[nome].total += Number(x.n);
+      }
+      res.json({ ok: true, days, porVendedor: Object.values(bySeller).sort((a: any, b: any) => b.total - a.total) });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
