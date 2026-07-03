@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import ReconcileButton from "@/components/ReconcileButton";
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -148,13 +149,18 @@ function ReceivablesTab() {
     queryKey: ['/api/financial/accounts'],
   });
 
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [sortAZ, setSortAZ] = useState(false);
   const filtered = receivables.filter((r: any) => {
+    if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
       if (!(r.customerName || '').toLowerCase().includes(q)) return false;
     }
     return true;
   });
+  if (sortAZ) filtered.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/receivables', data),
@@ -211,6 +217,14 @@ function ReceivablesTab() {
             <Input placeholder="Buscar cliente..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[200px]" />
           </div>
         </div>
+          <div>
+            <Label className="text-xs">Vendedor</Label>
+            <div><MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-receivables" /></div>
+          </div>
+          <div className="flex gap-2 items-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-receivables">{sortAZ ? "Cliente A-Z: ligado" : "Ordenar A-Z"}</Button>
+            <ExportExcelButton testId="export-receivables" onClick={() => exportToExcel(filtered.map((r: any) => ({ Titulo: r.titleNumber, Cliente: r.customerName, Vendedor: resolveSeller(r.sellerName), Categoria: r.category, Descricao: r.description, Valor: Number(r.amount || 0), ValorPago: Number(r.amountPaid || 0), Status: r.status, Vencimento: r.dueDate ? new Date(r.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-receber")} />
+          </div>
         <div>
           <Label className="text-xs">Status</Label>
           <Select value={statusFilter || 'all'} onValueChange={v => setStatusFilter(v === 'all' ? '' : v)}>
@@ -540,6 +554,7 @@ function PayablesTab() {
     queryKey: ['/api/financial/accounts'],
   });
 
+  const [sortAZ, setSortAZ] = useState(false);
   const filtered = payables.filter((p: any) => {
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
@@ -547,6 +562,7 @@ function PayablesTab() {
     }
     return true;
   });
+  if (sortAZ) filtered.sort((a: any, b: any) => String(a.supplierName || '').localeCompare(String(b.supplierName || '')));
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/payables', data),
@@ -602,6 +618,10 @@ function PayablesTab() {
             <Input placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 w-[200px]" />
           </div>
         </div>
+          <div className="flex gap-2 items-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-payables">{sortAZ ? "Fornecedor A-Z: ligado" : "Ordenar A-Z"}</Button>
+            <ExportExcelButton testId="export-payables" onClick={() => exportToExcel(filtered.map((p: any) => ({ Titulo: p.titleNumber, Fornecedor: p.supplierName, Documento: p.supplierDocument, Descricao: p.description, Valor: Number(p.amount || 0), ValorPago: Number(p.amountPaid || 0), Status: p.status, Vencimento: p.dueDate ? new Date(p.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-pagar")} />
+          </div>
         <div>
           <Label className="text-xs">Status</Label>
           <Select value={statusFilter || 'all'} onValueChange={v => setStatusFilter(v === 'all' ? '' : v)}>
