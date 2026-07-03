@@ -29,6 +29,7 @@ type Cliente = {
   diasSemCompra: number | null;
   ciclos: number | null;
   valorHistorico: number;
+  valorHistorico6m: number;
   nPedidos: number;
   faixa: Faixa;
 };
@@ -100,6 +101,7 @@ function fmtData(iso: string | null): string {
 export default function RadarChurn() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [aberto, setAberto] = useState<string | null>(null);
+  const [abertoPerdida, setAbertoPerdida] = useState<string | null>(null);
   const { sellerOptions, resolveSeller } = useActiveSellers();
 
   const { data, isFetching, dataUpdatedAt } = useQuery<RadarResp>({
@@ -134,6 +136,27 @@ export default function RadarChurn() {
       arr.sort((a, b) => b.valorHistorico - a.valorHistorico);
     return map;
   }, [data]);
+
+  const carteiraPerdida = useMemo(() => {
+    const map = new Map<string, { sellerName: string; valor6m: number; clientes: Cliente[] }>();
+    for (const c of data?.clientes || []) {
+      if (c.faixa !== "perdido") continue;
+      if (!multiMatch(sellerMulti, resolveSeller(c.sellerName || c.sellerId))) continue;
+      const g = map.get(c.sellerName) || { sellerName: c.sellerName, valor6m: 0, clientes: [] };
+      g.valor6m += c.valorHistorico6m || 0;
+      g.clientes.push(c);
+      map.set(c.sellerName, g);
+    }
+    const arr = Array.from(map.values());
+    for (const g of arr) g.clientes.sort((a, b) => (b.valorHistorico6m || 0) - (a.valorHistorico6m || 0));
+    arr.sort((a, b) => b.valor6m - a.valor6m);
+    return arr;
+  }, [data, sellerMulti, resolveSeller]);
+
+  const totalPerdido6m = useMemo(
+    () => carteiraPerdida.reduce((s, g) => s + g.valor6m, 0),
+    [carteiraPerdida],
+  );
 
   const tot = useMemo(() => {
     const a = {
@@ -368,6 +391,83 @@ export default function RadarChurn() {
                     className="py-6 text-center text-muted-foreground"
                   >
                     Sem dados de churn.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center justify-between">
+            <span>Carteira Perdida — recuperação (6m)</span>
+            <span className="text-sm font-normal text-red-700">
+              {fmtBRL(totalPerdido6m)}
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-auto max-h-[70vh]">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b [&>th]:py-2 [&>th]:pr-3 [&>th]:sticky [&>th]:top-0 [&>th]:bg-background">
+                <th>Vendedor</th>
+                <th className="text-right">Perdidos</th>
+                <th className="text-right">Valor perdido (6m)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {carteiraPerdida.map((g) => (
+                <>
+                  <tr
+                    key={g.sellerName}
+                    className="border-b hover:bg-muted/40 [&>td]:py-2 [&>td]:pr-3"
+                  >
+                    <td className="font-medium">{g.sellerName}</td>
+                    <td className="text-right text-red-700 font-semibold">
+                      {g.clientes.length}
+                    </td>
+                    <td className="text-right">{fmtBRL(g.valor6m)}</td>
+                    <td className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setAbertoPerdida(
+                            abertoPerdida === g.sellerName ? null : g.sellerName,
+                          )
+                        }
+                      >
+                        {abertoPerdida === g.sellerName ? "Fechar" : "Ver clientes"}
+                      </Button>
+                    </td>
+                  </tr>
+                  {abertoPerdida === g.sellerName && (
+                    <tr key={g.sellerName + "-cp"} className="border-b bg-muted/20">
+                      <td colSpan={4} className="py-3 px-2">
+                        <div className="flex flex-wrap gap-1">
+                          {g.clientes.map((c) => (
+                            <span
+                              key={c.customerId}
+                              className="inline-block bg-red-50 text-red-800 border border-red-200 rounded px-2 py-0.5 text-xs"
+                            >
+                              {c.nome}
+                              {c.cidade ? ` · ${c.cidade}` : ""} ·{" "}
+                              {c.diasSemCompra ?? "?"}d · 6m {fmtBRL(c.valorHistorico6m)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+              {carteiraPerdida.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                    Nenhum cliente na faixa "perdido".
                   </td>
                 </tr>
               )}
