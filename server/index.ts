@@ -730,15 +730,16 @@ run();
       }
 
       let snapshotGravado = false;
+      let snapErr: string | null = null;
       if (doSnap && clientes.length) {
         try {
-          for (let i = 0; i < clientes.length; i += 500) {
-            const batch = clientes.slice(i, i + 500);
-            const vals = batch.map((c) => sql`(${today}::date, ${c.customerId}, ${c.faixa}, ${c.sellerId}, ${c.valorHistorico})`);
+          for (let i = 0; i < clientes.length; i += 300) {
+            const batch = clientes.slice(i, i + 300);
+            const vals = batch.map((c) => sql`(${today}, ${c.customerId}, ${c.faixa}, ${c.sellerId || null}, ${c.valorHistorico})`);
             await db.execute(sql`INSERT INTO churn_snapshots (snapshot_date, customer_id, faixa, seller_id, valor_hist) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT (snapshot_date, customer_id) DO UPDATE SET faixa = EXCLUDED.faixa, seller_id = EXCLUDED.seller_id, valor_hist = EXCLUDED.valor_hist`);
           }
           snapshotGravado = true;
-        } catch (e) {}
+        } catch (e: any) { snapErr = String(e && e.message ? e.message : e).slice(0, 220); }
       }
 
       const zero = () => ({ em_dia: 0, esfriando: 0, em_risco: 0, perdido: 0, sem_historico: 0 });
@@ -756,7 +757,7 @@ run();
       resumo.valorEmRisco = Math.round(resumo.valorEmRisco * 100) / 100;
       const por_vendedor = Array.from(bySeller.values()).map((s: any) => ({ ...s, valorEmRisco: Math.round(s.valorEmRisco * 100) / 100 })).sort((a: any, b: any) => (b.em_risco + b.perdido) - (a.em_risco + a.perdido) || b.total - a.total);
 
-      res.json({ ok: true, date: today, snapshotGravado, resumo, por_vendedor, transicoes: { count: novosEmRisco.length, novosEmRisco }, clientes });
+      res.json({ ok: true, date: today, snapshotGravado, snapErr, resumo, por_vendedor, transicoes: { count: novosEmRisco.length, novosEmRisco }, clientes });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
