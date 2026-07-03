@@ -33,12 +33,17 @@ export default function RoutesValidation() {
   const [endDate, setEndDate] = useState(getBrazilDateISO());
   const [isValidating, setIsValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [antifraude, setAntifraude] = useState<any>(null);
 
   const handleValidate = async () => {
     setIsValidating(true);
     try {
       const result = await apiRequest('GET', `/api/routes/validate?startDate=${startDate}&endDate=${endDate}`);
       setValidation(result);
+      try {
+        const af = await apiRequest('GET', `/api/admin/checkin/anti-fraude?startDate=${startDate}&endDate=${endDate}`);
+        setAntifraude(af);
+      } catch (e) { setAntifraude(null); }
       toast({ title: "Validação concluída" });
     } catch (error: any) {
       console.error('Erro ao validar:', error);
@@ -149,6 +154,73 @@ export default function RoutesValidation() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Anti-fraude de check-in (VIGIA 2D) */}
+            {antifraude && antifraude.ok && (
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-orange-600" />
+                    Anti-fraude de check-in (&gt; {antifraude.maxDist}m)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Check-ins</p>
+                      <p className="text-2xl font-bold text-blue-600">{antifraude.totais.checkins}</p>
+                    </div>
+                    <div className="p-3 bg-red-50 dark:bg-red-950 rounded-lg">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Fora do limiar</p>
+                      <p className="text-2xl font-bold text-red-600">{antifraude.totais.flagged}</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Limiar</p>
+                      <p className="text-2xl font-bold text-gray-700 dark:text-gray-200">{antifraude.maxDist}m</p>
+                    </div>
+                  </div>
+                  {antifraude.por_vendedor.length > 0 ? (
+                    <div className="overflow-x-auto mb-4">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left py-2 px-2">Vendedor</th>
+                            <th className="text-center py-2 px-2">Check-ins</th>
+                            <th className="text-center py-2 px-2">Fora do limiar</th>
+                            <th className="text-center py-2 px-2">Maior dist.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {antifraude.por_vendedor.map((sv: any, i: number) => (
+                            <tr key={i} className={`border-b ${sv.flagged > 0 ? 'bg-red-50 dark:bg-red-950' : ''}`}>
+                              <td className="py-2 px-2 font-medium">{sv.sellerName}</td>
+                              <td className="py-2 px-2 text-center">{sv.checkins}</td>
+                              <td className={`py-2 px-2 text-center font-semibold ${sv.flagged > 0 ? 'text-red-600' : ''}`}>{sv.flagged}</td>
+                              <td className="py-2 px-2 text-center">{sv.maxDist}m</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">Nenhum check-in com distância registrada no período.</p>
+                  )}
+                  {antifraude.ocorrencias.length > 0 && (
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {antifraude.ocorrencias.map((o: any, i: number) => (
+                        <div key={i} className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
+                          <div>
+                            <p className="font-semibold text-red-900 dark:text-red-100">{o.nome}</p>
+                            <p className="text-xs text-red-700 dark:text-red-300">{o.sellerName}{o.checkInTime ? ' • ' + new Date(o.checkInTime).toLocaleString('pt-BR') : ''}</p>
+                          </div>
+                          <Badge variant="destructive">{o.distancia}m</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Visitas Faltando */}
             {validation.validation.missing.length > 0 && (
