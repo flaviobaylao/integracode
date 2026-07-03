@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 import { useState, useEffect, useRef } from 'react';
 import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -121,6 +122,9 @@ export default function Billings() {
     pageSize: 50,
   });
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [customerNameSearch, setCustomerNameSearch] = useState('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -283,6 +287,15 @@ export default function Billings() {
         return false;
       }
       
+      // Vendedor multi (ativos; inativo -> Sem Vendedor)
+      if (!multiMatch(sellerMulti, resolveSeller(billing.sellerName || billing.sellerId))) {
+        return false;
+      }
+      // Busca por nome de cliente
+      if (customerNameSearch && !(billing.customerFantasyName || '').toLowerCase().includes(customerNameSearch.toLowerCase())) {
+        return false;
+      }
+
       // Seller filter
       if (filters.sellerId && billing.sellerId !== filters.sellerId) {
         return false;
@@ -794,6 +807,10 @@ export default function Billings() {
                 data-testid="filter-customer-document"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Cliente (nome)</Label>
+              <Input placeholder="Buscar por nome" value={customerNameSearch} onChange={(e) => setCustomerNameSearch(e.target.value)} data-testid="filter-customer-name" />
+            </div>
             
             <div className="space-y-2">
               <Label>Data Inicial</Label>
@@ -859,22 +876,7 @@ export default function Billings() {
 
             <div className="space-y-2">
               <Label>Vendedor</Label>
-              <Select 
-                value={filters.sellerId || 'all'}
-                onValueChange={(value) => handleFilterChange('sellerId', value === 'all' ? undefined : value)}
-              >
-                <SelectTrigger data-testid="filter-seller">
-                  <SelectValue placeholder="Selecionar Vendedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  {(sellers && Array.isArray(sellers)) ? sellers.map((seller: any) => (
-                    <SelectItem key={seller.seller_id} value={seller.seller_id}>
-                      {seller.seller_name}
-                    </SelectItem>
-                  )) : null}
-                </SelectContent>
-              </Select>
+              <div><MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller" /></div>
             </div>
 
             {omieInstances && omieInstances.length > 0 && (
