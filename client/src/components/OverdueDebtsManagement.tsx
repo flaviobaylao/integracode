@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect } from "@/lib/tableTools";
 import { useState } from "react";
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -59,6 +60,8 @@ export default function OverdueDebtsManagement() {
   const [selectedVendor, setSelectedVendor] = useState<string>("all");
   const [downloadingBoleto, setDownloadingBoleto] = useState<number | null>(null);
   const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor'>('dias_atraso');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { toast } = useToast();
@@ -292,7 +295,9 @@ export default function OverdueDebtsManagement() {
     
     // Remover logs excessivos de debug - só usar quando necessário
     
-    return matchesSearch && matchesVendor;
+    const rowSellers = new Set<string>([...debt.debitos.map(d => resolveSeller(d.codigo_vendedor)), ...((debt.vendedores || []).map(v => resolveSeller(v)))]);
+    const matchesSellerMulti = sellerMulti.length === 0 || sellerMulti.some(s => rowSellers.has(s));
+    return matchesSearch && matchesVendor && matchesSellerMulti;
   }) || [];
 
   const handleSort = (column: typeof sortBy) => {
@@ -384,6 +389,7 @@ export default function OverdueDebtsManagement() {
           detalhesData.push({
             'Cliente': debt.cliente.nome_fantasia,
             'CNPJ/CPF': debt.cliente.cnpj_cpf,
+            'Vendedor': resolveSeller(documento.codigo_vendedor),
             'Nº Nota Fiscal': documento.numero_documento_fiscal || documento.numero_documento || 'N/A',
             'Valor': documento.valor,
             'Data Vencimento': documento.data_vencimento,
@@ -656,19 +662,7 @@ export default function OverdueDebtsManagement() {
             />
           </div>
           <div className="min-w-[200px]">
-            <Select value={selectedVendor} onValueChange={setSelectedVendor}>
-              <SelectTrigger data-testid="select-vendor-filter">
-                <SelectValue placeholder={isLoadingVendedores ? "Carregando..." : "Filtrar por vendedor"} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os vendedores</SelectItem>
-                {vendedores?.map((vendedor) => (
-                  <SelectItem key={vendedor.codigo} value={vendedor.codigo.toString()}>
-                    {vendedor.nome || `Vendedor ${vendedor.codigo}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-debts" />
           </div>
         </div>
       )}
@@ -709,7 +703,7 @@ export default function OverdueDebtsManagement() {
                 {searchTerm ? 'Nenhum débito encontrado para a busca.' : 'Nenhum débito vencido encontrado.'}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[70vh] [&_th]:sticky [&_th]:top-0 [&_th]:bg-gray-50 [&_th]:z-10">
                 <table className="w-full border-collapse" data-testid="table-debts">
                   <thead>
                     <tr className="bg-gray-50 border-b">
