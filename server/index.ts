@@ -336,6 +336,67 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
   });
 
+  // VIGIA (03/jul/2026): validacao de rota (planejado x rota gravada) — alimenta /validacao-rotas.
+  // Planejado = storage.getCustomersForDate (mesma fonte que gera a rota, Opcao A).
+  // Rota gravada = daily_routes.visit_stops (entityType customer). Read-only.
+  app.get('/api/routes/validate', async (req: Request, res: Response) => {
+    try {
+      const clean = (v: any) => String(v || '').replace(/[^0-9-]/g, '');
+      const startDate = clean(req.query.startDate) || new Date().toISOString().split('T')[0];
+      const endDate = clean(req.query.endDate) || startDate;
+      const start = new Date(startDate + 'T00:00:00.000Z');
+      const end = new Date(endDate + 'T00:00:00.000Z');
+      let days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+      if (!(days > 0)) days = 1;
+      if (days > 62) days = 62;
+      const dateRanges: any[] = [];
+      const missing: any[] = [];
+      const extra: any[] = [];
+      let totalPlanned = 0;
+      let totalInRoutes = 0;
+      for (let d = 0; d < days; d++) {
+        const dt = new Date(start.getTime());
+        dt.setUTCDate(dt.getUTCDate() + d);
+        const ds = dt.toISOString().split('T')[0];
+        const rq = "SELECT id::text AS id, seller_id AS sid, visit_stops FROM daily_routes WHERE route_date >= '" + ds + " 00:00:00' AND route_date <= '" + ds + " 23:59:59'";
+        const rr: any = await db.execute(sql.raw(rq));
+        const routes = (rr.rows || rr) as any[];
+        for (const route of routes) {
+          const sid = String(route.sid || '');
+          const stops = route.visit_stops || {};
+          const routeCustomerIds = new Set<string>();
+          for (const k of Object.keys(stops)) {
+            const st = (stops as any)[k];
+            if (st && st.entityType === 'customer' && st.entityId) routeCustomerIds.add(String(st.entityId));
+          }
+          let planned: any[] = [];
+          try { planned = await storage.getCustomersForDate(sid, new Date(ds + 'T12:00:00.000Z')); } catch {}
+          const plannedIds = new Set(planned.map((p: any) => String(p.id)));
+          for (const p of planned) {
+            if (!routeCustomerIds.has(String(p.id))) {
+              missing.push({ customerName: (p.name || String(p.id)), date: ds, sellerId: sid });
+            }
+          }
+          for (const cid of Array.from(routeCustomerIds)) {
+            if (!plannedIds.has(cid)) {
+              extra.push({ customerId: cid, date: ds, routeId: String(route.id) });
+            }
+          }
+          const dayMissing = planned.filter((p: any) => !routeCustomerIds.has(String(p.id))).length;
+          const dayExtra = Array.from(routeCustomerIds).filter((cid) => !plannedIds.has(cid)).length;
+          totalPlanned += planned.length;
+          totalInRoutes += routeCustomerIds.size;
+          dateRanges.push({ date: ds, sellerId: sid, planned: planned.length, inRoute: routeCustomerIds.size, status: (dayMissing === 0 && dayExtra === 0) ? 'ok' : 'issues' });
+        }
+      }
+      const withIssues = dateRanges.filter((r) => r.status !== 'ok').length;
+      const ok = dateRanges.length - withIssues;
+      res.json({ success: true, validation: { totalPlanned, totalInRoutes, dateRanges, missing, extra, wrongSeller: [], summary: { ok, withIssues } }, message: dateRanges.length + ' rota(s) verificada(s)' });
+    } catch (e: any) {
+      res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) });
+    }
+  });
+
   // REBUILD de rotas do dia a partir da agenda (02/jul/2026): apaga daily_routes sem checkpoint
   // na(s) data(s) e regenera pela visit_agenda (planDailyRoute corrigido p/ Opcao A).
   app.post('/api/admin/routes/rebuild-day', async (req: Request, res: Response) => {
