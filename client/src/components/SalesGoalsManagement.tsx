@@ -126,6 +126,17 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     enabled: ['admin', 'coordinator', 'administrative'].includes(user.role),
   });
 
+  const { data: coverageData } = useQuery<{ ok: boolean; byUser: Record<string, { planejados: number; atendidos: number; cobertura: number | null }> }>({
+    queryKey: ['/api/admin/routes/coverage-weekly'],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/routes/coverage-weekly?days=7`, { credentials: 'include' });
+      if (!res.ok) return null as any;
+      return res.json();
+    },
+    enabled: ['admin', 'coordinator', 'administrative'].includes(user.role),
+  });
+  const coverageMap = coverageData?.byUser || {};
+
   const metricsMap = useMemo(() => {
     const map: Record<string, { actual: number; projected: number; achievement: number; byInstance: Record<string, number> }> = {};
     if (dashboardData) {
@@ -312,6 +323,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     <TableHead className="text-right">Fat. Atual</TableHead>
                     <TableHead className="text-right">Projeção</TableHead>
                     <TableHead className="text-right">% Ating.</TableHead>
+                    <TableHead className="text-right">% Cobertura (7d)</TableHead>
                     <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -370,6 +382,15 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           ) : '—'}
                         </TableCell>
                         <TableCell className="text-right">
+                          {(() => {
+                            const cov = coverageMap[goal.sellerId];
+                            if (!cov || cov.cobertura === null || cov.cobertura === undefined) return <span className="text-muted-foreground">—</span>;
+                            const c = cov.cobertura;
+                            const color = c >= 90 ? 'text-green-600' : c >= 60 ? 'text-amber-600' : 'text-red-600';
+                            return <span className={`text-sm font-mono ${color}`} title={`${cov.atendidos}/${cov.planejados} planejados (7d)`}>{c}%</span>;
+                          })()}
+                        </TableCell>
+                        <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             <Button variant="ghost" size="sm" onClick={() => openEditGoal(goal)}>
                               <Pencil className="h-4 w-4" />
@@ -415,6 +436,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           </span>
                         ) : '—'}
                       </TableCell>
+                      <TableCell />
                       <TableCell />
                     </TableRow>
                   </TableFooter>
