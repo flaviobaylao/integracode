@@ -971,6 +971,46 @@ run();
     }
   });
 
+  // VIGIA 3C (03/jul/2026): REPESCAGEM turbinada (dry-run) — perdidos por valor historico que ainda NAO tem repescagem pendente.
+  // READ-ONLY: apenas preview de quem entraria em repescagem_assignments. Nao grava. Regra de atribuicao (atendente) fica p/ o apply apos OK do Flavio.
+  app.get('/api/admin/churn/repescagem-preview', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 3000);
+      const q = "WITH base AS (SELECT c.id AS customer_id, c.name AS nome, c.city AS cidade, c.phone AS telefone, c.contact AS contato, COALESCE(NULLIF(c.cnpj,''), NULLIF(c.cpf,'')) AS documento, COALESCE(c.visit_periodicity::text, 'semanal') AS periodicidade, c.seller_id AS seller_id, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id LIMIT 1) AS seller_name, EXISTS (SELECT 1 FROM repescagem_assignments ra WHERE ra.customer_id = c.id AND ra.status = 'pending') AS ja_pendente FROM customers c WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)), buys AS (SELECT customer_id, MAX(created_at) AS last_created, COALESCE(SUM(sale_value::numeric), 0) AS total_hist, COALESCE(SUM(sale_value::numeric) FILTER (WHERE created_at >= (now() - interval '6 months')), 0) AS total_6m FROM billing_pipeline WHERE customer_id IS NOT NULL GROUP BY customer_id) SELECT b.customer_id, b.nome, b.cidade, b.telefone, b.contato, b.documento, b.periodicidade, b.seller_id, b.seller_name, b.ja_pendente, bu.last_created, COALESCE(bu.total_hist,0) AS total_hist, COALESCE(bu.total_6m,0) AS total_6m FROM base b LEFT JOIN buys bu ON bu.customer_id = b.customer_id";
+      const r: any = await db.execute(sql.raw(q));
+      const rowsRaw = (r.rows || r) as any[];
+      const seen = new Set<string>();
+      const rows = rowsRaw.filter((x: any) => { const k = String(x.customer_id); if (seen.has(k)) return false; seen.add(k); return true; });
+      const interval: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
+      const now = Date.now();
+      const cand: any[] = [];
+      let jaPendentes = 0;
+      for (const x of rows) {
+        if (!x.last_created) continue;
+        const intv = interval[String(x.periodicidade || 'semanal')] || 7;
+        const dias = Math.floor((now - new Date(x.last_created).getTime()) / 86400000);
+        if (dias / intv < 3) continue; // apenas 'perdido'
+        if (x.ja_pendente) { jaPendentes++; continue; }
+        cand.push({
+          customerId: String(x.customer_id), nome: x.nome, cidade: x.cidade || '',
+          telefone: x.telefone || '', contato: x.contato || '', documento: x.documento || '',
+          vendedor: x.seller_name || (x.seller_id || 'Sem vendedor'),
+          diasSemCompra: dias,
+          ultimaCompra: new Date(x.last_created).toISOString(),
+          valorHistorico: Math.round(Number(x.total_hist || 0) * 100) / 100,
+          valorHistorico6m: Math.round(Number(x.total_6m || 0) * 100) / 100,
+        });
+      }
+      cand.sort((a, b) => b.valorHistorico - a.valorHistorico || b.valorHistorico6m - a.valorHistorico6m);
+      const limited = cand.slice(0, limit);
+      const porVendedor: Record<string, number> = {};
+      for (const c of cand) porVendedor[c.vendedor] = (porVendedor[c.vendedor] || 0) + 1;
+      res.json({ ok: true, dryRun: true, total: cand.length, jaEmRepescagemPendente: jaPendentes, mostrando: limited.length, valorTotalHist: Math.round(cand.reduce((s, c) => s + c.valorHistorico, 0) * 100) / 100, porVendedor, candidatos: limited });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
