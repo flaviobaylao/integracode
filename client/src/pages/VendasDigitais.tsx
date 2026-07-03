@@ -1,3 +1,4 @@
+import { MultiSelect, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { useState, useMemo } from "react";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
@@ -105,6 +106,7 @@ export default function VendasDigitais() {
   const [attendantStartDate, setAttendantStartDate] = useState(format(monthStart, 'yyyy-MM-dd'));
   const [attendantEndDate, setAttendantEndDate] = useState(format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd'));
   const [selectedAttendant, setSelectedAttendant] = useState<string>('all');
+  const [attendantMulti, setAttendantMulti] = useState<string[]>([]);
   
   const getUTCBoundary = (date: Date, isEnd: boolean) => {
     const d = new Date(date);
@@ -284,14 +286,14 @@ export default function VendasDigitais() {
   }, [allLogs, attendantStartDate, attendantEndDate, stats.byAttendant]);
 
   const filteredDaysByAttendant = useMemo(() => {
-    if (selectedAttendant === 'all') {
+    if (attendantMulti.length === 0) {
       return stats.byDay;
     }
     
     const filteredByDay: Record<string, { date: string; total: number; byType: Record<ServiceType, number> }> = {};
     
     for (const log of allLogs) {
-      if (log.attendant_id !== selectedAttendant) continue;
+      if (!attendantMulti.includes(log.attendant_name)) continue;
       
       const type = (log.service_type || 'prospecao') as ServiceType;
       const dateKey = format(parseISO(log.attendance_date), 'yyyy-MM-dd');
@@ -308,7 +310,7 @@ export default function VendasDigitais() {
     }
     
     return Object.values(filteredByDay).sort((a, b) => b.date.localeCompare(a.date));
-  }, [allLogs, selectedAttendant, stats.byDay]);
+  }, [allLogs, attendantMulti, stats.byDay]);
 
   if (isLoading) {
     return (
@@ -499,6 +501,7 @@ export default function VendasDigitais() {
                       className="w-[150px]"
                     />
                   </div>
+                  <ExportExcelButton testId="export-atendentes" onClick={() => exportToExcel(filteredAttendantDays.flatMap((a) => a.days.map((d) => ({ Atendente: a.name, Data: d.date, Debito: d.byType.debito_vencido, Venda: d.byType.venda, Prospecao: d.byType.prospecao, Total: d.total }))), "vendas-digitais-por-atendente")} />
                 </div>
               </div>
             </CardHeader>
@@ -606,19 +609,8 @@ export default function VendasDigitais() {
                     <Filter className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm text-muted-foreground">Atendente:</span>
                   </div>
-                  <Select value={selectedAttendant} onValueChange={setSelectedAttendant}>
-                    <SelectTrigger className="w-[250px]">
-                      <SelectValue placeholder="Todos os atendentes" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os atendentes</SelectItem>
-                      {uniqueAttendants.map((att) => (
-                        <SelectItem key={att.id} value={att.id}>
-                          {att.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect label="Atendente" options={uniqueAttendants.map((a) => a.name)} selected={attendantMulti} onChange={setAttendantMulti} testId="filter-attendant" />
+                  <ExportExcelButton testId="export-por-dia" onClick={() => exportToExcel(filteredDaysByAttendant.map((d) => ({ Data: d.date, Debito: d.byType.debito_vencido, Venda: d.byType.venda, Prospecao: d.byType.prospecao, Total: d.total })), "vendas-digitais-por-dia")} />
                 </div>
               </div>
             </CardHeader>
