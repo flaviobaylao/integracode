@@ -889,6 +889,88 @@ run();
     }
   });
 
+  // VIGIA 3A (grava) — cria/alimenta a fila de resgate (tabela PROPRIA churn_resgate_queue; NAO usa telemarketing_queue).
+  async function ensureResgateTable() {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS churn_resgate_queue (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id text NOT NULL, customer_name text, cidade text, bairro text, telefone text, contato text, documento text, seller_name text, faixa text NOT NULL, dias_sem_compra int, ultima_compra timestamptz, valor_hist numeric, valor_6m numeric, status text NOT NULL DEFAULT 'pendente', outcome text, outcome_reason text, notes text, agent_id varchar, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), outcome_at timestamptz)"));
+    await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_churn_resgate_status ON churn_resgate_queue (status)"));
+  }
+
+  app.post('/api/admin/churn/fila-resgate/apply', async (req: Request, res: Response) => {
+    try {
+      await ensureResgateTable();
+      const faixa = String((req.body && req.body.faixa) || 'ambos').toLowerCase();
+      const port = process.env.PORT || '8080';
+      const j: any = await fetch('http://127.0.0.1:' + port + '/api/admin/churn/fila-resgate?faixa=' + encodeURIComponent(faixa) + '&limit=2000').then((r) => r.json());
+      const cand: any[] = (j && j.candidatos) || [];
+      const exq: any = await db.execute(sql.raw("SELECT customer_id, faixa FROM churn_resgate_queue WHERE status IN ('pendente','em_atendimento')"));
+      const openSet = new Set(((exq.rows || exq) as any[]).map((r: any) => String(r.customer_id) + '|' + String(r.faixa)));
+      const toInsert = cand.filter((c: any) => !openSet.has(String(c.customerId) + '|' + String(c.faixa)));
+      let inserted = 0;
+      for (let i = 0; i < toInsert.length; i += 200) {
+        const batch = toInsert.slice(i, i + 200);
+        const vals = batch.map((c: any) => sql`(${c.customerId}, ${c.nome || null}, ${c.cidade || null}, ${c.bairro || null}, ${c.telefone || null}, ${c.contato || null}, ${c.documento || null}, ${c.vendedor || null}, ${c.faixa}, ${c.diasSemCompra ?? null}, ${c.ultimaCompra || null}, ${c.valorHistorico ?? null}, ${c.valorHistorico6m ?? null})`);
+        await db.execute(sql`INSERT INTO churn_resgate_queue (customer_id, customer_name, cidade, bairro, telefone, contato, documento, seller_name, faixa, dias_sem_compra, ultima_compra, valor_hist, valor_6m) VALUES ${sql.join(vals, sql`, `)}`);
+        inserted += batch.length;
+      }
+      res.json({ ok: true, faixa, totalCandidatos: cand.length, jaEnfileirados: cand.length - toInsert.length, inseridos: inserted });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  app.get('/api/admin/churn/resgate-queue', async (req: Request, res: Response) => {
+    try {
+      await ensureResgateTable();
+      const status = String(req.query.status || '').replace(/[^a-z_]/g, '');
+      const limit = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 3000);
+      const where = status ? "WHERE status = '" + status + "'" : "";
+      const q = "SELECT id, customer_id, customer_name, cidade, bairro, telefone, contato, documento, seller_name, faixa, dias_sem_compra, ultima_compra, valor_hist, valor_6m, status, outcome, outcome_reason, notes, created_at, outcome_at FROM churn_resgate_queue " + where + " ORDER BY (status = 'pendente') DESC, valor_6m DESC NULLS LAST LIMIT " + limit;
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+      const cnt: any = await db.execute(sql.raw("SELECT status, COUNT(*)::int AS n FROM churn_resgate_queue GROUP BY status"));
+      const resumo: Record<string, number> = {};
+      for (const c of ((cnt.rows || cnt) as any[])) resumo[String(c.status)] = Number(c.n);
+      res.json({ ok: true, resumo, total: rows.length, itens: rows });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  const RESGATE_MOTIVOS = ['preco', 'concorrente', 'fechou', 'entrega', 'sem_contato', 'voltou', 'outro'];
+  app.post('/api/admin/churn/resgate-queue/:id/desfecho', async (req: Request, res: Response) => {
+    try {
+      await ensureResgateTable();
+      const id = String(req.params.id || '').replace(/[^0-9a-fA-F-]/g, '');
+      if (!id) return res.status(400).json({ error: 'id invalido' });
+      const b = req.body || {};
+      const status = ['pendente', 'em_atendimento', 'concluido'].includes(String(b.status)) ? String(b.status) : 'em_atendimento';
+      const reason = b.outcome_reason && RESGATE_MOTIVOS.includes(String(b.outcome_reason)) ? String(b.outcome_reason) : null;
+      const outcome = b.outcome != null ? String(b.outcome).slice(0, 300) : null;
+      const notes = b.notes != null ? String(b.notes).slice(0, 1000) : null;
+      const agent = b.agentId != null ? String(b.agentId).slice(0, 60) : null;
+      const setOutcomeAt = status === 'concluido';
+      await db.execute(sql`UPDATE churn_resgate_queue SET status = ${status}, outcome = COALESCE(${outcome}, outcome), outcome_reason = COALESCE(${reason}, outcome_reason), notes = COALESCE(${notes}, notes), agent_id = COALESCE(${agent}, agent_id), outcome_at = ${setOutcomeAt ? sql`now()` : sql`outcome_at`}, updated_at = now() WHERE id = ${id}`);
+      res.json({ ok: true, id, status, outcome_reason: reason });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+  app.get('/api/admin/churn/resgate-motivos', async (req: Request, res: Response) => {
+    try {
+      await ensureResgateTable();
+      const now = new Date();
+      const mes = Math.min(Math.max(parseInt(String(req.query.mes || (now.getUTCMonth() + 1)), 10) || (now.getUTCMonth() + 1), 1), 12);
+      const ano = parseInt(String(req.query.ano || now.getUTCFullYear()), 10) || now.getUTCFullYear();
+      const q = "SELECT outcome_reason, COUNT(*)::int AS n, COALESCE(SUM(valor_6m),0)::numeric AS valor FROM churn_resgate_queue WHERE status = 'concluido' AND outcome_reason IS NOT NULL AND EXTRACT(MONTH FROM outcome_at) = " + mes + " AND EXTRACT(YEAR FROM outcome_at) = " + ano + " GROUP BY outcome_reason ORDER BY n DESC";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = ((r.rows || r) as any[]).map((x: any) => ({ motivo: x.outcome_reason, quantidade: Number(x.n), valor6m: Math.round(Number(x.valor || 0) * 100) / 100 }));
+      res.json({ ok: true, mes, ano, motivos: rows });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
