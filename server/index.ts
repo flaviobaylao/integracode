@@ -775,6 +775,51 @@ run();
     }
   });
 
+  // VIGIA 2D (03/jul/2026): Anti-fraude de check-in — check-ins com distancia ao cliente acima do limiar.
+  // limiar (metros) em system_settings 'checkin_max_dist' (default 300); override ?maxDist=. Fonte: sales_cards.distance_to_customer.
+  app.get('/api/admin/checkin/anti-fraude', async (req: Request, res: Response) => {
+    try {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      const start = String(req.query.startDate || today).replace(/[^0-9-]/g, '');
+      const end = String(req.query.endDate || start).replace(/[^0-9-]/g, '');
+      let maxDist = Number(req.query.maxDist);
+      if (!Number.isFinite(maxDist) || maxDist <= 0) {
+        try {
+          const cfg: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'checkin_max_dist' LIMIT 1"));
+          const rows = (cfg.rows || cfg) as any[];
+          const v = rows.length ? Number(String(rows[0].value).replace(/[^0-9.]/g, '')) : NaN;
+          maxDist = Number.isFinite(v) && v > 0 ? v : 300;
+        } catch (e) { maxDist = 300; }
+      }
+      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, sc.seller_id AS sid, sc.check_in_time AS checkin, MAX(sc.distance_to_customer::numeric) AS dist, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1) AS seller_name FROM sales_cards sc LEFT JOIN customers c ON c.id = sc.customer_id WHERE sc.check_in_time IS NOT NULL AND sc.distance_to_customer IS NOT NULL AND (sc.check_in_time AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (sc.check_in_time AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date GROUP BY sc.customer_id, sc.seller_id, sc.check_in_time";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+
+      const sellers = new Map<string, any>();
+      const ocorrencias: any[] = [];
+      let flaggedTot = 0;
+      for (const x of rows) {
+        const sid = String(x.sid || '');
+        const nome = x.seller_name || (sid || 'Sem vendedor');
+        const dist = Number(x.dist) || 0;
+        const flagged = dist > maxDist;
+        if (!sellers.has(nome)) sellers.set(nome, { sellerId: sid, sellerName: nome, checkins: 0, flagged: 0, maxDist: 0 });
+        const sv = sellers.get(nome);
+        sv.checkins++;
+        if (dist > sv.maxDist) sv.maxDist = Math.round(dist);
+        if (flagged) {
+          sv.flagged++; flaggedTot++;
+          ocorrencias.push({ customerId: String(x.cid || ''), nome: x.nome || x.cid, sellerName: nome, checkInTime: x.checkin ? new Date(x.checkin).toISOString() : null, distancia: Math.round(dist) });
+        }
+      }
+      const por_vendedor = Array.from(sellers.values()).sort((a: any, b: any) => (b.flagged - a.flagged) || (b.maxDist - a.maxDist));
+      ocorrencias.sort((a: any, b: any) => b.distancia - a.distancia);
+      res.json({ ok: true, startDate: start, endDate: end, maxDist, totais: { checkins: rows.length, flagged: flaggedTot }, por_vendedor, ocorrencias });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
