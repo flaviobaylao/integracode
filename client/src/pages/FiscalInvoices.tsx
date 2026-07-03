@@ -1,3 +1,4 @@
+import { exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
@@ -187,6 +188,8 @@ export default function FiscalInvoices() {
   const [activeTab, setActiveTab] = useState('invoices');
   const [statusFilter, setStatusFilter] = useState('all');
   const [envFilter, setEnvFilter] = useState('all');
+  const [nfSearch, setNfSearch] = useState('');
+  const [sortAZ, setSortAZ] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -288,6 +291,9 @@ export default function FiscalInvoices() {
     queryKey: ['/api/fiscal-invoices', statusFilter, envFilter],
     queryFn: () => fetch(buildInvoiceUrl(), { credentials: 'include' }).then(r => r.json()),
   });
+  const invoicesView = (invoices || []).filter((inv: any) => !nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch));
+  if (sortAZ) invoicesView.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
+
 
   const { data: invoiceDetail, isLoading: loadingDetail } = useQuery<FiscalInvoice>({
     queryKey: ['/api/fiscal-invoices', selectedInvoiceId],
@@ -664,6 +670,12 @@ export default function FiscalInvoices() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label className="text-xs">Cliente / Nº</Label>
+              <Input placeholder="Buscar cliente ou numero..." value={nfSearch} onChange={(e) => setNfSearch(e.target.value)} className="w-[220px]" data-testid="search-nf" />
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-nf">{sortAZ ? "Cliente A-Z: ligado" : "Ordenar A-Z"}</Button>
+            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
             <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
@@ -695,7 +707,7 @@ export default function FiscalInvoices() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {invoices.map(inv => (
+                    {invoicesView.map(inv => (
                       <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openDetail(inv.id)}>
                         <TableCell className="font-mono font-medium">{inv.invoiceNumber || '-'}</TableCell>
                         <TableCell>
