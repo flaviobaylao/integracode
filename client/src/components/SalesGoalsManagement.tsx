@@ -383,11 +383,15 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                         </TableCell>
                         <TableCell className="text-right">
                           {(() => {
-                            const cov = coverageMap[goal.sellerId];
-                            if (!cov || cov.cobertura === null || cov.cobertura === undefined) return <span className="text-muted-foreground">—</span>;
-                            const c = cov.cobertura;
+                            const uu = allUsers.find((x: User) => x.id === goal.sellerId) as any;
+                            const keys = new Set<string>([goal.sellerId]);
+                            if (uu && uu.omieVendorCode) { keys.add(String(uu.omieVendorCode)); keys.add('omie-vendor-' + String(uu.omieVendorCode)); }
+                            let plan = 0, atend = 0, has = false;
+                            keys.forEach((k) => { const cv = (coverageMap as any)[k]; if (cv) { plan += cv.planejados || 0; atend += cv.atendidos || 0; has = true; } });
+                            if (!has || plan <= 0) return <span className="text-muted-foreground">—</span>;
+                            const c = Math.min(100, Math.round((atend / plan) * 100));
                             const color = c >= 90 ? 'text-green-600' : c >= 60 ? 'text-amber-600' : 'text-red-600';
-                            return <span className={`text-sm font-mono ${color}`} title={`${cov.atendidos}/${cov.planejados} planejados (7d)`}>{c}%</span>;
+                            return <span className={`text-sm font-mono ${color}`} title={`${atend}/${plan} planejados (7d)`}>{c}%</span>;
                           })()}
                         </TableCell>
                         <TableCell className="text-right">
