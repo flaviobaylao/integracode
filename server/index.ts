@@ -463,7 +463,78 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
-  // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
+    // VIGIA 1A (03/jul/2026): Execucao de Rota do dia — planejados x check-ins x vendas x nao-vendas por vendedor
+  app.get('/api/admin/routes/execution', async (req: Request, res: Response) => {
+    try {
+      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const d = raw.replace(/[^0-9-]/g, '');
+      const t1s = "(('" + d + "'::date + INTERVAL '1 day')::timestamp + INTERVAL '3 hours')";
+      const evWin = (col: string) => "(" + col + " >= '" + d + " 03:00:00' AND " + col + " < " + t1s + ")";
+      const ex = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return (r.rows || r) as any[]; };
+
+      const qPlan = "SELECT c.seller_id AS sid, va.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + d + " 00:00:00' AND va.scheduled_date <= '" + d + " 23:59:59' AND (va.is_virtual IS NOT TRUE) AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id, va.customer_id";
+      const qChk = "SELECT DISTINCT customer_id AS cid FROM sales_cards WHERE " + evWin('check_in_time') + " UNION SELECT DISTINCT customer_id AS cid FROM route_checkpoints WHERE checkpoint_type = 'check_in' AND " + evWin('checkpoint_time');
+      const qVen = "SELECT seller_id AS sid, COALESCE(seller_name,'') AS snome, customer_id AS cid, COALESCE(sale_value::numeric,0) AS valor FROM billing_pipeline WHERE " + evWin('created_at');
+      const qNos = "SELECT sc.customer_id AS cid, sc.seller_id AS sid, MAX(sc.no_sale_reason) AS motivo, MAX(c.name) AS nome FROM sales_cards sc LEFT JOIN customers c ON c.id = sc.customer_id WHERE sc.no_sale_reason IS NOT NULL AND (" + evWin('sc.check_in_time') + " OR " + evWin('sc.completed_date') + ") GROUP BY sc.customer_id, sc.seller_id";
+      const qUsr = "SELECT id, COALESCE(omie_vendor_code,'') AS code, TRIM(CONCAT_WS(' ', first_name, last_name)) AS nome FROM users";
+
+      const plan = await ex(qPlan);
+      const chk = await ex(qChk);
+      const ven = await ex(qVen);
+      const nos = await ex(qNos);
+      const usr = await ex(qUsr);
+
+      const byId = new Map<string, string>();
+      const codeToId = new Map<string, string>();
+      for (const u of usr) {
+        byId.set(String(u.id), String(u.nome || u.id));
+        const code = String(u.code || '');
+        if (code) { codeToId.set(code, String(u.id)); codeToId.set('omie-vendor-' + code, String(u.id)); }
+      }
+      const canon = (sid: any) => { const k = String(sid || ''); if (byId.has(k)) return k; return codeToId.get(k) || k; };
+      const nameOf = (k: string) => byId.get(k) || (k ? k : 'Sem vendedor');
+
+      const chkSet = new Set(chk.map((r: any) => String(r.cid)));
+      const sellers = new Map<string, any>();
+      const S = (sidRaw: any) => {
+        const k = canon(sidRaw);
+        if (!sellers.has(k)) sellers.set(k, { sellerId: k, sellerName: nameOf(k), planejados: 0, checkins: 0, vendas: 0, valorVendas: 0, naoVendas: 0, pendentes: [] as any[], naoVendasLista: [] as any[], vendaClientes: new Set<string>() });
+        return sellers.get(k);
+      };
+      for (const v of ven) {
+        const s = S(v.sid);
+        s.vendas++; s.valorVendas += Number(v.valor) || 0;
+        if (v.cid) s.vendaClientes.add(String(v.cid));
+        if (s.sellerName === s.sellerId && v.snome) s.sellerName = String(v.snome);
+      }
+      for (const n of nos) { const s = S(n.sid); s.naoVendas++; s.naoVendasLista.push({ customerId: String(n.cid || ''), nome: n.nome, motivo: n.motivo }); }
+      for (const p of plan) {
+        const s = S(p.sid);
+        s.planejados++;
+        const cid = String(p.cid);
+        const visitado = chkSet.has(cid);
+        if (visitado) s.checkins++;
+        if (!visitado && !s.vendaClientes.has(cid)) s.pendentes.push({ customerId: cid, nome: p.nome, cidade: p.cidade });
+      }
+      const out = Array.from(sellers.values()).map((s: any) => {
+        const atendidos = s.planejados - s.pendentes.length;
+        return {
+          sellerId: s.sellerId, sellerName: s.sellerName,
+          planejados: s.planejados, checkins: s.checkins, atendidos,
+          vendas: s.vendas, valorVendas: Math.round(s.valorVendas * 100) / 100,
+          naoVendas: s.naoVendas,
+          cobertura: s.planejados > 0 ? Math.round((atendidos / s.planejados) * 100) : null,
+          pendentes: s.pendentes, naoVendasLista: s.naoVendasLista
+        };
+      }).sort((a: any, b: any) => (b.planejados - a.planejados) || (b.vendas - a.vendas));
+      const tot = out.reduce((a: any, s: any) => { a.planejados += s.planejados; a.checkins += s.checkins; a.atendidos += s.atendidos; a.vendas += s.vendas; a.valorVendas += s.valorVendas; a.naoVendas += s.naoVendas; return a; }, { planejados: 0, checkins: 0, atendidos: 0, vendas: 0, valorVendas: 0, naoVendas: 0 });
+      res.json({ ok: true, date: d, totais: { ...tot, valorVendas: Math.round(tot.valorVendas * 100) / 100, cobertura: tot.planejados > 0 ? Math.round((tot.atendidos / tot.planejados) * 100) : null }, sellers: out });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
+// Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
