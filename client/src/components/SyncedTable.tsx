@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { RefreshCw } from "lucide-react";
+import { exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 
 function fmt(v: any, col: string) {
   if (v === null || v === undefined || v === "") return "-";
@@ -23,6 +24,8 @@ export default function SyncedTable({
   table, hideColumns = [], labels = {}, limit = 2000,
 }: { table: string; hideColumns?: string[]; labels?: Record<string, string>; limit?: number }) {
   const [q, setQ] = useState("");
+  const [sortCol, setSortCol] = useState<string>("");
+  const [sortAsc, setSortAsc] = useState(true);
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["/api/synced-table", table, limit],
     queryFn: async () => {
@@ -39,14 +42,24 @@ export default function SyncedTable({
     const s = q.toLowerCase();
     return rows.filter((r) => cols.some((c) => String(r[c] ?? "").toLowerCase().includes(s)));
   }, [rows, q, cols]);
+  const sorted = useMemo(() => {
+    if (!sortCol) return filtered;
+    const dir = sortAsc ? 1 : -1;
+    return [...filtered].sort((a, b) => String(a[sortCol] ?? "").localeCompare(String(b[sortCol] ?? ""), "pt-BR", { numeric: true }) * dir);
+  }, [filtered, sortCol, sortAsc]);
+  const handleSort = (c: string) => {
+    if (sortCol === c) setSortAsc((v) => !v);
+    else { setSortCol(c); setSortAsc(true); }
+  };
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Input placeholder="Buscar..." value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
         <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
         </Button>
+        <ExportExcelButton testId={"export-" + table} onClick={() => exportToExcel(sorted.map((r) => Object.fromEntries(cols.map((c) => [labels[c] || c, fmt(r[c], c)]))), "tabela-" + table)} />
         <span className="text-sm text-gray-500">
           {isLoading ? "Carregando..." : `${filtered.length} de ${data?.total ?? rows.length} registros`}
         </span>
@@ -55,16 +68,20 @@ export default function SyncedTable({
         <Table>
           <TableHeader>
             <TableRow>
-              {cols.map((c) => (<TableHead key={c}>{labels[c] || c}</TableHead>))}
+              {cols.map((c) => (
+                <TableHead key={c} className="cursor-pointer select-none whitespace-nowrap" onClick={() => handleSort(c)}>
+                  {labels[c] || c}{sortCol === c ? (sortAsc ? " ↑" : " ↓") : ""}
+                </TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((r, i) => (
+            {sorted.map((r, i) => (
               <TableRow key={r.id || i}>
                 {cols.map((c) => (<TableCell key={c}>{fmt(r[c], c)}</TableCell>))}
               </TableRow>
             ))}
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && sorted.length === 0 && (
               <TableRow><TableCell colSpan={cols.length} className="text-center text-gray-400 py-8">Nenhum registro</TableCell></TableRow>
             )}
           </TableBody>
