@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { useState, useRef } from "react";
 import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -199,6 +200,9 @@ export default function ActiveCustomers() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const [selectedSeller, setSelectedSeller] = useState<string>("");
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [sortAZ, setSortAZ] = useState(false);
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -834,7 +838,8 @@ export default function ActiveCustomers() {
       const matchesCity = !selectedCity || ac.customer?.city?.trim() === selectedCity;
       const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
       
-      return matchesSearch && matchesSeller && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood;
+      const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId));
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -857,6 +862,7 @@ export default function ActiveCustomers() {
       }
       return bValue - aValue;
     });
+  if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.customer?.fantasyName || a.customer?.name || a.fantasyNameImported || '').localeCompare(String(b.customer?.fantasyName || b.customer?.name || b.fantasyNameImported || '')));
 
   const formatDocument = (doc: string, type: string) => {
     if (type === "cpf" && doc.length === 11) {
@@ -1067,18 +1073,9 @@ export default function ActiveCustomers() {
               
               <Filter className="h-4 w-4 text-muted-foreground" />
               
-              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                <SelectTrigger className="w-[120px] h-9" data-testid="select-seller-filter">
-                  <SelectValue placeholder="Vendedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sellers.map((seller) => (
-                    <SelectItem key={seller.id} value={seller.id || ""}>
-                      {seller.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-active" />
+              <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-active">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
+              <ExportExcelButton testId="export-active" onClick={() => exportToExcel(filteredCustomers.map((ac: any) => ({ Nome: ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "", Documento: ac.document, Telefone: ac.customer?.phone, Vendedor: resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId), Cidade: ac.customer?.city, Bairro: ac.customer?.neighborhood, Periodicidade: ac.customer?.visitPeriodicity, MesAnterior: Number(ac.previousMonthTotal || 0), MesAtual: Number(ac.currentMonthTotal || 0) })), "clientes-ativos")} />
               
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
                 <SelectTrigger className="w-[100px] h-9" data-testid="select-day-filter">
