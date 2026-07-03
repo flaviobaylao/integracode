@@ -1,3 +1,4 @@
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { useState, useMemo, useEffect } from "react";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
@@ -63,6 +64,9 @@ export default function VirtualClientsToday() {
   
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSeller, setSelectedSeller] = useState("");
+  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [sortAZ, setSortAZ] = useState(false);
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState("");
   const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
@@ -139,6 +143,7 @@ export default function VirtualClientsToday() {
 
       // Filtro de vendedor
       if (selectedSeller && ac.customer?.sellerId !== selectedSeller) return false;
+      if (!multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId))) return false;
 
       // Filtro de dia da semana
       if (selectedDayOfRoute) {
@@ -163,7 +168,10 @@ export default function VirtualClientsToday() {
 
       return true;
     });
-  }, [activeCustomers, searchTerm, selectedSeller, selectedDayOfRoute, selectedPeriodicity, selectedDate, daysOfRoute]);
+  }, [activeCustomers, searchTerm, selectedSeller, sellerMulti, resolveSeller, selectedDayOfRoute, selectedPeriodicity, selectedDate, daysOfRoute]);
+  const clientsView = [...filteredClients];
+  if (sortAZ) clientsView.sort((a, b) => String(a.customer?.name || a.fantasyNameImported || "").localeCompare(String(b.customer?.name || b.fantasyNameImported || "")));
+
 
   const handleClearFilters = () => {
     setSearchTerm("");
@@ -283,18 +291,7 @@ export default function VirtualClientsToday() {
               <Filter className="h-4 w-4 text-muted-foreground" />
 
               {!isTelemarketing && (
-                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                  <SelectTrigger className="w-[140px] h-9" data-testid="select-seller-filter">
-                    <SelectValue placeholder="Vendedor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sellers.map((seller) => (
-                      <SelectItem key={seller.id} value={seller.id}>
-                        {seller.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-virtual" />
               )}
 
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
@@ -335,6 +332,8 @@ export default function VirtualClientsToday() {
                 data-testid="input-date-filter"
               />
 
+              <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-virtual">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
+              <ExportExcelButton testId="export-virtual" onClick={() => exportToExcel(clientsView.map((c) => ({ Nome: c.customer?.fantasyName || c.customer?.name || c.fantasyNameImported || "", Documento: c.document, Telefone: c.customer?.phone, Vendedor: resolveSeller(c.customer?.sellerName || c.customer?.sellerId), Dia: Array.isArray(c.customer?.weekdays) ? (c.customer?.weekdays as any[]).join(", ") : c.customer?.weekdays || "", Periodicidade: c.customer?.visitPeriodicity })), "clientes-virtuais-do-dia")} />
               <Button
                 variant="outline"
                 size="sm"
@@ -390,7 +389,7 @@ export default function VirtualClientsToday() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredClients.map((client) => (
+                    clientsView.map((client) => (
                       <TableRow 
                         key={client.id} 
                         data-testid={`row-client-${client.id}`}
