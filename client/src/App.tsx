@@ -81,6 +81,7 @@ import PixCharges from "@/pages/PixCharges";
 import Visitas from "@/pages/Visitas";
 import ResumoVisitas from "@/pages/ResumoVisitas";
 import ExecucaoRota from "@/pages/ExecucaoRota";
+import RadarChurn from "@/pages/RadarChurn";
 import AgentesIA from "@/pages/AgentesIA";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
@@ -292,6 +293,7 @@ function Router() {
           <Route path="/visitas" component={Visitas} />
           <Route path="/resumo-visitas" component={ResumoVisitas} />
           <Route path="/execucao-rota" component={ExecucaoRota} />
+          <Route path="/radar-churn" component={RadarChurn} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
