@@ -22643,6 +22643,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Atualizar totalAmount com valor validado pelo servidor
       validatedData.totalAmount = serverTotal;
+
+    // VIGIA 3E: desconto de indicacao aplicado no servidor (fonte de verdade)
+    let _rc = String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let _bd = String(validatedData.customer.cpfCnpj || '').replace(/[^0-9]/g, '');
+    let _refPct = 0, _refMode = '', _refRedemptionId: any = null, _refDiscount = 0;
+    const _refBase = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+    try {
+      if (_rc && _bd) {
+        const _vr = await fetch(_refBase + '/api/referral/validate?code=' + encodeURIComponent(_rc) + '&referredDocument=' + _bd).then(r => r.json());
+        if (_vr && _vr.valid) { _refPct = Number(_vr.discountPct) || 15; _refMode = 'code'; }
+      }
+      if (!_refPct && _bd) {
+        const _rw = await fetch(_refBase + '/api/referral/reward-status?document=' + _bd).then(r => r.json());
+        if (_rw && _rw.hasReward) { _refPct = Number(_rw.pct) || 10; _refMode = 'reward'; _refRedemptionId = _rw.redemptionId; }
+      }
+      if (_refPct > 0) {
+        _refDiscount = Math.round(serverTotal * (_refPct / 100) * 100) / 100;
+        validatedData.totalAmount = Math.round((serverTotal - _refDiscount) * 100) / 100;
+      }
+    } catch (_e) {}
       
       // Buscar vendedor FLAVIO especificamente para pedidos do hotsite
       const users = await storage.getUsers();
@@ -22835,7 +22855,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: validatedData.paymentMethod,
         operationType: 'venda',
         products: formattedProducts, // ✅ Usar produtos formatados com todos os campos necessários
-        saleValue: serverTotal.toString(), // ✅ Valor total validado pelo servidor
+        saleValue: validatedData.totalAmount.toString(), // ✅ Valor total validado pelo servidor
         notes: `Pedido online via ${validatedData.source} - ${orderNumber}\nItens: ${validatedData.items.map(i => `${i.productName} (${i.quantity}x)`).join(', ')}\nTotal: R$ ${validatedData.totalAmount.toFixed(2)}\nMétodo de pagamento: ${validatedData.paymentMethod}`,
         deliveryWeekdays: [],
         deliveryTimeSlots: [],
@@ -22847,6 +22867,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
       const salesCard = await storage.createSalesCard(orderData);
+
+    try {
+      if (_refMode === 'code') {
+        const _rd = await fetch(_refBase + '/api/referral/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _rc, referredDocument: _bd, channel: 'hotsite', orderRef: orderNumber, orderValue: serverTotal }) }).then(r => r.json());
+        if (_rd && _rd.redemptionId) await fetch(_refBase + '/api/admin/referral/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _rd.redemptionId }) });
+      } else if (_refMode === 'reward' && _refRedemptionId) {
+        await fetch(_refBase + '/api/referral/consume-reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _refRedemptionId, orderRef: orderNumber }) });
+      }
+    } catch (_e2) {}
       console.log('✅ Pedido salvo com ID:', salesCard.id, 'Source:', salesCard.source);
       
       res.status(201).json({
@@ -22854,6 +22883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderId: salesCard.id,
         orderNumber,
         message: 'Pedido criado com sucesso!',
+      referralDiscount: _refPct > 0 ? { pct: _refPct, amount: _refDiscount, total: validatedData.totalAmount, mode: _refMode } : null,
         customerId,
         totalAmount: validatedData.totalAmount,
         paymentMethod: validatedData.paymentMethod
