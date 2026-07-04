@@ -116,6 +116,13 @@ export default function Dashboard() {
   }, [data, dates]);
 
   const totals = useMemo(() => sellers.reduce((t, s) => ({ clientesAtender: t.clientesAtender + s.clientesAtender, completedVisits: t.completedVisits + s.completedVisits, revenue: t.revenue + s.revenue, missedVisits: t.missedVisits + s.missedVisits, unmetRevenue: t.unmetRevenue + s.unmetRevenue }), { clientesAtender: 0, completedVisits: 0, revenue: 0, missedVisits: 0, unmetRevenue: 0 }), [sellers]);
+  const dailyRevenue = useMemo(() => {
+    const rws = data?.visitSummary?.rows;
+    if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
+    const m: Record<string, number> = {};
+    for (const N of rws) for (const v of N.visits || []) { if (v.hasOrder) m[v.date] = (m[v.date] || 0) + (v.orderValue || 0); }
+    return Object.keys(m).sort().map((d) => ({ d, v: m[d] }));
+  }, [data]);
 
   const today = Number(stats.todaySales) || 0;
   const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
@@ -153,8 +160,8 @@ export default function Dashboard() {
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Precos (Grade)</CardTitle></CardHeader>
-          <CardContent><a href="/price-tables" className="text-2xl font-bold text-green-700 hover:underline">Editar</a><div className="text-xs mt-1 text-gray-400">Consumidor Final + Instancias</div></CardContent>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
+          <CardContent><div className="text-lg font-bold text-gray-800">{brl(dailyRevenue.length ? dailyRevenue[dailyRevenue.length - 1].v : 0)}</div><Sparkline data={dailyRevenue} /><div className="text-xs mt-1 text-gray-400">Ultimo dia com venda</div></CardContent>
         </Card>
       </div>
 
@@ -265,6 +272,31 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+  );
+}
+
+function Sparkline(props: { data: { d: string; v: number }[] }) {
+  const data = props.data;
+  if (!data.length) return <div className="text-xs text-gray-400 h-11 flex items-center">Sem dados</div>;
+  const w = 240, h = 44, pad = 3;
+  const vals = data.map((x) => x.v);
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const range = max - min || 1;
+  const n = data.length;
+  const pts = data.map((x, i) => {
+    const px = pad + (n <= 1 ? 0 : (i / (n - 1)) * (w - 2 * pad));
+    const py = h - pad - ((x.v - min) / range) * (h - 2 * pad);
+    return px.toFixed(1) + "," + py.toFixed(1);
+  }).join(" ");
+  const last = data[n - 1];
+  const lx = pad + (n <= 1 ? 0 : (w - 2 * pad));
+  const ly = h - pad - ((last.v - min) / range) * (h - 2 * pad);
+  return (
+    <svg viewBox={"0 0 " + w + " " + h} className="w-full h-11 mt-1" preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke="#10b981" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <circle cx={lx} cy={ly} r="2" fill="#10b981" />
+    </svg>
   );
 }
 
