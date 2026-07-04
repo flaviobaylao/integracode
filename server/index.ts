@@ -619,6 +619,7 @@ run();
         }
       }
       try { const _pT = process.env.PORT || '8080'; const _trT = await fetch('http://127.0.0.1:' + _pT + '/api/admin/vendas-telemarketing?date=' + d); const _tk: any = await _trT.json(); if (_tk && _tk.ok && _tk.text) text += _tk.text; } catch (_e) {}
+      text += '\n📋 Vendedores: justifiquem as visitas nao realizadas em Justificar Visitas.';
       res.json({ ok: true, date: d, text });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
@@ -890,6 +891,22 @@ app.post('/api/referral/consume-reward', async (req: Request, res: Response) => 
   } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
 });
 
+// VIGIA 2D: config do limiar de distancia do check-in (anti-fraude)
+app.get('/api/admin/checkin/max-dist', async (_req: Request, res: Response) => {
+  try {
+    const rs: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'checkin_max_dist' LIMIT 1"));
+    const rows = (rs.rows || rs) as any[];
+    res.json({ ok: true, maxDist: rows.length ? (Number(rows[0].value) || 300) : 300, isDefault: rows.length === 0 });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 200) }); }
+});
+app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
+  try {
+    const n = Math.round(Number((req.body && req.body.maxDist)) || 0);
+    if (!n || n < 10 || n > 100000) return res.status(400).json({ error: 'maxDist invalido (10..100000 metros)' });
+    await db.execute(sql.raw("INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('checkin_max_dist', '" + n + "', 'vigia-config', now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'vigia-config', updated_at = now()"));
+    res.json({ ok: true, maxDist: n });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 200) }); }
+});
 // VIGIA: configura numeros do gestor p/ notificacoes (CSV) em system_settings gestor_whatsapp
   app.get('/api/admin/notify/gestor-config', async (_req: Request, res: Response) => {
     try {
