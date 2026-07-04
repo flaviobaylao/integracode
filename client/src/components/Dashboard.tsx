@@ -85,6 +85,7 @@ export default function Dashboard() {
   const [end, setEnd] = useState<string>(bounds.today);
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [pnfSeller, setPnfSeller] = useState<string[]>([]);
+  const [modal, setModal] = useState<{ title: string; names: string[] } | null>(null);
 
   const stats = data?.stats || {};
   const ov = data?.ordersOverview || {};
@@ -100,14 +101,14 @@ export default function Dashboard() {
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0 }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0, completedNames: [] as string[], missedNames: [] as string[] }; map.set(S, w); }
       for (const v of N.visits || []) {
         if (!dset.has(v.date)) continue;
         if (v.isScheduled) w.clientesAtender++;
         if (!v.isPast) continue;
         const k = visitColor(v);
-        if (k === "green" || k === "yellow") w.completedVisits++;
-        else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += expectedValue(v); }
+        if (k === "green" || k === "yellow") { w.completedVisits++; w.completedNames.push(N.customerName || "-"); }
+        else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += expectedValue(v); w.missedNames.push(N.customerName || "-"); }
         if (v.hasOrder) w.revenue += v.orderValue || 0;
       }
     }
@@ -191,9 +192,9 @@ export default function Dashboard() {
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
                     <td className="py-2 px-3 text-right tabular-nums">{x.clientesAtender}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-green-700">{x.completedVisits}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-green-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Visitas Efetivadas - " + x.sellerName, names: x.completedNames })}>{x.completedVisits}</button></td>
                     <td className="py-2 px-3 text-right tabular-nums font-semibold text-gray-800">{brl(x.revenue)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-red-700">{x.missedVisits}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-red-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Nao Efetivadas - " + x.sellerName, names: x.missedNames })}>{x.missedVisits}</button></td>
                     <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-500">{brl(x.unmetRevenue)}</td>
                   </tr>
                 ))}
@@ -243,6 +244,26 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setModal(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <h3 className="font-semibold text-sm text-gray-800">{modal.title} ({modal.names.length})</h3>
+              <button type="button" onClick={() => setModal(null)} className="text-sm px-2 py-1 border rounded hover:bg-gray-100">Fechar</button>
+            </div>
+            <div className="overflow-auto p-4 space-y-1">
+              {modal.names.length === 0 ? (
+                <div className="text-sm text-gray-400">Nenhum cliente no periodo.</div>
+              ) : (
+                modal.names.map((n, i) => (
+                  <div key={i} className="text-sm text-gray-800 border-b border-gray-100 py-1">{n}</div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
