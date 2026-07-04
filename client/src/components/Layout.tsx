@@ -114,6 +114,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'clientes-virtuais-hoje', label: 'Clientes Virtuais do Dia', icon: 'fas fa-phone', available: !isMotorista, badge: null },
         { id: 'radar-churn', label: 'Radar de Churn', icon: 'fas fa-heart-pulse', available: canAccessReports, badge: null },
         { id: 'fila-resgate', label: 'Fila de Resgate', icon: 'fas fa-life-ring', available: canAccessReports, badge: null },
+        { id: 'programa-indicacao', label: 'Programa de Indicação', icon: 'fas fa-gift', available: canAccessReports, badge: null },
         { id: 'leads', label: 'LEADs', icon: 'fas fa-crosshairs', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'locations', label: 'Localizações', icon: 'fas fa-map-marker-alt', available: canAccessReports, badge: null },
         { id: 'tabela-precos', label: 'Tabela de Preços', icon: 'fas fa-tags', available: canAccessReports, badge: null },
@@ -357,7 +358,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['execucao-rota', 'radar-churn', 'fila-resgate', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro'];
+    const routePages = ['execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
