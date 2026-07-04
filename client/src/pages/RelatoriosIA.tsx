@@ -106,9 +106,19 @@ export default function RelatoriosIA() {
     },
   });
 
+  const churn = useQuery<any>({
+    queryKey: ["/api/admin/churn/radar"],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/churn/radar`, { credentials: "include" });
+      if (!r.ok) throw new Error("Falha ao carregar churn");
+      return r.json();
+    },
+  });
+
   const d = dash.data;
   const rc = d?.resumo_carteira;
   const k = d?.kpis;
+  const crn = churn.data?.resumo;
 
   const clientesFiltrados = useMemo(() => {
     const all = semPedido.data?.clientes || [];
@@ -172,6 +182,10 @@ export default function RelatoriosIA() {
           sub={k ? `${num(k.total_pedidos_periodo)} pedidos · ticket ${brl(k.ticket_medio_periodo)}` : undefined} />
         <KpiCard icon={AlertTriangle} label="Débitos vencidos" value={dash.isLoading ? "…" : brl(k?.debitos_valor)} tone="red"
           sub={k ? `${num(k.debitos_clientes)} clientes` : undefined} />
+        <KpiCard icon={AlertTriangle} label="Em risco (churn)" value={churn.isLoading ? "…" : num(crn?.em_risco)} tone="amber"
+          sub={crn ? `perdido ${num(crn.perdido)}` : undefined} />
+        <KpiCard icon={DollarSign} label="R$ em risco" value={churn.isLoading ? "…" : brl(crn?.valorEmRisco)} tone="red"
+          sub="carteira em churn" />
       </div>
 
       {/* Gráfico vendas/dia + pipeline */}
