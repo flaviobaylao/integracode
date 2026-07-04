@@ -32,6 +32,23 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
   const [showingSectionOptions, setShowingSectionOptions] = useState(false);
+  // (05/jul) contador de acessos por card + abre secao via ?secao=
+  const MENU_COUNTS_KEY = "integra_menu_counts";
+  const [menuCounts, setMenuCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try { setMenuCounts(JSON.parse(localStorage.getItem(MENU_COUNTS_KEY) || "{}")); } catch { /* noop */ }
+    try {
+      const secao = new URLSearchParams(window.location.search).get("secao");
+      if (secao) { setSelectedSection(secao); setShowingSectionOptions(true); }
+    } catch { /* noop */ }
+  }, []);
+  const bumpMenuCount = (itemId: string) => {
+    setMenuCounts((prev) => {
+      const next = { ...prev, [itemId]: (prev[itemId] || 0) + 1 };
+      try { localStorage.setItem(MENU_COUNTS_KEY, JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handleSessionExpired = (event: CustomEvent) => {
@@ -321,6 +338,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   }, [menuGroups]);
 
   const handleMenuItemClick = (itemId: string) => {
+    bumpMenuCount(itemId);
     setShowingSectionOptions(false);
     setMobileMenuOpen(false);
 
@@ -452,7 +470,10 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const activeGroup = findGroupForActiveView();
 
   const renderSectionCards = (group: MenuGroup) => {
-    const items = roleFilterItems(group.items);
+    const items = [...roleFilterItems(group.items)]
+      .map((it, i) => ({ it, i }))
+      .sort((a, b) => ((menuCounts[b.it.id] || 0) - (menuCounts[a.it.id] || 0)) || (a.i - b.i))
+      .map((x) => x.it);
     return (
       <div className="p-4 md:p-6">
         <div className="mb-6">
