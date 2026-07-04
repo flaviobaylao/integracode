@@ -24,6 +24,8 @@ function HotsiteContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
+  const [referralCode, setReferralCode] = useState('');
+  const [discountInfo, setDiscountInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Carregar produtos ao iniciar
@@ -168,6 +170,21 @@ function HotsiteContent() {
         return tableMap[table];
       };
 
+      const _subtotal = calculateTotal();
+      const _buyerDoc = (cleanCustomer.cpfCnpj || '').replace(/[^0-9]/g, '');
+      let _pct = 0; let _mode = ''; const _refCode = (referralCode || '').trim().toUpperCase(); let _redemptionId: any = null;
+      try {
+        if (_refCode && _buyerDoc) {
+          const vr = await fetch('/api/referral/validate?code=' + encodeURIComponent(_refCode) + '&referredDocument=' + _buyerDoc).then(r => r.json());
+          if (vr && vr.valid) { _pct = Number(vr.discountPct) || 15; _mode = 'code'; }
+        }
+        if (!_pct && _buyerDoc) {
+          const rw = await fetch('/api/referral/reward-status?document=' + _buyerDoc).then(r => r.json());
+          if (rw && rw.hasReward) { _pct = Number(rw.pct) || 10; _mode = 'reward'; _redemptionId = rw.redemptionId; }
+        }
+      } catch (_x) {}
+      const _discountAmount = Math.round(_subtotal * (_pct / 100) * 100) / 100;
+      const _finalTotal = Math.round((_subtotal - _discountAmount) * 100) / 100;
       const order = {
         customer: cleanCustomer,
         items: cart.map(item => ({
@@ -176,7 +193,9 @@ function HotsiteContent() {
           quantity: item.quantity,
           unitPrice: item.price,
         })),
-        totalAmount: calculateTotal(),
+        totalAmount: _finalTotal,
+        referralCode: _refCode || null,
+        referralDiscountPct: _pct,
         paymentMethod,
         source: 'hotsite' as const,
         priceTable: convertPriceTable(priceTable), // ✅ Adicionar tabela de preço
@@ -187,6 +206,15 @@ function HotsiteContent() {
       console.log('🔵 Chamando api.createOrder...');
       
       const response = await api.createOrder(order);
+        try {
+          if (_mode === 'code') {
+            const rd = await fetch('/api/referral/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _refCode, referredDocument: _buyerDoc, channel: 'hotsite', orderRef: response.orderNumber, orderValue: _subtotal }) }).then(r => r.json());
+            if (rd && rd.redemptionId) { await fetch('/api/admin/referral/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: rd.redemptionId }) }); }
+          } else if (_mode === 'reward' && _redemptionId) {
+            await fetch('/api/referral/consume-reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _redemptionId, orderRef: response.orderNumber }) });
+          }
+          if (_pct > 0) setDiscountInfo({ pct: _pct, amount: _discountAmount, mode: _mode, total: _finalTotal }); else setDiscountInfo(null);
+        } catch (_y) {}
       
       console.log('✅ Resposta recebida:', response);
       
@@ -224,6 +252,11 @@ function HotsiteContent() {
           <h1 className="text-3xl font-bold text-honest-green mb-4">Pedido Confirmado!</h1>
           <p className="text-gray-600 mb-2">Número do pedido:</p>
           <p className="text-2xl font-mono font-bold text-honest-orange mb-6" data-testid="order-number">{orderNumber}</p>
+                {discountInfo && (
+                  <div className="bg-green-50 border border-green-300 rounded-xl p-3 mb-4 text-sm text-green-800">
+                    Desconto aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)}) · Total: R$ {Number(discountInfo.total).toFixed(2)}
+                  </div>
+                )}
           
           <div className="bg-honest-light p-4 rounded-xl mb-6 text-left">
             <p className="text-sm text-gray-700">
@@ -261,13 +294,20 @@ function HotsiteContent() {
   // View: Checkout
   if (view === 'checkout') {
     return (
-      <CheckoutForm
+      <div>
+        <div className="max-w-md mx-auto px-4 pt-4">
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Código de indicação (opcional)</label>
+          <input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} placeholder="Ex.: INDXXXXXX" className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" />
+          <p className="text-xs text-gray-400 mt-1">Novo cliente ganha 15% no 1º pedido com o código de quem indicou. Se você já indicou alguém, o desconto é aplicado automaticamente.</p>
+        </div>
+        <CheckoutForm
         cartItems={cart}
         total={calculateTotal()}
         onSubmit={handleCheckout}
         onBack={() => setView('catalog')}
         isProcessing={isProcessing}
       />
+      </div>
     );
   }
 
