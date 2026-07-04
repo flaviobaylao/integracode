@@ -731,22 +731,23 @@ run();
   try {
     const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
     const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const cardsR: any = await db.execute(sql.raw("SELECT sc.telemarketing_assigned_to AS id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), sc.telemarketing_assigned_to) AS nome, COUNT(*)::int AS qtd, COALESCE(SUM(sc.sale_value),0)::float AS valor FROM sales_cards sc LEFT JOIN users u ON u.id = sc.telemarketing_assigned_to WHERE sc.telemarketing_assigned_to IS NOT NULL AND sc.sale_value > 0 AND (COALESCE(sc.completed_date, sc.telemarketing_date, sc.created_at) AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1,2 ORDER BY valor DESC"));
-    const cards = (cardsR.rows || cardsR) as any[];
+    const JTL = "JOIN users u ON (u.seller_type = 'telemarketing' AND (bp.seller_id = u.id OR bp.seller_id = u.omie_vendor_code OR bp.seller_id = ('omie-vendor-' || u.omie_vendor_code)))";
+    const vendasR: any = await db.execute(sql.raw("SELECT COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), bp.seller_name, bp.seller_id) AS nome, COUNT(*)::int AS qtd, COALESCE(SUM(bp.sale_value),0)::float AS valor FROM billing_pipeline bp " + JTL + " WHERE bp.sale_value > 0 AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY valor DESC"));
+    const vendas = (vendasR.rows || vendasR) as any[];
     const atendR: any = await db.execute(sql.raw("SELECT attendant_name AS nome, COUNT(*)::int AS qtd FROM virtual_service_logs WHERE service_type = 'venda' AND (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY qtd DESC"));
     const atend = (atendR.rows || atendR) as any[];
-    const diagR: any = await db.execute(sql.raw("SELECT (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL) AS cards_tlmk, (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL AND sale_value > 0) AS cards_tlmk_venda, (SELECT COUNT(*) FROM sales_cards WHERE source = 'telemarketing') AS src_tlmk, (SELECT COUNT(*) FROM sales_cards WHERE source = 'telemarketing' AND sale_value > 0) AS src_tlmk_venda, (SELECT COUNT(*) FROM virtual_service_logs WHERE service_type = 'venda') AS venda_logs, (SELECT COUNT(*) FROM users WHERE seller_type = 'telemarketing') AS tlmk_users"));
+    const diagR: any = await db.execute(sql.raw("SELECT (SELECT COUNT(*) FROM users WHERE seller_type = 'telemarketing') AS tlmk_users, (SELECT COUNT(*) FROM billing_pipeline bp " + JTL + " WHERE bp.sale_value > 0) AS pipe_tlmk_all, (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL) AS cards_tlmk, (SELECT COUNT(*) FROM virtual_service_logs WHERE service_type = 'venda') AS venda_logs"));
     const diag = ((diagR.rows || diagR) as any[])[0] || {};
-    const cardsTot = cards.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
-    const cardsVal = cards.reduce((a: number, c: any) => a + (Number(c.valor) || 0), 0);
-    const atendTot = atend.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
+    const vTot = vendas.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
+    const vVal = vendas.reduce((a: number, c: any) => a + (Number(c.valor) || 0), 0);
+    const aTot = atend.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
     let text = '';
-    if (cardsTot > 0 || atendTot > 0) {
-      text += '\n📞 Telemarketing (hoje): vendas ' + cardsTot + ' (R$ ' + br(cardsVal) + ') · atendimentos venda ' + atendTot;
-      if (cards.length) text += '\n  • ' + cards.slice(0, 10).map((c: any) => c.nome + ': ' + c.qtd + ' (R$ ' + br(c.valor) + ')').join(' · ');
+    if (vTot > 0 || aTot > 0) {
+      text += '\n📞 Telemarketing (hoje): vendas ' + vTot + ' (R$ ' + br(vVal) + ') · atendimentos venda ' + aTot;
+      if (vendas.length) text += '\n  • ' + vendas.slice(0, 10).map((c: any) => c.nome + ': ' + c.qtd + ' (R$ ' + br(c.valor) + ')').join(' · ');
       if (atend.length) text += '\n  • atend.: ' + atend.slice(0, 10).map((a: any) => a.nome + ' ' + a.qtd).join(' · ');
     }
-    res.json({ ok: true, date: d, cards, atendimentos: atend, diag, text });
+    res.json({ ok: true, date: d, vendas, atendimentos: atend, diag, text });
   } catch (e: any) {
     res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
   }
