@@ -149,7 +149,7 @@ function ReceivablesTab() {
     queryKey: ['/api/financial/accounts'],
   });
 
-  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [sortAZ, setSortAZ] = useState(false);
   const filtered = receivables.filter((r: any) => {
@@ -219,7 +219,7 @@ function ReceivablesTab() {
         </div>
           <div>
             <Label className="text-xs">Vendedor</Label>
-            <div><MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-receivables" /></div>
+            <div><MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-receivables" /></div>
           </div>
           <div className="flex gap-2 items-end">
             <Button type="button" variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-receivables">{sortAZ ? "Cliente A-Z: ligado" : "Ordenar A-Z"}</Button>
