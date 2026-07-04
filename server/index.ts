@@ -758,6 +758,8 @@ app.post('/api/admin/referral/setup', async (req: Request, res: Response) => {
   try {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS referral_coupons (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar UNIQUE NOT NULL, code varchar UNIQUE NOT NULL, discount_new_pct int NOT NULL DEFAULT 15, discount_referrer_pct int NOT NULL DEFAULT 10, max_referrals int NOT NULL DEFAULT 5, used_count int NOT NULL DEFAULT 0, active boolean NOT NULL DEFAULT true, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())"));
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS referral_redemptions (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), code varchar NOT NULL, referrer_customer_id varchar, referred_customer_id varchar, referred_document varchar, channel varchar NOT NULL DEFAULT 'hotsite', order_ref varchar, order_value numeric(10,2), discount_new_amount numeric(10,2), reward_referrer_pct int DEFAULT 10, reward_referrer_amount numeric(10,2), reward_referrer_status varchar DEFAULT 'pending', status varchar NOT NULL DEFAULT 'pending', notes text, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())"));
+    await db.execute(sql.raw("ALTER TABLE referral_redemptions ADD COLUMN IF NOT EXISTS reward_consumed_at timestamp"));
+    await db.execute(sql.raw("ALTER TABLE referral_redemptions ADD COLUMN IF NOT EXISTS reward_order_ref varchar"));
     await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_ref_red_code ON referral_redemptions(code)"));
     await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_ref_red_referred ON referral_redemptions(referred_customer_id)"));
     res.json({ ok: true });
@@ -852,6 +854,39 @@ app.get('/api/admin/referral/list', async (req: Request, res: Response) => {
     const redemptions = (rd.rows || rd) as any[];
     const resumo = { coupons: coupons.length, redemptions: redemptions.length, confirmadas: redemptions.filter((r: any) => r.status === 'confirmed').length, pendentes: redemptions.filter((r: any) => r.status === 'pending').length };
     res.json({ ok: true, resumo, coupons, redemptions });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+// VIGIA 3E-checkout: status/consumo da recompensa 10% do indicador
+app.get('/api/referral/reward-status', async (req: Request, res: Response) => {
+  try {
+    const customerId = String(req.query.customerId || '').trim().replace(/'/g, "''");
+    const doc = String(req.query.document || '').replace(/[^0-9]/g, '');
+    let refId = customerId;
+    if (!refId && doc) {
+      const cq: any = await db.execute(sql.raw("SELECT id FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') = '" + doc + "' OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g') = '" + doc + "' LIMIT 1"));
+      const cr = ((cq.rows || cq) as any[])[0];
+      if (cr) refId = String(cr.id).replace(/'/g, "''");
+    }
+    if (!refId) return res.json({ hasReward: false });
+    const q: any = await db.execute(sql.raw("SELECT id, reward_referrer_pct FROM referral_redemptions WHERE referrer_customer_id = '" + refId + "' AND reward_referrer_status = 'released' AND status = 'confirmed' AND reward_consumed_at IS NULL ORDER BY created_at ASC LIMIT 1"));
+    const row = ((q.rows || q) as any[])[0];
+    if (!row) return res.json({ hasReward: false, referrerCustomerId: refId });
+    res.json({ hasReward: true, pct: Number(row.reward_referrer_pct) || 10, redemptionId: row.id, referrerCustomerId: refId });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/referral/consume-reward', async (req: Request, res: Response) => {
+  try {
+    const id = String((req.body && req.body.redemptionId) || '').replace(/'/g, "''");
+    const orderRef = String((req.body && req.body.orderRef) || '').replace(/'/g, "''");
+    if (!id) return res.status(400).json({ error: 'redemptionId obrigatorio' });
+    const q: any = await db.execute(sql.raw("SELECT * FROM referral_redemptions WHERE id = '" + id + "' LIMIT 1"));
+    const row = ((q.rows || q) as any[])[0];
+    if (!row) return res.status(404).json({ error: 'inexistente' });
+    if (row.reward_consumed_at) return res.json({ ok: true, already: true });
+    await db.execute(sql.raw("UPDATE referral_redemptions SET reward_consumed_at = now(), reward_order_ref = " + (orderRef ? "'" + orderRef + "'" : 'NULL') + ", updated_at = now() WHERE id = '" + id + "'"));
+    res.json({ ok: true, pct: Number(row.reward_referrer_pct) || 10 });
   } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
 });
 
