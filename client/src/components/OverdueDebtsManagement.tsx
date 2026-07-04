@@ -1,4 +1,4 @@
-import { useActiveSellers, MultiSelect } from "@/lib/tableTools";
+import { useActiveSellers, MultiSelect, DateRangeFilter, dateInRange } from "@/lib/tableTools";
 import { useState } from "react";
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -60,8 +60,10 @@ export default function OverdueDebtsManagement() {
   const [selectedVendor, setSelectedVendor] = useState<string>("all");
   const [downloadingBoleto, setDownloadingBoleto] = useState<number | null>(null);
   const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
-  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [dtStart, setDtStart] = useState('');
+  const [dtEnd, setDtEnd] = useState('');
   const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor'>('dias_atraso');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { toast } = useToast();
@@ -297,7 +299,8 @@ export default function OverdueDebtsManagement() {
     
     const rowSellers = new Set<string>([...debt.debitos.map(d => resolveSeller(d.codigo_vendedor)), ...((debt.vendedores || []).map(v => resolveSeller(v)))]);
     const matchesSellerMulti = sellerMulti.length === 0 || sellerMulti.some(s => rowSellers.has(s));
-    return matchesSearch && matchesVendor && matchesSellerMulti;
+    const matchesDate = (!dtStart && !dtEnd) || (debt.debitos || []).some((d: any) => dateInRange(d.data_vencimento, dtStart, dtEnd));
+      return matchesSearch && matchesVendor && matchesSellerMulti && matchesDate;
   }) || [];
 
   const handleSort = (column: typeof sortBy) => {
@@ -662,7 +665,8 @@ export default function OverdueDebtsManagement() {
             />
           </div>
           <div className="min-w-[200px]">
-            <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-debts" />
+            <MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-debts" />
+                  <div className="mt-2"><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} label="Vencimento" testId="daterange-debts" /></div>
           </div>
         </div>
       )}
