@@ -34,6 +34,7 @@ export default function RoutesValidation() {
   const [isValidating, setIsValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [antifraude, setAntifraude] = useState<any>(null);
+  const [maxDistInput, setMaxDistInput] = useState<string>("");
   const [routeError, setRouteError] = useState<string | null>(null);
 
   const handleValidate = async () => {
@@ -162,7 +163,21 @@ export default function RoutesValidation() {
                   <p className="text-2xl font-bold text-gray-700 dark:text-gray-200">{antifraude.maxDist}m</p>
                 </div>
               </div>
-              {antifraude.por_vendedor.length > 0 ? (
+              <div className="flex items-center gap-2 mb-4">
+                  <span className="text-sm text-gray-600 dark:text-gray-400">Definir limiar (m):</span>
+                  <input type="number" value={maxDistInput} onChange={(e) => setMaxDistInput(e.target.value)} placeholder={String(antifraude.maxDist)} className="border rounded px-2 py-1 w-24 text-sm" />
+                  <Button size="sm" variant="outline" onClick={async () => {
+                    const n = Math.round(Number(maxDistInput) || 0);
+                    if (!n) { toast({ title: "Informe um valor em metros" }); return; }
+                    try {
+                      await apiRequest('POST', '/api/admin/checkin/max-dist', { maxDist: n });
+                      const af = await apiRequest('GET', `/api/admin/checkin/anti-fraude?startDate=${startDate}&endDate=${endDate}`);
+                      setAntifraude(af);
+                      toast({ title: "Limiar salvo: " + n + "m" });
+                    } catch (e: any) { toast({ title: "Erro ao salvar", description: e?.message }); }
+                  }}>Salvar limiar</Button>
+                </div>
+                {antifraude.por_vendedor.length > 0 ? (
                 <div className="overflow-x-auto mb-4">
                   <table className="w-full text-sm">
                     <thead>
