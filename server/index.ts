@@ -753,6 +753,108 @@ run();
   }
 });
 
+// VIGIA 3E: Programa de indicacao (cupom) — FUNDACAO (nao altera valor de pedido)
+app.post('/api/admin/referral/setup', async (req: Request, res: Response) => {
+  try {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS referral_coupons (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar UNIQUE NOT NULL, code varchar UNIQUE NOT NULL, discount_new_pct int NOT NULL DEFAULT 15, discount_referrer_pct int NOT NULL DEFAULT 10, max_referrals int NOT NULL DEFAULT 5, used_count int NOT NULL DEFAULT 0, active boolean NOT NULL DEFAULT true, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())"));
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS referral_redemptions (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), code varchar NOT NULL, referrer_customer_id varchar, referred_customer_id varchar, referred_document varchar, channel varchar NOT NULL DEFAULT 'hotsite', order_ref varchar, order_value numeric(10,2), discount_new_amount numeric(10,2), reward_referrer_pct int DEFAULT 10, reward_referrer_amount numeric(10,2), reward_referrer_status varchar DEFAULT 'pending', status varchar NOT NULL DEFAULT 'pending', notes text, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())"));
+    await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_ref_red_code ON referral_redemptions(code)"));
+    await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_ref_red_referred ON referral_redemptions(referred_customer_id)"));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/referral/code', async (req: Request, res: Response) => {
+  try {
+    const customerId = String((req.body && req.body.customerId) || req.query.customerId || '').trim();
+    if (!customerId) return res.status(400).json({ error: 'customerId obrigatorio' });
+    const cid = customerId.replace(/'/g, "''");
+    const ex: any = await db.execute(sql.raw("SELECT * FROM referral_coupons WHERE customer_id = '" + cid + "' LIMIT 1"));
+    let row = ((ex.rows || ex) as any[])[0];
+    if (!row) {
+      let code = ''; let tries = 0;
+      while (tries < 8) {
+        const cand = 'IND' + Math.random().toString(36).slice(2, 8).toUpperCase();
+        const chk: any = await db.execute(sql.raw("SELECT 1 FROM referral_coupons WHERE code = '" + cand + "' LIMIT 1"));
+        if (((chk.rows || chk) as any[]).length === 0) { code = cand; break; }
+        tries++;
+      }
+      if (!code) code = 'IND' + Date.now().toString(36).toUpperCase();
+      const ins: any = await db.execute(sql.raw("INSERT INTO referral_coupons (customer_id, code) VALUES ('" + cid + "', '" + code + "') ON CONFLICT (customer_id) DO UPDATE SET updated_at = now() RETURNING *"));
+      row = ((ins.rows || ins) as any[])[0];
+    }
+    res.json({ ok: true, code: row.code, discountNewPct: row.discount_new_pct, discountReferrerPct: row.discount_referrer_pct, maxReferrals: row.max_referrals, usedCount: row.used_count, active: row.active });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.get('/api/referral/validate', async (req: Request, res: Response) => {
+  try {
+    const code = String(req.query.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const referredId = String(req.query.referredCustomerId || '').trim().replace(/'/g, "''");
+    const referredDoc = String(req.query.referredDocument || '').replace(/[^0-9]/g, '');
+    if (!code) return res.json({ valid: false, reason: 'sem_codigo' });
+    const cr: any = await db.execute(sql.raw("SELECT * FROM referral_coupons WHERE code = '" + code + "' LIMIT 1"));
+    const coupon = ((cr.rows || cr) as any[])[0];
+    if (!coupon) return res.json({ valid: false, reason: 'inexistente' });
+    if (!coupon.active) return res.json({ valid: false, reason: 'inativo' });
+    if (Number(coupon.used_count) >= Number(coupon.max_referrals)) return res.json({ valid: false, reason: 'teto_atingido' });
+    if (referredId && referredId === coupon.customer_id) return res.json({ valid: false, reason: 'auto_indicacao' });
+    let dupWhere = '';
+    if (referredId) dupWhere = "referred_customer_id = '" + referredId + "'";
+    if (referredDoc) dupWhere = (dupWhere ? dupWhere + ' OR ' : '') + "referred_document = '" + referredDoc + "'";
+    if (dupWhere) {
+      const dr: any = await db.execute(sql.raw("SELECT 1 FROM referral_redemptions WHERE status <> 'cancelled' AND (" + dupWhere + ") LIMIT 1"));
+      if (((dr.rows || dr) as any[]).length > 0) return res.json({ valid: false, reason: 'ja_usou' });
+    }
+    res.json({ valid: true, discountPct: coupon.discount_new_pct, referrerCustomerId: coupon.customer_id, code: coupon.code });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/referral/redeem', async (req: Request, res: Response) => {
+  try {
+    const b = req.body || {};
+    const code = String(b.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!code) return res.status(400).json({ error: 'code obrigatorio' });
+    const cr: any = await db.execute(sql.raw("SELECT * FROM referral_coupons WHERE code = '" + code + "' LIMIT 1"));
+    const coupon = ((cr.rows || cr) as any[])[0];
+    if (!coupon) return res.status(404).json({ error: 'codigo inexistente' });
+    const referredId = String(b.referredCustomerId || '').replace(/'/g, "''");
+    const referredDoc = String(b.referredDocument || '').replace(/[^0-9]/g, '');
+    const channel = (String(b.channel || 'hotsite').replace(/[^a-z]/g, '')) || 'hotsite';
+    const orderRef = String(b.orderRef || '').replace(/'/g, "''");
+    const orderValue = Number(b.orderValue) || 0;
+    const discNew = Math.round(orderValue * (Number(coupon.discount_new_pct) / 100) * 100) / 100;
+    const ins: any = await db.execute(sql.raw("INSERT INTO referral_redemptions (code, referrer_customer_id, referred_customer_id, referred_document, channel, order_ref, order_value, discount_new_amount, reward_referrer_pct) VALUES ('" + code + "', '" + coupon.customer_id + "', " + (referredId ? "'" + referredId + "'" : 'NULL') + ", " + (referredDoc ? "'" + referredDoc + "'" : 'NULL') + ", '" + channel + "', " + (orderRef ? "'" + orderRef + "'" : 'NULL') + ", " + orderValue + ", " + discNew + ", " + Number(coupon.discount_referrer_pct) + ") RETURNING id"));
+    const idr = ((ins.rows || ins) as any[])[0];
+    res.json({ ok: true, redemptionId: idr && idr.id, discountNewPct: coupon.discount_new_pct, discountNewAmount: discNew, referrerCustomerId: coupon.customer_id });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/admin/referral/confirm', async (req: Request, res: Response) => {
+  try {
+    const id = String((req.body && req.body.redemptionId) || '').replace(/'/g, "''");
+    if (!id) return res.status(400).json({ error: 'redemptionId obrigatorio' });
+    const rq: any = await db.execute(sql.raw("SELECT * FROM referral_redemptions WHERE id = '" + id + "' LIMIT 1"));
+    const red = ((rq.rows || rq) as any[])[0];
+    if (!red) return res.status(404).json({ error: 'inexistente' });
+    if (red.status === 'confirmed') return res.json({ ok: true, already: true });
+    await db.execute(sql.raw("UPDATE referral_redemptions SET status = 'confirmed', reward_referrer_status = 'released', updated_at = now() WHERE id = '" + id + "'"));
+    await db.execute(sql.raw("UPDATE referral_coupons SET used_count = used_count + 1, updated_at = now() WHERE code = '" + String(red.code).replace(/'/g, "''") + "'"));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.get('/api/admin/referral/list', async (req: Request, res: Response) => {
+  try {
+    const co: any = await db.execute(sql.raw("SELECT c.*, (SELECT name FROM customers WHERE id = c.customer_id) AS customer_name FROM referral_coupons c ORDER BY c.used_count DESC, c.created_at DESC LIMIT 500"));
+    const rd: any = await db.execute(sql.raw("SELECT * FROM referral_redemptions ORDER BY created_at DESC LIMIT 500"));
+    const coupons = (co.rows || co) as any[];
+    const redemptions = (rd.rows || rd) as any[];
+    const resumo = { coupons: coupons.length, redemptions: redemptions.length, confirmadas: redemptions.filter((r: any) => r.status === 'confirmed').length, pendentes: redemptions.filter((r: any) => r.status === 'pending').length };
+    res.json({ ok: true, resumo, coupons, redemptions });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
 // VIGIA: configura numeros do gestor p/ notificacoes (CSV) em system_settings gestor_whatsapp
   app.get('/api/admin/notify/gestor-config', async (_req: Request, res: Response) => {
     try {
