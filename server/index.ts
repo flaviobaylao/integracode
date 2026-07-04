@@ -618,6 +618,7 @@ run();
           text += '\n  ⚠️ Faltou visitar (' + pend.length + '): ' + nomes + (pend.length > 8 ? ' +' + (pend.length - 8) : '');
         }
       }
+      try { const _pT = process.env.PORT || '8080'; const _trT = await fetch('http://127.0.0.1:' + _pT + '/api/admin/vendas-telemarketing?date=' + d); const _tk: any = await _trT.json(); if (_tk && _tk.ok && _tk.text) text += _tk.text; } catch (_e) {}
       res.json({ ok: true, date: d, text });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
@@ -719,13 +720,39 @@ run();
           text += '\n  ⚠️ Entraram em risco hoje (' + nv.length + '): ' + nv.slice(0, 10).map((n: any) => n.nome + ' (' + n.sellerName + ', R$ ' + br(n.valorHistorico) + ')').join('; ') + (nv.length > 10 ? ' +' + (nv.length - 10) : '');
         }
       }
+      try { const _tk: any = await jget('/api/admin/vendas-telemarketing?date=' + d); if (_tk && _tk.ok && _tk.text) text += _tk.text; } catch (_e) {}
       res.json({ ok: true, date: d, text });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
   });
 
-  // VIGIA: configura numeros do gestor p/ notificacoes (CSV) em system_settings gestor_whatsapp
+  app.get('/api/admin/vendas-telemarketing', async (req: Request, res: Response) => {
+  try {
+    const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
+    const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const cardsR: any = await db.execute(sql.raw("SELECT sc.telemarketing_assigned_to AS id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), sc.telemarketing_assigned_to) AS nome, COUNT(*)::int AS qtd, COALESCE(SUM(sc.sale_value),0)::float AS valor FROM sales_cards sc LEFT JOIN users u ON u.id = sc.telemarketing_assigned_to WHERE sc.telemarketing_assigned_to IS NOT NULL AND sc.sale_value > 0 AND (COALESCE(sc.completed_date, sc.telemarketing_date, sc.created_at) AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1,2 ORDER BY valor DESC"));
+    const cards = (cardsR.rows || cardsR) as any[];
+    const atendR: any = await db.execute(sql.raw("SELECT attendant_name AS nome, COUNT(*)::int AS qtd FROM virtual_service_logs WHERE service_type = 'venda' AND (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY qtd DESC"));
+    const atend = (atendR.rows || atendR) as any[];
+    const diagR: any = await db.execute(sql.raw("SELECT (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL) AS cards_tlmk, (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL AND sale_value > 0) AS cards_tlmk_venda, (SELECT COUNT(*) FROM sales_cards WHERE source = 'telemarketing') AS src_tlmk, (SELECT COUNT(*) FROM sales_cards WHERE source = 'telemarketing' AND sale_value > 0) AS src_tlmk_venda, (SELECT COUNT(*) FROM virtual_service_logs WHERE service_type = 'venda') AS venda_logs, (SELECT COUNT(*) FROM users WHERE seller_type = 'telemarketing') AS tlmk_users"));
+    const diag = ((diagR.rows || diagR) as any[])[0] || {};
+    const cardsTot = cards.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
+    const cardsVal = cards.reduce((a: number, c: any) => a + (Number(c.valor) || 0), 0);
+    const atendTot = atend.reduce((a: number, c: any) => a + (Number(c.qtd) || 0), 0);
+    let text = '';
+    if (cardsTot > 0 || atendTot > 0) {
+      text += '\n📞 Telemarketing (hoje): vendas ' + cardsTot + ' (R$ ' + br(cardsVal) + ') · atendimentos venda ' + atendTot;
+      if (cards.length) text += '\n  • ' + cards.slice(0, 10).map((c: any) => c.nome + ': ' + c.qtd + ' (R$ ' + br(c.valor) + ')').join(' · ');
+      if (atend.length) text += '\n  • atend.: ' + atend.slice(0, 10).map((a: any) => a.nome + ' ' + a.qtd).join(' · ');
+    }
+    res.json({ ok: true, date: d, cards, atendimentos: atend, diag, text });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+  }
+});
+
+// VIGIA: configura numeros do gestor p/ notificacoes (CSV) em system_settings gestor_whatsapp
   app.get('/api/admin/notify/gestor-config', async (_req: Request, res: Response) => {
     try {
       const rs: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'gestor_whatsapp' LIMIT 1"));
