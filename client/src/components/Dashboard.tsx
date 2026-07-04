@@ -1,11 +1,21 @@
 // client/src/components/Dashboard.tsx
-// PARIDADE 2.0 = 1.0 — reconstruido a partir da engenharia reversa do dashboard do 1.0 (jun/2026).
-// Consome GET /api/dashboard2/full.
+// PARIDADE 2.0 = 1.0. Consome GET /api/dashboard2/full.
+// (05/jul/2026) Ajustes pedidos pelo Flavio:
+//  1) "Vendas Hoje" compara com o MESMO DIA DA SEMANA ANTERIOR (seg x seg...).
+//  2) "Comparativo por Vendedor" default = DIA VIGENTE; coluna "Pedidos" trocada
+//     por "Clientes a atender no dia" (visitas planejadas/agendadas).
+//  3) Filtro De/Ate SEMPRE dentro do mes vigente (vazio nao aplica; default = hoje).
+//  4) Cabecalho da tabela CONGELADO na rolagem (sticky).
+//  5) Filtro de VENDEDOR no cabecalho de "Pedidos e Notas Fiscais" (filtra as 3 colunas).
+// Requer no backend /api/dashboard2/full:
+//  - stats.lastWeekSameDaySales (soma de vendas de hoje-7)
+//  - visitSummary cobrindo o MES VIGENTE (dia 1 -> fim do mes) p/ o filtro funcionar.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 
 const brl = (n: any) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n) || 0);
@@ -19,14 +29,29 @@ function fmtDateTime(ts: any): string {
   return `${get("day")}/${get("month")}, ${get("hour")}:${get("minute")}`;
 }
 
-function lastBusinessRange() {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const a = new Date(today + "T12:00:00Z");
-  const dates = [today];
-  let r = 0;
-  while (r < 3) { a.setUTCDate(a.getUTCDate() - 1); const dow = a.getUTCDay(); if (dow >= 1 && dow <= 5) { dates.push(a.toISOString().slice(0, 10)); r++; } }
-  dates.sort();
-  return { start: dates[0], end: today, dates };
+function todayBRT(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+function monthBounds() {
+  const t = todayBRT();
+  const [y, m] = t.split("-");
+  const first = `${y}-${m}-01`;
+  const lastDay = new Date(Number(y), Number(m), 0).getDate();
+  const last = `${y}-${m}-${String(lastDay).padStart(2, "0")}`;
+  return { first, last, today: t };
+}
+
+function datesInRange(start: string, end: string): string[] {
+  if (!start || !end || start > end) return [];
+  const out: string[] = [];
+  const d = new Date(start + "T12:00:00Z");
+  const e = new Date(end + "T12:00:00Z");
+  while (d.getTime() <= e.getTime()) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
 }
 
 function visitColor(v: any): string {
@@ -51,44 +76,62 @@ function monthLabel(d = new Date()): string {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", month: "long", year: "numeric" }).format(d);
 }
 
+const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
+
 export default function Dashboard() {
   const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"] });
-  const range = useMemo(() => lastBusinessRange(), []);
+  const bounds = useMemo(() => monthBounds(), []);
+  const [start, setStart] = useState<string>(bounds.today);
+  const [end, setEnd] = useState<string>(bounds.today);
+  const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
+  const [pnfSeller, setPnfSeller] = useState<string[]>([]);
 
   const stats = data?.stats || {};
   const ov = data?.ordersOverview || {};
   const vem = data?.vendasEfetivasMes || {};
 
+  const dates = useMemo(() => datesInRange(start, end), [start, end]);
+
   const sellers = useMemo(() => {
     const rows = data?.visitSummary?.rows;
     if (!Array.isArray(rows)) return [];
-    const dset = new Set(range.dates);
+    const dset = new Set(dates);
     const map = new Map<string, any>();
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", completedVisits: 0, missedVisits: 0, orders: 0, revenue: 0, unmetRevenue: 0 }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0 }; map.set(S, w); }
       for (const v of N.visits || []) {
-        if (!v.isPast || !dset.has(v.date)) continue;
+        if (!dset.has(v.date)) continue;
+        if (v.isScheduled) w.clientesAtender++;
+        if (!v.isPast) continue;
         const k = visitColor(v);
         if (k === "green" || k === "yellow") w.completedVisits++;
         else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += expectedValue(v); }
-        if (v.hasOrder) { w.orders++; w.revenue += v.orderValue || 0; }
+        if (v.hasOrder) w.revenue += v.orderValue || 0;
       }
     }
     return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
-  }, [data, range]);
+  }, [data, dates]);
 
-  const totals = useMemo(() => sellers.reduce((t, s) => ({ orders: t.orders + s.orders, completedVisits: t.completedVisits + s.completedVisits, revenue: t.revenue + s.revenue, missedVisits: t.missedVisits + s.missedVisits, unmetRevenue: t.unmetRevenue + s.unmetRevenue }), { orders: 0, completedVisits: 0, revenue: 0, missedVisits: 0, unmetRevenue: 0 }), [sellers]);
+  const totals = useMemo(() => sellers.reduce((t, s) => ({ clientesAtender: t.clientesAtender + s.clientesAtender, completedVisits: t.completedVisits + s.completedVisits, revenue: t.revenue + s.revenue, missedVisits: t.missedVisits + s.missedVisits, unmetRevenue: t.unmetRevenue + s.unmetRevenue }), { clientesAtender: 0, completedVisits: 0, revenue: 0, missedVisits: 0, unmetRevenue: 0 }), [sellers]);
 
   const today = Number(stats.todaySales) || 0;
-  const yesterday = Number(stats.yesterdaySales) || 0;
-  const pct = yesterday > 0 ? Math.round(((today - yesterday) / yesterday) * 100) : null;
+  const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
+  const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
   const blocked: any[] = ov.blocked || [];
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
+
+  // Filtro de vendedor do card "Pedidos e Notas Fiscais" (aplica nas 3 colunas).
+  const matchSeller = (x: any) => multiMatch(pnfSeller, resolveSeller(x.seller_name || x.sellerName || x.seller_id || ""));
+  const blockedF = useMemo(() => blocked.filter(matchSeller), [blocked, pnfSeller, resolveSeller]);
+  const aFaturarF = useMemo(() => aFaturar.filter(matchSeller), [aFaturar, pnfSeller, resolveSeller]);
+  const nfsHojeF = useMemo(() => nfsHoje.filter(matchSeller), [nfsHoje, pnfSeller, resolveSeller]);
+
   const sum = (arr: any[], f: string) => arr.reduce((a, x) => a + (Number(x[f]) || 0), 0);
+  const isSingleDay = start === end;
 
   return (
     <div className="space-y-6 p-4">
@@ -97,7 +140,7 @@ export default function Dashboard() {
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Vendas Hoje</CardTitle></CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
-            <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs ontem</span>)}</div>
+            <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
           </CardContent>
         </Card>
         <Card>
@@ -116,38 +159,52 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Comparativo por Vendedor - ultimos 3 dias uteis + hoje</CardTitle>
-          <div className="text-xs text-gray-500">Periodo: {range.start.split("-").reverse().join("/")} a {range.end.split("-").reverse().join("/")}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">Comparativo por Vendedor{isSingleDay ? " - dia vigente" : ""}</CardTitle>
+              <div className="text-xs text-gray-500">Periodo: {brDate(start)}{isSingleDay ? "" : " a " + brDate(end)} (mes vigente)</div>
+            </div>
+            <div className="inline-flex items-center gap-1 text-sm">
+              <span className="text-gray-600">Periodo:</span>
+              <input type="date" value={start} min={bounds.first} max={bounds.last} onChange={(e) => { const v = e.target.value; setStart(v); if (v > end) setEnd(v); }} className="px-2 py-1.5 border rounded-md" aria-label="Data inicial" />
+              <span className="text-gray-400">-</span>
+              <input type="date" value={end} min={start || bounds.first} max={bounds.last} onChange={(e) => setEnd(e.target.value)} className="px-2 py-1.5 border rounded-md" aria-label="Data final" />
+              <button type="button" onClick={() => { setStart(bounds.today); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Voltar para o dia vigente">Hoje</button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[60vh]">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-gray-500">
-                  <th className="py-2 pr-4 font-medium text-left">Vendedor</th>
-                  <th className="py-2 px-3 font-medium text-right">Pedidos</th>
-                  <th className="py-2 px-3 font-medium text-right">Visitas Efetivadas</th>
-                  <th className="py-2 px-3 font-medium text-right">Faturamento Visitas Efetivas</th>
-                  <th className="py-2 px-3 font-medium text-right">Nao Efetivadas</th>
-                  <th className="py-2 pl-3 font-medium text-right">Faturamento Previsto Nao Efetivado</th>
+                  <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white">Vendedor</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Clientes a atender no dia</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Visitas Efetivadas</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Visitas Efetivas</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Nao Efetivadas</th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Previsto Nao Efetivado</th>
                 </tr>
               </thead>
               <tbody>
                 {sellers.map((x) => (
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{x.orders}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{x.clientesAtender}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-green-700">{x.completedVisits}</td>
                     <td className="py-2 px-3 text-right tabular-nums font-semibold text-gray-800">{brl(x.revenue)}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-red-700">{x.missedVisits}</td>
                     <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-500">{brl(x.unmetRevenue)}</td>
                   </tr>
                 ))}
+                {sellers.length === 0 && (
+                  <tr><td colSpan={6} className="py-6 text-center text-gray-400">Sem dados no periodo.</td></tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-gray-300 font-semibold text-gray-800">
                   <td className="py-2 pr-4">Total</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{totals.orders}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{totals.clientesAtender}</td>
                   <td className="py-2 px-3 text-right tabular-nums">{totals.completedVisits}</td>
                   <td className="py-2 px-3 text-right tabular-nums">{brl(totals.revenue)}</td>
                   <td className="py-2 px-3 text-right tabular-nums">{totals.missedVisits}</td>
@@ -170,14 +227,19 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Pedidos e Notas Fiscais</CardTitle>
-          <div className="text-xs text-gray-500">Bloqueados agora, ainda nao faturados e NFs emitidas hoje.</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">Pedidos e Notas Fiscais</CardTitle>
+              <div className="text-xs text-gray-500">Bloqueados agora, ainda nao faturados e NFs emitidas hoje.</div>
+            </div>
+            <MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={pnfSeller} onChange={setPnfSeller} testId="dash-pnf-seller" />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Column title="Bloqueados" color="red" count={blocked.length} total={sum(blocked, "total_amount")} items={blocked.map((b) => ({ name: b.customer_name || b.customerName || "-", sub: `Debito vencido - ${b.seller_name || b.sellerName || ""}`, when: fmtDateTime(b.blocked_at || b.blockedAt || b.created_at), value: b.total_amount ?? b.totalAmount }))} />
-            <Column title="A faturar" color="yellow" count={aFaturar.length} total={sum(aFaturar, "sale_value")} items={aFaturar.map((p) => ({ name: p.customer_name || p.customerName || "-", sub: `Pedido - ${p.seller_name || p.sellerName || ""}`, when: fmtDateTime(p.created_at || p.createdAt), value: p.sale_value ?? p.saleValue }))} />
-            <Column title="NFs emitidas hoje" color="green" count={nfsHoje.length} total={sum(nfsHoje, "total_invoice")} items={nfsHoje.map((n) => ({ name: n.customer_name || n.customerName || "-", sub: `NF ${n.invoice_number || n.invoiceNumber || ""} - ${n.seller_name || n.sellerName || ""}`, when: fmtDateTime(n.authorization_date || n.authorizationDate || n.emission_date), value: n.total_invoice ?? n.totalInvoice }))} />
+            <Column title="Bloqueados" color="red" count={blockedF.length} total={sum(blockedF, "total_amount")} items={blockedF.map((b) => ({ name: b.customer_name || b.customerName || "-", sub: `Debito vencido - ${b.seller_name || b.sellerName || ""}`, when: fmtDateTime(b.blocked_at || b.blockedAt || b.created_at), value: b.total_amount ?? b.totalAmount }))} />
+            <Column title="A faturar" color="yellow" count={aFaturarF.length} total={sum(aFaturarF, "sale_value")} items={aFaturarF.map((p) => ({ name: p.customer_name || p.customerName || "-", sub: `Pedido - ${p.seller_name || p.sellerName || ""}`, when: fmtDateTime(p.created_at || p.createdAt), value: p.sale_value ?? p.saleValue }))} />
+            <Column title="NFs emitidas hoje" color="green" count={nfsHojeF.length} total={sum(nfsHojeF, "total_invoice")} items={nfsHojeF.map((n) => ({ name: n.customer_name || n.customerName || "-", sub: `NF ${n.invoice_number || n.invoiceNumber || ""} - ${n.seller_name || n.sellerName || ""}`, when: fmtDateTime(n.authorization_date || n.authorizationDate || n.emission_date), value: n.total_invoice ?? n.totalInvoice }))} />
           </div>
         </CardContent>
       </Card>
