@@ -1,4 +1,4 @@
-import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel } from "@/lib/tableTools";
 import { useState, useEffect, useRef } from 'react';
 import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -122,7 +122,7 @@ export default function Billings() {
     pageSize: 50,
   });
   const [sortField, setSortField] = useState<keyof Billing>('invoiceDate');
-  const { sellerOptions, resolveSeller } = useActiveSellers();
+  const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [customerNameSearch, setCustomerNameSearch] = useState('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -613,7 +613,7 @@ export default function Billings() {
             
             <Button 
               variant="outline" 
-              onClick={handleExport} 
+              onClick={() => exportToExcel(filteredBillings.map((b) => ({ Pedido: b.orderNumber || "", NF: b.invoiceNumber || "", CFOP: getCfopDisplayName(b.cfop), Cliente: b.customerFantasyName || "", Data: b.invoiceDate ? formatDate(b.invoiceDate) : "", Valor: b.totalValue, Vencimento: b.dueDate ? formatDate(b.dueDate) : "", Pagamento: b.paymentMethod || "", Vendedor: b.sellerName || "", Etapa: b.invoiceStage || "" })), "faturamentos")} 
               data-testid="button-export"
               title="Exportar todos os dados do Omie para Excel"
             >
@@ -876,7 +876,7 @@ export default function Billings() {
 
             <div className="space-y-2">
               <Label>Vendedor</Label>
-              <div><MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller" /></div>
+              <div><MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller" /></div>
             </div>
 
             {omieInstances && omieInstances.length > 0 && (
@@ -964,7 +964,7 @@ export default function Billings() {
                     <SortableHeader field="dueDate">Vencimento</SortableHeader>
                     <SortableHeader field="paymentMethod">Pagamento</SortableHeader>
                     <SortableHeader field="sellerName">Vendedor</SortableHeader>
-                    <TableHead>Etapa</TableHead>
+                    <SortableHeader field="invoiceStage">Etapa</SortableHeader>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
