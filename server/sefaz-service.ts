@@ -104,6 +104,27 @@ function calculateDV(key: string): string {
 export class SefazService {
   private config: SefazConfig | null = null;
 
+  private async resolveCertForCnpj(cnpj: string): Promise<{ pfx: Buffer; password: string } | null> {
+    try {
+      const digits = (cnpj || '').replace(/\D/g, '');
+      const key = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
+      const dec = (enc: string): string => { const [a, b] = (enc || '').split(':'); const d = crypto.createDecipheriv('aes-256-cbc', key, Buffer.from(a, 'hex')); return d.update(b, 'hex', 'utf8') + d.final('utf8'); };
+      const certs: any[] = await storage.getDigitalCertificates();
+      const now = new Date();
+      const match = certs
+        .filter((c: any) => c && c.isActive && (c.pfxData || c.pfx_data) && (c.cnpj || '').replace(/\D/g, '') === digits && (!c.validUntil || new Date(c.validUntil) > now))
+        .sort((a: any, b: any) => new Date(b.validUntil || 0).getTime() - new Date(a.validUntil || 0).getTime());
+      if (!match.length) return null;
+      const c: any = match[0];
+      const pfxB64 = dec(c.pfxData || c.pfx_data);
+      const password = c.certificatePassword ? dec(c.certificatePassword) : '';
+      return { pfx: Buffer.from(pfxB64, 'base64'), password };
+    } catch (e) {
+      console.error('[SEFAZ] Erro ao resolver certificado por CNPJ:', e);
+      return null;
+    }
+  }
+
   async loadCertificate(certificateId: string): Promise<{ pfx: Buffer; password: string } | null> {
     try {
       const cert = await storage.getDigitalCertificate(certificateId);
@@ -371,12 +392,13 @@ export class SefazService {
         ? await storage.getFiscalScenario(invoice.fiscalScenarioId)
         : null;
 
+      const __cert = await this.resolveCertForCnpj((invoice.issuerCnpj || '').replace(/\D/g, ''));
       if (!this.config || invoice.environment === 'homologacao') {
         const cnpj = (invoice.issuerCnpj || '00000000000000').replace(/\D/g, '');
         const uf = invoice.issuerUf || 'GO';
         this.config = {
-          certificatePfx: this.config?.certificatePfx || Buffer.from(''),
-          certificatePassword: this.config?.certificatePassword || '',
+          certificatePfx: __cert?.pfx || this.config?.certificatePfx || Buffer.from(''),
+          certificatePassword: __cert?.password || this.config?.certificatePassword || '',
           cnpj,
           uf,
           environment: invoice.environment as 'homologacao' | 'producao',
@@ -403,6 +425,8 @@ export class SefazService {
         }
       }
 
+      if (this.config && __cert) { this.config.certificatePfx = __cert.pfx; this.config.certificatePassword = __cert.password; }
+      if (invoice.environment === 'producao' && !this.config?.certificatePfx?.length) { return { success: false, errorCode: 'NO_CERT', errorMessage: 'Certificado A1 do CNPJ emitente nao encontrado/ativo no 2.0.' }; }
       const nfeData = this.buildNfeXml(invoice, items, scenario);
       const xmlEnvio = JSON.stringify(nfeData);
 
