@@ -1888,6 +1888,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
+  db.execute(sql`ALTER TABLE digital_certificates ADD COLUMN IF NOT EXISTS pfx_data varchar`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
