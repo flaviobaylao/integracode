@@ -412,20 +412,19 @@ export function registerNfeRoutes(app: Express) {
         try { fs.unlinkSync(tmpFile); } catch {}
       }
 
+      let storageKey: string | null = null;
+    try {
       const privateDir = process.env.PRIVATE_OBJECT_DIR;
-      if (!privateDir) {
-        return res.status(500).json({ message: 'Object storage não configurado' });
-      }
-
-      const storageKey = `${privateDir}/certificates/${crypto.randomUUID()}.pfx`;
       const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-      if (!bucketId) {
-        return res.status(500).json({ message: 'Bucket de armazenamento não configurado' });
+      if (privateDir && bucketId && objectStorageClient) {
+        storageKey = `${privateDir}/certificates/${crypto.randomUUID()}.pfx`;
+        await objectStorageClient.bucket(bucketId).file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
       }
-
-      const bucket = objectStorageClient.bucket(bucketId);
-      const gcsFile = bucket.file(storageKey);
-      await gcsFile.save(file.buffer, { contentType: 'application/x-pkcs12' });
+    } catch (e: any) {
+      console.warn('[CERT-UPLOAD] Object Storage indisponivel, usando pfx no banco:', e?.message);
+      storageKey = null;
+    }
+    const pfxData = encryptPassword(file.buffer.toString('base64'));
 
       const cert = await storage.createDigitalCertificate({
         companyName: certInfo.companyName,
@@ -435,7 +434,8 @@ export function registerNfeRoutes(app: Express) {
         validFrom: certInfo.validFrom,
         validUntil: certInfo.validUntil,
         certificateType: 'A1',
-        storageKey,
+        storageKey: storageKey || 'db',
+        pfxData,
         certificatePassword: encryptPassword(password),
         isActive: true,
         uploadedBy: req.user?.id || null,
