@@ -107,7 +107,7 @@ function useInstanceNames(): Record<string, string> {
 function ReceivablesTab() {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('vencida');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -297,7 +297,7 @@ function ReceivablesTab() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
-              ) : filtered.map((r: any) => (
+              ) : filtered.slice(0, 300).map((r: any) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.titleNumber || '-'}</TableCell>
                   <TableCell>{r.customerName || '-'}</TableCell>
@@ -321,7 +321,8 @@ function ReceivablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 0 && (
+              {filtered.length > 300 && (<TableRow><TableCell colSpan={12} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, vendedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
+                  {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
                   <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0))}</TableCell>
@@ -679,7 +680,7 @@ function PayablesTab() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
-              ) : filtered.map((p: any) => (
+              ) : filtered.slice(0, 300).map((p: any) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-medium">{p.titleNumber || '-'}</TableCell>
                   <TableCell>{p.supplierName || '-'}</TableCell>
@@ -701,7 +702,8 @@ function PayablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 0 && (
+              {filtered.length > 300 && (<TableRow><TableCell colSpan={11} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, fornecedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
+                  {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
                   <TableCell colSpan={4}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}</TableCell>
