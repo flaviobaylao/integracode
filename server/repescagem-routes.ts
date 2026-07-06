@@ -27,7 +27,11 @@ function brTodayStr(): string {
 // Computa o conjunto de candidatos vermelhos: clientes ativos cuja
 // ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
 // e SEM pedido na data).
-async function computeRedCandidates(opts: { startDate: string; endDate: string }) {
+async function computeRedCandidates(opts: { startDate: string; endDate: string }): Promise<any[]> {
+  try { return await __computeRedCandidatesRaw(opts); } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
+}
+
+async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: string }) {
   const { startDate, endDate } = opts;
 
   // 1) Clientes ativos
