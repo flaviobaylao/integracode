@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useTableSort, SortableTh } from "@/lib/tableTools";
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -189,6 +190,7 @@ export default function Inventory() {
 
   const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
   const instanceMap = useMemo(() => new Map(instances.map(i => [i.id, i])), [instances]);
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
 
   const filteredLots = useMemo(() => {
     const lots = summaryQuery.data?.lots || [];
@@ -425,17 +427,17 @@ export default function Inventory() {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>Produto</TableHead>
-                              <TableHead>Tipo</TableHead>
-                              <TableHead>Lote</TableHead>
-                              <TableHead className="text-right">Quantidade</TableHead>
-                              <TableHead className="text-right">Qtd. Mínima</TableHead>
-                              <TableHead>Status</TableHead>
+                              <SortableTh label="Produto" colKey="produto" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Tipo" colKey="tipo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Lote" colKey="lote" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Quantidade" colKey="qty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Qtd. Mínima" colKey="minQty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                               <TableHead className="text-right">Ações</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {lots.map(lot => {
+                            {sortRows(lots, (lot: any, key: string) => { switch (key) { case 'produto': return (lot.product && lot.product.name) || lot.productId || ''; case 'tipo': return lot.stockType || ''; case 'lote': return lot.lotNumber || ''; case 'qty': return parseFloat(lot.quantity || '0'); case 'minQty': return parseFloat(lot.minQuantity || '0'); case 'status': return (parseFloat(lot.minQuantity || '0') > 0 && parseFloat(lot.quantity || '0') <= parseFloat(lot.minQuantity || '0')) ? 0 : 1; default: return ''; } }).map(lot => {
                               const qty = parseFloat(lot.quantity);
                               const minQty = parseFloat(lot.minQuantity || '0');
                               const isLow = minQty > 0 && qty <= minQty;
