@@ -799,6 +799,19 @@ run();
     } catch (e: any) { res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
+  app.get('/api/admin/analise-semanal-ia/enviar', async (req: Request, res: Response) => {
+    res.json({ ok: true, started: true });
+    (async () => {
+      try {
+        const port = process.env.PORT || '8080';
+        const base = 'http://127.0.0.1:' + port;
+        const r = await fetch(base + '/api/admin/analise-semanal-ia');
+        const j: any = await r.json().catch(() => null);
+        if (j && j.ok && j.text) { await fetch(base + '/api/admin/notify/gestor', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: j.text }) }); }
+      } catch (e) { console.error('analise-semanal-ia/enviar:', e); }
+    })();
+  });
+
   app.get('/api/admin/vendas-telemarketing', async (req: Request, res: Response) => {
   try {
     const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
