@@ -2601,6 +2601,41 @@ export const insertFiscalScenarioSchema = createInsertSchema(fiscalScenarios).om
 export type FiscalScenario = typeof fiscalScenarios.$inferSelect;
 export type InsertFiscalScenario = z.infer<typeof insertFiscalScenarioSchema>;
 
+// ===== Repescagem (portado do 1.0) =====
+export const repescagemAttendants = pgTable("repescagem_attendants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique("repescagem_attendants_user_id_key"),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  enabledAt: timestamp("enabled_at"),
+  disabledAt: timestamp("disabled_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const repescagemAssignments = pgTable("repescagem_assignments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull(),
+  // Data da última visita "vermelha" que disparou esta atribuição (YYYY-MM-DD)
+  lastRedDate: varchar("last_red_date").notNull(),
+  assignedUserId: varchar("assigned_user_id").notNull(),
+  assignedAt: timestamp("assigned_at").defaultNow(),
+  status: varchar("status").notNull().default('pending'), // pending | completed | cancelled
+  completedAt: timestamp("completed_at"),
+  completedByUserId: varchar("completed_by_user_id"),
+  completedServiceLogId: varchar("completed_service_log_id"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const repescagemAssignmentHistory = pgTable("repescagem_assignment_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  assignmentId: varchar("assignment_id"),
+  customerId: varchar("customer_id").notNull(),
+  fromUserId: varchar("from_user_id"),
+  toUserId: varchar("to_user_id"),
+  action: varchar("action").notNull(), // assigned | reassigned | completed | cancelled
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const digitalCertificates = pgTable("digital_certificates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: varchar("company_name").notNull(),
