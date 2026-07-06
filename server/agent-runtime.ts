@@ -87,11 +87,11 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       const termo = String(input?.termo || '').trim();
       if (!termo) return 'Informe o nome do produto.';
       const _stop = new Set(['de','da','do','com','e','a','o','os','as','para','por','sabor','ml','l','un','und']);
-    const _tokens = termo.toLowerCase().split(/[^0-9a-zà-ú]+/i).filter((t: string) => t.length >= 2 && !_stop.has(t));
-    const _conds = _tokens.map((t: string) => sql`name ILIKE ${'%' + t + '%'}`);
-    let _where: any = _conds.length ? _conds[0] : sql`name ILIKE ${'%' + termo + '%'}`;
-    for (let _i = 1; _i < _conds.length; _i++) _where = sql`${_where} AND ${_conds[_i]}`;
-    const r: any = await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock FROM products WHERE is_active=true AND (${_where}) ORDER BY name LIMIT 8`);
+    const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const _tokens = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
+    const _all: any = await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock FROM products WHERE is_active=true ORDER BY name`);
+    const _rows0 = (_all.rows || []).filter((p: any) => { const n = _norm(p.name); return _tokens.length ? _tokens.every((t: string) => n.includes(t)) : n.includes(_norm(termo)); }).slice(0, 8);
+    const r: any = { rows: _rows0 };
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
