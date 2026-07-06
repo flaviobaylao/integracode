@@ -812,6 +812,17 @@ run();
     })();
   });
 
+  app.post('/api/admin/referral/coupon-active', async (req: Request, res: Response) => {
+    try {
+      const code = String((req.body && req.body.code) || '').trim();
+      const active = (req.body && req.body.active) === undefined ? false : !!req.body.active;
+      if (!code) return res.status(400).json({ ok: false, error: 'Informe o code do cupom.' });
+      const r: any = await db.execute(sql`UPDATE referral_coupons SET active = ${active}, updated_at = now() WHERE upper(code) = upper(${code}) RETURNING id, code, active, used_count`);
+      if (!r.rows || !r.rows.length) return res.status(404).json({ ok: false, error: 'Cupom nao encontrado: ' + code });
+      res.json({ ok: true, coupon: r.rows[0] });
+    } catch (e: any) { res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e).slice(0, 200) }); }
+  });
+
   app.get('/api/admin/vendas-telemarketing', async (req: Request, res: Response) => {
   try {
     const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
