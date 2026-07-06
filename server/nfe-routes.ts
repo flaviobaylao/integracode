@@ -567,6 +567,15 @@ export function registerNfeRoutes(app: Express) {
         }
       }
 
+      // Auto-preenche IE do destinatario a partir do cadastro (contribuinte ICMS)
+      if ((invoiceFields as any).customerId && !(invoiceFields as any).customerIe) {
+        try {
+          const __custIe = await storage.getCustomer((invoiceFields as any).customerId);
+          if (__custIe && (__custIe as any).stateRegistration) {
+            (invoiceFields as any).customerIe = String((__custIe as any).stateRegistration).trim();
+          }
+        } catch (e) {}
+      }
       // Numeracao por CNPJ emitente + serie (cada CNPJ tem sequencia SEFAZ propria).
       const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1', (invoiceFields as any).issuerCnpj);
       
