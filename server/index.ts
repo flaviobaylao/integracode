@@ -772,6 +772,33 @@ run();
     }
   });
 
+  app.get('/api/admin/analise-semanal-ia', async (req: Request, res: Response) => {
+    try {
+      if (!process.env.ANTHROPIC_API_KEY) return res.status(400).json({ ok: false, error: 'ANTHROPIC_API_KEY ausente' });
+      const port = process.env.PORT || '8080';
+      const base = 'http://127.0.0.1:' + port;
+      const jget = async (p: string) => { try { const r = await fetch(base + p); return await r.json(); } catch (e) { return null; } };
+      const churn: any = await jget('/api/admin/churn/radar');
+      const cov: any = await jget('/api/admin/routes/coverage-weekly?days=7');
+      const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const byUser: any = (cov && cov.byUser) || {};
+      const covFor = (sid: any) => { const k = String(sid || ''); return byUser[k] || byUser[k.replace('omie-vendor-', '')] || byUser['omie-vendor-' + k.replace('omie-vendor-', '')]; };
+      let dados = '';
+      if (churn && churn.resumo) { const r: any = churn.resumo; dados += 'RESUMO GERAL: em dia ' + r.em_dia + ', esfriando ' + r.esfriando + ', em risco ' + r.em_risco + ', perdido ' + r.perdido + ', sem historico ' + r.sem_historico + '; R$ ' + br(r.valorEmRisco) + ' em risco.\n\nPOR VENDEDOR:\n'; }
+      const pv: any[] = (churn && churn.por_vendedor) || [];
+      for (const s of pv) { const c: any = covFor(s.sellerId); const covTxt = c ? ('cobertura rota ' + c.cobertura + '% (' + c.atendidos + '/' + c.planejados + ')') : 'cobertura n/d'; dados += '- ' + s.sellerName + ': em risco ' + s.em_risco + ' (R$ ' + br(s.valorEmRisco) + '), perdido ' + s.perdido + ', esfriando ' + s.esfriando + ', em dia ' + s.em_dia + '; ' + covTxt + '.\n'; }
+      const system = 'Voce e analista comercial da Honest Sucos (distribuidora de sucos em Goiania). Escreva uma ANALISE SEMANAL objetiva e acionavel para o gestor, a partir dos indicadores por vendedor. Comece com 1-2 linhas de panorama geral. Depois, por vendedor, destaque risco de churn (clientes em risco/perdidos e R$ em risco) e cobertura de rota (baixa cobertura = atencao), com 1 recomendacao pratica. Maximo cerca de 2 linhas por vendedor. Portugues do Brasil, tom profissional e direto. Use somente os dados fornecidos, nao invente numeros.';
+      const userMsg = 'Dados da semana:\n\n' + dados + '\nEscreva a analise semanal.';
+      const abody: any = { model: 'claude-sonnet-4-6', max_tokens: 1500, system, messages: [{ role: 'user', content: userMsg }] };
+      const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(abody) });
+      const aj: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) return res.status(502).json({ ok: false, error: 'Anthropic ' + resp.status, detail: JSON.stringify(aj).slice(0, 300) });
+      const textOut = (aj.content && aj.content[0] && aj.content[0].text) || '';
+      const hoje = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      res.json({ ok: true, model: abody.model, text: '*Analise Semanal — Honest Sucos (' + hoje + ')*\n\n' + textOut });
+    } catch (e: any) { res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
   app.get('/api/admin/vendas-telemarketing', async (req: Request, res: Response) => {
   try {
     const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
