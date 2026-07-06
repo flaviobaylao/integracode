@@ -765,6 +765,7 @@ run();
         }
       }
       try { const _tk: any = await jget('/api/admin/vendas-telemarketing?date=' + d); if (_tk && _tk.ok && _tk.text) text += _tk.text; } catch (_e) {}
+      try { const _sla: any = await db.execute(sql.raw("SELECT l.fantasy_name AS nome, TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))) AS vendedor FROM leads l LEFT JOIN users u ON (u.id = l.assigned_to OR u.omie_vendor_code = l.assigned_to OR ('omie-vendor-' || u.omie_vendor_code) = l.assigned_to) WHERE l.status = 'pending' AND l.created_at < (now() - interval '24 hours') ORDER BY l.created_at ASC")); const _rows: any[] = (_sla && _sla.rows) || []; if (_rows.length) { text += '\n🔔 Leads sem 1º contato >24h (' + _rows.length + '): ' + _rows.slice(0, 8).map((r: any) => (r.nome || '?') + (r.vendedor && r.vendedor.trim() ? ' (' + r.vendedor.trim() + ')' : '')).join('; ') + (_rows.length > 8 ? ' +' + (_rows.length - 8) : ''); } } catch (_e) {}
       res.json({ ok: true, date: d, text });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
