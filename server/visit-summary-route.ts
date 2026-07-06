@@ -77,4 +77,34 @@ export function registerVisitSummary(app: Express) {
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
     } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
   });
+
+  app.get('/api/routes/validate', async (req: Request, res: Response) => {
+    try {
+      const tz = 'America/Sao_Paulo';
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const norm = (s: any, def: string) => { const m = String(s || '').match(/^\d{4}-\d{2}-\d{2}$/); return m ? m[0] : def; };
+      const startDate = norm(req.query.startDate, todayStr);
+      const endDate = norm(req.query.endDate, startDate);
+      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const planned = await q(`SELECT DISTINCT va.customer_id, va.seller_id, (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(c.name, va.customer_id) AS customer_name FROM visit_agenda va LEFT JOIN customers c ON c.id = va.customer_id WHERE va.scheduled_date IS NOT NULL AND (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND (va.visit_status = 'pending' OR va.visit_status IS NULL) AND va.is_virtual = false AND va.customer_id IS NOT NULL`);
+      const routes = await q(`SELECT seller_id, (route_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, visit_stops FROM daily_routes WHERE (route_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`);
+      const routeEntries: any[] = [];
+      const custIds = new Set<string>();
+      for (const r of routes) { let stops: any = r.visit_stops; if (typeof stops === 'string') { try { stops = JSON.parse(stops); } catch (e) { stops = null; } } if (!stops || typeof stops !== 'object') continue; for (const k of Object.keys(stops)) { const st = stops[k]; if (st && st.entityType === 'customer' && st.entityId) { routeEntries.push({ customerId: st.entityId, sellerId: r.seller_id, d: r.d }); custIds.add(st.entityId); } } }
+      const nameMap = new Map<string, string>();
+      if (custIds.size) { const ids = Array.from(custIds).map((x) => `'${x}'`).join(','); const names = await q(`SELECT id, name FROM customers WHERE id IN (${ids})`); for (const n of names) nameMap.set(n.id, n.name); }
+      const nv = (s: any) => String(s || '').replace(/^omie-vendor-/, '');
+      const plannedMap = new Map<string, any>();
+      for (const p of planned) plannedMap.set(p.customer_id + '|' + p.d, { sellerId: p.seller_id, customerName: p.customer_name });
+      const routeMap = new Map<string, any>();
+      for (const e of routeEntries) if (!routeMap.has(e.customerId + '|' + e.d)) routeMap.set(e.customerId + '|' + e.d, { sellerId: e.sellerId, customerName: nameMap.get(e.customerId) || e.customerId });
+      const missing: any[] = []; const extra: any[] = []; const wrongSeller: any[] = [];
+      for (const [k, p] of plannedMap) { const rr = routeMap.get(k); const d = k.split('|')[1]; if (!rr) missing.push({ customerName: p.customerName, date: d, sellerId: p.sellerId }); else if (nv(rr.sellerId) !== nv(p.sellerId)) wrongSeller.push({ customerName: p.customerName, date: d, sellerId: p.sellerId, routeSellerId: rr.sellerId }); }
+      for (const [k, rr] of routeMap) { if (!plannedMap.has(k)) { const d = k.split('|')[1]; extra.push({ customerName: rr.customerName, date: d, sellerId: rr.sellerId }); } }
+      const totalPlanned = plannedMap.size; const totalInRoutes = routeMap.size;
+      const withIssues = missing.length + extra.length + wrongSeller.length;
+      const okCount = Math.max(0, totalPlanned - missing.length - wrongSeller.length);
+      res.json({ success: true, validation: { totalPlanned, totalInRoutes, dateRanges: [{ startDate, endDate }], missing: missing.slice(0, 1000), extra: extra.slice(0, 1000), wrongSeller: wrongSeller.slice(0, 1000), summary: { ok: okCount, withIssues } }, message: 'Validacao ' + startDate + ' a ' + endDate + ': ' + totalPlanned + ' planejadas, ' + totalInRoutes + ' nas rotas, ' + withIssues + ' divergencias.' });
+    } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
+  });
 }
