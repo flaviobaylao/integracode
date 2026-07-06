@@ -270,6 +270,10 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
 // - Cria novas atribuições para candidatos sem atribuição ativa
 // - Marca como completed se houve service log após assignedAt para esse customer
 async function reconcileAssignments(actorUserId?: string): Promise<void> {
+  try { await __reconcileAssignmentsRaw(actorUserId); } catch (e) { console.error('[reconcileAssignments] skip:', (e as any)?.message); }
+}
+
+async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // Janela ampla para localizar candidatos
   const today = brTodayStr();
   const startDate = (() => {
