@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTableSort, SortableTh, DateRangeFilter, dateInRange } from "@/lib/tableTools";
 import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -53,6 +54,9 @@ interface Customer {
 export default function HotsiteOrders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [dtStart, setDtStart] = useState('');
+  const [dtEnd, setDtEnd] = useState('');
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const [selectedOrder, setSelectedOrder] = useState<HotsiteOrder | null>(null);
   const { toast } = useToast();
 
@@ -184,7 +188,7 @@ export default function HotsiteOrders() {
     const customerName = customer?.fantasy_name || customer?.name || '';
     const matchesSearch = customerName.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && dateInRange(order.scheduledDate, dtStart, dtEnd);
   }) || [];
 
   // Calcular estatísticas
@@ -259,6 +263,21 @@ export default function HotsiteOrders() {
     if (customer?.address) return customer.address;
     return null;
   };
+
+    const sortedOrders = sortRows(filteredOrders, (order: any, key: string) => {
+    const cust = customersMap[order.customerId];
+    switch (key) {
+      case 'pedido': return extractOrderNumber(order.notes) || '';
+      case 'date': return order.scheduledDate ? new Date(order.scheduledDate).getTime() : 0;
+      case 'customer': return (cust && (cust.fantasy_name || cust.name)) || '';
+      case 'address': return getDeliveryAddress(order, cust) || '';
+      case 'products': return order.products ? order.products.length : 0;
+      case 'value': return Number(order.saleValue || 0);
+      case 'payment': return getPaymentMethodLabel(order.paymentMethod) || '';
+      case 'status': return order.status || '';
+      default: return '';
+    }
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-orange-50">
@@ -395,6 +414,9 @@ export default function HotsiteOrders() {
                   <option value="cancelled">Cancelado</option>
                 </select>
               </div>
+              <div>
+                <DateRangeFilter start={dtStart} end={dtEnd} onChange={(a, b) => { setDtStart(a); setDtEnd(b); }} label="Data (agendada)" testId="daterange-hotsite" />
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -423,19 +445,19 @@ export default function HotsiteOrders() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Pedido</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>Endereço de Entrega</TableHead>
-                      <TableHead>Produtos</TableHead>
-                      <TableHead>Valor</TableHead>
-                      <TableHead>Pagamento</TableHead>
-                      <TableHead>Status</TableHead>
+                      <SortableTh label="Pedido" colKey="pedido" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Data" colKey="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Cliente" colKey="customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Endereço de Entrega" colKey="address" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Produtos" colKey="products" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Valor" colKey="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Pagamento" colKey="payment" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <TableHead className="text-center">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredOrders.map((order) => {
+                    {sortedOrders.map((order) => {
                       const customer = customersMap[order.customerId];
                       const customerName = customer?.fantasy_name || customer?.name || 'Cliente não encontrado';
                       const deliveryAddress = getDeliveryAddress(order, customer);
