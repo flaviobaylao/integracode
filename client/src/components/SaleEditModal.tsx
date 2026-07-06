@@ -64,6 +64,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [paymentMethod, setPaymentMethod] = useState('a_vista');
   const [operationType, setOperationType] = useState('venda');
   const [notes, setNotes] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [routeDay, setRouteDay] = useState('');
   const [recurrenceType, setRecurrenceType] = useState('');
   const [deliveryWeekdays, setDeliveryWeekdays] = useState<string[]>(['Seg', 'Ter', 'Qua', 'Qui', 'Sex']);
@@ -355,6 +356,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         data: {
           status: 'completed',
           saleValue: totalValue.toFixed(2),
+          referralCode: (referralCode || '').trim() || undefined,
           products: products,
           paymentMethod: paymentMethod,
           operationType: operationType,
@@ -1465,6 +1467,11 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   rows={3}
                   data-testid="textarea-notes"
                 />
+              </div>
+
+              <div>
+                <Label>Código de indicação (opcional)</Label>
+                <Input value={referralCode} onChange={(e) => setReferralCode(e.target.value)} placeholder="Cupom de indicação" data-testid="input-referral-code" />
               </div>
 
               {/* Previsão de Entrega */}
