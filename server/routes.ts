@@ -1145,7 +1145,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/routes/:id', authenticateUser, async (req: any, res) => {
+  app.get('/api/routes/:id', authenticateUser, async (req: any, res, next) => {
+    if (req.params.id === 'validate') return next();
     try {
       const { id } = req.params;
       const route = await storage.getRoute(id);
