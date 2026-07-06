@@ -86,7 +86,12 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
     if (name === 'consultar_produto') {
       const termo = String(input?.termo || '').trim();
       if (!termo) return 'Informe o nome do produto.';
-      const r: any = await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock FROM products WHERE is_active=true AND name ILIKE ${'%' + termo + '%'} ORDER BY name LIMIT 5`);
+      const _stop = new Set(['de','da','do','com','e','a','o','os','as','para','por','sabor','ml','l','un','und']);
+    const _tokens = termo.toLowerCase().split(/[^0-9a-zà-ú]+/i).filter((t: string) => t.length >= 2 && !_stop.has(t));
+    const _conds = _tokens.map((t: string) => sql`name ILIKE ${'%' + t + '%'}`);
+    let _where: any = _conds.length ? _conds[0] : sql`name ILIKE ${'%' + termo + '%'}`;
+    for (let _i = 1; _i < _conds.length; _i++) _where = sql`${_where} AND ${_conds[_i]}`;
+    const r: any = await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock FROM products WHERE is_active=true AND (${_where}) ORDER BY name LIMIT 8`);
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
