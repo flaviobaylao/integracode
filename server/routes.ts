@@ -5404,6 +5404,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Buscar card ANTES da atualização
       const cardBefore = await storage.getSalesCard(id);
+
+    // VIGIA 3E vendedor: desconto de indicacao no pedido do vendedor (espelha /api/public/orders). Inerte sem cupom/recompensa.
+    try {
+      const _rc = String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
+        const _cust: any = await storage.getCustomer(cardBefore.customerId);
+        const _bd = String((_cust && (_cust.cnpj || _cust.cpf)) || '').replace(/[^0-9]/g, '');
+        const _refBase = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+        if (_bd) {
+          let _refPct = 0; let _refMode = ''; let _refRedemptionId: any = null;
+          if (_rc) { const _vr: any = await fetch(_refBase + '/api/referral/validate?code=' + encodeURIComponent(_rc) + '&referredDocument=' + _bd).then((r: any) => r.json()).catch(() => null); if (_vr && _vr.valid) { _refPct = Number(_vr.discountPct) || 15; _refMode = 'code'; } }
+          if (!_refPct) { const _rw: any = await fetch(_refBase + '/api/referral/reward-status?document=' + _bd).then((r: any) => r.json()).catch(() => null); if (_rw && _rw.hasReward) { _refPct = Number(_rw.pct) || 10; _refMode = 'reward'; _refRedemptionId = _rw.redemptionId; } }
+          if (_refPct > 0) {
+            const _orig = Number((data as any).saleValue);
+            const _disc = Math.round(_orig * (_refPct / 100) * 100) / 100;
+            (data as any).saleValue = (Math.round((_orig - _disc) * 100) / 100).toFixed(2);
+            console.log('🎟️ [3E vendedor] cupom', _refMode, _refPct + '%', 'de', _orig, '->', (data as any).saleValue);
+            try {
+              if (_refMode === 'code') { const _rd: any = await fetch(_refBase + '/api/referral/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _rc, referredDocument: _bd, channel: 'vendedor', orderRef: 'CARD-' + id, orderValue: _orig }) }).then((r: any) => r.json()); if (_rd && _rd.redemptionId) await fetch(_refBase + '/api/admin/referral/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _rd.redemptionId }) }); }
+              else if (_refMode === 'reward' && _refRedemptionId) { await fetch(_refBase + '/api/referral/consume-reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _refRedemptionId, orderRef: 'CARD-' + id }) }); }
+            } catch (_e2) {}
+          }
+        }
+      }
+    } catch (_e3e) {}
       console.log(`   📋 ANTES - routeDay:`, cardBefore?.routeDay);
       
       // Se coordenadas GPS foram capturadas, atualizar o cliente
