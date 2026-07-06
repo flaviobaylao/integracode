@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useTableSort, SortableTh } from "@/lib/tableTools";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -359,6 +360,22 @@ export default function LeadsManagement() {
     });
   }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
+  const sortedLeads = sortRows(filteredLeads, (lead: any, key: string) => {
+    switch (key) {
+      case 'temp': return lead.temperature || '';
+      case 'name': return lead.fantasyName || '';
+      case 'contact': return lead.contact || '';
+      case 'phone': return lead.phone || '';
+      case 'coords': return lead.latitude != null ? Number(lead.latitude) : -Infinity;
+      case 'status': return lead.status || '';
+      case 'lastService': return lastServiceLogs[lead.id] && lastServiceLogs[lead.id].date ? new Date(lastServiceLogs[lead.id].date).getTime() : 0;
+      case 'nextContact': return lead.nextContactDate ? new Date(lead.nextContactDate).getTime() : 0;
+      case 'created': return lead.createdAt ? new Date(lead.createdAt).getTime() : 0;
+      default: return '';
+    }
+  });
+
   const stats = {
     total: leads.length,
     pending: leads.filter(l => l.status === 'pending').length,
@@ -584,27 +601,27 @@ export default function LeadsManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left py-3 px-4 font-semibold">Temp.</th>
-                  <th className="text-left py-3 px-4 font-semibold">Nome</th>
-                  <th className="text-left py-3 px-4 font-semibold">Contato</th>
-                  <th className="text-left py-3 px-4 font-semibold">Telefone</th>
-                  <th className="text-left py-3 px-4 font-semibold">Coordenadas</th>
-                  <th className="text-left py-3 px-4 font-semibold">Status</th>
-                  <th className="text-left py-3 px-4 font-semibold">Último Atendimento</th>
-                  <th className="text-left py-3 px-4 font-semibold">Próximo Contato</th>
-                  <th className="text-left py-3 px-4 font-semibold">Criado em</th>
+                  <SortableTh label="Temp." colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Nome" colKey="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Último Atendimento" colKey="lastService" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
+                  <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
                   {isAdmin && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
                 </tr>
               </thead>
               <tbody>
-                {filteredLeads.length === 0 ? (
+                {sortedLeads.length === 0 ? (
                   <tr>
                     <td colSpan={isAdmin ? 10 : 9} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
                 ) : (
-                  filteredLeads.map((lead) => (
+                  sortedLeads.map((lead) => (
                     <tr 
                       key={lead.id} 
                       className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer" 
