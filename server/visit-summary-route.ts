@@ -30,10 +30,12 @@ export function registerVisitSummary(app: Express) {
       const bpSellerMap = new Map<string, string>();
       for (const r of bpSeller) bpSellerMap.set(r.customer_id, r.seller_name);
 
-      const win = `(scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`;
-      // Agendamentos + check-in (visit_agenda) e (sales_cards)
-      const schedVA = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(actual_check_in IS NOT NULL OR visit_status = 'completed') AS visited, BOOL_OR(is_virtual = true) AS is_virtual FROM visit_agenda WHERE scheduled_date IS NOT NULL AND ${win} AND customer_id IS NOT NULL GROUP BY customer_id, d`);
-      const schedSC = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(check_in_time IS NOT NULL) AS visited FROM sales_cards WHERE scheduled_date IS NOT NULL AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const winSC = `(scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`;
+      // Agendamentos + check-in — fonte = sales_cards (rota real; alinhado ao 1.0)
+      const sched = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(check_in_time IS NOT NULL) AS visited FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      // Agendamentos FUTUROS complementares (visit_agenda) apenas para dias > hoje (não infla passado)
+      let schedFut: any[] = [];
+      try { schedFut = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM visit_agenda WHERE scheduled_date IS NOT NULL AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date > '${todayStr}' AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date <= '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { schedFut = []; }
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Atendimento virtual (virtual_service_logs)
@@ -48,8 +50,8 @@ export function registerVisitSummary(app: Express) {
       type Cell = { isScheduled: boolean; hasVisit: boolean; hasOrder: boolean; hasVirtualAttendance: boolean; orderValue: number };
       const byCust = new Map<string, Map<string, Cell>>();
       const ensure = (cid: string, d: string): Cell => { let m = byCust.get(cid); if (!m) { m = new Map(); byCust.set(cid, m); } let c = m.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0 }; m.set(d, c); } return c; };
-      for (const s of schedVA) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; if (s.visited === true || s.visited === "t") c.hasVisit = true; }
-      for (const s of schedSC) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; if (s.visited === true || s.visited === "t") c.hasVisit = true; }
+      for (const s of sched) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; if (s.visited === true || s.visited === "t") c.hasVisit = true; }
+      for (const s of schedFut) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; }
       for (const o of orders) { const c = ensure(o.customer_id, o.d); c.hasOrder = Number(o.n) > 0; c.orderValue = Number(o.v) || 0; }
       for (const v of virt) { const c = ensure(v.customer_id, v.d); c.hasVirtualAttendance = true; }
 
