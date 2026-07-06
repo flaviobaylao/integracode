@@ -302,7 +302,7 @@ export default function FiscalInvoices() {
       case 'value': return Number(inv.totalInvoice || 0);
       case 'status': return inv.status || '';
       case 'env': return inv.environment || '';
-      case 'date': return inv.emissionDate ? new Date(inv.emissionDate).getTime() : 0;
+      case 'date': return inv.createdAt ? new Date(inv.createdAt).getTime() : 0;
       default: return '';
     }
   });
