@@ -31,11 +31,8 @@ export function registerVisitSummary(app: Express) {
       for (const r of bpSeller) bpSellerMap.set(r.customer_id, r.seller_name);
 
       const winSC = `(scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`;
-      // Agendamentos + check-in — fonte = sales_cards (rota real; alinhado ao 1.0)
-      const sched = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(check_in_time IS NOT NULL) AS visited FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND customer_id IS NOT NULL GROUP BY customer_id, d`);
-      // Agendamentos FUTUROS complementares (visit_agenda) apenas para dias > hoje (não infla passado)
-      let schedFut: any[] = [];
-      try { schedFut = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM visit_agenda WHERE scheduled_date IS NOT NULL AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date > '${todayStr}' AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date <= '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { schedFut = []; }
+      // Check-in (visita efetuada) — sales_cards.check_in_time (esparso; gap conhecido)
+      const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Atendimento virtual (virtual_service_logs)
@@ -48,30 +45,35 @@ export function registerVisitSummary(app: Express) {
       for (const m of metas) metaMap.set(m.customer_id, Number(m.meta) || 0);
 
       type Cell = { isScheduled: boolean; hasVisit: boolean; hasOrder: boolean; hasVirtualAttendance: boolean; orderValue: number };
-      const byCust = new Map<string, Map<string, Cell>>();
-      const ensure = (cid: string, d: string): Cell => { let m = byCust.get(cid); if (!m) { m = new Map(); byCust.set(cid, m); } let c = m.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0 }; m.set(d, c); } return c; };
-      for (const s of sched) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; if (s.visited === true || s.visited === "t") c.hasVisit = true; }
-      for (const s of schedFut) { const c = ensure(s.customer_id, s.d); c.isScheduled = true; }
-      for (const o of orders) { const c = ensure(o.customer_id, o.d); c.hasOrder = Number(o.n) > 0; c.orderValue = Number(o.v) || 0; }
-      for (const v of virt) { const c = ensure(v.customer_id, v.d); c.hasVirtualAttendance = true; }
-
+      const checkinMap = new Map<string, Set<string>>();
+      for (const c of checkins) { let s = checkinMap.get(c.customer_id); if (!s) { s = new Set(); checkinMap.set(c.customer_id, s); } s.add(c.d); }
+      const orderMap = new Map<string, Map<string, any>>();
+      for (const o of orders) { let m = orderMap.get(o.customer_id); if (!m) { m = new Map(); orderMap.set(o.customer_id, m); } m.set(o.d, { v: Number(o.v) || 0, n: Number(o.n) || 0 }); }
+      const virtMap = new Map<string, Set<string>>();
+      for (const v of virt) { let s = virtMap.get(v.customer_id); if (!s) { s = new Set(); virtMap.set(v.customer_id, s); } s.add(v.d); }
+      const allDates: string[] = [];
+      { const d = new Date(startDate + 'T12:00:00Z'); const e2 = new Date(endDate + 'T12:00:00Z'); while (d <= e2) { allDates.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); } }
+      const DOW: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
+      const parseDows = (w: any): number[] => { let arr: any = w; try { if (typeof w === 'string') arr = JSON.parse(w); } catch (e) { arr = []; } if (!Array.isArray(arr)) return []; const out: number[] = []; for (const x of arr) { const k = String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 3); if (DOW[k] !== undefined) out.push(DOW[k]); } return out; };
+      const firstDowOfMonth = (dt: Date, dow: number): number => { const first = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1)); const shift = (dow - first.getUTCDay() + 7) % 7; return 1 + shift; };
+      const isPlanned = (dateStr: string, dows: number[], periodicity: string): boolean => { const dt = new Date(dateStr + 'T12:00:00Z'); const dow = dt.getUTCDay(); if (!dows.includes(dow)) return false; const p = String(periodicity || 'semanal').toLowerCase(); if (p.indexOf('quinz') >= 0) { const weekIdx = Math.floor(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()) / (7 * 864e5)); return weekIdx % 2 === 0; } if (p.indexOf('mens') >= 0) return dt.getUTCDate() === firstDowOfMonth(dt, dow); if (p.indexOf('bime') >= 0) return dt.getUTCDate() === firstDowOfMonth(dt, dow) && (dt.getUTCMonth() % 2 === 0); return true; };
       const rows = clients.map((cl: any) => {
-        const cellMap = byCust.get(cl.customer_id) || new Map<string, Cell>();
-        const meta = metaMap.get(cl.customer_id) || 0;
-        const visits = Array.from(cellMap.entries()).map(([d, cell]) => ({
-          date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit,
-          hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue,
-          metaValue: meta, nextSaleValue: 0, visitStatus: null,
-        }));
-        return {
-          customerId: cl.customer_id,
-          customerName: cl.customer_name || "-",
-          sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cl.customer_id) || "Sem vendedor",
-          city: cl.city || "", neighborhood: cl.neighborhood || "",
-          periodicity: cl.periodicity || "", weekdays: cl.weekdays || "[]",
-          visits,
-        };
+        const cid = cl.customer_id;
+        const dows = parseDows(cl.weekdays);
+        const meta = metaMap.get(cid) || 0;
+        const ci = checkinMap.get(cid);
+        const om = orderMap.get(cid);
+        const vm = virtMap.get(cid);
+        const cells = new Map<string, Cell>();
+        const ensure = (d: string): Cell => { let c = cells.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0 }; cells.set(d, c); } return c; };
+        for (const d of allDates) { if (isPlanned(d, dows, cl.periodicity)) ensure(d).isScheduled = true; }
+        if (ci) for (const d of ci) ensure(d).hasVisit = true;
+        if (om) for (const [d, o] of om) { const c = ensure(d); c.hasOrder = o.n > 0; c.orderValue = o.v; }
+        if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
+        const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
+        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', visits };
       });
+
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
     } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
   });
