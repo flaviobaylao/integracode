@@ -17735,14 +17735,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notBeforeMatch = certDetails.match(/notBefore\s*=\s*(.*)/i);
       const notAfterMatch = certDetails.match(/notAfter\s*=\s*(.*)/i);
 
-      const privateDir = process.env.PRIVATE_OBJECT_DIR;
-      const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-      if (!privateDir || !bucketId) return res.status(500).json({ message: 'Object storage não configurado' });
-
-      const { objectStorageClient } = await import('./replit_integrations/object_storage/objectStorage');
-      const storageKey = `${privateDir}/certificates/${cryptoMod.randomUUID()}.pfx`;
-      const bucket = objectStorageClient.bucket(bucketId);
-      await bucket.file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
+      // [2.0] Railway sem object storage do Replit: guarda o PFX no banco (pfx_data cifrado), igual ao /api/digital-certificates.
+      let storageKey = 'db';
+      try {
+        const privateDir = process.env.PRIVATE_OBJECT_DIR;
+        const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+        if (privateDir && bucketId) {
+          const { objectStorageClient } = await import('./replit_integrations/object_storage/objectStorage');
+          storageKey = `${privateDir}/certificates/${cryptoMod.randomUUID()}.pfx`;
+          await objectStorageClient.bucket(bucketId).file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
+        }
+      } catch (e: any) {
+        console.warn('[CERT] Object storage indisponivel, usando pfx no banco:', e?.message);
+        storageKey = 'db';
+      }
+      const pfxData = encPwd(file.buffer.toString('base64'));
 
       if (cnpj && !instance.cnpj) {
         await storage.updateOmieInstance(instance.id, { cnpj } as any);
@@ -17761,6 +17768,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validFrom: notBeforeMatch ? new Date(notBeforeMatch[1].trim()) : new Date(),
           validUntil: notAfterMatch ? new Date(notAfterMatch[1].trim()) : new Date(),
           storageKey,
+          pfxData,
           certificatePassword: encPwd(password),
           isActive: true,
         });
@@ -17775,6 +17783,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validUntil: notAfterMatch ? new Date(notAfterMatch[1].trim()) : new Date(),
           certificateType: 'A1',
           storageKey,
+          pfxData,
           certificatePassword: encPwd(password),
           isActive: true,
           uploadedBy: req.user?.id || null,
