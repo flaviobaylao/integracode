@@ -1,4 +1,4 @@
-import { exportToExcel, ExportExcelButton, DateRangeFilter, dateInRange } from "@/lib/tableTools";
+import { exportToExcel, ExportExcelButton, DateRangeFilter, dateInRange, useTableSort, SortableTh } from "@/lib/tableTools";
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
@@ -189,7 +189,7 @@ export default function FiscalInvoices() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [envFilter, setEnvFilter] = useState('all');
   const [nfSearch, setNfSearch] = useState('');
-  const [sortAZ, setSortAZ] = useState(false);
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const [dtStart, setDtStart] = useState('');
   const [dtEnd, setDtEnd] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -293,8 +293,19 @@ export default function FiscalInvoices() {
     queryKey: ['/api/fiscal-invoices', statusFilter, envFilter],
     queryFn: () => fetch(buildInvoiceUrl(), { credentials: 'include' }).then(r => r.json()),
   });
-  const invoicesView = (invoices || []).filter((inv: any) => (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch)) && dateInRange(inv.emissionDate, dtStart, dtEnd));
-  if (sortAZ) invoicesView.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
+  const invoicesFiltered = (invoices || []).filter((inv: any) => (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch)) && dateInRange(inv.emissionDate, dtStart, dtEnd));
+  const invoicesView = sortRows(invoicesFiltered, (inv: any, key: string) => {
+    switch (key) {
+      case 'number': return Number(inv.invoiceNumber || 0);
+      case 'customer': return inv.customerName || '';
+      case 'cfop': return inv.cfop || '';
+      case 'value': return Number(inv.totalInvoice || 0);
+      case 'status': return inv.status || '';
+      case 'env': return inv.environment || '';
+      case 'date': return inv.emissionDate ? new Date(inv.emissionDate).getTime() : 0;
+      default: return '';
+    }
+  });
 
 
   const { data: invoiceDetail, isLoading: loadingDetail } = useQuery<FiscalInvoice>({
@@ -677,7 +688,7 @@ export default function FiscalInvoices() {
               <Input placeholder="Buscar cliente ou numero..." value={nfSearch} onChange={(e) => setNfSearch(e.target.value)} className="w-[220px]" data-testid="search-nf" />
             </div>
             <div><Label className="text-xs">Periodo (emissao)</Label><div><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} testId="daterange-nf" /></div></div>
-            <Button variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-nf">{sortAZ ? "Cliente A-Z: ligado" : "Ordenar A-Z"}</Button>
+            
             <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
             <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
@@ -699,13 +710,13 @@ export default function FiscalInvoices() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Número</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>CFOP</TableHead>
-                      <TableHead>Valor Total</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Ambiente</TableHead>
-                      <TableHead>Data</TableHead>
+                      <SortableTh label="Número" colKey="number" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Cliente" colKey="customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="CFOP" colKey="cfop" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Valor Total" colKey="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Ambiente" colKey="env" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Data" colKey="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <TableHead>Ações</TableHead>
                     </TableRow>
                   </TableHeader>
