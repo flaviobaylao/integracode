@@ -1,0 +1,786 @@
+import type { Express } from 'express';
+import { db } from './db';
+import { sql, and, eq, gte, lte, isNotNull, inArray, desc } from 'drizzle-orm';
+import {
+  repescagemAttendants,
+  repescagemAssignments,
+  repescagemAssignmentHistory,
+  users,
+  customers,
+  activeCustomers,
+  visitScheduleHistory,
+  routeCheckpoints,
+  billings,
+  billingPipeline as billingPipelineTable,
+  virtualServiceLogs,
+} from '@shared/schema';
+
+const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
+
+function brTodayStr(): string {
+  const now = new Date();
+  const offset = -3 * 60; // BRT
+  const local = new Date(now.getTime() + (offset - now.getTimezoneOffset()) * 60000);
+  return local.toISOString().split('T')[0];
+}
+
+// Computa o conjunto de candidatos vermelhos: clientes ativos cuja
+// ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
+// e SEM pedido na data).
+async function computeRedCandidates(opts: { startDate: string; endDate: string }) {
+  const { startDate, endDate } = opts;
+
+  // 1) Clientes ativos
+  const activeRows = await db.select({ customerId: activeCustomers.customerId })
+    .from(activeCustomers)
+    .where(and(eq(activeCustomers.isActive, true), isNotNull(activeCustomers.customerId)));
+  const customerIds = Array.from(new Set(activeRows.map(r => r.customerId).filter(Boolean) as string[]));
+  if (customerIds.length === 0) return [];
+
+  const cs = await db.select({
+    id: customers.id,
+    name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+    sellerId: customers.sellerId,
+    weekdays: customers.weekdays,
+    periodicity: customers.visitPeriodicity,
+    serviceStartDate: customers.serviceStartDate,
+    omieClientCode: customers.omieClientCode,
+  }).from(customers).where(inArray(customers.id, customerIds));
+
+  // 2) Visitas registradas (visit_schedule_history) — usado para marcar "efetuada"
+  const visits = await db.select({
+    customerId: visitScheduleHistory.customerId,
+    scheduledDate: visitScheduleHistory.scheduledDate,
+    visitStatus: visitScheduleHistory.visitStatus,
+    checkInTime: visitScheduleHistory.checkInTime,
+  }).from(visitScheduleHistory).where(
+    and(
+      sql`${visitScheduleHistory.scheduledDate} >= ${startDate}`,
+      sql`${visitScheduleHistory.scheduledDate} <= ${endDate}`,
+    )
+  );
+  const visitMap = new Map<string, any[]>();
+  for (const v of visits) {
+    const key = `${v.customerId}_${v.scheduledDate}`;
+    if (!visitMap.has(key)) visitMap.set(key, []);
+    visitMap.get(key)!.push(v);
+  }
+
+  // 2b) Datas agendadas inferidas de weekdays + periodicity (mesma lógica do VisitSummary)
+  const WEEKDAY_MAP: Record<string, number> = {
+    'Dom': 0, 'Seg': 1, 'Ter': 2, 'Qua': 3, 'Qui': 4, 'Sex': 5, 'Sab': 6,
+    'domingo': 0, 'segunda': 1, 'terca': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5, 'sabado': 6,
+  };
+  const PERIODICITY_DAYS: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28 };
+  function parseWeekdays(raw: any): string[] {
+    try {
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') return JSON.parse(raw);
+      return [];
+    } catch { return []; }
+  }
+  function getScheduledDates(weekdays: string[], periodicity: string, startStr: string, endStr: string): string[] {
+    const wn = weekdays.map(w => WEEKDAY_MAP[w]).filter(n => n !== undefined);
+    if (wn.length === 0) return [];
+    const start = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+    const dates: string[] = [];
+    const current = new Date(start);
+    while (current <= end) {
+      if (wn.includes(current.getDay())) dates.push(current.toISOString().split('T')[0]);
+      current.setDate(current.getDate() + 1);
+    }
+    const interval = PERIODICITY_DAYS[periodicity] || 7;
+    if (interval > 7 && dates.length > 0) {
+      const filtered: string[] = [];
+      let lastIncluded: Date | null = null;
+      for (const d of dates) {
+        const dt = new Date(d + 'T00:00:00');
+        if (!lastIncluded || (dt.getTime() - lastIncluded.getTime()) / 86400000 >= interval - 2) {
+          filtered.push(d);
+          lastIncluded = dt;
+        }
+      }
+      return filtered;
+    }
+    return dates;
+  }
+  const scheduledByCustomer = new Map<string, Set<string>>();
+  for (const c of cs) {
+    const wd = parseWeekdays(c.weekdays);
+    const dates = getScheduledDates(wd, c.periodicity || 'semanal', startDate, endDate);
+    if (dates.length > 0) scheduledByCustomer.set(c.id, new Set(dates));
+  }
+
+  // 3) Checkpoints (route check-ins indicam visita efetuada)
+  const cps = await db.select({
+    customerId: routeCheckpoints.customerId,
+    checkpointTime: routeCheckpoints.checkpointTime,
+  }).from(routeCheckpoints).where(
+    and(
+      sql`DATE(${routeCheckpoints.checkpointTime}) >= ${startDate}`,
+      sql`DATE(${routeCheckpoints.checkpointTime}) <= ${endDate}`,
+      eq(routeCheckpoints.checkpointType, 'check_in'),
+    )
+  );
+  const checkpointSet = new Set<string>();
+  for (const c of cps) {
+    if (!c.customerId || !c.checkpointTime) continue;
+    const ds = new Date(c.checkpointTime).toISOString().split('T')[0];
+    checkpointSet.add(`${c.customerId}_${ds}`);
+  }
+
+  // 3.5) Atendimentos virtuais (registrados em resgate) contam como visita
+  const vlogs = await db.select({
+    customerId: virtualServiceLogs.customerId,
+    attendanceDate: virtualServiceLogs.attendanceDate,
+  }).from(virtualServiceLogs).where(
+    and(
+      sql`DATE(${virtualServiceLogs.attendanceDate}) >= ${startDate}`,
+      sql`DATE(${virtualServiceLogs.attendanceDate}) <= ${endDate}`,
+    )
+  );
+  const virtualLogSet = new Set<string>();
+  for (const v of vlogs) {
+    if (!v.customerId || !v.attendanceDate) continue;
+    const ds = new Date(v.attendanceDate).toISOString().split('T')[0];
+    virtualLogSet.add(`${v.customerId}_${ds}`);
+  }
+
+  // 4) Pedidos (billings + pipeline)
+  const orderSet = new Set<string>();
+  const omieCodeToCustomerId = new Map<string, string>();
+  for (const c of cs) {
+    if (c.omieClientCode) omieCodeToCustomerId.set(c.omieClientCode, c.id);
+  }
+  const billingOrders = await db.select({
+    omieCustomerCode: billings.omieCustomerCode,
+    dateStr: sql<string>`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate}))::text`,
+  }).from(billings).where(
+    and(
+      eq(billings.isCancelled, false),
+      sql`COALESCE(CAST(${billings.totalValue} AS NUMERIC), 0) > 0`,
+      sql`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate})) >= ${startDate}`,
+      sql`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate})) <= ${endDate}`,
+    )
+  );
+  for (const b of billingOrders) {
+    const cid = omieCodeToCustomerId.get(b.omieCustomerCode || '');
+    if (!cid || !b.dateStr) continue;
+    orderSet.add(`${cid}_${b.dateStr}`);
+  }
+
+  const pipelineOrders = await db.select({
+    customerId: billingPipelineTable.customerId,
+    dateStr: sql<string>`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt}))::text`,
+  }).from(billingPipelineTable).where(
+    and(
+      sql`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt})) >= ${startDate}`,
+      sql`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt})) <= ${endDate}`,
+    )
+  );
+  for (const p of pipelineOrders) {
+    if (!p.customerId || !p.dateStr) continue;
+    orderSet.add(`${p.customerId}_${p.dateStr}`);
+  }
+
+  const todayStr = brTodayStr();
+  const candidates: Array<{
+    customerId: string;
+    customerName: string;
+    sellerId: string | null;
+    sellerName?: string;
+    periodicity: string;
+    weekdays: string[];
+    lastRedDate: string;
+    daysSince: number;
+  }> = [];
+
+  // Index dates of visits / orders / logs / checkpoints PER customer so we can
+  // detect atendimentos OU pedidos posteriores ao último vermelho.
+  const orderDatesByCustomer = new Map<string, Set<string>>();
+  for (const k of orderSet) {
+    const [cid, ds] = k.split('_');
+    if (!orderDatesByCustomer.has(cid)) orderDatesByCustomer.set(cid, new Set());
+    orderDatesByCustomer.get(cid)!.add(ds);
+  }
+  const checkpointDatesByCustomer = new Map<string, Set<string>>();
+  for (const k of checkpointSet) {
+    const [cid, ds] = k.split('_');
+    if (!checkpointDatesByCustomer.has(cid)) checkpointDatesByCustomer.set(cid, new Set());
+    checkpointDatesByCustomer.get(cid)!.add(ds);
+  }
+  const virtualLogDatesByCustomer = new Map<string, Set<string>>();
+  for (const k of virtualLogSet) {
+    const [cid, ds] = k.split('_');
+    if (!virtualLogDatesByCustomer.has(cid)) virtualLogDatesByCustomer.set(cid, new Set());
+    virtualLogDatesByCustomer.get(cid)!.add(ds);
+  }
+  const completedVisitDatesByCustomer = new Map<string, Set<string>>();
+  for (const v of visits) {
+    if (!v.customerId || !v.scheduledDate) continue;
+    if (v.visitStatus === 'completed' || v.checkInTime) {
+      if (!completedVisitDatesByCustomer.has(v.customerId)) completedVisitDatesByCustomer.set(v.customerId, new Set());
+      completedVisitDatesByCustomer.get(v.customerId)!.add(v.scheduledDate);
+    }
+  }
+
+  for (const c of cs) {
+    const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
+    if (scheduled.length === 0) continue;
+    const lastDate = scheduled[scheduled.length - 1];
+    const vKey = `${c.id}_${lastDate}`;
+    const vrecs = visitMap.get(vKey) || [];
+    const hasVisit = vrecs.some(v => v.visitStatus === 'completed' || v.checkInTime) || checkpointSet.has(vKey) || virtualLogSet.has(vKey);
+    const hasOrder = orderSet.has(vKey);
+    // Vermelho = agendada, no passado, sem visita, sem pedido
+    if (hasVisit || hasOrder) continue;
+    // NOVO: se o cliente recebeu QUALQUER pedido, atendimento virtual,
+    // check-in de rota ou visita concluída APÓS lastDate (inclusive),
+    // ele já foi atendido na repescagem -> sai da lista.
+    const allDatesAfter: string[] = [];
+    for (const map of [orderDatesByCustomer, checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer]) {
+      const set = map.get(c.id);
+      if (!set) continue;
+      for (const d of set) if (d >= lastDate) allDatesAfter.push(d);
+    }
+    if (allDatesAfter.length > 0) continue;
+    const days = Math.floor((new Date(todayStr).getTime() - new Date(lastDate).getTime()) / 86400000);
+    candidates.push({
+      customerId: c.id,
+      customerName: c.name || 'Sem nome',
+      sellerId: c.sellerId || null,
+      periodicity: c.periodicity || 'semanal',
+      weekdays: (c.weekdays as unknown as string[]) || [],
+      lastRedDate: lastDate,
+      daysSince: days,
+    });
+  }
+
+  return candidates;
+}
+
+// Distribui clientes entre atendentes habilitados de forma equilibrada.
+// - Mantém atribuições existentes válidas (atendente ainda habilitado)
+// - Reatribui quando atendente foi desabilitado
+// - Cria novas atribuições para candidatos sem atribuição ativa
+// - Marca como completed se houve service log após assignedAt para esse customer
+async function reconcileAssignments(actorUserId?: string): Promise<void> {
+  // Janela ampla para localizar candidatos
+  const today = brTodayStr();
+  const startDate = (() => {
+    const d = new Date(today); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0];
+  })();
+  const endDate = (() => {
+    const d = new Date(today); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
+  })();
+
+  const candidates = await computeRedCandidates({ startDate, endDate });
+  const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
+
+  // Atendentes habilitados
+  const enabled = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
+  const enabledIds = enabled.map(a => a.userId);
+  const enabledSet = new Set(enabledIds);
+
+  // Atribuições pendentes existentes
+  const pending = await db.select().from(repescagemAssignments)
+    .where(eq(repescagemAssignments.status, 'pending'));
+
+  // 1) Marcar como completed quando houve service log após assignedAt
+  // Batch: buscar TODOS os logs relevantes de uma vez para os pending atuais
+  if (pending.length > 0) {
+    const customerIds = Array.from(new Set(pending.map(p => p.customerId)));
+    const minAssignedAt = pending.reduce<Date>((min, p) => {
+      const d = new Date(p.assignedAt);
+      return d < min ? d : min;
+    }, new Date(pending[0].assignedAt));
+    const allLogs = await db.select().from(virtualServiceLogs)
+      .where(
+        and(
+          inArray(virtualServiceLogs.customerId, customerIds),
+          sql`${virtualServiceLogs.attendanceDate} >= ${minAssignedAt}`,
+        )
+      );
+    const logsByCustomer = new Map<string, typeof allLogs>();
+    for (const l of allLogs) {
+      if (!logsByCustomer.has(l.customerId)) logsByCustomer.set(l.customerId, []);
+      logsByCustomer.get(l.customerId)!.push(l);
+    }
+    for (const a of pending) {
+      const cLogs = logsByCustomer.get(a.customerId) || [];
+      const matching = cLogs
+        .filter(l => new Date(l.attendanceDate) >= new Date(a.assignedAt))
+        .sort((x, y) => new Date(y.attendanceDate).getTime() - new Date(x.attendanceDate).getTime());
+      if (matching.length > 0) {
+        const log = matching[0];
+        await db.update(repescagemAssignments).set({
+          status: 'completed',
+          completedAt: new Date(),
+          completedByUserId: log.attendantId,
+          completedServiceLogId: log.id,
+          updatedAt: new Date(),
+        }).where(eq(repescagemAssignments.id, a.id));
+        await db.insert(repescagemAssignmentHistory).values({
+          assignmentId: a.id,
+          customerId: a.customerId,
+          fromUserId: a.assignedUserId,
+          toUserId: log.attendantId,
+          action: 'completed',
+          reason: 'Atendimento registrado',
+        });
+      }
+    }
+  }
+
+  // Recarregar pendentes
+  const pendingNow = await db.select().from(repescagemAssignments)
+    .where(eq(repescagemAssignments.status, 'pending'));
+
+  // 2) Cancelar atribuições para clientes que NÃO são mais candidatos
+  // (ex: cliente foi atendido por outra via, mudança de status)
+  for (const a of pendingNow) {
+    if (!candidateByCustomerId.has(a.customerId)) {
+      await db.update(repescagemAssignments).set({
+        status: 'cancelled',
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id,
+        customerId: a.customerId,
+        fromUserId: a.assignedUserId,
+        toUserId: null,
+        action: 'cancelled',
+        reason: 'Cliente saiu da lista de repescagem',
+      });
+    }
+  }
+
+  // 3) Construir mapa de carga atual por usuário habilitado
+  const stillPending = await db.select().from(repescagemAssignments)
+    .where(eq(repescagemAssignments.status, 'pending'));
+  const loadByUser = new Map<string, number>();
+  for (const id of enabledIds) loadByUser.set(id, 0);
+  const validPendingByCustomer = new Map<string, typeof stillPending[number]>();
+  for (const a of stillPending) {
+    if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (enabledSet.has(a.assignedUserId)) {
+      loadByUser.set(a.assignedUserId, (loadByUser.get(a.assignedUserId) || 0) + 1);
+      validPendingByCustomer.set(a.customerId, a);
+    }
+  }
+
+  function pickLeastLoaded(): string | null {
+    if (enabledIds.length === 0) return null;
+    let best: string | null = null;
+    let bestLoad = Infinity;
+    for (const id of enabledIds) {
+      const l = loadByUser.get(id) || 0;
+      if (l < bestLoad) { bestLoad = l; best = id; }
+    }
+    return best;
+  }
+
+  // 4) Reatribuir os pendentes cujo usuário foi desabilitado
+  for (const a of stillPending) {
+    if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (enabledSet.has(a.assignedUserId)) continue;
+    const newUserId = pickLeastLoaded();
+    if (!newUserId) {
+      // Ninguém habilitado — cancela a atribuição para que o cliente
+      // apareça como "Não atribuído" no fallback de órfãos.
+      await db.update(repescagemAssignments).set({
+        status: 'cancelled',
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id,
+        customerId: a.customerId,
+        fromUserId: a.assignedUserId,
+        toUserId: null,
+        action: 'cancelled',
+        reason: 'Atendente desabilitado e nenhum outro disponível',
+      });
+      continue;
+    }
+    const oldUser = a.assignedUserId;
+    await db.update(repescagemAssignments).set({
+      assignedUserId: newUserId,
+      assignedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(repescagemAssignments.id, a.id));
+    await db.insert(repescagemAssignmentHistory).values({
+      assignmentId: a.id,
+      customerId: a.customerId,
+      fromUserId: oldUser,
+      toUserId: newUserId,
+      action: 'reassigned',
+      reason: 'Atendente anterior desabilitado',
+    });
+    loadByUser.set(newUserId, (loadByUser.get(newUserId) || 0) + 1);
+    validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: newUserId });
+  }
+
+  // 4.5) Rebalancear: se a diferença entre o atendente mais carregado e o
+  // menos carregado for > 1, mover atribuições do mais para o menos.
+  if (enabledIds.length > 1) {
+    const getMax = () => {
+      let id: string | null = null; let v = -Infinity;
+      for (const u of enabledIds) { const l = loadByUser.get(u) || 0; if (l > v) { v = l; id = u; } }
+      return { id, v };
+    };
+    const getMin = () => {
+      let id: string | null = null; let v = Infinity;
+      for (const u of enabledIds) { const l = loadByUser.get(u) || 0; if (l < v) { v = l; id = u; } }
+      return { id, v };
+    };
+    let safety = 10000;
+    while (safety-- > 0) {
+      const max = getMax(); const min = getMin();
+      if (!max.id || !min.id || max.v - min.v <= 1) break;
+      // Pega uma atribuição do max para mover ao min
+      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id);
+      if (!toMove) break;
+      await db.update(repescagemAssignments).set({
+        assignedUserId: min.id,
+        assignedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, toMove.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: toMove.id,
+        customerId: toMove.customerId,
+        fromUserId: max.id,
+        toUserId: min.id,
+        action: 'reassigned',
+        reason: 'Rebalanceamento (novo atendente habilitado)',
+      });
+      loadByUser.set(max.id, max.v - 1);
+      loadByUser.set(min.id, min.v + 1);
+      validPendingByCustomer.set(toMove.customerId, { ...toMove, assignedUserId: min.id });
+    }
+  }
+
+  // 5) Atribuir candidatos novos (sem pendente válido) a quem está habilitado
+  if (enabledIds.length > 0) {
+    // Batch: pré-carregar todos os assignments anteriores dos candidatos relevantes
+    const candidateIds = candidates
+      .filter(c => !validPendingByCustomer.has(c.customerId))
+      .map(c => c.customerId);
+    const priorMap = new Map<string, string[]>(); // key = customerId+lastRedDate -> statuses
+    if (candidateIds.length > 0) {
+      const allPrior = await db.select({
+        customerId: repescagemAssignments.customerId,
+        lastRedDate: repescagemAssignments.lastRedDate,
+        status: repescagemAssignments.status,
+      }).from(repescagemAssignments).where(
+        inArray(repescagemAssignments.customerId, candidateIds)
+      );
+      for (const p of allPrior) {
+        const k = `${p.customerId}_${p.lastRedDate}`;
+        if (!priorMap.has(k)) priorMap.set(k, []);
+        priorMap.get(k)!.push(p.status);
+      }
+    }
+    for (const cand of candidates) {
+      if (validPendingByCustomer.has(cand.customerId)) {
+        // Atualiza lastRedDate caso tenha mudado
+        const a = validPendingByCustomer.get(cand.customerId)!;
+        if (a.lastRedDate !== cand.lastRedDate) {
+          await db.update(repescagemAssignments).set({
+            lastRedDate: cand.lastRedDate,
+            updatedAt: new Date(),
+          }).where(eq(repescagemAssignments.id, a.id));
+        }
+        continue;
+      }
+      // Já existe completed para a MESMA lastRedDate?
+      const priorStatuses = priorMap.get(`${cand.customerId}_${cand.lastRedDate}`) || [];
+      if (priorStatuses.includes('completed')) continue;
+      // criar nova
+      const newUserId = pickLeastLoaded();
+      if (!newUserId) break;
+      const inserted = await db.insert(repescagemAssignments).values({
+        customerId: cand.customerId,
+        lastRedDate: cand.lastRedDate,
+        assignedUserId: newUserId,
+        status: 'pending',
+      }).returning();
+      const newAssign = inserted[0];
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: newAssign.id,
+        customerId: cand.customerId,
+        fromUserId: null,
+        toUserId: newUserId,
+        action: 'assigned',
+        reason: 'Distribuição automática',
+      });
+      loadByUser.set(newUserId, (loadByUser.get(newUserId) || 0) + 1);
+    }
+  }
+}
+
+export function registerRepescagemRoutes(app: Express, opts: {
+  authenticateUser: any;
+  requireRole: (roles: string[]) => any;
+}) {
+  const { authenticateUser, requireRole } = opts;
+
+  // Listar atendentes (habilitados + perfil disponíveis para se habilitarem)
+  app.get('/api/repescagem/attendants', authenticateUser, requireRole(ALLOWED_ROLES), async (_req, res) => {
+    try {
+      const eligible = await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+      }).from(users).where(
+        and(
+          eq(users.isActive, true),
+          inArray(users.role, ['admin', 'administrative', 'coordinator', 'telemarketing'] as any),
+        )
+      );
+      const attendants = await db.select().from(repescagemAttendants);
+      const map = new Map(attendants.map(a => [a.userId, a]));
+      const out = eligible.map(u => {
+        const a = map.get(u.id);
+        return {
+          userId: u.id,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id,
+          role: u.role,
+          isEnabled: a?.isEnabled || false,
+          enabledAt: a?.enabledAt || null,
+        };
+      }).sort((a, b) => a.name.localeCompare(b.name));
+      res.json(out);
+    } catch (e: any) {
+      console.error('GET /api/repescagem/attendants', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Habilitar/desabilitar a si mesmo
+  app.post('/api/repescagem/attendants/me', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+    try {
+      const userId = (req as any).currentUser?.id;
+      const { isEnabled } = req.body || {};
+      if (!userId) return res.status(401).json({ message: 'no user' });
+      const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      if (existing.length === 0) {
+        await db.insert(repescagemAttendants).values({
+          userId,
+          isEnabled: !!isEnabled,
+          enabledAt: isEnabled ? new Date() : null,
+          disabledAt: !isEnabled ? new Date() : null,
+        });
+      } else {
+        await db.update(repescagemAttendants).set({
+          isEnabled: !!isEnabled,
+          enabledAt: isEnabled ? new Date() : existing[0].enabledAt,
+          disabledAt: !isEnabled ? new Date() : existing[0].disabledAt,
+          updatedAt: new Date(),
+        }).where(eq(repescagemAttendants.userId, userId));
+      }
+      // Reconciliar (redistribuição em cascata)
+      await reconcileAssignments(userId);
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/attendants/me', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Lista de atribuições enriquecida (clientes para repescagem com atendente atribuído)
+  app.get('/api/repescagem/assignments', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+    try {
+      // Reconciliar primeiro
+      await reconcileAssignments((req as any).currentUser?.id);
+
+      const pending = await db.select().from(repescagemAssignments)
+        .where(eq(repescagemAssignments.status, 'pending'));
+
+      // Carregar nomes de atendentes
+      const userIds = Array.from(new Set(pending.map(p => p.assignedUserId)));
+      const allUsersList = userIds.length === 0 ? [] : await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      }).from(users).where(inArray(users.id, userIds));
+      const userNameById = new Map(allUsersList.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
+
+      // Carregar dados dos clientes
+      const customerIds = Array.from(new Set(pending.map(p => p.customerId)));
+      const cs = customerIds.length === 0 ? [] : await db.select({
+        id: customers.id,
+        name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+        sellerId: customers.sellerId,
+        weekdays: customers.weekdays,
+        periodicity: customers.visitPeriodicity,
+        phone: customers.phone,
+        city: customers.city,
+        neighborhood: customers.neighborhood,
+      }).from(customers).where(inArray(customers.id, customerIds));
+      const customerById = new Map(cs.map(c => [c.id, c]));
+
+      // Sellers
+      const sellerIds = Array.from(new Set(cs.map(c => c.sellerId).filter(Boolean) as string[]));
+      const sellersList = sellerIds.length === 0 ? [] : await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      }).from(users).where(inArray(users.id, sellerIds));
+      const sellerNameById = new Map(sellersList.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
+
+      const today = brTodayStr();
+      const assignedCustomerIds = new Set(pending.map(p => p.customerId));
+      const result = pending.map(p => {
+        const c = customerById.get(p.customerId);
+        const days = Math.floor((new Date(today).getTime() - new Date(p.lastRedDate).getTime()) / 86400000);
+        return {
+          assignmentId: p.id,
+          customerId: p.customerId,
+          customerName: c?.name || 'Sem nome',
+          customerPhone: c?.phone || null,
+          customerCity: c?.city || null,
+          customerNeighborhood: c?.neighborhood || null,
+          sellerId: c?.sellerId || null,
+          sellerName: c?.sellerId ? sellerNameById.get(c.sellerId) : null,
+          periodicity: c?.periodicity || 'semanal',
+          weekdays: (c?.weekdays as unknown as string[]) || [],
+          lastRedDate: p.lastRedDate,
+          daysSince: days,
+          assignedUserId: p.assignedUserId,
+          assignedUserName: userNameById.get(p.assignedUserId) || p.assignedUserId,
+          assignedAt: p.assignedAt,
+          unassigned: false,
+        };
+      });
+
+      // Incluir candidatos da repescagem que ainda não têm atribuição
+      // (acontece quando nenhum atendente está habilitado)
+      const _today = brTodayStr();
+      const _start = (() => { const d = new Date(_today); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0]; })();
+      const _end = (() => { const d = new Date(_today); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })();
+      const allCandidates = await computeRedCandidates({ startDate: _start, endDate: _end });
+      const orphanCustomerIds = allCandidates
+        .filter(c => !assignedCustomerIds.has(c.customerId))
+        .map(c => c.customerId);
+      if (orphanCustomerIds.length > 0) {
+        const orphanCustomers = await db.select({
+          id: customers.id,
+          name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+          sellerId: customers.sellerId,
+          weekdays: customers.weekdays,
+          periodicity: customers.visitPeriodicity,
+          phone: customers.phone,
+          city: customers.city,
+          neighborhood: customers.neighborhood,
+        }).from(customers).where(inArray(customers.id, orphanCustomerIds));
+        const orphanById = new Map(orphanCustomers.map(c => [c.id, c]));
+        const orphanSellerIds = Array.from(new Set(orphanCustomers.map(c => c.sellerId).filter(Boolean) as string[]));
+        const newSellerIds = orphanSellerIds.filter(id => !sellerNameById.has(id));
+        if (newSellerIds.length > 0) {
+          const more = await db.select({
+            id: users.id, firstName: users.firstName, lastName: users.lastName,
+          }).from(users).where(inArray(users.id, newSellerIds));
+          for (const u of more) sellerNameById.set(u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id);
+        }
+        for (const cand of allCandidates) {
+          if (assignedCustomerIds.has(cand.customerId)) continue;
+          const c = orphanById.get(cand.customerId);
+          const days = Math.floor((new Date(today).getTime() - new Date(cand.lastRedDate).getTime()) / 86400000);
+          result.push({
+            assignmentId: '',
+            customerId: cand.customerId,
+            customerName: c?.name || cand.customerName || 'Sem nome',
+            customerPhone: c?.phone || null,
+            customerCity: c?.city || null,
+            customerNeighborhood: c?.neighborhood || null,
+            sellerId: c?.sellerId || null,
+            sellerName: c?.sellerId ? (sellerNameById.get(c.sellerId) || null) : null,
+            periodicity: c?.periodicity || cand.periodicity || 'semanal',
+            weekdays: (c?.weekdays as unknown as string[]) || cand.weekdays || [],
+            lastRedDate: cand.lastRedDate,
+            daysSince: days,
+            assignedUserId: '',
+            assignedUserName: '',
+            assignedAt: '' as any,
+            unassigned: true,
+          });
+        }
+      }
+
+      result.sort((a, b) => b.lastRedDate.localeCompare(a.lastRedDate));
+
+      res.json(result);
+    } catch (e: any) {
+      console.error('GET /api/repescagem/assignments', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Histórico de uma atribuição/cliente
+  app.get('/api/repescagem/history/:customerId', authenticateUser, requireRole(ALLOWED_ROLES), async (req, res) => {
+    try {
+      const { customerId } = req.params;
+      const rows = await db.select().from(repescagemAssignmentHistory)
+        .where(eq(repescagemAssignmentHistory.customerId, customerId))
+        .orderBy(desc(repescagemAssignmentHistory.createdAt));
+      const userIds = Array.from(new Set([
+        ...rows.map(r => r.fromUserId).filter(Boolean) as string[],
+        ...rows.map(r => r.toUserId).filter(Boolean) as string[],
+      ]));
+      const us = userIds.length === 0 ? [] : await db.select({
+        id: users.id, firstName: users.firstName, lastName: users.lastName,
+      }).from(users).where(inArray(users.id, userIds));
+      const nameById = new Map(us.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim()]));
+      res.json(rows.map(r => ({
+        ...r,
+        fromUserName: r.fromUserId ? nameById.get(r.fromUserId) || r.fromUserId : null,
+        toUserName: r.toUserId ? nameById.get(r.toUserId) || r.toUserId : null,
+      })));
+    } catch (e: any) {
+      console.error('GET /api/repescagem/history', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Estatísticas: contagem de atendimentos completos por usuário num intervalo
+  app.get('/api/repescagem/stats', authenticateUser, requireRole(ALLOWED_ROLES), async (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '');
+      const endDate = String(req.query.endDate || '');
+      if (!startDate || !endDate) return res.status(400).json({ message: 'startDate/endDate' });
+
+      const rows = await db.select().from(repescagemAssignments).where(
+        and(
+          eq(repescagemAssignments.status, 'completed'),
+          gte(repescagemAssignments.completedAt, new Date(`${startDate}T00:00:00-03:00`)),
+          lte(repescagemAssignments.completedAt, new Date(`${endDate}T23:59:59-03:00`)),
+        )
+      );
+
+      const counts = new Map<string, number>();
+      for (const r of rows) {
+        const uid = r.completedByUserId || r.assignedUserId;
+        if (!uid) continue;
+        counts.set(uid, (counts.get(uid) || 0) + 1);
+      }
+      const userIds = Array.from(counts.keys());
+      const us = userIds.length === 0 ? [] : await db.select({
+        id: users.id, firstName: users.firstName, lastName: users.lastName,
+      }).from(users).where(inArray(users.id, userIds));
+      const nameById = new Map(us.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
+      const result = Array.from(counts.entries()).map(([userId, count]) => ({
+        userId,
+        userName: nameById.get(userId) || userId,
+        count,
+      })).sort((a, b) => b.count - a.count);
+      res.json({ total: rows.length, perUser: result });
+    } catch (e: any) {
+      console.error('GET /api/repescagem/stats', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+}
