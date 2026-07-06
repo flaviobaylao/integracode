@@ -1,4 +1,4 @@
-import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
+import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton, useTableSort, SortableTh } from "@/lib/tableTools";
 import { useState, useMemo, useEffect } from "react";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
@@ -66,7 +66,7 @@ export default function VirtualClientsToday() {
   const [selectedSeller, setSelectedSeller] = useState("");
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
-  const [sortAZ, setSortAZ] = useState(false);
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState("");
   const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
@@ -169,8 +169,17 @@ export default function VirtualClientsToday() {
       return true;
     });
   }, [activeCustomers, searchTerm, selectedSeller, sellerMulti, resolveSeller, selectedDayOfRoute, selectedPeriodicity, selectedDate, daysOfRoute]);
-  const clientsView = [...filteredClients];
-  if (sortAZ) clientsView.sort((a, b) => String(a.customer?.name || a.fantasyNameImported || "").localeCompare(String(b.customer?.name || b.fantasyNameImported || "")));
+  const clientsView = sortRows(filteredClients, (client: any, key: string) => {
+      switch (key) {
+        case 'nome': return client.customer?.fantasyName || client.customer?.name || client.fantasyNameImported || '';
+        case 'doc': return client.document || '';
+        case 'telefone': return client.customer?.phone || '';
+        case 'vendedor': return client.customer?.sellerName || '';
+        case 'dia': return Array.isArray(client.customer?.weekdays) ? client.customer.weekdays.join(', ') : (client.customer?.weekdays || '');
+        case 'periodicidade': return client.customer?.visitPeriodicity || '';
+        default: return '';
+      }
+    });
 
 
   const handleClearFilters = () => {
@@ -332,7 +341,7 @@ export default function VirtualClientsToday() {
                 data-testid="input-date-filter"
               />
 
-              <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-virtual">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
+              
               <ExportExcelButton testId="export-virtual" onClick={() => exportToExcel(clientsView.map((c) => ({ Nome: c.customer?.fantasyName || c.customer?.name || c.fantasyNameImported || "", Documento: c.document, Telefone: c.customer?.phone, Vendedor: resolveSeller(c.customer?.sellerName || c.customer?.sellerId), Dia: Array.isArray(c.customer?.weekdays) ? (c.customer?.weekdays as any[]).join(", ") : c.customer?.weekdays || "", Periodicidade: c.customer?.visitPeriodicity })), "clientes-virtuais-do-dia")} />
               <Button
                 variant="outline"
@@ -372,12 +381,12 @@ export default function VirtualClientsToday() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Nome</TableHead>
-                    <TableHead>CPF/CNPJ</TableHead>
-                    <TableHead>Telefone</TableHead>
-                    <TableHead>Vendedor</TableHead>
-                    <TableHead>Dia da Semana</TableHead>
-                    <TableHead>Periodicidade</TableHead>
+                    <SortableTh label="Nome" colKey="nome" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="CPF/CNPJ" colKey="doc" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="Telefone" colKey="telefone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="Vendedor" colKey="vendedor" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="Dia da Semana" colKey="dia" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="Periodicidade" colKey="periodicidade" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                     <TableHead>Ação</TableHead>
                   </TableRow>
                 </TableHeader>
