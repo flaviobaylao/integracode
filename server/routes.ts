@@ -17723,10 +17723,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const subjectLine = subjectMatch ? subjectMatch[1] : '';
       const cnMatch = subjectLine.match(/CN\s*=\s*([^,/\n]+)/i);
       const companyName = cnMatch ? cnMatch[1].trim() : 'Desconhecido';
-      let cnpj = '';
-      const cnpjMatch = certDetails.match(/\d{14}/);
-      if (cnpjMatch) cnpj = cnpjMatch[0];
+      // CNPJ real = do CN do e-CNPJ ("RAZAO SOCIAL:CNPJ"); certDetails (serial/issuer) so como ultimo recurso.
+      let cnpj = (companyName.match(/\d{14}/) || [])[0] || '';
       if (!cnpj) { const m = subjectLine.match(/\d{14}/); if (m) cnpj = m[0]; }
+      if (!cnpj) { const m2 = certDetails.match(/\d{14}/); if (m2) cnpj = m2[0]; }
 
       const issuerMatch = certDetails.match(/issuer\s*=\s*(.*)/i);
       const issuerCnMatch = (issuerMatch?.[1] || '').match(/CN\s*=\s*([^,/\n]+)/i);
