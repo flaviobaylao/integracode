@@ -10,6 +10,8 @@ import {
   multiMatch,
   exportToExcel,
   ExportExcelButton,
+  useTableSort,
+  SortableTh,
 } from "@/lib/tableTools";
 
 // VIGIA 2A — Radar de Churn por cadência.
@@ -123,6 +125,9 @@ export default function RadarChurn() {
       multiMatch(sellerMulti, resolveSeller(s.sellerName || s.sellerId)),
     );
   }, [data, sellerMulti, resolveSeller]);
+
+  const sort1 = useTableSort();
+  const sort2 = useTableSort();
 
   const clientesPorVendedor = useMemo(() => {
     const map = new Map<string, Cliente[]>();
@@ -301,19 +306,19 @@ export default function RadarChurn() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left border-b [&>th]:py-2 [&>th]:pr-3 [&>th]:sticky [&>th]:top-0 [&>th]:bg-background">
-                <th>Vendedor</th>
-                <th className="text-right">Total</th>
-                <th className="text-right">Em dia</th>
-                <th className="text-right">Esfriando</th>
-                <th className="text-right">Em risco</th>
-                <th className="text-right">Perdido</th>
-                <th className="text-right">Sem hist.</th>
-                <th className="text-right">Valor em risco</th>
+                <SortableTh label="Vendedor" colKey="vendedor" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} />
+                <SortableTh label="Total" colKey="total" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Em dia" colKey="emdia" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Esfriando" colKey="esfriando" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Em risco" colKey="emrisco" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Perdido" colKey="perdido" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Sem hist." colKey="semhist" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Valor em risco" colKey="valor" sortKey={sort1.sortKey} sortDir={sort1.sortDir} onSort={sort1.toggleSort} align="right" className="text-right" />
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {linhas.map((s) => {
+              {sort1.sortRows(linhas, (s: any, key: string) => { switch (key) { case 'vendedor': return s.sellerName || ''; case 'total': return Number(s.total || 0); case 'emdia': return Number(s.em_dia || 0); case 'esfriando': return Number(s.esfriando || 0); case 'emrisco': return Number(s.em_risco || 0); case 'perdido': return Number(s.perdido || 0); case 'semhist': return Number(s.sem_historico || 0); case 'valor': return Number(s.valorEmRisco || 0); default: return ''; } }).map((s) => {
                 const clis = clientesPorVendedor.get(s.sellerName) || [];
                 return (
                   <>
@@ -412,14 +417,14 @@ export default function RadarChurn() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left border-b [&>th]:py-2 [&>th]:pr-3 [&>th]:sticky [&>th]:top-0 [&>th]:bg-background">
-                <th>Vendedor</th>
-                <th className="text-right">Perdidos</th>
-                <th className="text-right">Valor perdido (6m)</th>
+                <SortableTh label="Vendedor" colKey="vendedor" sortKey={sort2.sortKey} sortDir={sort2.sortDir} onSort={sort2.toggleSort} />
+                <SortableTh label="Perdidos" colKey="perdidos" sortKey={sort2.sortKey} sortDir={sort2.sortDir} onSort={sort2.toggleSort} align="right" className="text-right" />
+                <SortableTh label="Valor perdido (6m)" colKey="valor6m" sortKey={sort2.sortKey} sortDir={sort2.sortDir} onSort={sort2.toggleSort} align="right" className="text-right" />
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {carteiraPerdida.map((g) => (
+              {sort2.sortRows(carteiraPerdida, (g: any, key: string) => { switch (key) { case 'vendedor': return g.sellerName || ''; case 'perdidos': return g.clientes ? g.clientes.length : 0; case 'valor6m': return Number(g.valor6m || 0); default: return ''; } }).map((g) => (
                 <>
                   <tr
                     key={g.sellerName}
