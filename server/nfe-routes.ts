@@ -568,14 +568,16 @@ export function registerNfeRoutes(app: Express) {
       }
 
       // Auto-preenche IE do destinatario a partir do cadastro (contribuinte ICMS)
-      if ((invoiceFields as any).customerId && !(invoiceFields as any).customerIe) {
-        try {
-          const __custIe = await storage.getCustomer((invoiceFields as any).customerId);
-          if (__custIe && (__custIe as any).stateRegistration) {
-            (invoiceFields as any).customerIe = String((__custIe as any).stateRegistration).trim();
-          }
-        } catch (e) {}
-      }
+      if ((invoiceFields as any).customerCnpjCpf && !(invoiceFields as any).customerIe) {
+      try {
+        const __doc = String((invoiceFields as any).customerCnpjCpf).replace(/\D/g, '');
+        if (__doc.length >= 11) {
+          const __ieRes: any = await db.execute(sql`SELECT state_registration FROM customers WHERE regexp_replace(coalesce(cnpj, ''), '[^0-9]', '', 'g') = ${__doc} OR regexp_replace(coalesce(cpf, ''), '[^0-9]', '', 'g') = ${__doc} LIMIT 1`);
+          const __ie = __ieRes && __ieRes.rows && __ieRes.rows[0] && __ieRes.rows[0].state_registration;
+          if (__ie) (invoiceFields as any).customerIe = String(__ie).trim();
+        }
+      } catch (e) {}
+    }
       // Numeracao por CNPJ emitente + serie (cada CNPJ tem sequencia SEFAZ propria).
       const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1', (invoiceFields as any).issuerCnpj);
       
