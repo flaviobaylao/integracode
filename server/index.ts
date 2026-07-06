@@ -10,6 +10,7 @@ import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
+import { authenticateUser, requireRole } from './authMiddleware';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -134,7 +135,7 @@ run();
   });
 
   const server = await registerRoutes(app);
-  try { registerRepescagemRoutes(app); } catch (e) { console.error('[repescagem routes]', e); }
+  try { registerRepescagemRoutes(app, { authenticateUser, requireRole }); } catch (e) { console.error('[repescagem routes]', e); }
 
   app.post('/api/admin/sync/customer-ie', async (req, res) => {
     const apply = !!(req.body && req.body.apply === true);
