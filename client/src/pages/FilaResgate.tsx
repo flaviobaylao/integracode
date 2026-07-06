@@ -10,6 +10,8 @@ import {
   multiMatch,
   exportToExcel,
   ExportExcelButton,
+  useTableSort,
+  SortableTh,
 } from "@/lib/tableTools";
 
 // VIGIA 3A — Fila de Resgate (telemarketing). Fonte: /api/admin/churn/resgate-queue
@@ -109,6 +111,20 @@ export default function FilaResgate() {
       multiMatch(sellerMulti, resolveSeller(i.seller_name || "")),
     );
   }, [data, sellerMulti, resolveSeller]);
+
+  const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
+  const itensSorted = sortRows(itens, (i: any, key: string) => {
+    switch (key) {
+      case 'cliente': return i.customer_name || '';
+      case 'vendedor': return i.seller_name || '';
+      case 'faixa': return i.faixa || '';
+      case 'dias': return Number(i.dias_sem_compra || 0);
+      case 'valor6m': return Number(i.valor_6m || 0);
+      case 'contato': return i.telefone || '';
+      case 'status': return i.status || '';
+      default: return '';
+    }
+  });
 
   const abrirDesfecho = (id: string, statusAtual: string) => {
     setEditId(id);
@@ -236,18 +252,18 @@ export default function FilaResgate() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left border-b [&>th]:py-2 [&>th]:pr-3 [&>th]:sticky [&>th]:top-0 [&>th]:bg-background">
-                <th>Cliente</th>
-                <th>Vendedor</th>
-                <th>Faixa</th>
-                <th className="text-right">Dias</th>
-                <th className="text-right">Valor 6m</th>
-                <th>Contato</th>
-                <th>Status</th>
+                <SortableTh label="Cliente" colKey="cliente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Vendedor" colKey="vendedor" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Faixa" colKey="faixa" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Dias" colKey="dias" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="text-right" />
+                <SortableTh label="Valor 6m" colKey="valor6m" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="text-right" />
+                <SortableTh label="Contato" colKey="contato" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {itens.map((i) => (
+              {itensSorted.map((i) => (
                 <>
                   <tr
                     key={i.id}
