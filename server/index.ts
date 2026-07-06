@@ -140,10 +140,12 @@ run();
     (async () => {
       try {
         await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
-        const { Pool } = await import('@neondatabase/serverless');
-        const pool = new Pool({ connectionString: process.env.REPLIT_DATABASE_URL });
-        const srcRes = await pool.query("SELECT cnpj, cpf, state_registration AS ie FROM customers WHERE state_registration IS NOT NULL AND btrim(state_registration) <> ''");
-        await pool.end();
+                const pgMod = await import('pg');
+        const PgClient = (pgMod.default && pgMod.default.Client) || pgMod.Client;
+        const client = new PgClient({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        await client.connect();
+        const srcRes = await client.query("SELECT cnpj, cpf, state_registration AS ie FROM customers WHERE state_registration IS NOT NULL AND btrim(state_registration) <> ''");
+        await client.end();
         let seen = 0, updated = 0;
         for (const row of srcRes.rows) {
           const doc = String(row.cnpj || row.cpf || '').replace(/\D/g, '');
