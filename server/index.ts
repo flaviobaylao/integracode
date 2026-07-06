@@ -134,6 +134,40 @@ run();
 
   const server = await registerRoutes(app);
 
+  app.post('/api/admin/sync/customer-ie', async (req, res) => {
+    const apply = !!(req.body && req.body.apply === true);
+    res.json({ started: true, apply });
+    (async () => {
+      try {
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
+        const { Pool } = await import('@neondatabase/serverless');
+        const pool = new Pool({ connectionString: process.env.REPLIT_DATABASE_URL });
+        const srcRes = await pool.query("SELECT cnpj, cpf, state_registration AS ie FROM customers WHERE state_registration IS NOT NULL AND btrim(state_registration) <> ''");
+        await pool.end();
+        let seen = 0, updated = 0;
+        for (const row of srcRes.rows) {
+          const doc = String(row.cnpj || row.cpf || '').replace(/\D/g, '');
+          const ie = String(row.ie || '').trim();
+          if (doc.length < 11 || !ie) continue;
+          seen++;
+          if (apply) {
+            const u = await db.execute(sql`UPDATE customers SET state_registration = ${ie} WHERE (regexp_replace(coalesce(cnpj, ''), '[^0-9]', '', 'g') = ${doc} OR regexp_replace(coalesce(cpf, ''), '[^0-9]', '', 'g') = ${doc}) AND (state_registration IS NULL OR btrim(state_registration) = '')`);
+            updated += ((u).rowCount || 0);
+          }
+        }
+        const summary = JSON.stringify({ seen, updated, apply, at: new Date().toISOString() });
+        await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('customer_ie_sync_last', ${summary}, 'nfe-port') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'nfe-port'`);
+      } catch (e) { console.error('[customer-ie sync]', e); }
+    })();
+  });
+
+  app.get('/api/admin/sync/customer-ie/status', async (req, res) => {
+    try {
+      const r = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'customer_ie_sync_last'`);
+      res.json({ last: (r.rows && r.rows[0]) ? r.rows[0].value : null });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
   app.get('/api/admin/nfe/cert-upload', (req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(Buffer.from('PCFkb2N0eXBlIGh0bWw+PGh0bWwgbGFuZz0icHQtYnIiPjxoZWFkPjxtZXRhIGNoYXJzZXQ9InV0Zi04Ij48bWV0YSBuYW1lPSJ2aWV3cG9ydCIgY29udGVudD0id2lkdGg9ZGV2aWNlLXdpZHRoLGluaXRpYWwtc2NhbGU9MSI+PHRpdGxlPlVwbG9hZCBDZXJ0aWZpY2FkbyBBMTwvdGl0bGU+PHN0eWxlPmJvZHl7Zm9udC1mYW1pbHk6c3lzdGVtLXVpLEFyaWFsLHNhbnMtc2VyaWY7bWF4LXdpZHRoOjU2MHB4O21hcmdpbjo0MHB4IGF1dG87cGFkZGluZzowIDE2cHg7Y29sb3I6IzExMX1oMXtmb250LXNpemU6MjBweH1sYWJlbHtkaXNwbGF5OmJsb2NrO21hcmdpbjoxNHB4IDAgNHB4O2ZvbnQtd2VpZ2h0OjYwMH1pbnB1dHt3aWR0aDoxMDAlO3BhZGRpbmc6MTBweDtib3JkZXI6MXB4IHNvbGlkICNjY2M7Ym9yZGVyLXJhZGl1czo4cHg7Ym94LXNpemluZzpib3JkZXItYm94fWJ1dHRvbnttYXJnaW4tdG9wOjE4cHg7cGFkZGluZzoxMnB4IDE4cHg7YmFja2dyb3VuZDojMUY2RjQzO2NvbG9yOiNmZmY7Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czo4cHg7Zm9udC1zaXplOjE1cHg7Y3Vyc29yOnBvaW50ZXJ9I291dHttYXJnaW4tdG9wOjE4cHg7d2hpdGUtc3BhY2U6cHJlLXdyYXA7YmFja2dyb3VuZDojZjVmNWY1O3BhZGRpbmc6MTJweDtib3JkZXItcmFkaXVzOjhweH1zbWFsbHtjb2xvcjojNjY2fTwvc3R5bGU+PC9oZWFkPjxib2R5PjxoMT5VcGxvYWQgZGUgQ2VydGlmaWNhZG8gQTEgKE5GLWUpPC9oMT48cD48c21hbGw+RW52aWUgbyAucGZ4Ly5wMTIgZSBhIHNlbmhhLiBGaWNhIGNpZnJhZG8gbm8gYmFuY28uIEVzdGVqYSBsb2dhZG8gbm8gSU5URUdSQSAyLjAgbmVzdGEgbWVzbWEgamFuZWxhLjwvc21hbGw+PC9wPjxsYWJlbD5BcnF1aXZvIC5wZnggLyAucDEyPC9sYWJlbD48aW5wdXQgaWQ9ImYiIHR5cGU9ImZpbGUiIGFjY2VwdD0iLnBmeCwucDEyIj48bGFiZWw+U2VuaGEgZG8gY2VydGlmaWNhZG88L2xhYmVsPjxpbnB1dCBpZD0icCIgdHlwZT0icGFzc3dvcmQiIGF1dG9jb21wbGV0ZT0ib2ZmIj48YnV0dG9uIGlkPSJiIj5FbnZpYXIgY2VydGlmaWNhZG88L2J1dHRvbj48ZGl2IGlkPSJvdXQiPjwvZGl2PjxzY3JpcHQ+ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoImIiKS5vbmNsaWNrPWFzeW5jIGZ1bmN0aW9uKCl7dmFyIG91dD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgib3V0Iik7dmFyIGY9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoImYiKS5maWxlc1swXTt2YXIgcD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgicCIpLnZhbHVlO2lmKCFmKXtvdXQudGV4dENvbnRlbnQ9IlNlbGVjaW9uZSBvIGFycXVpdm8gLnBmeCI7cmV0dXJufW91dC50ZXh0Q29udGVudD0iRW52aWFuZG8uLi4iO3ZhciBmZD1uZXcgRm9ybURhdGEoKTtmZC5hcHBlbmQoInBmeEZpbGUiLGYpO2ZkLmFwcGVuZCgicGFzc3dvcmQiLHApO3RyeXt2YXIgcj1hd2FpdCBmZXRjaCgiL2FwaS9kaWdpdGFsLWNlcnRpZmljYXRlcyIse21ldGhvZDoiUE9TVCIsYm9keTpmZCxjcmVkZW50aWFsczoiaW5jbHVkZSJ9KTt2YXIgaj17fTt0cnl7aj1hd2FpdCByLmpzb24oKX1jYXRjaChlKXt9aWYoci5vayl7b3V0LnRleHRDb250ZW50PSJPSyEgQ2VydGlmaWNhZG8gY2FkYXN0cmFkbzogIitKU09OLnN0cmluZ2lmeShqKX1lbHNle291dC50ZXh0Q29udGVudD0iRVJSTyAoIityLnN0YXR1cysiKTogIisoai5tZXNzYWdlfHxKU09OLnN0cmluZ2lmeShqKSl9fWNhdGNoKGUpe291dC50ZXh0Q29udGVudD0iRmFsaGE6ICIrZX19PC9zY3JpcHQ+PC9ib2R5PjwvaHRtbD4=', 'base64').toString('utf8')); });
   registerPaymentVerificationRoutes(app);
 
@@ -1891,6 +1925,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE digital_certificates ADD COLUMN IF NOT EXISTS pfx_data varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
