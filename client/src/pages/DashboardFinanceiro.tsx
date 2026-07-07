@@ -69,6 +69,16 @@ export default function DashboardFinanceiro() {
     };
   });
 
+  const fluxoDiario: any[] = data?.fluxoDiario || [];
+  const fmtDia = (d: string) => { const pp = String(d || '').split('-'); return pp.length === 3 ? pp[2] + '/' + pp[1] : d; };
+  const fluxoDiarioChart = fluxoDiario.map((d: any) => ({
+    dia: fmtDia(d.dia),
+    Entradas: Number(d.entradas || 0),
+    Saidas: Number(d.saidas || 0),
+    Saldo: Number(d.saldo || 0),
+    Acumulado: Number(d.saldoAcumulado || 0),
+  }));
+
   const pagarHoje: any[] = data?.pagarHoje || [];
   const pagarVencidas: any[] = data?.pagarVencidas || [];
   const receberHoje: any[] = data?.receberHoje || [];
@@ -156,6 +166,56 @@ export default function DashboardFinanceiro() {
                   ))}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+
+          {/* Fluxo de caixa DIARIO - proximos 30 dias */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-blue-600" />
+                Fluxo de Caixa — Próximos 30 dias (por dia)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={fluxoDiarioChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="dia" fontSize={10} interval={2} />
+                    <YAxis fontSize={11} tickFormatter={(v: any) => (Number(v) / 1000).toFixed(0) + "k"} />
+                    <Tooltip formatter={(v: any) => fmt(v)} />
+                    <Legend />
+                    <Bar dataKey="Entradas" fill="#16a34a" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="Saidas" name="Saídas" fill="#dc2626" radius={[3, 3, 0, 0]} />
+                    <Line type="monotone" dataKey="Acumulado" stroke="#2563eb" strokeWidth={2} dot={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="max-h-80 overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Dia</TableHead>
+                      <TableHead className="text-right">Entradas (a receber)</TableHead>
+                      <TableHead className="text-right">Saídas (a pagar)</TableHead>
+                      <TableHead className="text-right">Saldo do dia</TableHead>
+                      <TableHead className="text-right">Saldo acumulado</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {fluxoDiarioChart.map((d) => (
+                      <TableRow key={d.dia}>
+                        <TableCell className="font-medium">{d.dia}</TableCell>
+                        <TableCell className="text-right text-green-700">{d.Entradas ? fmt(d.Entradas) : "—"}</TableCell>
+                        <TableCell className="text-right text-red-700">{d.Saidas ? fmt(d.Saidas) : "—"}</TableCell>
+                        <TableCell className={`text-right font-medium ${d.Saldo < 0 ? "text-red-700" : d.Saldo > 0 ? "text-green-700" : ""}`}>{d.Saldo ? fmt(d.Saldo) : "—"}</TableCell>
+                        <TableCell className={`text-right font-bold ${d.Acumulado < 0 ? "text-red-700" : ""}`}>{fmt(d.Acumulado)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
