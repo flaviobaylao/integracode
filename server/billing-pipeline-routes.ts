@@ -733,6 +733,21 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     createdBy: user?.email || null,
   });
 
+  // AUTO-EMISSAO: transmite a NF-e para a SEFAZ (autoriza) logo apos criar o rascunho.
+  // Sem isto a NF fica em 'draft' (Rascunho) e NAO tem valor fiscal. Robusto: falha nao bloqueia
+  // o faturamento (a NF fica em rascunho e pode ser transmitida manualmente pelo botao Transmitir).
+  try {
+    const { sefazService } = await import('./sefaz-service.js');
+    const emitRes = await sefazService.emitNfe(invoice.id);
+    if (emitRes?.success) {
+      console.log(`[NFE-AUTO] NF-e #${nextNumber} AUTORIZADA automaticamente (${invEnv})`);
+    } else {
+      console.warn(`[NFE-AUTO] NF-e #${nextNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
+    }
+  } catch (e: any) {
+    console.warn(`[NFE-AUTO] erro ao transmitir NF-e #${nextNumber} (fica em rascunho):`, e?.message);
+  }
+
   return invoice;
 }
 
