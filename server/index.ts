@@ -1450,6 +1450,16 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const fr = new Map(fluxoRec.map((r: any) => [r.mes, Number(r.v)]));
       const fp = new Map(fluxoPay.map((r: any) => [r.mes, Number(r.v)]));
       const fluxo = meses.map((m) => ({ mes: m, entradas: fr.get(m) || 0, saidas: fp.get(m) || 0 }));
+      // Fluxo de caixa DIARIO — proximos 30 dias (hoje..hoje+29), com saldo do dia e acumulado
+      const winRecD = openRec + " AND due_date::date >= " + HOJE + " AND due_date::date < " + HOJE + " + 30";
+      const winPayD = openPay + " AND due_date::date >= " + HOJE + " AND due_date::date < " + HOJE + " + 30";
+      const fluxoRecD = await many("SELECT due_date::date::text AS dia, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v " + winRecD + " GROUP BY 1");
+      const fluxoPayD = await many("SELECT due_date::date::text AS dia, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v " + winPayD + " GROUP BY 1");
+      const frD = new Map(fluxoRecD.map((r: any) => [r.dia, Number(r.v)]));
+      const fpD = new Map(fluxoPayD.map((r: any) => [r.dia, Number(r.v)]));
+      const diasD = await many("SELECT (" + HOJE + " + g)::text AS dia FROM generate_series(0,29) g ORDER BY 1");
+      let accD = 0;
+      const fluxoDiario = diasD.map((row: any) => { const e = frD.get(row.dia) || 0; const s = fpD.get(row.dia) || 0; accD += (e - s); return { dia: row.dia, entradas: e, saidas: s, saldo: e - s, saldoAcumulado: accD }; });
       const pagarHoje = await many("SELECT title_number AS titulo, supplier_name AS fornecedor, description AS descricao, due_date AS vencimento, (amount - COALESCE(amount_paid,0))::float AS saldo " + openPay + " AND due_date::date = " + HOJE + " ORDER BY saldo DESC LIMIT 100");
       const pagarVencidas = await many("SELECT title_number AS titulo, supplier_name AS fornecedor, description AS descricao, due_date AS vencimento, (amount - COALESCE(amount_paid,0))::float AS saldo " + openPay + " AND due_date::date < " + HOJE + " ORDER BY due_date ASC LIMIT 100");
       const receberHoje = await many("SELECT title_number AS titulo, customer_name AS cliente, (amount - COALESCE(amount_paid,0))::float AS saldo " + openRec + " AND due_date::date = " + HOJE + " ORDER BY saldo DESC LIMIT 100");
@@ -1468,7 +1478,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
           receberHoje: Number(kr.v_hoje || 0), receberHojeN: Number(kr.n_hoje || 0),
           pagarHoje: Number(kp.v_hoje || 0), pagarHojeN: Number(kp.n_hoje || 0)
         },
-        fluxo, pagarHoje, pagarVencidas, receberHoje, agingReceber, agingPagar, topDevedores
+        fluxo, fluxoDiario, pagarHoje, pagarVencidas, receberHoje, agingReceber, agingPagar, topDevedores
       });
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
   });
