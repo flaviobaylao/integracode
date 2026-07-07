@@ -1590,6 +1590,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const value = req.body[key];
         if (['latitude', 'longitude', 'lastSaleValue'].includes(key)) {
           cleanedData[key] = value === '' ? null : value;
+        } else if (['cpf', 'cnpj', 'document'].includes(key)) {
+          // Documento vazio/em branco -> NULL (evita colisao na unique constraint
+          // customers_cpf_unique/cnpj quando o cliente nao tem CPF/CNPJ).
+          const digits = String(value ?? '').replace(/\D/g, '');
+          cleanedData[key] = digits.length ? value : null;
         } else {
           cleanedData[key] = value;
         }
@@ -2091,6 +2096,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+        ...(req.body.cpf !== undefined && { cpf: (String(req.body.cpf ?? '').replace(/\D/g, '').length ? req.body.cpf : null) }),
+        ...(req.body.cnpj !== undefined && { cnpj: (String(req.body.cnpj ?? '').replace(/\D/g, '').length ? req.body.cnpj : null) }),
+        ...(req.body.document !== undefined && { document: (String(req.body.document ?? '').replace(/\D/g, '').length ? req.body.document : null) }),
         serviceStartDate: req.body.serviceStartDate 
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
           : undefined,
