@@ -508,16 +508,23 @@ export function registerNfeRoutes(app: Express) {
       }
 
       const allInvoices = await storage.getFiscalInvoices();
-      const matched = allInvoices.filter(inv => {
-        const num = inv.invoiceNumber?.toString();
-        return invoiceNumbers.some((n: string) => {
-          const clean = n.replace('NF-', '');
-          return num === clean;
-        });
-      });
-
+      // Para cada numero pedido, pode haver MAIS DE UMA nota com o mesmo numero
+      // (ex.: teste de homologacao e a real de producao compartilham numeracao).
+      // Escolhe a MELHOR: producao + autorizada primeiro, depois producao, depois
+      // autorizada, e por fim a mais recente. Evita imprimir a DANFE de homologacao/cancelada.
+      const score = (i: any) => (i.environment === 'producao' ? 2 : 0) + (i.status === 'authorized' ? 1 : 0);
       const results = [];
-      for (const inv of matched) {
+      const seen = new Set<string>();
+      for (const raw of invoiceNumbers as string[]) {
+        const clean = String(raw).replace('NF-', '').trim();
+        if (seen.has(clean)) continue;
+        seen.add(clean);
+        const candidates = allInvoices.filter(inv => inv.invoiceNumber?.toString() === clean);
+        if (!candidates.length) continue;
+        candidates.sort((a: any, b: any) =>
+          (score(b) - score(a)) ||
+          (new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
+        const inv = candidates[0];
         const items = await storage.getFiscalInvoiceItems(inv.id);
         results.push({ ...inv, items });
       }
