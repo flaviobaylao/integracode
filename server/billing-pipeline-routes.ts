@@ -817,7 +817,7 @@ async function generatePixForReceivable(receivable: any, item: any): Promise<voi
       debtorName: receivable.customerName || customer?.name || 'Cliente',
       debtorDocument: receivable.customerDocument || customer?.cnpj || customer?.cpf || undefined,
       description: `Pedido ${item.orderNumber || item.salesCardId || ''}`.trim(),
-      expirationSeconds: 2592000, // 30 dias
+      expirationSeconds: Math.max(3600, Math.round((new Date(receivable.dueDate).getTime() - Date.now()) / 1000)), // ate o vencimento
       receivableId: receivable.id,
       customerId: receivable.customerId || undefined,
       createdBy: 'auto-faturamento',
@@ -833,18 +833,21 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   if (totalValue <= 0) return null;
 
   const now = nowBrazil();
-  const dueDate = new Date(now);
-  dueDate.setDate(dueDate.getDate() + 30);
 
-  let paymentMethod: string | null = null;
-  if (item.paymentMethod) {
-    const methodMap: Record<string, string> = {
-      'a_vista': 'dinheiro',
-      'boleto': 'boleto',
-      'pix': 'pix',
-    };
-    paymentMethod = methodMap[item.paymentMethod] || 'outros';
-  }
+  // Vencimento por PRAZO: se o cliente tem condicao cadastrada (forma+prazo), usa AMBOS
+  // do cadastro; senao usa a forma da venda + default (pix=5, boleto=7, a vista=0).
+  let custCond: any = null;
+  try { if (item.customerId) custCond = await storage.getCustomer(item.customerId); } catch {}
+  const hasCadastro = !!(custCond && custCond.paymentMethod);
+  const effForma = hasCadastro ? String(custCond.paymentMethod) : String(item.paymentMethod || 'a_vista');
+  const defaultDays = (fm: string) => (fm === 'pix' ? 5 : fm === 'boleto' ? 7 : 0);
+  const prazoDaysRaw = (hasCadastro && custCond.boletoDays != null) ? Number(custCond.boletoDays) : defaultDays(effForma);
+  const prazoDays = isNaN(prazoDaysRaw) ? 0 : prazoDaysRaw;
+  const dueDate = new Date(now);
+  dueDate.setDate(dueDate.getDate() + prazoDays);
+
+  const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix' };
+  const paymentMethod: string | null = methodMap[effForma] || 'outros';
 
   const receivable = await storage.createReceivable({
     titleNumber: item.invoiceNumber || `TIT-${item.salesCardId?.substring(0, 8)}`,
@@ -865,9 +868,9 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     createdBy: user?.email || null,
   });
 
-  if (item.paymentMethod === 'boleto') {
+  if (effForma === 'boleto') {
     void generateBoletoForReceivable(receivable, item);
-  } else if (item.paymentMethod === 'pix' || item.paymentMethod === 'a_vista') {
+  } else if (effForma === 'pix' || effForma === 'a_vista' || effForma === 'dinheiro') {
     void generatePixForReceivable(receivable, item);
   }
 
