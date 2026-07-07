@@ -106,7 +106,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true, badge: null },
         { id: 'sales-goals', label: user?.role === 'vendedor' ? 'Minhas Metas' : 'Metas de Vendas', icon: 'fas fa-bullseye', available: true, badge: null },
         { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
-        { id: 'rota-do-dia', label: isVendedor ? 'Minha Rota do Dia' : 'Rota do Dia', icon: 'fas fa-map-marked-alt', available: isVendedor || canAccessReports, badge: null },
+        { id: 'rota-do-dia', label: (isVendedor || isTelemarketing) ? 'Minha Rota do Dia' : 'Rota do Dia', icon: 'fas fa-map-marked-alt', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
