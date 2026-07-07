@@ -1712,24 +1712,30 @@ export default function RotaDoDia() {
                         });
                         return;
                       }
+                      const onGeoOk = (position: GeolocationPosition) => {
+                        setCheckInCoords({
+                          lat: position.coords.latitude,
+                          lng: position.coords.longitude
+                        });
+                        toast({
+                          title: "Localização capturada",
+                          description: `Lat: ${position.coords.latitude.toFixed(6)}, Lng: ${position.coords.longitude.toFixed(6)}`
+                        });
+                      };
+                      const onGeoErr = (err: any) => {
+                        const code = err?.code;
+                        const description = code === 1
+                          ? 'Permissão de localização negada. Ative o GPS e permita o acesso à localização deste site.'
+                          : code === 3
+                          ? 'Tempo esgotado ao obter a localização. Verifique se o GPS está ligado e tente novamente.'
+                          : 'Localização indisponível. Verifique se o GPS está ligado (de preferência próximo a uma janela).';
+                        toast({ variant: "destructive", title: "Erro", description });
+                      };
+                      // 1a tentativa alta precisao; fallback baixa precisao (funciona em ambiente fechado)
                       navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                          setCheckInCoords({
-                            lat: position.coords.latitude,
-                            lng: position.coords.longitude
-                          });
-                          toast({
-                            title: "Localização capturada",
-                            description: `Lat: ${position.coords.latitude.toFixed(6)}, Lng: ${position.coords.longitude.toFixed(6)}`
-                          });
-                        },
-                        () => {
-                          toast({
-                            variant: "destructive",
-                            title: "Erro",
-                            description: "Não foi possível obter sua localização"
-                          });
-                        }
+                        onGeoOk,
+                        () => navigator.geolocation.getCurrentPosition(onGeoOk, onGeoErr, { enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 }),
+                        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
                       );
                     }}
                     data-testid="button-capture-location"
