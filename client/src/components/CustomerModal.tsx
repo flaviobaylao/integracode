@@ -141,6 +141,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       visitPeriodicity: 'semanal',
       icmsCsosn: '102',
       isSupplier: false,
+      paymentMethod: undefined,
+      boletoDays: null,
+      collectionDiscount: null,
+      paymentInstallments: null,
       isActive: true,
       latitude: '',
       longitude: '',
@@ -190,6 +194,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
         icmsCsosn: (customer as any).icmsCsosn || '102',
         isSupplier: (customer as any).isSupplier || false,
+        paymentMethod: (customer as any).paymentMethod || undefined,
+        boletoDays: (customer as any).boletoDays ?? null,
+        collectionDiscount: (customer as any).collectionDiscount ?? null,
+        paymentInstallments: (customer as any).paymentInstallments ?? null,
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
@@ -223,6 +231,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         visitPeriodicity: 'semanal',
       icmsCsosn: '102',
       isSupplier: false,
+      paymentMethod: undefined,
+      boletoDays: null,
+      collectionDiscount: null,
+      paymentInstallments: null,
         isActive: true,
         latitude: '',
         longitude: '',
@@ -1211,6 +1223,113 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
             <Card>
               <CardContent className="pt-6">
                 <h3 className="font-semibold text-lg mb-4">Configurações de Recebimento</h3>
+
+                {/* Dados de Pagamento Padrão (condição de pagamento do cliente) */}
+                <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg mb-4">
+                  <FormLabel className="text-sm font-medium text-emerald-900 flex items-center space-x-2">
+                    <i className="fas fa-hand-holding-usd text-emerald-700"></i>
+                    <span>Dados de Pagamento Padrão</span>
+                  </FormLabel>
+                  <FormDescription className="text-xs">
+                    Condição de pagamento do cliente. Quando a Forma está definida aqui, ela SOBREPÕE a forma e o prazo da venda ao gerar a cobrança. Deixe "Usar forma da venda" para não sobrepor.
+                  </FormDescription>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="paymentMethod"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Forma de Pagamento</FormLabel>
+                          <Select
+                            value={(field.value as any) || '__none__'}
+                            onValueChange={(v) => field.onChange(v === '__none__' ? undefined : v)}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-payment-method">
+                                <SelectValue placeholder="Usar forma da venda" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">Usar forma da venda (padrão)</SelectItem>
+                              <SelectItem value="a_vista">À vista</SelectItem>
+                              <SelectItem value="boleto">Boleto</SelectItem>
+                              <SelectItem value="pix">PIX</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription className="text-xs">
+                            Quando definida, sobrepõe a forma E o prazo da venda.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="boletoDays"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Prazo (dias)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={field.value ?? ''}
+                              onChange={(e) => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
+                              placeholder="Ex.: 7 (boleto) / 5 (PIX)"
+                              data-testid="input-boleto-days"
+                            />
+                          </FormControl>
+                          <FormDescription className="text-xs">
+                            Dias até o vencimento. Vazio usa o padrão (boleto 7, PIX 5).
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="paymentInstallments"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Parcelamento (nº de parcelas)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={field.value ?? ''}
+                              onChange={(e) => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
+                              placeholder="1"
+                              data-testid="input-payment-installments"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="collectionDiscount"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm">Desconto de Cobrança (%)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={(field.value as any) ?? ''}
+                              onChange={(e) => field.onChange(e.target.value === '' ? null : e.target.value)}
+                              placeholder="0"
+                              data-testid="input-collection-discount"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
                 
                 {/* Veículo Exclusivo */}
                 <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg mb-4">
