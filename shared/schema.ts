@@ -483,6 +483,8 @@ export const salesCards = pgTable("sales_cards", {
   
   // Configurações de pagamento boleto
   boletoDays: integer("boleto_days").default(7), // prazo em dias para pagamento boleto
+  collectionDiscount: decimal("collection_discount", { precision: 6, scale: 2 }).default('0'), // Desconto Cobranca (%) - condicao de pagamento do cliente
+  paymentInstallments: integer("payment_installments").default(1), // Parcelamento (numero de parcelas) - condicao de pagamento do cliente
   
   // Georreferenciamento do cliente
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }), // Latitude da localização do cliente
