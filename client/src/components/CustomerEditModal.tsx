@@ -92,6 +92,10 @@ export default function CustomerEditModal({
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
     isConsumerClient: false, // Cliente Consumidor - destaque verde
+    paymentMethod: "", // Condicao de pagamento do cliente (sobrepoe forma+prazo da venda)
+    boletoDays: "" as any,
+    collectionDiscount: "" as any,
+    paymentInstallments: "" as any,
   });
 
   const createLeadMutation = useMutation({
@@ -168,6 +172,13 @@ export default function CustomerEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const payload: any = {
+      ...formData,
+      paymentMethod: (formData as any).paymentMethod || null,
+      boletoDays: (formData as any).boletoDays === "" || (formData as any).boletoDays == null ? null : Number((formData as any).boletoDays),
+      paymentInstallments: (formData as any).paymentInstallments === "" || (formData as any).paymentInstallments == null ? null : Number((formData as any).paymentInstallments),
+      collectionDiscount: (formData as any).collectionDiscount === "" || (formData as any).collectionDiscount == null ? null : String((formData as any).collectionDiscount),
+    };
     
     // Se é novo lead (isLead = true e customer = null), cria novo
     if (isLead && !customer?.id) {
@@ -180,10 +191,10 @@ export default function CustomerEditModal({
         });
         return;
       }
-      createLeadMutation.mutate(formData);
+      createLeadMutation.mutate(payload);
     } else {
       // Caso contrário atualiza existente
-      updateCustomerMutation.mutate(formData);
+      updateCustomerMutation.mutate(payload);
     }
   };
 
@@ -299,6 +310,10 @@ export default function CustomerEditModal({
         deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
         isConsumerClient: (customer as any).isConsumerClient || false,
+        paymentMethod: (customer as any).paymentMethod || "",
+        boletoDays: (customer as any).boletoDays ?? "",
+        collectionDiscount: (customer as any).collectionDiscount ?? "",
+        paymentInstallments: (customer as any).paymentInstallments ?? "",
       });
     }
   }, [customer]);
@@ -555,6 +570,71 @@ export default function CustomerEditModal({
           {/* Configurações de Recebimento */}
           <div className="space-y-4 border-t pt-4">
             <h3 className="font-semibold text-lg">Configurações de Recebimento</h3>
+
+            {/* Dados de Pagamento Padrão (condição de pagamento do cliente) */}
+            <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-emerald-900 flex items-center gap-2">
+                <i className="fas fa-hand-holding-usd text-emerald-700"></i>
+                Dados de Pagamento Padrão
+              </Label>
+              <p className="text-xs text-emerald-700">Condição de pagamento do cliente. Quando a Forma está definida aqui, ela SOBREPÕE a forma e o prazo da venda ao gerar a cobrança. Deixe "Usar forma da venda" para não sobrepor.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm">Forma de Pagamento</Label>
+                  <Select
+                    value={(formData as any).paymentMethod || "__none__"}
+                    onValueChange={(v) => setFormData(prev => ({ ...prev, paymentMethod: v === "__none__" ? "" : v } as any))}
+                  >
+                    <SelectTrigger data-testid="select-payment-method">
+                      <SelectValue placeholder="Usar forma da venda" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Usar forma da venda (padrão)</SelectItem>
+                      <SelectItem value="a_vista">À vista</SelectItem>
+                      <SelectItem value="boleto">Boleto</SelectItem>
+                      <SelectItem value="pix">PIX</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500 mt-1">Quando definida, sobrepõe a forma E o prazo da venda.</p>
+                </div>
+                <div>
+                  <Label className="text-sm">Prazo (dias)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={(formData as any).boletoDays}
+                    onChange={(e) => setFormData(prev => ({ ...prev, boletoDays: e.target.value } as any))}
+                    placeholder="Ex.: 7 (boleto) / 5 (PIX)"
+                    data-testid="input-boleto-days"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Dias até o vencimento. Vazio usa o padrão (boleto 7, PIX 5).</p>
+                </div>
+                <div>
+                  <Label className="text-sm">Parcelamento (nº de parcelas)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={(formData as any).paymentInstallments}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paymentInstallments: e.target.value } as any))}
+                    placeholder="1"
+                    data-testid="input-payment-installments"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm">Desconto de Cobrança (%)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={(formData as any).collectionDiscount}
+                    onChange={(e) => setFormData(prev => ({ ...prev, collectionDiscount: e.target.value } as any))}
+                    placeholder="0"
+                    data-testid="input-collection-discount"
+                  />
+                </div>
+              </div>
+            </div>
+
             
             {/* Veículo Exclusivo */}
             <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
