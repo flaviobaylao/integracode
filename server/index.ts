@@ -10,6 +10,7 @@ import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerReconciliation } from "./reconciliation-routes";
+import { registerPaymentTerms } from "./payment-terms-routes";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { authenticateUser, requireRole } from './authMiddleware';
@@ -219,6 +220,7 @@ run();
   registerPaymentVerificationRoutes(app);
   registerVisitSummary(app);
   registerReconciliation(app);
+  registerPaymentTerms(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
   app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
@@ -2057,6 +2059,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
   db.execute(sql`ALTER TABLE digital_certificates ADD COLUMN IF NOT EXISTS pfx_data varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
 
