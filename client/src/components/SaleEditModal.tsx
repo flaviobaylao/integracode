@@ -274,9 +274,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         setProducts([...products, {
           id: selectedProduct.id,
           name: selectedProduct.name,
-          quantity: 1,
+          quantity: 0,
           unitPrice: parseFloat(selectedProduct.price || '0'),
-          totalPrice: parseFloat(selectedProduct.price || '0')
+          totalPrice: 0
         }]);
       }
     } else {
@@ -287,7 +287,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const updateProductQuantity = (productId: string, quantity: number) => {
     const updatedProducts = products.map(p => {
       if (p.id === productId) {
-        const qty = quantity || 1;
+        const qty = Number.isFinite(quantity) ? quantity : 0;
         return { ...p, quantity: qty, totalPrice: qty * p.unitPrice };
       }
       return p;
@@ -772,6 +772,17 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
       toast({
         title: "Nenhum Produto",
         description: "Adicione pelo menos um produto antes de salvar.",
+        variant: "destructive"
+      });
+      return false;
+    }
+
+    // Validação: todos os produtos selecionados devem ter quantidade informada (>= 1)
+    const semQuantidade = products.filter(p => !p.quantity || p.quantity < 1);
+    if (semQuantidade.length > 0) {
+      toast({
+        title: "Quantidade não informada",
+        description: "Informe a quantidade de todos os produtos selecionados antes de salvar.",
         variant: "destructive"
       });
       return false;
@@ -1299,6 +1310,11 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 <div className="space-y-3">
                   {availableProducts
                     .filter((p: any) => p.isActive === true)
+                    .slice()
+                    .sort((a: any, b: any) => {
+                      const grp = (n: string) => { const t = (n || '').toLowerCase(); return t.includes('350ml') ? 0 : (t.includes('900ml') || t.includes('500ml')) ? 1 : 2; };
+                      return grp(a.name) - grp(b.name) || String(a.name).localeCompare(String(b.name), 'pt-BR');
+                    })
                     .map((product: any) => {
                       const selectedProduct = products.find(p => p.id === product.id);
                       const isSelected = !!selectedProduct;
@@ -1327,8 +1343,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                                 <Input
                                   type="number"
                                   min="1"
-                                  value={selectedProduct.quantity}
-                                  onChange={(e) => updateProductQuantity(product.id, parseInt(e.target.value) || 1)}
+                                  placeholder="Qtd"
+                                  value={selectedProduct.quantity || ''}
+                                  onChange={(e) => updateProductQuantity(product.id, e.target.value === '' ? 0 : (parseInt(e.target.value) || 0))}
                                   data-testid={`input-quantity-${product.id}`}
                                 />
                               </div>
