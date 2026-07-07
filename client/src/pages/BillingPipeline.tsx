@@ -15,7 +15,7 @@ import { generateMultiCobrancaPdf, generateCompletoPdf, type CobrancaData } from
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
-  RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin,
+  RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
   Power, CheckSquare, X, ArrowRightCircle
 } from 'lucide-react';
 
@@ -87,6 +87,7 @@ function formatDate(dateStr: string) {
 }
 
 export default function BillingPipeline() {
+  const [search, setSearch] = useState('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -475,6 +476,21 @@ export default function BillingPipeline() {
           </div>
         </div>
 
+        {/* Busca por cliente */}
+        <div className="mb-3 relative w-full max-w-sm">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar pedido por cliente..."
+            className="pl-8 h-9"
+            data-testid="input-search-pipeline"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">×</button>
+          )}
+        </div>
+
         {/* Bulk Action Toolbar */}
         {selectedIds.size > 0 && (
           <div className="mb-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3 animate-in slide-in-from-top-2">
@@ -576,7 +592,8 @@ export default function BillingPipeline() {
         {/* Kanban Board */}
         <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 120px)' }}>
           {STAGES.map((stage) => {
-            const stageItems = groupedByStage[stage.key] || [];
+            const _q = search.trim().toLowerCase();
+            const stageItems = (groupedByStage[stage.key] || []).filter(i => !_q || (i.customerName || '').toLowerCase().includes(_q));
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             const StageIcon = stage.icon;
             const stageIds = stageItems.map(i => i.id);
