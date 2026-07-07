@@ -629,6 +629,21 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   const nextNumber = await storage.getNextInvoiceNumber('1', issuerCnpj);
 
+  // Ambiente de emissao POR CNPJ EMITENTE (system_settings fiscal_env_<instanceId>).
+  // ANTES estava fixo 'homologacao' -> NF do pipeline saia SEM VALOR FISCAL mesmo com o CNPJ em producao.
+  // Resolve a instancia pelo omieInstanceId do item ou, se vazio, pelo CNPJ do emitente
+  // (quando o cliente nao tem instancia, o emitente cai no fallback GYN). Default homologacao.
+  let invEnv: 'homologacao' | 'producao' = 'homologacao';
+  try {
+    const __settings = await storage.getSystemSettings();
+    const __instances = await storage.getOmieInstances();
+    const __issuerDigits = String(issuerCnpj || '').replace(/\D/g, '');
+    let __inst: any = item.omieInstanceId ? __instances.find((i: any) => i.id === item.omieInstanceId) : null;
+    if (!__inst) __inst = __instances.find((i: any) => String(i.cnpj || '').replace(/\D/g, '') === __issuerDigits);
+    const __v = __inst ? (__settings || []).find((x: any) => x.key === 'fiscal_env_' + __inst.id)?.value : null;
+    if (__v && String(__v).replace(/\"/g, '') === 'producao') invEnv = 'producao';
+  } catch {}
+
   const invoice = await storage.createFiscalInvoice({
     invoiceNumber: nextNumber,
     series: '1',
@@ -659,7 +674,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     paymentMethod: item.paymentMethod || 'a_vista',
     notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
     emissionDate: nowBrazil(),
-    environment: 'homologacao',
+    environment: invEnv,
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
   });
