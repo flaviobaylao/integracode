@@ -1432,6 +1432,28 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // DASHBOARD FINANCEIRO (02/jul/2026): agregados de contas a receber/pagar p/ a tela /dashboard-financeiro
+  // [Blindagem Financeira - Fase 1] AUDITORIA DE INTEGRIDADE (read-only, risco zero): detecta vazamentos.
+  app.get('/api/admin/financial/auditoria-integridade', async (_req: Request, res: Response) => {
+    try {
+      const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
+      // 1) Faturado SEM cobranca: recebivel de VENDA (billing_pipeline_id), em aberto, sem boleto E sem pix vinculado
+      const semCobBase = "FROM receivables r WHERE r.billing_pipeline_id IS NOT NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)";
+      const semCobTot = (await many("SELECT COUNT(*)::int AS n, COALESCE(SUM(r.amount - COALESCE(r.amount_paid,0)),0)::float AS v " + semCobBase))[0] || {};
+      const semCobItens = await many("SELECT r.id, r.title_number AS titulo, r.customer_name AS cliente, (r.amount - COALESCE(r.amount_paid,0))::float AS saldo, r.due_date AS vencimento, r.payment_method AS forma, r.omie_instance_id AS instancia " + semCobBase + " ORDER BY saldo DESC LIMIT 200");
+      // 2) Baixa SEM lastro bancario: pagamento de recebivel registrado sem conta financeira (nao lastreado em banco)
+      const semLastroTot = (await many("SELECT COUNT(*)::int AS n, COALESCE(SUM(amount),0)::float AS v FROM receivable_payments WHERE financial_account_id IS NULL"))[0] || {};
+      const semLastroItens = await many("SELECT rp.id, rp.receivable_id, rp.amount::float AS valor, rp.paid_at AS pago_em, rp.payment_method AS forma, rp.created_by, rp.notes FROM receivable_payments rp WHERE rp.financial_account_id IS NULL ORDER BY rp.paid_at DESC NULLS LAST LIMIT 200");
+      // Contexto: totais de referencia
+      const ctx = (await many("SELECT (SELECT COUNT(*) FROM receivables WHERE billing_pipeline_id IS NOT NULL)::int AS receb_venda, (SELECT COUNT(*) FROM boleto_charges)::int AS boletos, (SELECT COUNT(*) FROM pix_charges)::int AS pix, (SELECT COUNT(*) FROM receivable_payments)::int AS pagamentos, (SELECT COUNT(*) FROM account_movements)::int AS movimentos, (SELECT COUNT(*) FROM bank_statement_items)::int AS itens_extrato"))[0] || {};
+      res.json({
+        geradoEm: new Date().toISOString(),
+        faturadoSemCobranca: { n: Number(semCobTot.n || 0), valor: Number(semCobTot.v || 0), itens: semCobItens },
+        baixaSemLastroBancario: { n: Number(semLastroTot.n || 0), valor: Number(semLastroTot.v || 0), itens: semLastroItens },
+        contexto: ctx,
+      });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
+  });
+
   app.get('/api/admin/financial/dashboard', async (_req: Request, res: Response) => {
     try {
       const HOJE = "(now() at time zone 'America/Sao_Paulo')::date";
