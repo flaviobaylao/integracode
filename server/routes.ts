@@ -373,6 +373,31 @@ async function resolveRouteStops(
   return resolvedStops;
 }
 
+// [Fase 1 - 06/jul] Atendimento virtual = VISITA EFETUADA: carimba check_in/out no card do dia do cliente,
+// para todas as telas que leem sales_cards.check_in_time (Resumo de Visitas, cobertura, Execucao de Rota).
+async function markVirtualVisitExecuted(customerId: string): Promise<void> {
+  try {
+    if (!customerId) return;
+    const found = await db.execute(sql`
+      SELECT id FROM sales_cards
+      WHERE customer_id = ${customerId}
+        AND scheduled_date IS NOT NULL
+        AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY created_at DESC LIMIT 1`);
+    if ((found.rows || []).length > 0) {
+      const cardId = (found.rows[0] as any).id;
+      await db.execute(sql`UPDATE sales_cards SET check_in_time = COALESCE(check_in_time, now()), check_out_time = COALESCE(check_out_time, now()), updated_at = now() WHERE id = ${cardId}`);
+    } else {
+      const cust: any = await storage.getCustomer(customerId).catch(() => null);
+      const seller = (cust && cust.sellerId) || 'sem-vendedor';
+      const rec = (cust && cust.visitPeriodicity) || 'semanal';
+      await db.execute(sql`INSERT INTO sales_cards (customer_id, seller_id, status, scheduled_date, recurrence_type, operation_type, check_in_time, check_out_time) VALUES (${customerId}, ${seller}, 'completed', now(), ${rec}, 'venda', now(), now())`);
+    }
+  } catch (e: any) {
+    console.warn('[virtual->checkin] falhou (ignorado):', e?.message);
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -2380,6 +2405,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const serviceLog = result.rows[0] as any;
 
+      if (entityType === 'customer') { await markVirtualVisitExecuted(entityId); }
+
       // Se for lead, registrar prospecção por atendimento e definir próximo contato
       if (entityType === 'lead') {
         try {
@@ -2570,6 +2597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         RETURNING *
       `);
 
+      await markVirtualVisitExecuted(id);
       res.json(result.rows[0]);
     } catch (error) {
       console.error("Error creating service log:", error);
