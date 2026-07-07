@@ -118,7 +118,7 @@ export default function RotaDoDia() {
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{ id: string; name: string } | null>(null);
 
   const { data: sellers } = useQuery<any[]>({
-    queryKey: ['/api/users?role=vendedor'],
+    queryKey: ['/api/users'],
     enabled: isAdmin && !!user,
   });
 
@@ -728,7 +728,7 @@ export default function RotaDoDia() {
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sellers?.filter(s => s.isActive).map((seller) => (
+                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing')).map((seller) => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName}
                     </SelectItem>
