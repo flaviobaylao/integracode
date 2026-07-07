@@ -660,7 +660,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     customerId: item.customerId || null,
     customerName: item.customerName || '',
     customerCnpjCpf: item.customerDocument || customer?.cnpj || customer?.cpf || '',
-    customerIe: (customer as any)?.ie || '',
+    customerIe: (customer as any)?.stateRegistration || (customer as any)?.state_registration || (customer as any)?.ie || '',
     customerAddress: customer?.address || '',
     customerBairro: customer?.neighborhood || '',
     customerCep: customer?.zipCode || '',
