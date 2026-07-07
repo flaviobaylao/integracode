@@ -100,6 +100,40 @@
       }
     </script>
 
+    <!-- Auto-atualizacao: detecta um novo build (hash do bundle) e recarrega sozinho -->
+    <script>
+      (function () {
+        function currentBundle() {
+          var s = document.querySelector('script[src*="/assets/index-"]');
+          return s ? s.getAttribute('src').split('?')[0] : null;
+        }
+        var reloading = false;
+        var lastActivity = Date.now();
+        ['click', 'keydown', 'touchstart', 'mousedown'].forEach(function (ev) {
+          window.addEventListener(ev, function () { lastActivity = Date.now(); }, { passive: true });
+        });
+        async function checkUpdate() {
+          if (reloading) return;
+          try {
+            var html = await fetch('/index.html', { cache: 'no-store' }).then(function (r) { return r.text(); });
+            var m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
+            var latest = m ? m[0] : null;
+            var current = currentBundle();
+            if (latest && current && latest !== current) {
+              reloading = true;
+              try { if (window.caches) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); } } catch (e) {}
+              location.reload();
+            }
+          } catch (e) {}
+        }
+        // Recarrega ao voltar para o app, ou quando ocioso/em segundo plano (nao interrompe quem esta digitando)
+        setInterval(function () { if (document.hidden || (Date.now() - lastActivity) > 60000) checkUpdate(); }, 120000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) checkUpdate(); });
+        window.addEventListener('focus', checkUpdate);
+        window.addEventListener('load', function () { setTimeout(checkUpdate, 8000); });
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
