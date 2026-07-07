@@ -64,6 +64,11 @@ export function registerPaymentTerms(app: Express) {
       src = await client(process.env.REPLIT_DATABASE_URL);
       tgt = await client(process.env.DATABASE_URL);
 
+      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS boleto_days integer").catch(() => {});
+      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method payment_method").catch(() => {});
+      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0").catch(() => {});
+      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1").catch(() => {});
+
       // enum válido p/ payment_method no 2.0 (customers.payment_method)
       const pmEnum = new Set(["a_vista", "boleto", "pix", "cartao", "cartao_credito", "cartao_debito", "transferencia", "dinheiro", "cheque", "a_prazo"]);
       const normPm = (v: any): string | null => {
