@@ -17,6 +17,7 @@ interface RouteMapProps {
     checkInLatitude?: string | null;
     checkInLongitude?: string | null;
   }>;
+  virtualVisits?: Array<{ id: string; customerName: string; customerLatitude: string | null; customerLongitude: string | null }>;
   optimizedOrder: string[];
   checkpoints?: Array<{
     visitId: string;
@@ -34,7 +35,7 @@ interface RouteMapProps {
   }) => void;
 }
 
-export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
+export default function RouteMap({ homeLocation, visits, virtualVisits = [], optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
@@ -164,6 +165,24 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
         `);
     });
 
+    // [Fase 3] Marcadores dos clientes VIRTUAIS (atendimento remoto) — cor distinta (roxo), NAO entram no tracado.
+    (virtualVisits || []).forEach((visit) => {
+      if (!visit.customerLatitude || !visit.customerLongitude) return;
+      const vlat = parseFloat(visit.customerLatitude);
+      const vlon = parseFloat(visit.customerLongitude);
+      if (isNaN(vlat) || isNaN(vlon)) return;
+      const vIconHtml = renderToStaticMarkup(
+        <div className="bg-purple-600 rounded-full shadow-lg flex items-center justify-center border-2 border-white"
+             style={{ width: '28px', height: '28px' }}>
+          <span className="text-white font-bold text-xs">V</span>
+        </div>
+      );
+      const vIcon = L.divIcon({ html: vIconHtml, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+      L.marker([vlat, vlon], { icon: vIcon })
+        .addTo(map)
+        .bindPopup(`<strong>${visit.customerName}</strong><br>🟣 Cliente virtual (atendimento remoto)`);
+    });
+
     // Voltar para casa
     routeCoordinates.push([homeLocation.latitude, homeLocation.longitude]);
 
@@ -264,7 +283,7 @@ export default function RouteMap({ homeLocation, visits, optimizedOrder, checkpo
       }).addTo(map);
     }
 
-  }, [homeLocation, visits, optimizedOrder, checkpoints, hasValidCoordinates]);
+  }, [homeLocation, visits, virtualVisits, optimizedOrder, checkpoints, hasValidCoordinates]);
 
   if (!hasValidCoordinates) {
     return (
