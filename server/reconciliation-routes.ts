@@ -342,4 +342,51 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // ---- Desfazer conciliação (reverte a baixa) ------------------------------
+  app.post("/api/reconciliation/items/:id/undo", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const item = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_items WHERE id = ${id}`))[0];
+      if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (item.reconciliation_status === "ignored") {
+        await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_by=${by}, matched_at=null, notes=null WHERE id=${id}`);
+        return res.json({ ok: true, status: "pending", reverted: "ignored" });
+      }
+      if (item.reconciliation_status !== "reconciled") return res.status(409).json({ error: "item nao esta conciliado" });
+      const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`));
+      const reverted: any[] = [];
+      for (const m of matches) {
+        const settled = Number(m.title_amount_settled || m.amount || 0);
+        if (m.receivable_id) {
+          const rec: any = await storage.getReceivable(m.receivable_id);
+          if (rec) {
+            const newPaid = Math.max(0, Number(rec.amountPaid || 0) - settled);
+            const amt = Number(rec.amount || 0);
+            const due = rec.dueDate ? new Date(rec.dueDate) : null;
+            const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (due && due < new Date() ? "vencida" : "a_vencer");
+            await storage.updateReceivable(m.receivable_id, { amountPaid: newPaid.toFixed(2), status } as any);
+            await db.execute(sql`DELETE FROM receivable_payments WHERE receivable_id = ${m.receivable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
+            reverted.push({ kind: "receivable", id: m.receivable_id, status });
+          }
+        } else if (m.payable_id) {
+          const pay: any = await storage.getPayable(m.payable_id);
+          if (pay) {
+            const newPaid = Math.max(0, Number(pay.amountPaid || 0) - settled);
+            const amt = Number(pay.amount || 0);
+            const due = pay.dueDate ? new Date(pay.dueDate) : null;
+            const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (due && due < new Date() ? "vencida" : "a_vencer");
+            await storage.updatePayable(m.payable_id, { amountPaid: newPaid.toFixed(2), status } as any);
+            await db.execute(sql`DELETE FROM payable_payments WHERE payable_id = ${m.payable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
+            reverted.push({ kind: "payable", id: m.payable_id, status });
+          }
+        }
+      }
+      await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
+      await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_receivable_id=null, matched_payable_id=null, matched_at=null, matched_by=${by}, match_confidence=null, notes=null WHERE id=${id}`);
+      res.json({ ok: true, status: "pending", reverted });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
 }
