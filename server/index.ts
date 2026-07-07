@@ -135,7 +135,47 @@ run();
 </script></body></html>`);
   });
 
+  const { fireAutomation } = await import('./automation-engine');
   const server = await registerRoutes(app);
+
+  // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
+  app.get('/api/admin/automations/mode', async (_req, res) => {
+    try {
+      const m: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'automations_mode'`);
+      const t: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'automations_test_number'`);
+      const autos: any = await db.execute(sql`SELECT id, name, trigger_event, is_active, recipient_type, recipient_fixed_phone, sent_count, failed_count, last_triggered_at FROM communication_automations ORDER BY name`);
+      const strip = (v: any) => v == null ? null : String(v).replace(/^"(.*)"$/, '$1');
+      res.json({ mode: strip(m?.rows?.[0]?.value) || 'off', testNumber: strip(t?.rows?.[0]?.value) || '5562995782812', automations: autos?.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post('/api/admin/automations/mode', async (req, res) => {
+    try {
+      const mode = String(req.body?.mode || '').toLowerCase();
+      if (!['off', 'test', 'on'].includes(mode)) return res.status(400).json({ error: "mode deve ser off|test|on" });
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('automations_mode', ${mode}, 'automations') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      if (req.body?.testNumber) {
+        const tn = String(req.body.testNumber).replace(/\D/g, '');
+        await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('automations_test_number', ${tn}, 'automations') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      }
+      res.json({ ok: true, mode });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post('/api/admin/automations/test', async (req, res) => {
+    try {
+      const ev = String(req.body?.triggerEvent || 'pedido.criado');
+      const ctx = req.body?.ctx || {
+        customer: { name: 'CLIENTE TESTE' },
+        order: { id: 'INT-TESTE01', value: 'R$ 99,90' },
+        seller: { name: 'Vendedor Teste' },
+        delivery: { orderNumber: 'INT-TESTE01' },
+        driver: { name: 'Motorista Teste' },
+        sellerPhone: null,
+      };
+      await fireAutomation(ev, ctx);
+      const log: any = await db.execute(sql`SELECT trigger_event, recipient_phone, status, error, mode, created_at FROM automation_dispatch_log ORDER BY created_at DESC LIMIT 5`).catch(() => ({ rows: [] }));
+      res.json({ ok: true, fired: ev, recentLog: log?.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
   try { registerRepescagemRoutes(app, { authenticateUser, requireRole }); } catch (e) { console.error('[repescagem routes]', e); }
 
   app.post('/api/admin/sync/customer-ie', async (req, res) => {

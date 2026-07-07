@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { fireAutomation, fireOrderAutomation } from './automation-engine';
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
@@ -2089,6 +2090,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Transformar strings vazias em null para campos numéricos
+      const __blankDoc = (v: any) => (String(v ?? '').replace(/\D/g, '').length ? v : null);
       const data = {
         ...req.body,
         // Se normalizedWeekdaysJson foi definido, usar; senão, não incluir no update (manter valor existente)
@@ -2096,9 +2098,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
-        ...(req.body.cpf !== undefined && { cpf: (String(req.body.cpf ?? '').replace(/\D/g, '').length ? req.body.cpf : null) }),
-        ...(req.body.cnpj !== undefined && { cnpj: (String(req.body.cnpj ?? '').replace(/\D/g, '').length ? req.body.cnpj : null) }),
-        ...(req.body.document !== undefined && { document: (String(req.body.document ?? '').replace(/\D/g, '').length ? req.body.document : null) }),
+        // Documento vazio -> NULL (evita colisao na unique constraint cpf/cnpj)
+        ...(req.body.cpf !== undefined && { cpf: __blankDoc(req.body.cpf) }),
+        ...(req.body.cnpj !== undefined && { cnpj: __blankDoc(req.body.cnpj) }),
+        ...(req.body.document !== undefined && { document: __blankDoc(req.body.document) }),
         serviceStartDate: req.body.serviceStartDate 
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
           : undefined,
@@ -14399,7 +14402,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
-      
+
+      // Automacao: entrega.finalizada (fire-and-forget)
+      (async () => {
+        let sellerPhone: any = null;
+        try {
+          const c = await storage.getCustomer(stop[0].customerId);
+          if ((c as any)?.sellerId) {
+            const u = await storage.getUser((c as any).sellerId);
+            sellerPhone = (u as any)?.phone || null;
+          }
+        } catch {}
+        await fireAutomation('entrega.finalizada', {
+          customer: { name: stop[0].customerName || 'Cliente' },
+          delivery: { orderNumber: stop[0].orderNumber || (stop[0].salesCardId ? `INT-${String(stop[0].salesCardId).substring(0, 8)}` : '') },
+          driver: { name: route[0].driverName || '' },
+          sellerPhone,
+        });
+      })().catch(() => {});
+
       // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO
       // Estratégia: tentar via billingId primeiro, depois via omieOrderId direto da parada
       let omieStageChanged = false;
@@ -15757,6 +15778,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
         
         await db.insert(blockedOrders).values(blockedOrderData);
+        void fireOrderAutomation('pedido.bloqueado', card);
         
         return res.status(403).json({ 
           blocked: true,
@@ -15798,6 +15820,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           await db.insert(blockedOrders).values(blockedOrderData);
           console.log(`✅ [DEBT-CHECK] Pedido bloqueado registrado no banco de dados`);
+          void fireOrderAutomation('pedido.bloqueado', card);
           
           return res.status(403).json({ 
             blocked: true,

@@ -569,7 +569,7 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
   }
 }
 
-async function sendUmblerTalkText(toPhone: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+export async function sendUmblerTalkText(toPhone: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');

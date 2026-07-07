@@ -40,6 +40,8 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
   return { scanned: 0, created: 0, failed: 0, disabled: true };
 }
 
+import { fireAutomation } from './automation-engine';
+
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
@@ -86,6 +88,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 
     await logOrderAudit(salesCard.id, 'created');
     console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCard.id} auto-enviado para faturamento interno (modo ativo)`);
+    // Automacao: pedido.criado (fire-and-forget)
+    void fireAutomation('pedido.criado', {
+      customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
+      order: { id: item.orderNumber, value: (Number(salesCard.saleValue) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) },
+      seller: { name: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : '' },
+      sellerPhone: (seller as any)?.phone || null,
+    });
     return item;
   } catch (error) {
     await logOrderAudit(salesCard.id, 'failed', String((error as any)?.message || error));
