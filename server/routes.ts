@@ -391,7 +391,7 @@ async function markVirtualVisitExecuted(customerId: string): Promise<void> {
       const cust: any = await storage.getCustomer(customerId).catch(() => null);
       const seller = (cust && cust.sellerId) || 'sem-vendedor';
       const rec = (cust && cust.visitPeriodicity) || 'semanal';
-      await db.execute(sql`INSERT INTO sales_cards (customer_id, seller_id, status, scheduled_date, recurrence_type, operation_type, check_in_time, check_out_time) VALUES (${customerId}, ${seller}, 'completed', now(), ${rec}, 'venda', now(), now())`);
+      await db.execute(sql`INSERT INTO sales_cards (customer_id, seller_id, status, scheduled_date, route_day, recurrence_type, operation_type, check_in_time, check_out_time) VALUES (${customerId}, ${seller}, 'completed', now(), (CASE extract(dow from (now() AT TIME ZONE 'America/Sao_Paulo')) WHEN 0 THEN 'domingo' WHEN 1 THEN 'segunda' WHEN 2 THEN 'terca' WHEN 3 THEN 'quarta' WHEN 4 THEN 'quinta' WHEN 5 THEN 'sexta' ELSE 'sabado' END), ${rec}, 'venda', now(), now())`);
     }
   } catch (e: any) {
     console.warn('[virtual->checkin] falhou (ignorado):', e?.message);
