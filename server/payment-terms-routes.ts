@@ -65,7 +65,7 @@ export function registerPaymentTerms(app: Express) {
       tgt = await client(process.env.DATABASE_URL);
 
       await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS boleto_days integer").catch(() => {});
-      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method payment_method").catch(() => {});
+      await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method varchar").catch(() => {});
       await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0").catch(() => {});
       await tgt.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1").catch(() => {});
 
@@ -101,7 +101,7 @@ export function registerPaymentTerms(app: Express) {
         result.matched++;
 
         const sets: string[] = []; const vals: any[] = [];
-        if (targets.payment_method) { const v = normPm(row[targets.payment_method]); if (v) { sets.push(`payment_method = $${vals.length + 1}::text::payment_method`); vals.push(v); } }
+        if (targets.payment_method) { const v = normPm(row[targets.payment_method]); if (v) { sets.push(`payment_method = $${vals.length + 1}`); vals.push(v); } }
         if (targets.boleto_days) { const v = num(row[targets.boleto_days]); if (v != null) { sets.push(`boleto_days = $${vals.length + 1}`); vals.push(Math.round(v)); } }
         if (targets.collection_discount) { const v = num(row[targets.collection_discount]); if (v != null) { sets.push(`collection_discount = $${vals.length + 1}`); vals.push(v); } }
         if (targets.payment_installments) { const v = num(row[targets.payment_installments]); if (v != null) { sets.push(`payment_installments = $${vals.length + 1}`); vals.push(Math.round(v)); } }
