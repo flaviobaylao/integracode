@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { storage } from "./storage";
+import { settleBoletoCharge } from "./bb-boleto-service";
 
 // ---------------------------------------------------------------------------
 // Conciliação Bancária — FASE 1 (read-only): reconstrói a tela do 1.0.
@@ -16,6 +18,15 @@ import { sql } from "drizzle-orm";
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
 // drizzle expande ${array} em vez de passar array Postgres p/ ANY(); usar IN (...) com params individuais.
 const inList = (arr: any[]) => sql.join(arr.map((v) => sql`${v}`), sql`, `);
+const onlyDigits = (v: any): string => (v == null ? "" : String(v)).replace(/\D/g, "");
+const pickMethod = (desc: any): string => {
+  const d = (desc == null ? "" : String(desc)).toLowerCase();
+  if (d.includes("pix")) return "pix";
+  if (d.includes("boleto")) return "boleto";
+  if (d.includes("ted") || d.includes("doc ") || d.includes("transfer")) return "transferencia";
+  if (d.includes("dinheiro") || d.includes("especie") || d.includes("saque")) return "dinheiro";
+  return "transferencia";
+};
 const normDesc = (v: any): string =>
   (v == null ? "" : String(v)).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, "");
 const money = (v: any): string => {
@@ -186,4 +197,149 @@ export function registerReconciliation(app: Express) {
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
+
+
+  // =========================================================================
+  // FASE 2 — ESCRITA (financeiro). Conciliar dá baixa (reusa a baixa testada).
+  // =========================================================================
+
+  async function settleReceivable(recId: string, amount: number, method: string, accountId: string | null, paidAtISO: string, by: string) {
+    const br = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${recId} ORDER BY created_at DESC NULLS LAST LIMIT 1`);
+    const charge = rowsOf(br)[0];
+    if (charge) {
+      const result = await settleBoletoCharge(charge, amount, paidAtISO, "conciliacao-bancaria");
+      return { via: "boleto", result };
+    }
+    const rec: any = await storage.getReceivable(recId);
+    if (!rec) throw new Error("recebivel nao encontrado: " + recId);
+    const prevPaid = Number(rec.amountPaid || 0);
+    const amt = Number(rec.amount || 0);
+    const newPaid = prevPaid + amount;
+    const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : rec.status;
+    await storage.updateReceivable(recId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || rec.financialAccountId || null } as any);
+    await storage.createReceivablePayment({ receivableId: recId, paidAt: paidAtISO as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || rec.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
+    return { via: "receivable", status };
+  }
+
+  async function settlePayable(payId: string, amount: number, method: string, accountId: string | null, paidAtISO: string, by: string) {
+    const pay: any = await storage.getPayable(payId);
+    if (!pay) throw new Error("pagavel nao encontrado: " + payId);
+    const prevPaid = Number(pay.amountPaid || 0);
+    const amt = Number(pay.amount || 0);
+    const newPaid = prevPaid + amount;
+    const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : pay.status;
+    await storage.updatePayable(payId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || pay.financialAccountId || null } as any);
+    await storage.createPayablePayment({ payableId: payId, paidAt: paidAtISO as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || pay.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
+    return { via: "payable", status };
+  }
+
+  async function evolvePattern(item: any, cp: { type: string; id: string | null; name: string | null; document: string | null; category: string | null }, instanceId: string | null, by: string) {
+    try {
+      const dir = item.type;
+      const doc = onlyDigits(cp.document) || ((String(item.description || "").match(/(\d{11}|\d{14})/) || [])[1] || "");
+      const nd = normDesc(item.description);
+      const entries: { ptype: string; pval: string; norm: string }[] = [];
+      if (doc) entries.push({ ptype: "cpf_cnpj", pval: doc, norm: doc });
+      if (nd) entries.push({ ptype: "description", pval: String(item.description || "").slice(0, 200), norm: nd });
+      for (const e of entries) {
+        const ex = rowsOf(await db.execute(sql`
+          SELECT id FROM reconciliation_patterns
+          WHERE pattern_type = ${e.ptype} AND normalized_value = ${e.norm} AND direction = ${dir} LIMIT 1`))[0];
+        if (ex) {
+          await db.execute(sql`
+            UPDATE reconciliation_patterns
+            SET match_count = COALESCE(match_count,0) + 1, last_used_at = now(), updated_at = now(),
+                counterparty_type = ${cp.type}, counterparty_id = ${cp.id}, counterparty_name = ${cp.name},
+                counterparty_document = ${cp.document}, suggested_category = COALESCE(${cp.category}, suggested_category)
+            WHERE id = ${ex.id}`);
+        } else {
+          await db.execute(sql`
+            INSERT INTO reconciliation_patterns (id, pattern_type, pattern_value, normalized_value, direction,
+              counterparty_type, counterparty_id, counterparty_name, counterparty_document, suggested_category,
+              omie_instance_id, match_count, last_used_at, created_by, created_at, updated_at)
+            VALUES (gen_random_uuid(), ${e.ptype}, ${e.pval}, ${e.norm}, ${dir},
+              ${cp.type}, ${cp.id}, ${cp.name}, ${cp.document}, ${cp.category},
+              ${instanceId}, 1, now(), ${by}, now(), now())`);
+        }
+      }
+    } catch (_e) { /* best-effort */ }
+  }
+
+  app.post("/api/reconciliation/items/:id/ignore", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const reason = (req.body?.reason || "").toString();
+      const cur = rowsOf(await db.execute(sql`SELECT reconciliation_status FROM bank_statement_items WHERE id = ${id}`))[0];
+      if (!cur) return res.status(404).json({ error: "item nao encontrado" });
+      if (cur.reconciliation_status === "reconciled") return res.status(409).json({ error: "item ja conciliado; desfaca antes de ignorar" });
+      const note = `Ignorado por ${by} em ${new Date().toISOString()}${reason ? " - " + reason : ""}`;
+      await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(), notes = ${note}
+        WHERE id = ${id}`);
+      res.json({ ok: true, status: "ignored" });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  app.post("/api/reconciliation/items/:id/reconcile", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const dryRun = !!req.body?.dryRun;
+      const titles: any[] = Array.isArray(req.body?.titles) ? req.body.titles : [];
+      if (!titles.length) return res.status(400).json({ error: "titles[] obrigatorio" });
+      const item = rowsOf(await db.execute(sql`
+        SELECT i.*, s.omie_instance_id AS s_instance, s.financial_account_id AS s_account
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.id = ${id}`))[0];
+      if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (item.reconciliation_status === "reconciled") return res.status(409).json({ error: "item ja conciliado" });
+      const method = (req.body?.paymentMethod || pickMethod(item.description)).toString();
+      const paidAtISO = (req.body?.paidAt ? new Date(req.body.paidAt) : new Date(item.transaction_date || Date.now())).toISOString();
+      const accountId = item.s_account || null;
+
+      const plan = titles.map((t) => ({
+        kind: t.kind === "payable" ? "payable" : "receivable",
+        id: t.id,
+        amount: Number(t.amount || 0),
+        interest: Number(t.interest || 0),
+        discount: Number(t.discount || 0),
+        settled: Number(t.amount || 0) + Number(t.interest || 0) - Number(t.discount || 0),
+      }));
+      if (dryRun) {
+        return res.json({ ok: true, dryRun: true, item: { id: item.id, amount: item.amount, type: item.type, description: item.description }, method, paidAtISO, accountId, plan });
+      }
+
+      const kind = titles.length > 1 ? "manual_multi" : "manual";
+      const results: any[] = [];
+      let firstRecv: string | null = null, firstPay: string | null = null;
+      let cpInfo: any = null;
+      for (const t of plan) {
+        if (t.kind === "receivable") {
+          const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by);
+          results.push({ id: t.id, kind: "receivable", ...r });
+          if (!firstRecv) firstRecv = t.id;
+          if (!cpInfo) { const rec: any = await storage.getReceivable(t.id); if (rec) cpInfo = { type: "customer", id: rec.customerId || null, name: rec.customerName || null, document: rec.customerDocument || null, category: rec.category || null }; }
+        } else {
+          const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by);
+          results.push({ id: t.id, kind: "payable", ...r });
+          if (!firstPay) firstPay = t.id;
+          if (!cpInfo) { const pay: any = await storage.getPayable(t.id); if (pay) cpInfo = { type: "supplier", id: null, name: pay.supplierName || null, document: pay.supplierDocument || null, category: pay.category || null }; }
+        }
+        await db.execute(sql`
+          INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
+          VALUES (gen_random_uuid(), ${id}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${t.amount.toFixed(2)}, ${kind}, ${t.settled.toFixed(2)}, ${t.interest.toFixed(2)}, ${t.discount.toFixed(2)}, ${by}, now())`);
+      }
+      const note = `Conciliado por ${by} em ${new Date().toISOString()}${titles.length > 1 ? " (composta " + titles.length + " titulos)" : ""}`;
+      await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = 'reconciled', matched_receivable_id = ${firstRecv}, matched_payable_id = ${firstPay},
+            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}
+        WHERE id = ${id}`);
+      if (cpInfo) await evolvePattern(item, cpInfo, item.s_instance || null, by);
+      res.json({ ok: true, status: "reconciled", kind, results });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
 }
