@@ -1042,6 +1042,11 @@ export default function RotaDoDia() {
                     customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
                     customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
                   }))}
+                  virtualVisits={((route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual')).map((visit: any) => ({
+                    ...visit,
+                    customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
+                    customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
+                  }))}
                   optimizedOrder={route.optimizedOrder || []}
                   checkpoints={route.checkpoints || []}
                 />
