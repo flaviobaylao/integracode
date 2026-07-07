@@ -1,6 +1,27 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+// ── Logo Honest (public/honest-logo.png), carregado uma vez e cacheado ───────
+let _danfeLogo: string | null | undefined;
+async function loadDanfeLogo(): Promise<string | null> {
+  if (_danfeLogo !== undefined) return _danfeLogo as string | null;
+  try {
+    const r = await fetch('/honest-logo.png');
+    const blob = await r.blob();
+    _danfeLogo = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onloadend = () => res(fr.result as string); fr.onerror = rej; fr.readAsDataURL(blob); });
+  } catch { _danfeLogo = null; }
+  return _danfeLogo as string | null;
+}
+// Proporção real do honest-logo.png (619 x 490 px). (w,h) é uma CAIXA; o logo é
+// ajustado dentro dela mantendo a razão largura/altura (contain), sem distorção.
+const DANFE_LOGO_RATIO = 619 / 490;
+function putDanfeLogo(doc: jsPDF, logo: string | null, x: number, y: number, w: number, h: number) {
+  if (!logo) return;
+  let dw = w, dh = w / DANFE_LOGO_RATIO;
+  if (dh > h) { dh = h; dw = h * DANFE_LOGO_RATIO; }
+  try { doc.addImage(logo, 'PNG', x, y, dw, dh); } catch (e) {}
+}
+
 export interface DanfeInvoice {
   id: string;
   invoiceNumber: string;
@@ -77,16 +98,17 @@ export interface DanfeInvoiceItem {
   valorIpi?: string;
 }
 
-export function generateMultiDanfePdf(invoices: DanfeInvoice[]) {
+export async function generateMultiDanfePdf(invoices: DanfeInvoice[]) {
   if (invoices.length === 0) return;
   if (invoices.length === 1) {
-    generateDanfePdf(invoices[0]);
+    await generateDanfePdf(invoices[0]);
     return;
   }
+  const logo = await loadDanfeLogo();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   for (let i = 0; i < invoices.length; i++) {
     if (i > 0) doc.addPage();
-    renderDanfeToDoc(doc, invoices[i]);
+    renderDanfeToDoc(doc, invoices[i], logo);
   }
   const firstNum = invoices[0].invoiceNumber || '0';
   const lastNum = invoices[invoices.length - 1].invoiceNumber || '0';
@@ -95,15 +117,16 @@ export function generateMultiDanfePdf(invoices: DanfeInvoice[]) {
   doc.save(fileName);
 }
 
-export function generateDanfePdf(invoice: DanfeInvoice) {
+export async function generateDanfePdf(invoice: DanfeInvoice) {
+  const logo = await loadDanfeLogo();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  renderDanfeToDoc(doc, invoice);
+  renderDanfeToDoc(doc, invoice, logo);
   const nfNum = invoice.invoiceNumber || '0';
   const fileName = `DANFE_${nfNum}_${invoice.environment === 'homologacao' ? 'HOM' : 'PROD'}.pdf`;
   doc.save(fileName);
 }
 
-export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice) {
+export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string | null = null) {
   const pageWidth = 210;
   const margin = 7;
   const contentWidth = pageWidth - margin * 2;
@@ -220,21 +243,26 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice) {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100);
   doc.text('IDENTIFICAÇÃO DO EMITENTE', margin + col1W / 2, y + 3, { align: 'center' });
+  // Logo da empresa (proporcional) à esquerda; texto do emitente deslocado p/ a direita
+  const hasEmitLogo = !!logo;
+  if (hasEmitLogo) putDanfeLogo(doc, logo, margin + 2, y + 8, 18, 20);
+  const emitTextX = margin + 2 + (hasEmitLogo ? 20 : 0);
+  const emitTextW = col1W - 4 - (hasEmitLogo ? 20 : 0);
   doc.setTextColor(0);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  const emitNameLines = doc.splitTextToSize(emitName, col1W - 4);
-  doc.text(emitNameLines.slice(0, 2), margin + 2, y + 8);
+  const emitNameLines = doc.splitTextToSize(emitName, emitTextW);
+  doc.text(emitNameLines.slice(0, 2), emitTextX, y + 8);
   const emitNameH = Math.min(emitNameLines.length, 2) * 3.5;
   doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
-  const emitAddrLines = doc.splitTextToSize(emitAddress, col1W - 4);
-  doc.text(emitAddrLines.slice(0, 2), margin + 2, y + 8 + emitNameH + 1);
+  const emitAddrLines = doc.splitTextToSize(emitAddress, emitTextW);
+  doc.text(emitAddrLines.slice(0, 2), emitTextX, y + 8 + emitNameH + 1);
   const cityLine = emitCity && emitUf ? `${emitCity} - ${emitUf}` : '';
   const phoneLine = emitPhone ? `Fone: ${emitPhone}` : '';
   const cityPhoneLine = [cityLine, phoneLine].filter(Boolean).join('  ');
   if (cityPhoneLine) {
-    doc.text(cityPhoneLine, margin + 2, y + 8 + emitNameH + 1 + Math.min(emitAddrLines.length, 2) * 3 + 1);
+    doc.text(cityPhoneLine, emitTextX, y + 8 + emitNameH + 1 + Math.min(emitAddrLines.length, 2) * 3 + 1);
   }
 
   const danfeCenterX = margin + col1W + col2W / 2;

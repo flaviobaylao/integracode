@@ -33,8 +33,15 @@ async function loadLogo(): Promise<string | null> {
   } catch { _logo = null; }
   return _logo as string | null;
 }
+// Proporção real do honest-logo.png (619 x 490 px). Usada p/ desenhar o logo
+// sem distorção: os parâmetros (w,h) viram uma CAIXA e o logo é ajustado dentro
+// dela mantendo a razão largura/altura (contain, alinhado no topo-esquerda).
+const LOGO_RATIO = 619 / 490;
 function putLogo(doc: jsPDF, logo: string | null, x: number, y: number, w: number, h: number) {
-  if (!logo) return; try { doc.addImage(logo, 'PNG', x, y, w, h); } catch (e) {}
+  if (!logo) return;
+  let dw = w, dh = w / LOGO_RATIO;
+  if (dh > h) { dh = h; dw = h * LOGO_RATIO; }
+  try { doc.addImage(logo, 'PNG', x, y, dw, dh); } catch (e) {}
 }
 
 // Interleaved 2 of 5 barcode (boleto, 44 digitos)
@@ -246,7 +253,7 @@ export async function generateCompletoPdf(list: CobrancaData[]): Promise<number>
   list.forEach((c) => {
     if (!first) doc.addPage(); first = false;
     renderPedido(doc, c, logo);
-    if (c.danfe) { doc.addPage(); try { renderDanfeToDoc(doc, c.danfe); } catch (e) {} }
+    if (c.danfe) { doc.addPage(); try { renderDanfeToDoc(doc, c.danfe, logo); } catch (e) {} }
     if (c.boleto) { doc.addPage(); renderBoleto(doc, c, logo); }
     else if (c.pix) { doc.addPage(); renderPix(doc, c, logo); }
   });
