@@ -344,7 +344,7 @@ export default function BillingPipeline() {
       const byItem = new Map<string, any>();
       for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
       const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix }; });
-      const n = generateMultiCobrancaPdf(list);
+      const n = await generateMultiCobrancaPdf(list);
       if (n === 0) toast({ title: 'Nenhuma cobranca encontrada', description: 'Os pedidos selecionados nao possuem boleto/PIX gerado.', variant: 'destructive' });
       else toast({ title: n + ' cobranca(s) gerada(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
@@ -369,7 +369,7 @@ export default function BillingPipeline() {
         } catch (e) {}
       }
       const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
-      const n = generateCompletoPdf(list);
+      const n = await generateCompletoPdf(list);
       toast({ title: n + ' pedido(s) impresso(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
     finally { setIsPrintingCompleto(false); }
