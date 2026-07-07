@@ -231,7 +231,9 @@ export async function registrarBoleto(
       numeroInscricao: parseInt(doc || '0', 10),
       nome: (params.debtorName || 'Cliente').slice(0, 60),
       endereco: (params.debtorAddress || 'Nao informado').slice(0, 60),
-      cep: parseInt(digits(params.debtorZip) || '0', 10),
+      // CEP: BB recusa cep=0/invalido. Se o cliente nao tem CEP valido (8 digitos),
+      // usa um CEP padrao valido de Goiania (74000-000) para o registro nao falhar.
+      cep: parseInt((digits(params.debtorZip).length === 8 ? digits(params.debtorZip) : '74000000'), 10),
       cidade: (params.debtorCity || 'Goiania').slice(0, 30),
       bairro: (params.debtorNeighborhood || 'Centro').slice(0, 30),
       uf: (params.debtorState || 'GO').slice(0, 2),

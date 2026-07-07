@@ -740,7 +740,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
 // Hook boleto BB: gera boleto p/ um recebivel de faturamento.
 // Gated por bbBoletoEnabled na conta financeira; default HOMOLOGACAO (BB_BOLETO_SANDBOX).
 // Fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
-async function generateBoletoForReceivable(receivable: any, item: any): Promise<void> {
+export async function generateBoletoForReceivable(receivable: any, item: any): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   try {
     // [06/jul] SERV (PURO SERVIÇOS, CNPJ ...0105) NÃO emite boleto por decisão — não cair no fallback do IND.
     // GYN e BSB seguem no fallback do IND (intencional). Guard robusto a tag ("SERV") ou UUID da instância.
@@ -753,7 +753,7 @@ async function generateBoletoForReceivable(receivable: any, item: any): Promise<
         const _c = String((_inst as any)?.cnpj || '').replace(/\D/g, '');
         if (_c === '52921727000105' || String((_inst as any)?.name || '').toUpperCase() === 'SERV') _serv = true;
       }
-      if (_serv) { console.log('[BB-BOLETO] SERV nao emite boleto (decisao 06/jul) - skip'); return; }
+      if (_serv) { console.log('[BB-BOLETO] SERV nao emite boleto (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
     } catch {}
     let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
     let account = (accounts || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio);
@@ -761,7 +761,7 @@ async function generateBoletoForReceivable(receivable: any, item: any): Promise<
       const all = await storage.getFinancialAccounts();
       account = (all || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio);
     }
-    if (!account) return; // nenhuma conta com boleto BB habilitado -> no-op silencioso
+    if (!account) return { ok: false, skipped: true }; // nenhuma conta com boleto BB habilitado -> no-op silencioso
     let customer: any = null;
     try { if (item.customerId) customer = await storage.getCustomer(item.customerId); } catch {}
     const r = await registrarBoleto(account.id, {
@@ -781,14 +781,16 @@ async function generateBoletoForReceivable(receivable: any, item: any): Promise<
     });
     if (r.success) console.log(`[BB-BOLETO] hook: boleto gerado p/ receivable ${receivable.id} (${r.sandbox ? 'homolog' : 'PRODUCAO'})`);
     else console.warn(`[BB-BOLETO] hook: nao gerou boleto (${r.error})`);
+    return r.success ? { ok: true } : { ok: false, error: r.error };
   } catch (e: any) {
     console.warn('[BB-BOLETO] hook erro (ignorado):', e?.message);
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
 // Hook PIX BB: gera cobranca PIX para um recebivel de faturamento (forma pix ou a vista).
 // Gated por bbPixEnabled+pixKey na conta; fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
-async function generatePixForReceivable(receivable: any, item: any): Promise<void> {
+export async function generatePixForReceivable(receivable: any, item: any): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   try {
     // [06/jul] SERV (PURO SERVIÇOS, CNPJ ...0105) NÃO emite PIX por decisão — não cair no fallback do IND.
     // GYN e BSB seguem no fallback do IND (intencional). Guard robusto a tag ("SERV") ou UUID da instância.
@@ -801,7 +803,7 @@ async function generatePixForReceivable(receivable: any, item: any): Promise<voi
         const _c = String((_inst as any)?.cnpj || '').replace(/\D/g, '');
         if (_c === '52921727000105' || String((_inst as any)?.name || '').toUpperCase() === 'SERV') _serv = true;
       }
-      if (_serv) { console.log('[BB-PIX] SERV nao emite PIX (decisao 06/jul) - skip'); return; }
+      if (_serv) { console.log('[BB-PIX] SERV nao emite PIX (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
     } catch {}
     let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
     let account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
@@ -809,7 +811,7 @@ async function generatePixForReceivable(receivable: any, item: any): Promise<voi
       const all = await storage.getFinancialAccounts();
       account = (all || []).find((a: any) => a.bbPixEnabled && a.pixKey);
     }
-    if (!account) return; // nenhuma conta com PIX BB habilitado -> no-op silencioso
+    if (!account) return { ok: false, skipped: true }; // nenhuma conta com PIX BB habilitado -> no-op silencioso
     let customer: any = null;
     try { if (item.customerId) customer = await storage.getCustomer(item.customerId); } catch {}
     const r = await createImmediateCharge(account.id, {
@@ -823,8 +825,10 @@ async function generatePixForReceivable(receivable: any, item: any): Promise<voi
       createdBy: 'auto-faturamento',
     });
     if (r) console.log(`[BB-PIX] hook: cobranca PIX gerada p/ receivable ${receivable.id} (txid ${r.txid})`);
+    return r ? { ok: true } : { ok: false, error: 'sem retorno do PIX' };
   } catch (e: any) {
     console.warn('[BB-PIX] hook erro (ignorado):', e?.message);
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
