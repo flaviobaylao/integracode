@@ -168,6 +168,27 @@ export default function BillingPipeline() {
     }
   });
 
+  const releaseBlockedMutation = useMutation({
+    mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/release', { orderIds }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      const rel = data?.released ?? 0; const errs = data?.errors?.length ?? 0;
+      if (errs && !rel) toast({ title: 'Nao foi possivel liberar', description: (data?.errors || []).join(' | '), variant: 'destructive' });
+      else toast({ title: 'Pedido liberado', description: `${rel} pedido(s) enviado(s) ao faturamento${errs ? `, ${errs} erro(s)` : ''}` });
+    },
+    onError: (error: any) => { toast({ title: 'Erro ao liberar', description: error.message, variant: 'destructive' }); }
+  });
+
+  const rejectBlockedMutation = useMutation({
+    mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/reject', { orderIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      toast({ title: 'Pedido rejeitado', description: 'Pedido bloqueado removido.' });
+    },
+    onError: (error: any) => { toast({ title: 'Erro ao rejeitar', description: error.message, variant: 'destructive' }); }
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest('DELETE', `/api/billing-pipeline/${id}`);
@@ -376,6 +397,13 @@ export default function BillingPipeline() {
   }, [selectedItems]);
 
   const moveItem = (item: BillingPipelineItem, direction: 'forward' | 'backward') => {
+    // Card da coluna 'Bloqueados' nao e item do pipeline: avancar = LIBERAR (release), nao PATCH /stage.
+    if (item.stage === 'bloqueado') {
+      if (direction === 'forward') {
+        if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento?`)) releaseBlockedMutation.mutate([item.id]);
+      }
+      return;
+    }
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
     if (nextIdx < 0 || nextIdx >= STAGES.length) return;
@@ -589,7 +617,9 @@ export default function BillingPipeline() {
                       onMoveForward={() => moveItem(item, 'forward')}
                       onMoveBackward={() => moveItem(item, 'backward')}
                       onViewDetail={() => setDetailItem(item)}
-                      onDelete={() => setDeleteConfirm(item.id)}
+                      onDelete={() => stage.key === 'bloqueado'
+                        ? (window.confirm(`Rejeitar (excluir) o pedido bloqueado de ${item.customerName}?`) && rejectBlockedMutation.mutate([item.id]))
+                        : setDeleteConfirm(item.id)}
                       isFirst={stage.key === STAGES[0].key}
                       isLast={stage.key === STAGES[STAGES.length - 1].key}
                       isMoving={moveStageMutation.isPending}
