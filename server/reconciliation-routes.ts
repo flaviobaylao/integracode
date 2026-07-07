@@ -14,6 +14,8 @@ import { sql } from "drizzle-orm";
 // ---------------------------------------------------------------------------
 
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+// drizzle expande ${array} em vez de passar array Postgres p/ ANY(); usar IN (...) com params individuais.
+const inList = (arr: any[]) => sql.join(arr.map((v) => sql`${v}`), sql`, `);
 const normDesc = (v: any): string =>
   (v == null ? "" : String(v)).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, "");
 const money = (v: any): string => {
@@ -87,7 +89,7 @@ export function registerReconciliation(app: Express) {
           FROM bank_statement_item_matches m
           LEFT JOIN receivables r ON r.id = m.receivable_id
           LEFT JOIN payables p ON p.id = m.payable_id
-          WHERE m.bank_statement_item_id = ANY(${ids})`);
+          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
         for (const m of rowsOf(mR)) (matchesByItem[m.bank_statement_item_id] ||= []).push(m);
       }
 
@@ -115,8 +117,8 @@ export function registerReconciliation(app: Express) {
           SELECT pattern_type, normalized_value, direction, counterparty_type, counterparty_id,
                  counterparty_name, counterparty_document, suggested_category, match_count
           FROM reconciliation_patterns
-          WHERE (pattern_type = 'description' AND normalized_value = ANY(${normArr}))
-             OR (pattern_type = 'cpf_cnpj'   AND normalized_value = ANY(${docArr}))
+          WHERE (pattern_type = 'description' AND normalized_value IN (${inList(normArr)}))
+             OR (pattern_type = 'cpf_cnpj'   AND normalized_value IN (${inList(docArr)}))
           ORDER BY match_count DESC`);
         for (const p of rowsOf(pR)) {
           if (p.pattern_type === "description") (patByDesc[p.normalized_value] ||= []).push(p);
@@ -132,14 +134,14 @@ export function registerReconciliation(app: Express) {
           SELECT id, title_number, customer_name, customer_document, amount, due_date, omie_instance_id
           FROM receivables
           WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
-            AND round(amount::numeric, 2)::text = ANY(${amtArr})
+            AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
           LIMIT 400`);
         for (const r of rowsOf(orR)) (recvByAmt[money(r.amount)] ||= []).push(r);
         const opR = await db.execute(sql`
           SELECT id, title_number, supplier_name, supplier_document, amount, due_date, omie_instance_id
           FROM payables
           WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
-            AND round(amount::numeric, 2)::text = ANY(${amtArr})
+            AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
           LIMIT 400`);
         for (const p of rowsOf(opR)) (payByAmt[money(p.amount)] ||= []).push(p);
       }
