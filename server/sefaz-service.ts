@@ -487,16 +487,29 @@ async function findCertificateForCnpj(cnpj: string): Promise<string | null> {
       }
     }
 
-    const exactMatch = validCerts.find((c) => getCertificateCnpj(c) === clean);
-    if (exactMatch) {
-      console.log(`[SEFAZ] Certificado encontrado por CNPJ exato: ${exactMatch.companyName}`);
-      return exactMatch.id;
+    // Preferir certificado COM binario (pfx_data) no banco; entre iguais, o de maior validade.
+    // Evita escolher um cert-cadastro paralelo sem PFX (que faria loadCertFromStorage falhar).
+    const hasPfx = (c: any) => !!c.pfxData;
+    const preferBest = (a: any, b: any) =>
+      ((hasPfx(b) ? 1 : 0) - (hasPfx(a) ? 1 : 0)) ||
+      (new Date(b.validUntil || 0).getTime() - new Date(a.validUntil || 0).getTime());
+
+    const exactMatches = validCerts
+      .filter((c) => getCertificateCnpj(c) === clean)
+      .sort(preferBest);
+    if (exactMatches.length) {
+      const chosen = exactMatches[0];
+      console.log(`[SEFAZ] Certificado encontrado por CNPJ exato: ${chosen.companyName} (pfx=${hasPfx(chosen)})`);
+      return chosen.id;
     }
 
-    const rootMatch = validCerts.find((c) => getCertificateCnpj(c).substring(0, 8) === cnpjRoot && cnpjRoot.length === 8);
-    if (rootMatch) {
-      console.log(`[SEFAZ] Certificado encontrado por CNPJ raiz: ${rootMatch.companyName}`);
-      return rootMatch.id;
+    const rootMatches = validCerts
+      .filter((c) => getCertificateCnpj(c).substring(0, 8) === cnpjRoot && cnpjRoot.length === 8)
+      .sort(preferBest);
+    if (rootMatches.length) {
+      const chosen = rootMatches[0];
+      console.log(`[SEFAZ] Certificado encontrado por CNPJ raiz: ${chosen.companyName} (pfx=${hasPfx(chosen)})`);
+      return chosen.id;
     }
 
     // ATENÇÃO: NÃO usar fallback para "único certificado disponível" — a SEFAZ
