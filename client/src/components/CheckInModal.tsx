@@ -47,13 +47,20 @@ export default function CheckInModal({
     setStep('location');
     
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
-        });
+      if (!navigator.geolocation) {
+        throw { code: 2, message: 'Dispositivo sem suporte a geolocalização' };
+      }
+      const getPos = (opts: PositionOptions) => new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, opts);
       });
+      let position: GeolocationPosition;
+      try {
+        // 1a tentativa: alta precisao (GPS), com tempo maior e aceitando posicao recente
+        position = await getPos({ enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+      } catch (e1) {
+        // Fallback: baixa precisao (rede/wifi) — funciona em ambiente fechado e responde rapido
+        position = await getPos({ enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 });
+      }
 
       const loc = {
         latitude: position.coords.latitude,
@@ -75,10 +82,16 @@ export default function CheckInModal({
       // Ir para o próximo passo (foto)
       setStep('photo');
       startCamera();
-    } catch (error) {
+    } catch (error: any) {
+      const code = error?.code;
+      const description =
+        code === 1 ? 'Permissão de localização negada. Ative o GPS e permita o acesso à localização deste site nas configurações do navegador.'
+        : code === 2 ? 'Localização indisponível. Verifique se o GPS está ligado e tente novamente (de preferência próximo a uma janela ou ao ar livre).'
+        : code === 3 ? 'Tempo esgotado ao obter a localização. Verifique se o GPS está ligado e tente novamente.'
+        : (error?.message || 'Erro desconhecido');
       toast({
         title: "Erro ao capturar localização",
-        description: error instanceof Error ? error.message : "Erro desconhecido",
+        description,
         variant: "destructive"
       });
     }
