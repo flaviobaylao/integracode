@@ -155,6 +155,19 @@ export default function ConciliacaoBancaria() {
     finally { setImporting(false); }
   };
 
+  const doDeleteStatement = async (s: Statement, e?: any) => {
+    if (e) e.stopPropagation();
+    if ((s.reconciled || 0) > 0) { alert(`Este extrato tem ${s.reconciled} item(ns) já conciliado(s). Desfaça as conciliações antes de remover.`); return; }
+    if (!window.confirm(`Remover o extrato "${s.file_name || s.id}" e seus ${s.items} lançamento(s)?\nNão afeta títulos (não há baixa). Você pode reimportar o OFX depois.`)) return;
+    setBusy("stmt:" + s.id);
+    try {
+      await post(`/api/reconciliation/statements/${s.id}/delete`, { by: me });
+      if (selected?.id === s.id) { setSelected(null); setDetail(null); }
+      await loadStatements();
+    } catch (err: any) { alert("Erro ao remover extrato: " + err.message); }
+    finally { setBusy(""); }
+  };
+
   const items: Item[] = detail?.items || [];
   const matchesByItem: Record<string, any[]> = detail?.matchesByItem || {};
   const suggestions: Record<string, any> = detail?.suggestions || {};
@@ -190,14 +203,22 @@ export default function ConciliacaoBancaria() {
             {loadingList && <div className="p-4 text-sm text-gray-400">Carregando…</div>}
             {!loadingList && statements.length === 0 && <div className="p-4 text-sm text-gray-400">Nenhum extrato.</div>}
             {statements.map((s) => (
-              <button key={s.id} onClick={() => openStatement(s)} className={`w-full text-left px-4 py-3 hover:bg-green-50 ${selected?.id === s.id ? "bg-green-50" : ""}`}>
-                <div className="text-sm font-medium truncate">📄 {s.file_name || s.id}</div>
-                <div className="text-xs text-gray-500 mt-0.5">
-                  {fmtDate(s.start_date)} → {fmtDate(s.end_date)} · {s.items} itens · <span className="text-green-600">{s.reconciled} conciliados</span>
-                  {s.ignored ? <span className="text-gray-400"> · {s.ignored} ignorados</span> : null}
-                </div>
-                <div className="text-[11px] text-gray-400 mt-0.5">{s.account_name || ""}{s.omie_instance_id ? ` · ${s.omie_instance_id}` : ""}{s.source ? ` · ${s.source}` : ""}</div>
-              </button>
+              <div key={s.id} className={`relative group ${selected?.id === s.id ? "bg-green-50" : ""}`}>
+                <button onClick={() => openStatement(s)} className="w-full text-left px-4 py-3 hover:bg-green-50">
+                  <div className="text-sm font-medium truncate pr-6">📄 {s.file_name || s.id}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {fmtDate(s.start_date)} → {fmtDate(s.end_date)} · {s.items} itens · <span className="text-green-600">{s.reconciled} conciliados</span>
+                    {s.ignored ? <span className="text-gray-400"> · {s.ignored} ignorados</span> : null}
+                  </div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">{s.account_name || ""}{s.omie_instance_id ? ` · ${s.omie_instance_id}` : ""}{s.source ? ` · ${s.source}` : ""}</div>
+                </button>
+                <button
+                  onClick={(e) => doDeleteStatement(s, e)}
+                  disabled={busy === "stmt:" + s.id}
+                  title={(s.reconciled || 0) > 0 ? "Desfaça as conciliações antes de remover" : "Remover extrato importado"}
+                  className="absolute top-2 right-2 text-gray-300 hover:text-red-600 text-sm disabled:opacity-40"
+                >🗑</button>
+              </div>
             ))}
           </div>
         </div>
