@@ -52,7 +52,7 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
   // (A) NFs autorizadas sem card -> 'faturado'
   try {
     const nfs = await db.select().from(fiscalInvoices)
-      .where(and(gte(fiscalInvoices.createdAt, since), eq(fiscalInvoices.status, 'authorized')));
+      .where(and(gte(fiscalInvoices.createdAt, since), sql`${fiscalInvoices.status} IN ('authorized','rejected')`));
     for (const nf of nfs as any[]) {
       const num = String(nf.invoiceNumber || '').replace(/\D/g, '');
       if (!num || haveInv.has(num)) continue;
@@ -75,7 +75,8 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
           invoiceNumber: `NF-${nf.invoiceNumber}`,
           omieInstanceId: nf.omieInstanceId || null,
           stageHistory: [{ stage: 'faturado', changedAt: (nf.emissionDate ? new Date(nf.emissionDate) : nowBrazil()).toISOString(), changedBy: 'reconcile-nf' }],
-          createdBy: 'reconcile-nf',
+          notes: nf.status === 'rejected' ? 'NF REJEITADA na SEFAZ - preencher UF do cliente e re-transmitir (nao re-faturar, evita NF duplicada)' : null,
+          createdBy: nf.status === 'rejected' ? 'reconcile-nf-rej' : 'reconcile-nf',
           ...(nf.emissionDate ? { createdAt: new Date(nf.emissionDate) } : {}),
         } as any);
         haveInv.add(num); haveCustVal.add(cv);
