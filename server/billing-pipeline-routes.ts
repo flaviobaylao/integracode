@@ -6,7 +6,8 @@ import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
 import { db } from './db';
-import { sql } from 'drizzle-orm';
+import { sql, eq, and, gte, isNull } from 'drizzle-orm';
+import { fiscalInvoices, salesCards } from '@shared/schema';
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -31,13 +32,105 @@ async function logOrderAudit(salesCardId: string, outcome: string, error?: strin
 
 // Reconciliacao: garante que TODO sales_card com venda registrada (recente) tenha item no pipeline.
 // Idempotente. E a rede de seguranca caso o envio ao vivo tenha falhado.
-export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; created: number; failed: number; disabled?: boolean }> {
-  // DESABILITADO (28/jun/2026): a recriacao a partir de sales_cards criava PEDIDOS FANTASMAS.
-  // Motivo (descoberto com o Flavio): muitos sales_cards "pending" no 2.0 ja foram FATURADOS/entregues no 1.0
-  // (sairam do pipeline ativo do 1.0). O pipeline do 1.0 SINCRONIZA corretamente p/ o 2.0 (contagens batem),
-  // entao "sales_card com venda fora do pipeline" NAO significa pedido perdido. A garantia de "pedido nao some"
-  // fica com: (a) autoSendToBillingPipeline ao CRIAR pedido novo no 2.0 (ao vivo) + (b) sync do pipeline do 1.0.
-  return { scanned: 0, created: 0, failed: 0, disabled: true };
+export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned: number; createdFromNf: number; createdFromCard: number; failed: number }> {
+  // REDE DE SEGURANCA (08/jul): NENHUM pedido pode sumir do pipeline.
+  // Regra do Flavio: um pedido so pode desaparecer do pipeline se foi CANCELADO antes do faturamento.
+  // Portanto reconciliamos tudo que NAO esta cancelado e ficou sem card:
+  //   (A) toda NF AUTORIZADA sem card -> cria card 'faturado' (com o numero da NF);
+  //   (B) toda venda COMPLETADA (nao cancelada) sem NF e sem card -> cria card 'pedido'.
+  // Idempotente: dedup por numero de NF, por sales_card_id e por cliente+valor recente.
+  // NAO dispara automacoes (evita WhatsApp em massa retroativo). Cards marcados createdBy 'reconcile-*' (reversivel via remove-reconciled).
+  const since = new Date(Date.now() - days * 86400000);
+  let scanned = 0, createdFromNf = 0, createdFromCard = 0, failed = 0;
+
+  const existing = await storage.getBillingPipelineItems();
+  const haveInv = new Set(existing.map((i: any) => String(i.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean));
+  const haveCard = new Set(existing.map((i: any) => i.salesCardId).filter(Boolean));
+  const recent = existing.filter((i: any) => i.createdAt && new Date(i.createdAt) >= since);
+  const haveCustVal = new Set(recent.map((i: any) => `${i.customerId}|${Math.round(Number(i.saleValue || 0))}`));
+
+  // (A) NFs autorizadas sem card -> 'faturado'
+  try {
+    const nfs = await db.select().from(fiscalInvoices)
+      .where(and(gte(fiscalInvoices.createdAt, since), eq(fiscalInvoices.status, 'authorized')));
+    for (const nf of nfs as any[]) {
+      const num = String(nf.invoiceNumber || '').replace(/\D/g, '');
+      if (!num || haveInv.has(num)) continue;
+      const cv = `${nf.customerId}|${Math.round(Number(nf.totalInvoice || 0))}`;
+      if (haveCustVal.has(cv)) continue; // ja existe card recente do mesmo cliente/valor
+      scanned++;
+      try {
+        const customer = nf.customerId ? await storage.getCustomer(nf.customerId) : null;
+        const seller = customer?.sellerId ? await storage.getUser(customer.sellerId) : null;
+        await storage.createBillingPipelineItem({
+          salesCardId: null,
+          customerId: nf.customerId || null,
+          customerName: nf.customerName || (customer as any)?.fantasyName || customer?.name || 'Cliente',
+          customerDocument: nf.customerCnpjCpf || (customer as any)?.cnpj || (customer as any)?.cpf || null,
+          sellerId: customer?.sellerId || null,
+          sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
+          stage: 'faturado',
+          orderNumber: `NF-${nf.invoiceNumber}`,
+          saleValue: nf.totalInvoice || null,
+          invoiceNumber: `NF-${nf.invoiceNumber}`,
+          omieInstanceId: nf.omieInstanceId || null,
+          stageHistory: [{ stage: 'faturado', changedAt: (nf.emissionDate ? new Date(nf.emissionDate) : nowBrazil()).toISOString(), changedBy: 'reconcile-nf' }],
+          createdBy: 'reconcile-nf',
+          ...(nf.emissionDate ? { createdAt: new Date(nf.emissionDate) } : {}),
+        } as any);
+        haveInv.add(num); haveCustVal.add(cv);
+        createdFromNf++;
+      } catch (e) { failed++; }
+    }
+  } catch (e) { console.error('[reconcile] parte A (NFs) erro:', (e as any)?.message); }
+
+  // (B) vendas completadas (nao canceladas) sem NF e sem card -> 'pedido'
+  try {
+    const cards = await db.select().from(salesCards).where(and(
+      gte(salesCards.createdAt, since),
+      eq(salesCards.status, 'completed'),
+      isNull(salesCards.invoiceNumber),
+      sql`${salesCards.saleValue} IS NOT NULL AND ${salesCards.saleValue}::numeric > 0`,
+    ));
+    for (const sc of cards as any[]) {
+      if (sc.isPermanent) continue;
+      if (haveCard.has(sc.id)) continue;
+      const cv = `${sc.customerId}|${Math.round(Number(sc.saleValue || 0))}`;
+      if (haveCustVal.has(cv)) continue;
+      scanned++;
+      try {
+        const customer = sc.customerId ? await storage.getCustomer(sc.customerId) : null;
+        const seller = sc.sellerId ? await storage.getUser(sc.sellerId) : null;
+        let omieInstanceName = '';
+        if ((customer as any)?.omieInstanceId) { const inst = await storage.getOmieInstance((customer as any).omieInstanceId); omieInstanceName = (inst as any)?.displayName || ''; }
+        await storage.createBillingPipelineItem({
+          salesCardId: sc.id,
+          customerId: sc.customerId,
+          customerName: (customer as any)?.fantasyName || customer?.name || 'Cliente desconhecido',
+          customerDocument: (customer as any)?.cnpj || (customer as any)?.cpf || null,
+          sellerId: sc.sellerId || null,
+          sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
+          stage: 'pedido',
+          orderNumber: `INT-${String(sc.id).substring(0, 8)}`,
+          saleValue: sc.saleValue || null,
+          paymentMethod: sc.paymentMethod || null,
+          operationType: sc.operationType || null,
+          products: (sc.products as any) || null,
+          notes: sc.notes || null,
+          omieInstanceId: (customer as any)?.omieInstanceId || null,
+          omieInstanceName: omieInstanceName || null,
+          stageHistory: [{ stage: 'pedido', changedAt: (sc.createdAt ? new Date(sc.createdAt) : nowBrazil()).toISOString(), changedBy: 'reconcile-card' }],
+          createdBy: 'reconcile-card',
+          ...(sc.createdAt ? { createdAt: new Date(sc.createdAt) } : {}),
+        } as any);
+        haveCard.add(sc.id); haveCustVal.add(cv);
+        await logOrderAudit(sc.id, 'created');
+        createdFromCard++;
+      } catch (e) { await logOrderAudit(sc.id, 'failed', String((e as any)?.message || e)); failed++; }
+    }
+  } catch (e) { console.error('[reconcile] parte B (cards) erro:', (e as any)?.message); }
+
+  return { scanned, createdFromNf, createdFromCard, failed };
 }
 
 import { fireAutomation } from './automation-engine';
