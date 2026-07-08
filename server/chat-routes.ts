@@ -1557,7 +1557,7 @@ export function registerChatRoutes(app: Express): void {
       if (!chResp.ok) return res.status(502).json({ error: `channels HTTP ${chResp.status}`, body: raw.slice(0, 300) });
       let chans: any; try { chans = JSON.parse(raw); } catch { chans = raw; }
       const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
-      const canais = (list || []).map((c: any) => ({ phone: c.phoneNumber, tipo: c._t || c.channelType || c.name, status: c.status || c.connectionStatus || c.state || c.isConnected, id: c.id }));
+      const canais = (list || []).map((c: any) => ({ phone: c.phoneNumber, nome: c.name || c.displayName || c.description, tipo: c._t || c.channelType, status: c.status || c.connectionStatus || c.state || c.isConnected, id: c.id }));
       res.json({ fromPhoneUsado: cfg.fromPhone, orgId: cfg.orgId, totalCanais: canais.length, canais });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 200) }); }
   });
@@ -3895,7 +3895,7 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // PATCH /api/chat/conversations/:conversationId/transfer - Transferir conversa (admin only)
-  app.patch("/api/chat/conversations/:conversationId/transfer", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req, res) => {
+  app.patch("/api/chat/conversations/:conversationId/transfer", authenticateUser, requireRole(["admin", "coordinator", "administrative", "telemarketing", "vendedor"]), async (req, res) => {
     try {
       const { conversationId } = req.params;
       const { newAgentId } = req.body;
@@ -5555,7 +5555,7 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // POST /api/chat/conversations/:id/transfer - Transferir conversa para outro atendente (apenas admin)
-  app.post("/api/chat/conversations/:id/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+  app.post("/api/chat/conversations/:id/transfer", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'telemarketing', 'vendedor']), async (req, res) => {
     try {
       const { id } = req.params;
       const { toAgentId } = req.body;
