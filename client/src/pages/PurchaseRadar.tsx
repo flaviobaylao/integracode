@@ -56,6 +56,8 @@ export default function PurchaseRadar() {
   const [showDetail, setShowDetail] = useState(false);
   const [showClassify, setShowClassify] = useState(false);
   const [showPayable, setShowPayable] = useState(false);
+  const [showEntry, setShowEntry] = useState(false);
+  const [entryMappings, setEntryMappings] = useState<any[]>([]);
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
@@ -86,6 +88,16 @@ export default function PurchaseRadar() {
 
   const { data: certificates = [] } = useQuery<any[]>({
     queryKey: ["/api/purchases/certificates-status"],
+  });
+
+  const { data: rawMaterials = [] } = useQuery<any[]>({
+    queryKey: ["/api/synced-table/raw_materials"],
+    queryFn: async () => {
+      const res = await fetch("/api/synced-table/raw_materials?limit=1000", { credentials: "include" });
+      if (!res.ok) return [];
+      const j = await res.json();
+      return (j.rows || []).filter((m: any) => m.is_active !== false);
+    },
   });
 
   const importXml = useMutation({
@@ -129,6 +141,21 @@ export default function PurchaseRadar() {
       setShowPayable(false);
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
+
+  const processRaw = useMutation({
+    mutationFn: async ({ id, itemMappings }: any) => {
+      const res = await apiRequest("POST", `/api/purchases/${id}/process-raw-materials`, { itemMappings });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Entrada de matéria-prima registrada" });
+      setShowEntry(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/synced-table/raw_materials"] });
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
@@ -178,7 +205,7 @@ export default function PurchaseRadar() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Radar className="h-7 w-7 text-primary" />
-            Radar de Compras
+            Compras
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Importação, classificação e controle de notas fiscais de entrada
@@ -636,6 +663,23 @@ export default function PurchaseRadar() {
                     <CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como Paga
                   </Button>
                 )}
+                {["classified", "linked"].includes(selectedInvoice.status) && selectedInvoice.isStockPurchase && !selectedInvoice.stockProcessed && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="bg-amber-600 hover:bg-amber-700"
+                    onClick={() => {
+                      const its = Array.isArray(selectedInvoice.items) ? selectedInvoice.items : [];
+                      setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", quantity: it.qCom || "", unitCost: it.vUnCom || "", label: it.xProd || "" })));
+                      setShowEntry(true);
+                    }}
+                  >
+                    <Package className="h-4 w-4 mr-1" /> Dar entrada (matéria-prima)
+                  </Button>
+                )}
+                {selectedInvoice.isStockPurchase && selectedInvoice.stockProcessed && (
+                  <Badge className="bg-emerald-100 text-emerald-800 self-center"><CheckCircle2 className="h-3 w-3 mr-1 inline" />Estoque processado</Badge>
+                )}
                 {!["paid", "cancelled"].includes(selectedInvoice.status) && (
                   <Button
                     size="sm"
@@ -769,6 +813,65 @@ export default function PurchaseRadar() {
               onClick={() => createPayable.mutate({ id: selectedInvoice?.id, ...payableData })}
             >
               {createPayable.isPending ? "Criando..." : "Criar Conta a Pagar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showEntry} onOpenChange={setShowEntry}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Dar entrada — Matéria-Prima</DialogTitle>
+            <DialogDescription>
+              Para cada item da NF {selectedInvoice?.invoiceNumber}, escolha a matéria-prima que receberá a entrada, a quantidade e o custo unitário. Itens sem matéria-prima selecionada são ignorados.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div className="border rounded-lg overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="text-left p-2">Item da NF</th>
+                    <th className="text-left p-2">Matéria-Prima</th>
+                    <th className="text-right p-2">Quantidade</th>
+                    <th className="text-right p-2">Custo Unit.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entryMappings.map((m: any, i: number) => (
+                    <tr key={i} className="border-t align-top">
+                      <td className="p-2 max-w-[220px]">{m.label || `Item ${i + 1}`}</td>
+                      <td className="p-2 min-w-[220px]">
+                        <Select value={m.rawMaterialId} onValueChange={(v) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, rawMaterialId: v } : x))}>
+                          <SelectTrigger><SelectValue placeholder="Selecione (ou ignore)..." /></SelectTrigger>
+                          <SelectContent>
+                            {rawMaterials.map((rm: any) => (
+                              <SelectItem key={rm.id} value={rm.id}>{rm.name}{rm.unit ? ` (${rm.quantity} ${rm.unit})` : ""}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="p-2 w-28">
+                        <Input type="number" step="0.001" value={m.quantity} onChange={(e) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))} className="text-right" />
+                      </td>
+                      <td className="p-2 w-28">
+                        <Input type="number" step="0.0001" value={m.unitCost} onChange={(e) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, unitCost: e.target.value } : x))} className="text-right" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-muted-foreground">A entrada soma à quantidade da matéria-prima e registra um movimento de "entrada_compra" (com custo unitário). Não afeta o estoque de produtos acabados.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEntry(false)}>Cancelar</Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700"
+              disabled={processRaw.isPending || !entryMappings.some((m: any) => m.rawMaterialId && Number(m.quantity) > 0)}
+              onClick={() => processRaw.mutate({ id: selectedInvoice?.id, itemMappings: entryMappings.filter((m: any) => m.rawMaterialId && Number(m.quantity) > 0) })}
+            >
+              {processRaw.isPending ? "Registrando..." : "Confirmar entrada"}
             </Button>
           </DialogFooter>
         </DialogContent>
