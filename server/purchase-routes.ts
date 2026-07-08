@@ -286,6 +286,8 @@ export function registerPurchaseRoutes(app: Express) {
       if (instancesWithCnpj.length === 0) {
         return res.json({ ok: true, message: "Nenhuma instância com CNPJ cadastrado.", scanned: 0, found: 0, instances: [] });
       }
+      const ourCnpjs = new Set<string>();
+      for (const i of instances) { const c = onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj); if (c) ourCnpjs.add(c); }
       const getSetting = async (k: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${k} LIMIT 1`); const rows = (r as any).rows || r; return rows[0]?.value ?? null; };
       const setSetting = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, 'radar-compras') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'radar-compras', updated_at = now()`); };
 
@@ -307,7 +309,7 @@ export function registerPurchaseRoutes(app: Express) {
             cStat = r?.cStat || null;
             if (!r?.ok && r?.error) { err = r.error; break; }
             for (const doc of (r.docs || [])) {
-              if ((doc.type === "resumo" || doc.type === "nota") && doc.accessKey && !doc.isCancellation) {
+              if ((doc.type === "resumo" || doc.type === "nota") && doc.accessKey && !doc.isCancellation && !ourCnpjs.has(onlyDig(doc.supplierDocument))) {
                 const [ex] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, doc.accessKey));
                 if (!ex) {
                   await db.insert(purchaseInvoices).values({
