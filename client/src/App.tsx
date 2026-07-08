@@ -73,6 +73,7 @@ import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
 import PurchaseRadar from "@/pages/PurchaseRadar";
 import RelatoriosIA from "@/pages/RelatoriosIA";
+import RelatoriosGraficos from "@/pages/RelatoriosGraficos";
 import PagamentoClientes from "@/pages/PagamentoClientes";
 import DashboardFinanceiro from "@/pages/DashboardFinanceiro";
 import Repescagem from "@/pages/Repescagem";
@@ -288,6 +289,7 @@ function Router() {
           <Route path="/relatorios" component={Reports} />
           <Route path="/radar-compras" component={PurchaseRadar} />
           <Route path="/relatorios-ia" component={RelatoriosIA} />
+          <Route path="/relatorios-graficos" component={RelatoriosGraficos} />
           <Route path="/pagamento-clientes" component={PagamentoClientes} />
       <Route path="/dashboard-financeiro" component={DashboardFinanceiro} />
           <Route path="/repescagem" component={Repescagem} />
