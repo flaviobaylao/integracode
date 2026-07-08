@@ -797,8 +797,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           )}
         </div>
 
-        {/* Botões para Pedidos Finalizados */}
-        {card.status === 'completed' && (
+        {/* Botões para Pedidos Finalizados (venda concluída OU não-venda) */}
+        {(card.status === 'completed' || card.status === 'no_sale') && (
           <div className="border-t pt-4 space-y-3">
             {onStartSale && (
               <Button
@@ -810,15 +810,17 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 Registrar / Editar Pedido
               </Button>
             )}
-            <Button
-              onClick={handleDuplicateLastOrder}
-              variant="outline"
-              className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
-              data-testid="button-duplicate-completed-order"
-            >
-              <Package className="h-4 w-4 mr-2" />
-              Duplicar Pedido
-            </Button>
+            {card.status === 'completed' && (
+              <Button
+                onClick={handleDuplicateLastOrder}
+                variant="outline"
+                className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
+                data-testid="button-duplicate-completed-order"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Duplicar Pedido
+              </Button>
+            )}
           </div>
         )}
 
