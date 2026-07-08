@@ -278,24 +278,68 @@ export function registerPurchaseRoutes(app: Express) {
 
   app.post("/api/purchases/radar/scan", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
     try {
+      const onlyDig = (v: any) => (v == null ? "" : String(v)).replace(/\D/g, "");
+      const { INSTANCE_COMPANY_DATA } = await import("./nfe-routes");
+      const { fetchDistribuicaoDFe } = await import("./sefaz-service");
       const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
-      const instancesWithCnpj = instances.filter(i => i.cnpj);
-
+      const instancesWithCnpj = instances.filter((i: any) => onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj));
       if (instancesWithCnpj.length === 0) {
-        return res.json({
-          message: "Nenhuma instância com CNPJ cadastrado. Configure o CNPJ das instâncias Omie para ativar o radar.",
-          scanned: 0,
-          found: 0,
-        });
+        return res.json({ ok: true, message: "Nenhuma instância com CNPJ cadastrado.", scanned: 0, found: 0, instances: [] });
       }
+      const getSetting = async (k: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${k} LIMIT 1`); const rows = (r as any).rows || r; return rows[0]?.value ?? null; };
+      const setSetting = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, 'radar-compras') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'radar-compras', updated_at = now()`); };
 
-      res.json({
-        message: `Radar configurado para ${instancesWithCnpj.length} instância(s). A busca automática via DF-e/SEFAZ requer certificado digital A1 configurado. Use a importação manual de XML enquanto isso.`,
-        instances: instancesWithCnpj.map(i => ({ id: i.id, name: i.name, cnpj: i.cnpj })),
-        scanned: instancesWithCnpj.length,
-        found: 0,
-        tip: "Para ativar a busca automática, configure um certificado digital A1 válido para cada instância e o sistema consultará automaticamente o Web Service de Distribuição de DF-e da SEFAZ AN.",
-      });
+      const results: any[] = [];
+      let totalFound = 0;
+      for (const inst of instancesWithCnpj) {
+        const cd: any = (INSTANCE_COMPANY_DATA as any)[inst.name];
+        const cnpj = onlyDig(cd?.cnpj || inst.cnpj);
+        const uf = cd?.uf || "GO";
+        if (!cnpj) continue;
+        const envVal = await getSetting("fiscal_env_" + inst.id);
+        const ambiente: "producao" | "homologacao" = envVal === "homologacao" ? "homologacao" : "producao";
+        let ultNSU = onlyDig(await getSetting("dfe_ult_nsu_" + cnpj)) || "0";
+        let found = 0, calls = 0, err: string | null = null, cStat: string | null = null;
+        try {
+          while (calls < 4) {
+            calls++;
+            const r: any = await fetchDistribuicaoDFe({ cnpj, uf, ultNSU, ambiente });
+            cStat = r?.cStat || null;
+            if (!r?.ok && r?.error) { err = r.error; break; }
+            for (const doc of (r.docs || [])) {
+              if ((doc.type === "resumo" || doc.type === "nota") && doc.accessKey && !doc.isCancellation) {
+                const [ex] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, doc.accessKey));
+                if (!ex) {
+                  await db.insert(purchaseInvoices).values({
+                    accessKey: doc.accessKey,
+                    invoiceNumber: doc.invoiceNumber,
+                    series: doc.series || "1",
+                    issueDate: doc.issueDate || null,
+                    supplierName: doc.supplierName || "(a identificar)",
+                    supplierDocument: doc.supplierDocument || "",
+                    supplierIe: doc.supplierIe,
+                    totalValue: doc.totalValue || "0",
+                    items: [],
+                    status: "detected",
+                    omieInstanceId: inst.id,
+                    detectedAt: nowBrazil(),
+                    createdBy: req.userId,
+                  });
+                  found++; totalFound++;
+                }
+              }
+            }
+            const newUlt = onlyDig(r.ultNSU) || ultNSU;
+            const maxNSU = onlyDig(r.maxNSU) || newUlt;
+            ultNSU = newUlt;
+            await setSetting("dfe_ult_nsu_" + cnpj, ultNSU);
+            if (r.cStat === "137") break;
+            try { if (BigInt(ultNSU || "0") >= BigInt(maxNSU || "0")) break; } catch (_e) { break; }
+          }
+        } catch (e: any) { err = e.message; }
+        results.push({ instance: inst.name, cnpj, ambiente, found, ultNSU, calls, cStat, error: err });
+      }
+      res.json({ ok: true, scanned: instancesWithCnpj.length, found: totalFound, instances: results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -673,7 +717,7 @@ export function registerPurchaseRoutes(app: Express) {
       if (!cnpj) return res.status(400).json({ error: "CNPJ da instância não configurado (necessário certificado A1)." });
 
       const [existing] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, chave));
-      if (existing) return res.status(409).json({ error: "Nota fiscal já importada", existingId: existing.id });
+      if (existing && existing.status !== "detected") return res.status(409).json({ error: "Nota fiscal já importada", existingId: existing.id });
 
       let ambiente: "producao" | "homologacao" = "producao";
       try {
@@ -690,27 +734,50 @@ export function registerPurchaseRoutes(app: Express) {
 
       const parsed = parseNFeXml(result.fullXml);
       const issueDateParsed = parsed.issueDate ? new Date(parsed.issueDate) : null;
-      const [invoice] = await db.insert(purchaseInvoices).values({
-        accessKey: parsed.accessKey || chave,
-        invoiceNumber: parsed.invoiceNumber,
-        series: parsed.series || "1",
-        issueDate: issueDateParsed,
-        supplierName: parsed.supplierName,
-        supplierDocument: parsed.supplierDocument,
-        supplierIe: parsed.supplierIe,
-        totalValue: parsed.totalValue || "0",
-        items: parsed.items,
-        taxes: parsed.taxes,
-        status: "imported",
-        xmlContent: result.fullXml,
-        omieInstanceId: instanceId,
-        cfop: parsed.cfop,
-        natureOfOperation: parsed.natureOfOperation,
-        importedAt: nowBrazil(),
-        createdBy: req.userId,
-      }).returning();
+      let invoice: any;
+      let enriched = false;
+      if (existing && existing.status === "detected") {
+        [invoice] = await db.update(purchaseInvoices).set({
+          invoiceNumber: parsed.invoiceNumber,
+          series: parsed.series || "1",
+          issueDate: issueDateParsed,
+          supplierName: parsed.supplierName,
+          supplierDocument: parsed.supplierDocument,
+          supplierIe: parsed.supplierIe,
+          totalValue: parsed.totalValue || "0",
+          items: parsed.items,
+          taxes: parsed.taxes,
+          status: "imported",
+          xmlContent: result.fullXml,
+          cfop: parsed.cfop,
+          natureOfOperation: parsed.natureOfOperation,
+          importedAt: nowBrazil(),
+          updatedAt: nowBrazil(),
+        }).where(eq(purchaseInvoices.id, existing.id)).returning();
+        enriched = true;
+      } else {
+        [invoice] = await db.insert(purchaseInvoices).values({
+          accessKey: parsed.accessKey || chave,
+          invoiceNumber: parsed.invoiceNumber,
+          series: parsed.series || "1",
+          issueDate: issueDateParsed,
+          supplierName: parsed.supplierName,
+          supplierDocument: parsed.supplierDocument,
+          supplierIe: parsed.supplierIe,
+          totalValue: parsed.totalValue || "0",
+          items: parsed.items,
+          taxes: parsed.taxes,
+          status: "imported",
+          xmlContent: result.fullXml,
+          omieInstanceId: instanceId,
+          cfop: parsed.cfop,
+          natureOfOperation: parsed.natureOfOperation,
+          importedAt: nowBrazil(),
+          createdBy: req.userId,
+        }).returning();
+      }
 
-      res.json({ invoice, ambiente });
+      res.json({ invoice, ambiente, enriched });
     } catch (err: any) {
       console.error("[PURCHASES] Import by key error:", err.message);
       res.status(500).json({ error: err.message });
