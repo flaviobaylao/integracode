@@ -389,4 +389,200 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // =========================================================================
+  // IMPORTAR OFX — cria bank_statement + bank_statement_items (status pending).
+  // Não dá baixa; só ingere o extrato (o motor sugere a conciliação).
+  // Insert defensivo por introspecção de colunas (tabelas vêm do sync do 1.0).
+  // =========================================================================
+
+  type ColInfo = Map<string, { nullable: boolean; hasDefault: boolean; dtype: string }>;
+  async function tableColInfo(table: string): Promise<ColInfo> {
+    const r = await db.execute(sql`
+      SELECT column_name, is_nullable, column_default, data_type
+      FROM information_schema.columns
+      WHERE table_name = ${table} AND table_schema = 'public'`);
+    const m: ColInfo = new Map();
+    for (const c of rowsOf(r)) m.set(String(c.column_name), { nullable: c.is_nullable === "YES", hasDefault: c.column_default != null, dtype: String(c.data_type || "") });
+    return m;
+  }
+  const defaultForType = (dtype: string): any => {
+    if (/int|numeric|real|double|decimal|money/i.test(dtype)) return 0;
+    if (/bool/i.test(dtype)) return false;
+    if (/timestamp|date|time/i.test(dtype)) return new Date().toISOString();
+    return "";
+  };
+  async function insertDynamic(table: string, cols: ColInfo, valueMap: Record<string, any>, returning?: string) {
+    const names: string[] = [];
+    const vals: any[] = [];
+    for (const [k, v] of Object.entries(valueMap)) {
+      if (v === undefined) continue;
+      if (cols.has(k)) { names.push(k); vals.push(v); }
+    }
+    // Preenche NOT NULL sem default que não foram fornecidos (evita 500 por coluna obrigatória)
+    for (const [name, info] of cols.entries()) {
+      if (name === "id") continue;
+      if (!info.nullable && !info.hasDefault && !names.includes(name)) { names.push(name); vals.push(defaultForType(info.dtype)); }
+    }
+    const colSql = sql.join(names.map((c) => sql.raw('"' + c + '"')), sql`, `);
+    const valSql = sql.join(vals.map((v) => sql`${v}`), sql`, `);
+    const hasId = cols.has("id");
+    const idColSql = hasId ? sql`"id", ` : sql``;
+    const idValSql = hasId ? sql`gen_random_uuid(), ` : sql``;
+    const retSql = returning ? sql`${sql.raw('RETURNING "' + returning + '"')}` : sql``;
+    const r = await db.execute(sql`INSERT INTO ${sql.raw('"' + table + '"')} (${idColSql}${colSql}) VALUES (${idValSql}${valSql}) ${retSql}`);
+    return rowsOf(r)[0] || null;
+  }
+
+  const ofxDate = (v: any): string | null => {
+    const s = onlyDigits(v);
+    if (s.length < 8) return null;
+    return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  };
+  const ofxAmount = (v: any): number => {
+    let s = String(v == null ? "" : v).trim().replace(/[^0-9.,\-]/g, "");
+    if (!s) return NaN;
+    if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
+    else if (s.includes(",")) s = s.replace(",", ".");
+    const n = parseFloat(s);
+    return isNaN(n) ? NaN : n;
+  };
+  const ofxTag = (block: string, tag: string): string => {
+    const m = block.match(new RegExp("<" + tag + ">([^<\\r\\n]*)", "i"));
+    return m ? m[1].trim() : "";
+  };
+  function parseOfx(text: string) {
+    const acct = ofxTag(text, "ACCTID");
+    const bankId = ofxTag(text, "BANKID");
+    const dtStart = ofxDate(ofxTag(text, "DTSTART"));
+    const dtEnd = ofxDate(ofxTag(text, "DTEND"));
+    const txns: any[] = [];
+    const re = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
+    let mm: RegExpExecArray | null;
+    const chunks: string[] = [];
+    while ((mm = re.exec(text))) chunks.push(mm[1]);
+    if (!chunks.length && /<STMTTRN>/i.test(text)) {
+      // OFX sem fechamento de </STMTTRN>: separa por marcador
+      const parts = text.split(/<STMTTRN>/i).slice(1);
+      for (const p of parts) chunks.push(p.split(/<\/BANKTRANLIST>|<LEDGERBAL>|<AVAILBAL>/i)[0]);
+    }
+    for (const blk of chunks) {
+      const amt = ofxAmount(ofxTag(blk, "TRNAMT"));
+      if (isNaN(amt)) continue;
+      const date = ofxDate(ofxTag(blk, "DTPOSTED"));
+      const memo = ofxTag(blk, "MEMO");
+      const name = ofxTag(blk, "NAME");
+      const fitid = ofxTag(blk, "FITID");
+      const checknum = ofxTag(blk, "CHECKNUM");
+      const trntype = ofxTag(blk, "TRNTYPE").toUpperCase();
+      const type = amt >= 0 ? "C" : "D";
+      txns.push({ date, amount: Math.abs(amt), type, description: (memo || name || trntype || "").slice(0, 300), name: (name || "").slice(0, 200), document: (checknum || "").slice(0, 60), fitid: (fitid || "").slice(0, 120) });
+    }
+    return { acct, bankId, dtStart, dtEnd, transactions: txns };
+  }
+
+  app.post("/api/reconciliation/import-ofx", async (req, res) => {
+    try {
+      const ofxText = String(req.body?.ofxText || "");
+      const accountId = (req.body?.accountId || "").toString();
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const fileName = (req.body?.fileName || "extrato.ofx").toString().slice(0, 200);
+      if (!ofxText.trim()) return res.status(400).json({ error: "ofxText obrigatorio" });
+      if (!accountId) return res.status(400).json({ error: "selecione a conta antes de importar" });
+
+      const acc = rowsOf(await db.execute(sql`SELECT id, name, omie_instance_id FROM financial_accounts WHERE id = ${accountId} LIMIT 1`))[0];
+      if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
+      const instanceId = acc.omie_instance_id || null;
+
+      const parsed = parseOfx(ofxText);
+      if (!parsed.transactions.length) return res.status(400).json({ error: "nenhuma transacao (STMTTRN) encontrada no arquivo" });
+
+      const stCols = await tableColInfo("bank_statements");
+      const itCols = await tableColInfo("bank_statement_items");
+      const fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
+
+      // Dedup contra itens já existentes na MESMA conta
+      let skipped = 0;
+      let toInsert = parsed.transactions;
+      if (fitCol) {
+        const fitsIn = Array.from(new Set(parsed.transactions.map((t) => t.fitid).filter(Boolean)));
+        const existing = new Set<string>();
+        if (fitsIn.length) {
+          const er = await db.execute(sql`
+            SELECT DISTINCT ${sql.raw('i."' + fitCol + '"')} AS fit
+            FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+            WHERE s.financial_account_id = ${accountId} AND ${sql.raw('i."' + fitCol + '"')} IN (${inList(fitsIn)})`);
+          for (const x of rowsOf(er)) existing.add(String(x.fit));
+        }
+        const seen = new Set<string>();
+        toInsert = parsed.transactions.filter((t) => {
+          const k = t.fitid || `${t.date}|${t.amount}|${t.type}|${t.description}`;
+          if (t.fitid && existing.has(t.fitid)) { skipped++; return false; }
+          if (seen.has(k)) { skipped++; return false; }
+          seen.add(k); return true;
+        });
+      } else {
+        // Sem coluna de FITID: dedup por (data|valor|tipo|descrição) contra o período
+        const existing = new Set<string>();
+        if (parsed.dtStart || parsed.dtEnd) {
+          const er = await db.execute(sql`
+            SELECT i.transaction_date, i.amount, i.type, i.description
+            FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+            WHERE s.financial_account_id = ${accountId}
+              AND (${parsed.dtStart}::date IS NULL OR i.transaction_date >= ${parsed.dtStart}::date)
+              AND (${parsed.dtEnd}::date IS NULL OR i.transaction_date <= ${parsed.dtEnd}::date)`);
+          for (const x of rowsOf(er)) existing.add(`${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`);
+        }
+        const seen = new Set<string>();
+        toInsert = parsed.transactions.filter((t) => {
+          const k = `${t.date}|${money(t.amount)}|${t.type}|${normDesc(t.description)}`;
+          if (existing.has(k) || seen.has(k)) { skipped++; return false; }
+          seen.add(k); return true;
+        });
+      }
+
+      if (!toInsert.length) return res.json({ ok: true, statementId: null, inserted: 0, skipped, message: "Todos os lançamentos já existiam (nada novo a importar)." });
+
+      const totalC = toInsert.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0);
+      const totalD = toInsert.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0);
+
+      const stmt = await insertDynamic("bank_statements", stCols, {
+        file_name: fileName,
+        source: "ofx",
+        start_date: parsed.dtStart,
+        end_date: parsed.dtEnd,
+        financial_account_id: accountId,
+        omie_instance_id: instanceId,
+        total_credits: totalC.toFixed(2),
+        total_debits: totalD.toFixed(2),
+        item_count: toInsert.length,
+        reconciled_count: 0,
+        bank_account: parsed.acct || null,
+        created_by: by,
+      }, "id");
+      const stmtId = stmt?.id;
+      if (!stmtId) return res.status(500).json({ error: "falha ao criar o extrato (sem id)" });
+
+      let inserted = 0;
+      for (const t of toInsert) {
+        const vm: Record<string, any> = {
+          statement_id: stmtId,
+          transaction_date: t.date,
+          amount: t.amount.toFixed(2),
+          type: t.type,
+          description: t.description,
+          document: t.document,
+          origin_name: t.name || null,
+          reconciliation_status: "pending",
+          created_by: by,
+        };
+        if (fitCol) vm[fitCol] = t.fitid || null;
+        await insertDynamic("bank_statement_items", itCols, vm);
+        inserted++;
+      }
+
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
 }
