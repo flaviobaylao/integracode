@@ -579,19 +579,19 @@ function ChatCenterInner() {
   // Filtrar conversas por termo de busca (apenas as normais)
   const filteredConversations = normalConversations.filter(conv => 
     conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
+    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
   );
 
   // Filtrar conversas SPAM por termo de busca
   const filteredSpamConversations = spamConversations.filter(conv => 
     conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
+    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
   );
 
   // Filtrar conversas GRUPO por termo de busca
   const filteredGrupoConversations = grupoConversations.filter(conv => 
     conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.customerPhone.includes(searchTerm.replace(/\D/g, ''))
+    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
   );
 
   // Fetch messages para a conversa selecionada - polling a cada 2 segundos (evita rate limiting)
@@ -901,7 +901,7 @@ function ChatCenterInner() {
           customerPhone: phoneNumber.replace(/\D/g, ''),
           customerName: customerName || `Cliente ${phoneNumber}`
         })
-      }).then(r => r.json());
+      }).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `Erro ${r.status}`); return d; });
     },
     onSuccess: (data) => {
       toast({ title: "Sucesso", description: "Conversa iniciada com sucesso" });
