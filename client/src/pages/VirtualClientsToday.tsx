@@ -55,6 +55,7 @@ interface VirtualClient {
     visitPeriodicity?: string;
   };
   nextThreeVisits: Array<{ date: string; status: string }>;
+  last3MonthsAvg?: number;
 }
 
 export default function VirtualClientsToday() {
@@ -177,6 +178,7 @@ export default function VirtualClientsToday() {
         case 'vendedor': return client.customer?.sellerName || '';
         case 'dia': return Array.isArray(client.customer?.weekdays) ? client.customer.weekdays.join(', ') : (client.customer?.weekdays || '');
         case 'periodicidade': return client.customer?.visitPeriodicity || '';
+        case 'media3m': return client.last3MonthsAvg || 0;
         default: return '';
       }
     });
@@ -342,7 +344,7 @@ export default function VirtualClientsToday() {
               />
 
               
-              <ExportExcelButton testId="export-virtual" onClick={() => exportToExcel(clientsView.map((c) => ({ Nome: c.customer?.fantasyName || c.customer?.name || c.fantasyNameImported || "", Documento: c.document, Telefone: c.customer?.phone, Vendedor: resolveSeller(c.customer?.sellerName || c.customer?.sellerId), Dia: Array.isArray(c.customer?.weekdays) ? (c.customer?.weekdays as any[]).join(", ") : c.customer?.weekdays || "", Periodicidade: c.customer?.visitPeriodicity })), "clientes-virtuais-do-dia")} />
+              <ExportExcelButton testId="export-virtual" onClick={() => exportToExcel(clientsView.map((c) => ({ Nome: c.customer?.fantasyName || c.customer?.name || c.fantasyNameImported || "", Documento: c.document, Telefone: c.customer?.phone, Vendedor: resolveSeller(c.customer?.sellerName || c.customer?.sellerId), Dia: Array.isArray(c.customer?.weekdays) ? (c.customer?.weekdays as any[]).join(", ") : c.customer?.weekdays || "", Periodicidade: c.customer?.visitPeriodicity, "Media 3 meses": Number(c.last3MonthsAvg || 0) })), "clientes-virtuais-do-dia")} />
               <Button
                 variant="outline"
                 size="sm"
@@ -387,13 +389,14 @@ export default function VirtualClientsToday() {
                     <SortableTh label="Vendedor" colKey="vendedor" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                     <SortableTh label="Dia da Semana" colKey="dia" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                     <SortableTh label="Periodicidade" colKey="periodicidade" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                    <SortableTh label="Média 3 meses" colKey="media3m" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
                     <TableHead>Ação</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredClients.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                         Nenhum cliente virtual agendado para este dia
                       </TableCell>
                     </TableRow>
@@ -446,6 +449,9 @@ export default function VirtualClientsToday() {
                               ? "Mensal"
                               : "-"}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {(client.last3MonthsAvg || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
