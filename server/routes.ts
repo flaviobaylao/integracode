@@ -2780,6 +2780,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Bulk update time slots for all customers - ADMIN ONLY
+  // Edição em massa de clientes (Vendedor, Periodicidade, Dias de Visita, Data de Início do Fornecimento)
+  app.post('/api/customers/bulk-update', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { ids, fields } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
+      const patch: any = {};
+      if (fields?.sellerId) patch.sellerId = String(fields.sellerId);
+      if (fields?.visitPeriodicity && ['semanal', 'quinzenal', 'mensal'].includes(String(fields.visitPeriodicity))) patch.visitPeriodicity = String(fields.visitPeriodicity);
+      if (Array.isArray(fields?.weekdays) && fields.weekdays.length > 0) patch.weekdays = JSON.stringify(fields.weekdays);
+      if (fields?.serviceStartDate) { const d = new Date(fields.serviceStartDate); if (!isNaN(d.getTime())) patch.serviceStartDate = d; }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
+      let updated = 0; const errors: string[] = [];
+      for (const id of ids) {
+        try { await storage.updateCustomer(String(id), patch); updated++; }
+        catch (e: any) { if (errors.length < 8) errors.push(String(id).slice(0, 8) + ": " + String(e?.message || e).slice(0, 60)); }
+      }
+      res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), errors });
+    } catch (error: any) {
+      console.error("Error bulk updating customers:", error);
+      res.status(500).json({ message: "Falha na edição em massa: " + String(error?.message || error) });
+    }
+  });
+
   app.post('/api/customers/bulk-update-time-slots', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const result = await storage.bulkUpdateAllCustomersTimeSlots();
