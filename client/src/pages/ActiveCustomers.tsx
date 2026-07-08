@@ -236,6 +236,13 @@ export default function ActiveCustomers() {
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
+  const [selectedPersonType, setSelectedPersonType] = useState<string>("");
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkSeller, setBulkSeller] = useState("");
+  const [bulkPeriodicity, setBulkPeriodicity] = useState("");
+  const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
+  const [bulkStartDate, setBulkStartDate] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -839,7 +846,10 @@ export default function ActiveCustomers() {
       const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
       
       const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId));
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood;
+      const ptDigits = (ac.document || '').replace(/\D/g, '');
+      const personType = (ac.customer as any)?.customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
+      const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -863,6 +873,29 @@ export default function ActiveCustomers() {
       return bValue - aValue;
     });
   if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.customer?.fantasyName || a.customer?.name || a.fantasyNameImported || '').localeCompare(String(b.customer?.fantasyName || b.customer?.name || b.fantasyNameImported || '')));
+
+  const selectableIds = filteredCustomers.map((ac: any) => ac.customer?.id).filter(Boolean) as string[];
+  const allCustomersSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedCustomerIds.has(id));
+  const toggleCustomer = (id?: string) => { if (!id) return; setSelectedCustomerIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
+  const toggleSelectAllCustomers = () => { setSelectedCustomerIds((prev) => { if (selectableIds.length > 0 && selectableIds.every((id) => prev.has(id))) return new Set(); return new Set(selectableIds); }); };
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async () => {
+      const fields: any = {};
+      if (bulkSeller) fields.sellerId = bulkSeller;
+      if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
+      if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
+      if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
+      return await apiRequest('POST', '/api/customers/bulk-update', { ids: Array.from(selectedCustomerIds), fields });
+    },
+    onSuccess: async (r: any) => {
+      const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      toast({ title: "Clientes atualizados", description: `${j.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s).` });
+      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate("");
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+    },
+    onError: (e: any) => { toast({ title: "Erro na edição em massa", description: e?.message || String(e), variant: "destructive" }); },
+  });
 
   const formatDocument = (doc: string, type: string) => {
     if (type === "cpf" && doc.length === 11) {
@@ -1113,6 +1146,16 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
               
+              <Select value={selectedPersonType} onValueChange={setSelectedPersonType}>
+                <SelectTrigger className="w-[120px] h-9" data-testid="select-persontype-filter">
+                  <SelectValue placeholder="PJ / PF" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pessoa_juridica">Pessoa Jurídica</SelectItem>
+                  <SelectItem value="pessoa_fisica">Pessoa Física</SelectItem>
+                </SelectContent>
+              </Select>
+
               <Select value={selectedPositivation} onValueChange={setSelectedPositivation}>
                 <SelectTrigger className="w-[120px] h-9" data-testid="select-positivation-filter">
                   <SelectValue placeholder="Positivação" />
@@ -1182,6 +1225,8 @@ export default function ActiveCustomers() {
                   setSelectedPhone("");
                   setSelectedCity("");
                   setSelectedNeighborhood("");
+                  setSelectedPersonType("");
+                  setSelectedCustomerIds(new Set());
                 }}
                 className="h-9"
                 data-testid="button-clear-all-filters"
@@ -1194,6 +1239,11 @@ export default function ActiveCustomers() {
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
+              {selectedCustomerIds.size > 0 && (
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white h-9" onClick={() => setShowBulkModal(true)} data-testid="button-bulk-edit">
+                  ✏️ Editar em massa ({selectedCustomerIds.size})
+                </Button>
+              )}
               {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || selectedCity || selectedNeighborhood) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
@@ -1247,6 +1297,7 @@ export default function ActiveCustomers() {
                   <Table className="min-w-[1800px]">
                     <TableHeader className="sticky top-0 bg-background z-10" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
                       <TableRow>
+                        <TableHead className="w-8"><Checkbox checked={allCustomersSelected} onCheckedChange={toggleSelectAllCustomers} aria-label="Selecionar todos" /></TableHead>
                         <TableHead className="min-w-[60px]">Status</TableHead>
                         <TableHead className="min-w-[120px]">CPF/CNPJ</TableHead>
                         <TableHead className="min-w-[180px]">Nome</TableHead>
@@ -1306,7 +1357,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller || selectedPhone || selectedCity || selectedNeighborhood ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -1318,6 +1369,9 @@ export default function ActiveCustomers() {
                             onClick={(e) => handleActionClick(e, ac)}
                             className={`cursor-pointer transition-colors ${((ac.nextThreeVisits?.length ?? 0) === 0) ? 'bg-red-100 hover:bg-red-200' : 'hover:bg-muted/50'}${(ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude)) ? ' text-red-600' : ''}`}
                           >
+                            <TableCell onClick={(e) => e.stopPropagation()} className="w-8">
+                              <Checkbox checked={selectedCustomerIds.has(ac.customer?.id || '')} onCheckedChange={() => toggleCustomer(ac.customer?.id)} disabled={!ac.customer?.id} aria-label="Selecionar cliente" />
+                            </TableCell>
                             <TableCell>
                               {ac.matchStatus === "matched" ? (
                                 <span title="Encontrado no sistema">
@@ -1491,6 +1545,58 @@ export default function ActiveCustomers() {
         )}
 
         {/* Modal de Edição de Cliente / Novo Lead */}
+        {showBulkModal && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowBulkModal(false)}>
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 py-3 border-b flex items-center justify-between">
+                <div className="font-bold text-gray-800">Editar em massa · {selectedCustomerIds.size} cliente(s)</div>
+                <button onClick={() => setShowBulkModal(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              </div>
+              <div className="px-5 py-4 space-y-4 text-sm">
+                <p className="text-xs text-gray-500">Preencha só os campos que quer alterar; os demais ficam como estão.</p>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Vendedor</label>
+                  <select value={bulkSeller} onChange={(e) => setBulkSeller(e.target.value)} className="w-full border rounded px-2 py-1.5">
+                    <option value="">— não alterar —</option>
+                    {activeSellers.map((sv: any) => (<option key={sv.id} value={sv.id}>{sv.name}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Periodicidade de Visita</label>
+                  <select value={bulkPeriodicity} onChange={(e) => setBulkPeriodicity(e.target.value)} className="w-full border rounded px-2 py-1.5">
+                    <option value="">— não alterar —</option>
+                    <option value="semanal">Semanal</option>
+                    <option value="quinzenal">Quinzenal</option>
+                    <option value="mensal">Mensal</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Dias de Visita <span className="text-gray-400">(marque para alterar)</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {[['Seg', 'Segunda'], ['Ter', 'Terça'], ['Qua', 'Quarta'], ['Qui', 'Quinta'], ['Sex', 'Sexta'], ['Sab', 'Sábado'], ['Dom', 'Domingo']].map(([v, l]) => (
+                      <label key={v} className={`px-2 py-1 rounded border cursor-pointer text-xs ${bulkWeekdays.includes(v) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>
+                        <input type="checkbox" className="hidden" checked={bulkWeekdays.includes(v)} onChange={() => setBulkWeekdays((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v])} />
+                        {l}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Data de Início do Fornecimento</label>
+                  <input type="date" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} className="w-full border rounded px-2 py-1.5" />
+                </div>
+              </div>
+              <div className="px-5 py-3 border-t flex justify-end gap-2">
+                <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
+                <button
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  disabled={bulkUpdateMutation.isPending}
+                  className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
+                >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
+              </div>
+            </div>
+          </div>
+        )}
         <CustomerEditModal
           isOpen={showCustomerEditModal}
           onClose={handleCustomerEditClose}
