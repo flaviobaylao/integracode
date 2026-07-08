@@ -654,5 +654,68 @@ export function registerPurchaseRoutes(app: Express) {
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+
+  // ===== Importar NF-e por CHAVE (SEFAZ Distribuição DFe — usa o A1 do CNPJ destinatário) =====
+  app.post("/api/purchases/import-by-key", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const chave = (req.body?.chave || "").toString().replace(/\D/g, "");
+      const instanceId = (req.body?.instanceId || "").toString();
+      if (chave.length !== 44) return res.status(400).json({ error: "Chave de acesso inválida (precisa ter 44 dígitos)." });
+      if (!instanceId) return res.status(400).json({ error: "Selecione a empresa (instância) destinatária da nota." });
+
+      const [inst] = await db.select().from(omieInstances).where(eq(omieInstances.id, instanceId));
+      if (!inst) return res.status(404).json({ error: "Instância não encontrada" });
+
+      const { INSTANCE_COMPANY_DATA } = await import("./nfe-routes");
+      const cd: any = (INSTANCE_COMPANY_DATA as any)[inst.name];
+      const cnpj = ((cd?.cnpj || inst.cnpj || "") as string).replace(/\D/g, "");
+      const uf = (cd?.uf || "GO") as string;
+      if (!cnpj) return res.status(400).json({ error: "CNPJ da instância não configurado (necessário certificado A1)." });
+
+      const [existing] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, chave));
+      if (existing) return res.status(409).json({ error: "Nota fiscal já importada", existingId: existing.id });
+
+      let ambiente: "producao" | "homologacao" = "producao";
+      try {
+        const s = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${"fiscal_env_" + instanceId} LIMIT 1`);
+        const row: any = (s as any).rows ? (s as any).rows[0] : (Array.isArray(s) ? s[0] : null);
+        if (row && String(row.value) === "homologacao") ambiente = "homologacao";
+      } catch (_e) { /* default producao */ }
+
+      const { fetchNFeByChave } = await import("./sefaz-service");
+      const result: any = await fetchNFeByChave({ chave, uf, cnpj, ambiente });
+      if (!result?.ok || !result?.fullXml) {
+        return res.status(422).json({ error: `SEFAZ: ${result?.xMotivo || result?.error || "não foi possível obter o XML da nota"}${result?.cStat ? ` (cStat ${result.cStat})` : ""}`, cStat: result?.cStat || null });
+      }
+
+      const parsed = parseNFeXml(result.fullXml);
+      const issueDateParsed = parsed.issueDate ? new Date(parsed.issueDate) : null;
+      const [invoice] = await db.insert(purchaseInvoices).values({
+        accessKey: parsed.accessKey || chave,
+        invoiceNumber: parsed.invoiceNumber,
+        series: parsed.series || "1",
+        issueDate: issueDateParsed,
+        supplierName: parsed.supplierName,
+        supplierDocument: parsed.supplierDocument,
+        supplierIe: parsed.supplierIe,
+        totalValue: parsed.totalValue || "0",
+        items: parsed.items,
+        taxes: parsed.taxes,
+        status: "imported",
+        xmlContent: result.fullXml,
+        omieInstanceId: instanceId,
+        cfop: parsed.cfop,
+        natureOfOperation: parsed.natureOfOperation,
+        importedAt: nowBrazil(),
+        createdBy: req.userId,
+      }).returning();
+
+      res.json({ invoice, ambiente });
+    } catch (err: any) {
+      console.error("[PURCHASES] Import by key error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   console.log("✅ Purchase/Radar routes registered");
 }
