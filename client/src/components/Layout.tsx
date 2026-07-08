@@ -737,7 +737,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </nav>
 
         {/* Main Content Area */}
-        <main className="flex-1 min-h-[calc(100vh-73px)]">
+        <main className="flex-1 min-w-0 overflow-x-auto min-h-[calc(100vh-73px)]">
           {showingSectionOptions && selectedGroup ? (
             renderSectionCards(selectedGroup)
           ) : (
