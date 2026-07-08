@@ -502,10 +502,18 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Update item details (notes, invoice number, etc.)
   app.patch('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
-      const { notes, invoiceNumber } = req.body;
+      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument } = req.body;
       const updates: any = {};
       if (notes !== undefined) updates.notes = notes;
       if (invoiceNumber !== undefined) updates.invoiceNumber = invoiceNumber;
+      if (saleValue !== undefined) updates.saleValue = (saleValue === null || saleValue === '') ? null : String(saleValue);
+      if (paymentMethod !== undefined) updates.paymentMethod = paymentMethod || null;
+      if (operationType !== undefined) updates.operationType = operationType || null;
+      if (sellerId !== undefined) updates.sellerId = sellerId || null;
+      if (sellerName !== undefined) updates.sellerName = sellerName || null;
+      if (products !== undefined) updates.products = products;
+      if (customerName !== undefined) updates.customerName = customerName;
+      if (customerDocument !== undefined) updates.customerDocument = customerDocument;
 
       const updated = await storage.updateBillingPipelineItem(req.params.id, updates);
       res.json(updated);
