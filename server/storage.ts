@@ -7699,9 +7699,26 @@ export class DatabaseStorage implements IStorage {
 
   async getPhonebookContactByPhone(phone: string): Promise<PhonebookContact | undefined> {
     const cleanPhone = phone.replace(/\D/g, '');
+    // 1) match exato por substring (comportamento original)
     const [contact] = await db.select().from(phonebookContacts)
       .where(like(phonebookContacts.phone, `%${cleanPhone}%`));
-    return contact;
+    if (contact) return contact;
+    // 2) fallback FLEXIVEL: casa por DDD + ultimos 8 digitos, ignorando o 9o digito (com/sem).
+    //    So retorna se houver UM UNICO contato com esse DDD+8 (evita casar DDD/pessoa errada).
+    const local = cleanPhone.startsWith('55') ? cleanPhone.slice(2) : cleanPhone; // DD + [9] + 8
+    if (local.length >= 10) {
+      const dd = local.slice(0, 2);
+      const last8 = local.slice(-8);
+      const cands = await db.select().from(phonebookContacts)
+        .where(like(phonebookContacts.phone, `%${last8}`));
+      const matches = (cands || []).filter((c: any) => {
+        const cl = String(c.phone || '').replace(/\D/g, '');
+        const loc = cl.startsWith('55') ? cl.slice(2) : cl;
+        return loc.length >= 10 && loc.slice(0, 2) === dd && loc.slice(-8) === last8;
+      });
+      if (matches.length === 1) return matches[0];
+    }
+    return undefined;
   }
 
   async createPhonebookContact(contact: InsertPhonebookContact): Promise<PhonebookContact> {
