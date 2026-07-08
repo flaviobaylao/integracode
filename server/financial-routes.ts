@@ -29,15 +29,24 @@ function isFinancialReadAuthorized(req: any, res: any, next: any) {
 // Normaliza o body de contas (edição): datas string -> Date; valores "1.234,56" -> "1234.56"
 function normalizeFinancialBody(body: any): any {
   const out: any = { ...body };
+  const isoRe = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
   const dateFields = ['dueDate', 'issueDate', 'paidDate', 'paidAt', 'emissionDate', 'expectedSettlementDate'];
   for (const k of dateFields) {
     if (out[k] === '' || out[k] === null) { out[k] = null; }
     else if (typeof out[k] === 'string') { const d = new Date(out[k]); if (!isNaN(d.getTime())) out[k] = d; }
   }
+  // genérico: qualquer string em formato ISO de data vira Date (cobre createdAt/updatedAt/etc. carregados no form de edição)
+  for (const k of Object.keys(out)) {
+    if (typeof out[k] === 'string' && isoRe.test(out[k])) { const d = new Date(out[k]); if (!isNaN(d.getTime())) out[k] = d; }
+  }
   const numFields = ['amount', 'amountPaid', 'interestTotal', 'discountTotal'];
   for (const k of numFields) {
     if (typeof out[k] === 'string' && out[k].includes(',')) out[k] = out[k].replace(/\./g, '').replace(',', '.');
   }
+  // nunca sobrescrever PK / timestamps de auditoria a partir do payload do cliente
+  delete out.id;
+  delete out.createdAt;
+  delete out.updatedAt;
   return out;
 }
 
