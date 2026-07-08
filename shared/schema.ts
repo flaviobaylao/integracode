@@ -1786,6 +1786,7 @@ export const chatConversations = pgTable("chat_conversations", {
   priority: chatPriorityEnum("priority").notNull().default("normal"),
   lastMessageTime: timestamp("last_message_time").defaultNow(),
   unreadCount: integer("unread_count").notNull().default(0), // 🟢 Contador de mensagens não lidas
+  channelPhone: varchar("channel_phone"), // Canal Umbler (fromPhone) escolhido para a conversa
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
