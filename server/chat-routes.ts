@@ -1092,13 +1092,7 @@ export function registerChatRoutes(app: Express): void {
       const normalizedPhone = normalizePhoneNumber(customerPhone);
       console.log(`📞 [START-CONVERSATION] Telefone normalizado: ${customerPhone} → ${normalizedPhone}`);
 
-      // Get Evolution API config
-      const config = evolutionAPIService.getConfig();
-      if (!config || !config.instanceName) {
-        console.error(`⚠️  [START-CONVERSATION] WhatsApp não está configurado`, config);
-        return res.status(400).json({ error: "WhatsApp não está configurado" });
-      }
-      console.log(`✅ [START-CONVERSATION] Evolution API configurada:`, config.instanceName);
+      // (Evolution API removida — provedor atual é Umbler Talk; a conversa e apenas um registro no banco, o envio ocorre no endpoint de mensagem)
 
       // Create or get customer
       console.log(`👤 [START-CONVERSATION] Criando cliente...`);
@@ -1554,6 +1548,20 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // Diagnostico Umbler Talk: resolve organizationId + fromPhone via API (read-only)
+  app.get("/api/chat/umbler-talk/channels", authenticateUser, async (req: any, res: any) => {
+    try {
+      const cfg = await resolveUmblerTalkConfig();
+      if ('error' in cfg) return res.status(400).json({ error: cfg.error });
+      const chResp = await umblerTalkFetch('/v1/channels/?organizationId=' + encodeURIComponent(cfg.orgId));
+      const raw = await chResp.text();
+      if (!chResp.ok) return res.status(502).json({ error: `channels HTTP ${chResp.status}`, body: raw.slice(0, 300) });
+      let chans: any; try { chans = JSON.parse(raw); } catch { chans = raw; }
+      const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
+      const canais = (list || []).map((c: any) => ({ phone: c.phoneNumber, tipo: c._t || c.channelType || c.name, status: c.status || c.connectionStatus || c.state || c.isConnected, id: c.id }));
+      res.json({ fromPhoneUsado: cfg.fromPhone, orgId: cfg.orgId, totalCanais: canais.length, canais });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 200) }); }
+  });
+
   app.get("/api/chat/umbler-talk/diagnose", async (req: any, res: any) => {
     try {
       const cfg = await resolveUmblerTalkConfig();
