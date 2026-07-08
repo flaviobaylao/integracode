@@ -26,6 +26,21 @@ function isFinancialReadAuthorized(req: any, res: any, next: any) {
   next();
 }
 
+// Normaliza o body de contas (edição): datas string -> Date; valores "1.234,56" -> "1234.56"
+function normalizeFinancialBody(body: any): any {
+  const out: any = { ...body };
+  const dateFields = ['dueDate', 'issueDate', 'paidDate', 'paidAt', 'emissionDate', 'expectedSettlementDate'];
+  for (const k of dateFields) {
+    if (out[k] === '' || out[k] === null) { out[k] = null; }
+    else if (typeof out[k] === 'string') { const d = new Date(out[k]); if (!isNaN(d.getTime())) out[k] = d; }
+  }
+  const numFields = ['amount', 'amountPaid', 'interestTotal', 'discountTotal'];
+  for (const k of numFields) {
+    if (typeof out[k] === 'string' && out[k].includes(',')) out[k] = out[k].replace(/\./g, '').replace(',', '.');
+  }
+  return out;
+}
+
 export function registerFinancialRoutes(app: Express) {
 
   // ============================================================================
@@ -434,7 +449,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/receivables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const receivable = await storage.updateReceivable(req.params.id, req.body);
+      const receivable = await storage.updateReceivable(req.params.id, normalizeFinancialBody(req.body));
       res.json(receivable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -530,7 +545,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/payables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const payable = await storage.updatePayable(req.params.id, req.body);
+      const payable = await storage.updatePayable(req.params.id, normalizeFinancialBody(req.body));
       res.json(payable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
