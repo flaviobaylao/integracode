@@ -51,3 +51,11 @@
 .container {
   max-width: 100% !important;
 }
+
+/* Barra de rolagem (vertical + horizontal) fixada ao viewport, em TODAS as páginas.
+   #root vira o container de scroll: a barra horizontal fica no rodapé da tela quando
+   o conteúdo for mais largo que a janela (útil para navegar em telas/tabelas largas). */
+#root {
+  height: 100vh;
+  overflow: auto;
+}
