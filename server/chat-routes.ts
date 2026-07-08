@@ -3834,8 +3834,8 @@ export function registerChatRoutes(app: Express): void {
         return res.status(404).json({ error: "Conversa não encontrada" });
       }
 
-      // Verificar permissão: admin pode finalizar qualquer conversa, atendentes apenas as suas
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      // Verificar permissão: admin/coord/administrativo + telemarketing/vendedor podem finalizar qualquer conversa
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative' || currentUser?.role === 'telemarketing' || currentUser?.role === 'vendedor';
       if (!isAdmin && conversation.assignedAgentId) {
         const agents = await storage.getChatAgents();
         const userAgent = agents.find(a => a.userId === userId);
@@ -3947,8 +3947,8 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Conversa não encontrada" });
       }
 
-      // 🔐 Verificar permissão: admin vê todas, agentes veem só suas
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      // 🔐 Verificar permissão: admin/coord/administrativo + telemarketing/vendedor podem enviar em qualquer conversa
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative' || currentUser?.role === 'telemarketing' || currentUser?.role === 'vendedor';
       if (!isAdmin && conversation.agentId) {
         const agents = await storage.getChatAgents();
         const userAgent = agents.find(a => a.userId === userId);
