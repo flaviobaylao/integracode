@@ -1570,7 +1570,7 @@ export default function ChatCenter() {
                             <div key={idx} className="text-[10px] text-gray-500 flex items-center gap-1">
                               <Clock className="w-3 h-3" />
                               <span>
-                                {format(new Date(item.createdAt), "dd/MM/yy HH:mm", { locale: ptBR })}
+                                {(() => { const _d = new Date(item.createdAt); return isNaN(_d.getTime()) ? "--" : format(_d, "dd/MM/yy HH:mm", { locale: ptBR }); })()}
                                 {" - "}
                                 <span className="font-medium">{item.assignedAgentName || item.assignedAgentId}</span>
                                 {item.assignedByUserName && item.assignedByUserName !== 'Sistema' && (
@@ -1619,7 +1619,7 @@ export default function ChatCenter() {
                                     👤 {sellerName}
                                   </div>
                                 )}
-                                {msg.messageType === 'location' && msg.content.includes('[Localização:') ? (
+                                {msg.messageType === 'location' && (msg.content || '').includes('[Localização:') ? (
                                   <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
                                     <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
                                   </div>
