@@ -5715,6 +5715,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`Card fechado e próxima visita agendada: ${result.nextCard.id} para ${result.nextCard.scheduledDate}`);
           }
         }
+
+        // REDE DE SEGURANÇA (08/jul): pedido do vendedor (PUT sales-card) deve entrar no pipeline de faturamento.
+        // Antes o PUT nao enviava ao pipeline -> pedidos ficavam fora do pipeline. Envia ao registrar a venda (autoSend dedup por salesCardId).
+        try {
+          if (isStatusChanging && data.status === 'completed' && Number((data as any).saleValue) > 0 && salesCard) {
+            const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+            const cardForPipeline: any = { ...salesCard, saleValue: (salesCard as any).saleValue ?? (data as any).saleValue };
+            await autoSendToBillingPipeline(cardForPipeline, user?.email || 'system');
+          }
+        } catch (e: any) { console.error('[PUT sales-card] autoSend pipeline (ignorado):', e?.message); }
       } else {
         // Atualização normal sem mudança de status final
         console.log(`   💾 Salvando card com routeDay:`, data.routeDay);
