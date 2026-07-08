@@ -569,7 +569,7 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
   }
 }
 
-export async function sendUmblerTalkText(toPhone: string, text: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+export async function sendUmblerTalkText(toPhone: string, text: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');
@@ -578,7 +578,8 @@ export async function sendUmblerTalkText(toPhone: string, text: string): Promise
   const cfg = await resolveUmblerTalkConfig();
   if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
   try {
-    const body = JSON.stringify({ organizationId: cfg.orgId, fromPhone: cfg.fromPhone, toPhone: digits, message: text });
+    const fromPhone = String(fromPhoneOverride || cfg.fromPhone || '').replace(/\D/g, '');
+    const body = JSON.stringify({ organizationId: cfg.orgId, fromPhone, toPhone: digits, message: text });
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body });
     const raw = await resp.text();
     console.log(`[UMBLER-TALK] to=${digits} from=${cfg.fromPhone} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
@@ -591,7 +592,7 @@ export async function sendUmblerTalkText(toPhone: string, text: string): Promise
   }
 }
 
-async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');
@@ -601,7 +602,8 @@ async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: s
   const cfg = await resolveUmblerTalkConfig();
   if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
   try {
-    const payload: any = { organizationId: cfg.orgId, fromPhone: cfg.fromPhone, toPhone: digits, file: fileUrl };
+    const fromPhone = String(fromPhoneOverride || cfg.fromPhone || '').replace(/\D/g, '');
+    const payload: any = { organizationId: cfg.orgId, fromPhone, toPhone: digits, file: fileUrl };
     if (caption) payload.message = caption;
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload) });
     const raw = await resp.text();
@@ -3423,6 +3425,7 @@ export function registerChatRoutes(app: Express): void {
           customerName: displayName,
           customerPhone: conv.customerPhone || customer?.phone || "-",
           customerLinked: !!(phonebookContact && (phonebookContact as any).customerId),
+          channelPhone: (conv as any).channelPhone || null,
           agentId: conv.agentId,
           agentName: creatorAgent?.name,
           assignedAgentId: conv.assignedAgentId,
@@ -4061,7 +4064,7 @@ export function registerChatRoutes(app: Express): void {
               if (messageType === 'text' && content) {
                 if (process.env.UMBLER_TALK_TOKEN) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler Talk para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content);
+                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content, (conversation as any).channelPhone);
                 } else if (process.env.UMBLER_API_KEY) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
                   sendResult = await sendUmblerText(chatCustomer.phone, content);
@@ -4077,7 +4080,7 @@ export function registerChatRoutes(app: Express): void {
                 const host = req.headers.host || 'integracode-production.up.railway.app';
                 const absMediaUrl = /^https?:\/\//.test(mediaUrl) ? mediaUrl : ('https://' + host + mediaUrl);
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} via Umbler Talk: ${absMediaUrl.substring(0, 80)}`);
-                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, mediaCaption || content || '');
+                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, mediaCaption || content || '', (conversation as any).channelPhone);
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
                 
@@ -4214,7 +4217,7 @@ export function registerChatRoutes(app: Express): void {
                 if (!lat || !lng) { const m = String(content).match(/(-?\d+\.\d+)[,;\s]+(-?\d+\.\d+)/); if (m) { lat = m[1]; lng = m[2]; } }
                 const mapsUrl = (lat && lng) ? `https://maps.google.com/?q=${lat},${lng}` : String(content);
                 const locText = (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
-                if (process.env.UMBLER_TALK_TOKEN) sendResult = await sendUmblerTalkText(chatCustomer.phone, locText);
+                if (process.env.UMBLER_TALK_TOKEN) sendResult = await sendUmblerTalkText(chatCustomer.phone, locText, (conversation as any).channelPhone);
                 else sendResult = await evolutionAPIService.sendTextMessage(config.instanceName, phoneFormatted, locText);
               } else {
                 sendResult = { success: false, error: 'Tipo de mensagem não suportado' };
