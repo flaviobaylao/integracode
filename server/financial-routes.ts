@@ -439,7 +439,7 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/receivables', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
-      const data = { ...req.body, createdBy: user?.email || null };
+      const data = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       const receivable = await storage.createReceivable(data);
       res.status(201).json(receivable);
     } catch (error: any) {
@@ -535,7 +535,7 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/payables', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
-      const data = { ...req.body, createdBy: user?.email || null };
+      const data = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       const payable = await storage.createPayable(data);
       res.status(201).json(payable);
     } catch (error: any) {
