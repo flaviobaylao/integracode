@@ -89,6 +89,9 @@ function formatDate(dateStr: string) {
 export default function BillingPipeline() {
   const [search, setSearch] = useState('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editData, setEditData] = useState<any>(null);
+  const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
@@ -172,6 +175,31 @@ export default function BillingPipeline() {
     }
   });
 
+  const updateItemMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => await apiRequest('PATCH', `/api/billing-pipeline/${id}`, data),
+    onSuccess: (_r: any, vars: any) => {
+      toast({ title: 'Pedido atualizado' });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      setEditMode(false);
+      setDetailItem((prev) => prev ? ({ ...prev, ...vars.data } as any) : prev);
+    },
+    onError: (e: any) => toast({ title: 'Erro ao salvar', description: e.message, variant: 'destructive' }),
+  });
+  const startEdit = () => {
+    if (!detailItem) return;
+    setEditData({
+      saleValue: detailItem.saleValue ?? '',
+      paymentMethod: detailItem.paymentMethod ?? '',
+      operationType: detailItem.operationType ?? '',
+      sellerId: detailItem.sellerId ?? '',
+      sellerName: detailItem.sellerName ?? '',
+      invoiceNumber: detailItem.invoiceNumber ?? '',
+      notes: detailItem.notes ?? '',
+      products: (detailItem.products || []).map((pp: any) => ({ ...pp })),
+    });
+    setEditMode(true);
+  };
+  const saveEdit = () => { if (detailItem && editData) updateItemMutation.mutate({ id: detailItem.id, data: editData }); };
   const releaseBlockedMutation = useMutation({
     mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/release', { orderIds }),
     onSuccess: (data: any) => {
@@ -653,7 +681,7 @@ export default function BillingPipeline() {
       </div>
 
       {/* Detail Modal */}
-      <Dialog open={!!detailItem} onOpenChange={() => setDetailItem(null)}>
+      <Dialog open={!!detailItem} onOpenChange={() => { setDetailItem(null); setEditMode(false); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
@@ -664,9 +692,14 @@ export default function BillingPipeline() {
                 </DialogDescription>
               </div>
               {detailItem && (
-                <Badge className={STAGES.find(s => s.key === detailItem.stage)?.badgeColor || 'bg-gray-100'}>
-                  {STAGES.find(s => s.key === detailItem.stage)?.label || detailItem.stage}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge className={STAGES.find(s => s.key === detailItem.stage)?.badgeColor || 'bg-gray-100'}>
+                    {STAGES.find(s => s.key === detailItem.stage)?.label || detailItem.stage}
+                  </Badge>
+                  {!editMode ? (
+                    <Button size="sm" variant="outline" className="text-xs" onClick={startEdit} data-testid="button-edit-order">✏️ Editar</Button>
+                  ) : (<span className="text-xs text-blue-600 font-medium">Editando…</span>)}
+                </div>
               )}
             </div>
           </DialogHeader>
@@ -697,28 +730,47 @@ export default function BillingPipeline() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Valor Total</label>
-                    <p className="font-bold text-lg text-green-700">{formatCurrency(detailItem.saleValue)}</p>
+                    {editMode ? (
+                      <input type="number" step="0.01" value={editData?.saleValue ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, saleValue: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm font-bold" />
+                    ) : (<p className="font-bold text-lg text-green-700">{formatCurrency(detailItem.saleValue)}</p>)}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Pagamento</label>
-                    <p className="text-sm">{PAYMENT_LABELS[detailItem.paymentMethod || ''] || detailItem.paymentMethod || '-'}</p>
+                    {editMode ? (
+                      <select value={editData?.paymentMethod ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, paymentMethod: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm">
+                        <option value="">-</option>
+                        {Object.entries(PAYMENT_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+                      </select>
+                    ) : (<p className="text-sm">{PAYMENT_LABELS[detailItem.paymentMethod || ''] || detailItem.paymentMethod || '-'}</p>)}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Operação</label>
-                    <p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>
+                    {editMode ? (
+                      <select value={editData?.operationType ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, operationType: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm">
+                        <option value="">-</option>
+                        {Object.entries(OPERATION_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+                      </select>
+                    ) : (<p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>)}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
-                    <p className="text-sm">{detailItem.sellerName || '-'}</p>
+                    {editMode ? (
+                      <select value={editData?.sellerId ?? ''} onChange={(e) => { const u = (usersList as any[]).find((x) => x.id === e.target.value); setEditData((d: any) => ({ ...d, sellerId: e.target.value, sellerName: u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : d.sellerName })); }} className="w-full border rounded px-2 py-1 text-sm">
+                        <option value="">{editData?.sellerName || '-'}</option>
+                        {(usersList as any[]).filter((u) => u.isActive).map((u) => (<option key={u.id} value={u.id}>{`${u.firstName || ''} ${u.lastName || ''}`.trim()}</option>))}
+                      </select>
+                    ) : (<p className="text-sm">{detailItem.sellerName || '-'}</p>)}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância Omie</label>
                     <p className="text-sm">{detailItem.omieInstanceName || '-'}</p>
                   </div>
-                  {detailItem.invoiceNumber && (
+                  {(detailItem.invoiceNumber || editMode) && (
                     <div>
                       <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Nota Fiscal</label>
-                      <p className="text-sm font-mono font-semibold text-orange-700">{detailItem.invoiceNumber}</p>
+                      {editMode ? (
+                        <input value={editData?.invoiceNumber ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, invoiceNumber: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm font-mono" />
+                      ) : (<p className="text-sm font-mono font-semibold text-orange-700">{detailItem.invoiceNumber}</p>)}
                     </div>
                   )}
                   <div>
@@ -732,7 +784,7 @@ export default function BillingPipeline() {
                 </div>
               </div>
 
-              {detailItem.products && detailItem.products.length > 0 && (
+              {((detailItem.products && detailItem.products.length > 0) || editMode) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Package className="h-4 w-4 text-gray-500" />
@@ -750,7 +802,15 @@ export default function BillingPipeline() {
                         </tr>
                       </thead>
                       <tbody>
-                        {detailItem.products.map((p, i) => (
+                        {editMode ? (editData?.products || []).map((p: any, i: number) => (
+                          <tr key={i} className="border-t">
+                            <td className="p-1.5 text-gray-400">{i + 1}</td>
+                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; return { ...d, products: pr }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; return { ...d, products: pr }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; return { ...d, products: pr }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => ({ ...d, products: d.products.filter((_: any, x: number) => x !== i) }))} className="text-red-500 ml-1">✕</button></td>
+                          </tr>
+                        )) : detailItem.products?.map((p, i) => (
                           <tr key={i} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
                             <td className="p-2.5 text-gray-400">{i + 1}</td>
                             <td className="p-2.5 font-medium">{p.name}</td>
@@ -771,10 +831,12 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {detailItem.notes && (
+              {(detailItem.notes || editMode) && (
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
-                  <p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>
+                  {editMode ? (
+                    <textarea value={editData?.notes ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, notes: e.target.value }))} rows={2} className="w-full border rounded px-2 py-1 text-sm" />
+                  ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>)}
                 </div>
               )}
 
@@ -798,6 +860,13 @@ export default function BillingPipeline() {
                 </div>
               )}
 
+              {editMode && (
+                <div className="border-t pt-4 flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setEditMode(false)}>Cancelar</Button>
+                  <Button size="sm" onClick={saveEdit} disabled={updateItemMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white" data-testid="button-save-order">{updateItemMutation.isPending ? 'Salvando…' : 'Salvar alterações'}</Button>
+                </div>
+              )}
+              {!editMode && (
               <div className="border-t pt-4">
                 <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Mover para etapa</label>
                 <div className="flex flex-wrap gap-1.5">
@@ -822,6 +891,7 @@ export default function BillingPipeline() {
                   })}
                 </div>
               </div>
+              )}
             </div>
           )}
         </DialogContent>
