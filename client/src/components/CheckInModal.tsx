@@ -55,11 +55,17 @@ export default function CheckInModal({
       });
       let position: GeolocationPosition;
       try {
-        // 1a tentativa: alta precisao (GPS), com tempo maior e aceitando posicao recente
-        position = await getPos({ enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+        // 1a tentativa: aceita posicao recente em cache (rede/wifi) — resolve NA HORA se o navegador
+        // ja tem um fix (ex. do mapa da rota) e funciona bem em ambiente fechado (supermercado)
+        position = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
       } catch (e1) {
-        // Fallback: baixa precisao (rede/wifi) — funciona em ambiente fechado e responde rapido
-        position = await getPos({ enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 });
+        try {
+          // 2a: alta precisao (GPS) com tempo maior
+          position = await getPos({ enableHighAccuracy: true, timeout: 25000, maximumAge: 60000 });
+        } catch (e2) {
+          // 3a (ultima): qualquer posicao em cache, baixa precisao, tempo longo — o mais tolerante possivel
+          position = await getPos({ enableHighAccuracy: false, timeout: 30000, maximumAge: 600000 });
+        }
       }
 
       const loc = {

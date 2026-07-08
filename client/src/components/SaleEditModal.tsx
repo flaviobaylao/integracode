@@ -896,14 +896,20 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         return;
       }
 
-      // Capturar localização atual
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
-        });
+      // Capturar localização atual (robusto: cache rápido → GPS → tolerante; funciona indoor/supermercado)
+      const getPos = (opts: PositionOptions) => new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, opts);
       });
+      let position: GeolocationPosition;
+      try {
+        position = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+      } catch (e1) {
+        try {
+          position = await getPos({ enableHighAccuracy: true, timeout: 25000, maximumAge: 60000 });
+        } catch (e2) {
+          position = await getPos({ enableHighAccuracy: false, timeout: 30000, maximumAge: 600000 });
+        }
+      }
 
       // Fazer check-out
       const checkOutResponse = await fetch(`/api/visit-agenda/${visit.id}/check-out`, {
