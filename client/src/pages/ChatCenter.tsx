@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Component } from "react";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -303,7 +303,25 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
   );
 }
 
-export default function ChatCenter() {
+class ChatCenterErrorBoundary extends Component<{ children: any }, { hasError: boolean }> {
+  constructor(props: any) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: any, info: any) { console.error('[ChatCenter] erro de render capturado:', error, info); }
+  render() {
+    if ((this.state as any).hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center p-12 text-center" style={{ minHeight: '300px' }}>
+          <p className="text-lg font-semibold mb-2">Ocorreu um erro ao exibir esta tela.</p>
+          <p className="text-gray-600 mb-4">Isso nao afeta o envio/recebimento das mensagens. Recarregue para continuar.</p>
+          <button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Recarregar</button>
+        </div>
+      );
+    }
+    return (this.props as any).children;
+  }
+}
+
+function ChatCenterInner() {
   const { toast } = useToast();
   const [location, setLocation] = useLocation();
   const { user } = useAuth();
@@ -2007,5 +2025,13 @@ export default function ChatCenter() {
         </Dialog>
       </div>
     </div>
+  );
+}
+
+export default function ChatCenter() {
+  return (
+    <ChatCenterErrorBoundary>
+      <ChatCenterInner />
+    </ChatCenterErrorBoundary>
   );
 }
