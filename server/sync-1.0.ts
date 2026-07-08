@@ -72,7 +72,7 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; nat
 // --- Tabelas adicionadas (paridade de dados 1.0 → 2.0) ---
 { table: "leads", pk: "id", hasUpdatedAt: true },
 { table: "lead_visits", pk: "id", hasUpdatedAt: false },
-  { table: "billing_pipeline", pk: "id", hasUpdatedAt: true },
+  // { table: "billing_pipeline", pk: "id", hasUpdatedAt: true }, // DESLIGADO (08/jul): pipeline gerido no 2.0, sem sync do 1.0 (cutover).
 { table: "order_history", pk: "id", hasUpdatedAt: true },
 { table: "sales_goals", pk: "id", hasUpdatedAt: true },
 { table: "blocked_orders", pk: "id", hasUpdatedAt: true },
