@@ -800,9 +800,20 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         {/* Botões para Pedidos Finalizados */}
         {card.status === 'completed' && (
           <div className="border-t pt-4 space-y-3">
+            {onStartSale && (
+              <Button
+                onClick={() => onStartSale(card)}
+                className="w-full bg-green-600 hover:bg-green-700 text-white"
+                data-testid="button-register-sale-completed"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Registrar / Editar Pedido
+              </Button>
+            )}
             <Button
               onClick={handleDuplicateLastOrder}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              variant="outline"
+              className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
               data-testid="button-duplicate-completed-order"
             >
               <Package className="h-4 w-4 mr-2" />
