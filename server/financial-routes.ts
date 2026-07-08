@@ -14,6 +14,18 @@ function isFinancialAuthorized(req: any, res: any, next: any) {
   next();
 }
 
+// Leitura financeira ampliada: além de admin/coord/administrativo, permite
+// vendedor e telemarketing VISUALIZAREM (somente GET; escrita segue restrita).
+function isFinancialReadAuthorized(req: any, res: any, next: any) {
+  const user = req.currentUser || req.user;
+  if (!user) return res.status(401).json({ message: 'Não autenticado' });
+  const allowedRoles = ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'];
+  if (!allowedRoles.includes(user.role)) {
+    return res.status(403).json({ message: 'Acesso restrito ao módulo financeiro' });
+  }
+  next();
+}
+
 export function registerFinancialRoutes(app: Express) {
 
   // ============================================================================
@@ -379,7 +391,7 @@ export function registerFinancialRoutes(app: Express) {
   // RECEIVABLES (Contas a Receber)
   // ============================================================================
 
-  app.get('/api/financial/receivables', authenticateUser, isFinancialAuthorized, async (req, res) => {
+  app.get('/api/financial/receivables', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
     try {
       const filters: any = {};
       if (req.query.customerId) filters.customerId = req.query.customerId;
