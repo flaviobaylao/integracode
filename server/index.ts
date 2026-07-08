@@ -2591,6 +2591,112 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     }
   });
 
+  // ── Relatório GRÁFICO: Positivação do mês (% atual + projeção por dias úteis) ──
+  // READ-ONLY. Universo = clientes na lista de Ativos. Positivado = comprou no mês
+  // (billing_pipeline 2.0 OU receivable — inclui faturas do 1.0). Projeção linear
+  // pela cadência de positivação sobre os dias úteis do mês (feriados não considerados).
+  app.get('/api/reports/positivacao-mes', async (req: Request, res: Response) => {
+    try {
+      const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+      const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
+
+      const au = rowsOf(await db.execute(sql`
+        SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf
+        FROM active_customers ac
+        LEFT JOIN customers c ON c.id = ac.customer_id
+        WHERE ac.is_active IS NOT FALSE`));
+      const universe: { id: string | null; doc: string }[] = [];
+      const seen = new Set<string>();
+      for (const r of au) {
+        const rid = r.rid ? String(r.rid) : null;
+        const doc = digits(r.cnpj) || digits(r.cpf);
+        const key = rid || (doc ? 'doc:' + doc : '');
+        if (!key || seen.has(key)) { if (!key) universe.push({ id: null, doc: '' }); continue; }
+        seen.add(key);
+        universe.push({ id: rid, doc });
+      }
+      const totalAtivos = universe.length;
+
+      const bp = rowsOf(await db.execute(sql`
+        SELECT customer_id AS cid, MIN(created_at) AS first
+        FROM billing_pipeline
+        WHERE created_at >= date_trunc('month', (now() at time zone 'America/Sao_Paulo'))
+          AND created_at < date_trunc('month', (now() at time zone 'America/Sao_Paulo')) + interval '1 month'
+          AND COALESCE(sale_value,0) > 0
+        GROUP BY customer_id`));
+      const rc = rowsOf(await db.execute(sql`
+        SELECT customer_id AS cid, customer_document AS doc, MIN(issue_date) AS first
+        FROM receivables
+        WHERE issue_date >= date_trunc('month', (now() at time zone 'America/Sao_Paulo'))
+          AND issue_date < date_trunc('month', (now() at time zone 'America/Sao_Paulo')) + interval '1 month'
+          AND COALESCE(amount,0) > 0 AND status <> 'cancelada'
+        GROUP BY customer_id, customer_document`));
+
+      const firstById = new Map<string, Date>();
+      const firstByDoc = new Map<string, Date>();
+      const setMin = (m: Map<string, Date>, k: string, d: any) => { if (!k || !d) return; const dt = new Date(d); if (isNaN(dt.getTime())) return; const cur = m.get(k); if (!cur || dt < cur) m.set(k, dt); };
+      for (const r of bp) setMin(firstById, String(r.cid), r.first);
+      for (const r of rc) { if (r.cid) setMin(firstById, String(r.cid), r.first); const dd = digits(r.doc); if (dd.length >= 11) setMin(firstByDoc, dd, r.first); }
+
+      const firstDates: Date[] = [];
+      let positivados = 0;
+      for (const u of universe) {
+        let d: Date | null = null;
+        if (u.id && firstById.has(u.id)) d = firstById.get(u.id) as Date;
+        if (u.doc && firstByDoc.has(u.doc)) { const dd = firstByDoc.get(u.doc) as Date; if (!d || dd < d) d = dd; }
+        if (d) { positivados++; firstDates.push(d); }
+      }
+
+      const nowBr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      const y = nowBr.getFullYear(), mo = nowBr.getMonth(), todayDay = nowBr.getDate();
+      const lastDay = new Date(y, mo + 1, 0).getDate();
+      const isBiz = (dt: Date) => { const w = dt.getDay(); return w >= 1 && w <= 5; };
+      let diasUteisTotal = 0, diasUteisDecorridos = 0;
+      for (let day = 1; day <= lastDay; day++) {
+        const dt = new Date(y, mo, day);
+        if (isBiz(dt)) { diasUteisTotal++; if (day <= todayDay) diasUteisDecorridos++; }
+      }
+      const diasUteisRestantes = Math.max(0, diasUteisTotal - diasUteisDecorridos);
+      const projetadoPositivados = diasUteisDecorridos > 0
+        ? Math.min(totalAtivos, Math.round(positivados * diasUteisTotal / diasUteisDecorridos))
+        : positivados;
+      const pct = (n: number) => totalAtivos > 0 ? Math.round((n / totalAtivos) * 1000) / 10 : 0;
+      const pctAtual = pct(positivados);
+      const pctProjetado = pct(projetadoPositivados);
+
+      const firstByDay: number[] = new Array(lastDay + 2).fill(0);
+      for (const d of firstDates) { const day = d.getDate(); if (day >= 1 && day <= lastDay) firstByDay[day]++; }
+      const serie: any[] = [];
+      let cum = 0;
+      for (let day = 1; day <= lastDay; day++) {
+        const dt = new Date(y, mo, day);
+        if (!isBiz(dt)) continue;
+        const isPast = day <= todayDay;
+        if (isPast) cum += firstByDay[day];
+        serie.push({ dia: String(day).padStart(2, '0') + '/' + String(mo + 1).padStart(2, '0'), real: isPast ? pct(cum) : null, projecao: null, _past: isPast });
+      }
+      const futuros = serie.filter(s => !s._past).length;
+      let fi = 0;
+      for (const s of serie) {
+        if (s._past) { s.projecao = null; }
+        else { fi++; s.projecao = Math.round((pctAtual + (pctProjetado - pctAtual) * (fi / Math.max(1, futuros))) * 10) / 10; }
+      }
+      // conecta a projeção ao último ponto real (hoje)
+      for (let i = serie.length - 1; i >= 0; i--) { if (serie[i]._past && serie[i].real !== null) { serie[i].projecao = serie[i].real; break; } }
+      for (const s of serie) delete s._past;
+
+      res.json({
+        mes: mo + 1, ano: y,
+        totalAtivos, positivados, percentual: pctAtual,
+        diasUteisTotal, diasUteisDecorridos, diasUteisRestantes,
+        projetadoPositivados, projetadoPercentual: pctProjetado,
+        serie,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Relatório IA: dashboard consolidado de vendas ────────────────────────
   // GET /api/reports/ia-dashboard?dias=30  — READ-ONLY
   // Fonte-verdade de vendas = billing_pipeline (vivo); débitos = overdue_debts.
