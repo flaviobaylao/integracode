@@ -6668,6 +6668,7 @@ export class DatabaseStorage implements IStorage {
       let positivationMap = new Map<string, boolean>();
       let lastActivityMap = new Map<string, Date>();
       let monthlyTotalsMap = new Map<string, { previousMonth: number; currentMonth: number }>();
+      let avg3mMap = new Map<string, number>();
 
       // Buscar instância Omie padrão para fallback de clientes sem omieInstanceId
       let defaultOmieInstanceId: string | null = null;
@@ -6859,6 +6860,35 @@ export class DatabaseStorage implements IStorage {
           positivationMap.set(c.id, byPipeline || byRecId || byRecDoc);
         }
       } catch (e: any) { console.warn('positivação (receivables) falhou:', e?.message); }
+
+      // MÉDIA de vendas dos ÚLTIMOS 3 MESES (por cliente) — inclui faturas do 1.0.
+      // Fonte: receivables (1 recebível por faturamento → sem dupla contagem; sincronizado do 1.0 + nativo do 2.0).
+      try {
+        const threeStart = nowBrazil(); threeStart.setMonth(threeStart.getMonth() - 3); threeStart.setHours(0, 0, 0, 0);
+        const rec3 = await db
+          .select({ customerId: receivables.customerId, customerDocument: receivables.customerDocument, amount: receivables.amount })
+          .from(receivables)
+          .where(and(
+            gte(receivables.issueDate, threeStart),
+            sql`${receivables.amount}::numeric > 0`,
+            sql`${receivables.status} <> 'cancelada'`,
+          ));
+        const docToId = new Map<string, string>();
+        const idSet = new Set<string>();
+        for (const c of customersData) {
+          idSet.add(String(c.id));
+          const d = String((c as any).cnpj || '').replace(/\D/g, '') || String((c as any).cpf || '').replace(/\D/g, '');
+          if (d.length >= 11 && !docToId.has(d)) docToId.set(d, c.id);
+        }
+        const sum3 = new Map<string, number>();
+        for (const r of rec3) {
+          let key: string | null = null;
+          if (r.customerId && idSet.has(String(r.customerId))) key = String(r.customerId);
+          else { const d = String(r.customerDocument || '').replace(/\D/g, ''); if (d.length >= 11 && docToId.has(d)) key = docToId.get(d)!; }
+          if (key) sum3.set(key, (sum3.get(key) || 0) + Number(r.amount || 0));
+        }
+        for (const [id, total] of sum3) avg3mMap.set(id, total / 3);
+      } catch (e: any) { console.warn('média 3 meses (receivables) falhou:', e?.message); }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
@@ -6985,7 +7015,8 @@ export class DatabaseStorage implements IStorage {
           lastTwoVisits: [],
           nextThreeVisits: visits,
           previousMonthTotal: monthlyTotals?.previousMonth || 0,
-          currentMonthTotal: monthlyTotals?.currentMonth || 0
+          currentMonthTotal: monthlyTotals?.currentMonth || 0,
+          last3MonthsAvg: _effId ? (avg3mMap.get(String(_effId)) || 0) : 0
         };
       });
       
