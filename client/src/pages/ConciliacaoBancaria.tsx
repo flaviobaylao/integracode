@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 // ---------------------------------------------------------------------------
-// Conciliação Bancária — Fase 1 (extratos + itens + sugestões) + Fase 2 (ações:
-// conciliar dá baixa, ignorar, desfazer). Consome /api/reconciliation/*.
-// Conciliar/desfazer são financeiros: confirmação obrigatória + usuário logado.
+// Conciliação Bancária — paridade com o 1.0: extratos + lançamentos (paginação/
+// ordenação/filtro) + modal "Conciliar Transação" (carrinho com juros/desconto,
+// abas Sugestões / Buscar Título, Δ deve zerar). Conciliar dá baixa (financeiro).
 // ---------------------------------------------------------------------------
 
 type Account = { id: string; name: string; omie_instance_id: string | null };
@@ -16,9 +16,11 @@ type Statement = {
 };
 type Item = {
   id: string; transaction_date: string; amount: string; type: string;
-  description: string; document: string; reconciliation_status: string | null;
+  description: string; document: string; origin_name?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
 };
+type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null };
+type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number };
 
 const fmtDate = (d: any): string => {
   if (!d) return "—";
@@ -26,10 +28,11 @@ const fmtDate = (d: any): string => {
   const p = s.split("-");
   return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s;
 };
-const fmtMoney = (v: any): string => {
+const num = (v: any): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? "0").replace(/[^0-9.-]/g, ""));
-  return (isNaN(n) ? 0 : n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return isNaN(n) ? 0 : n;
 };
+const fmtMoney = (v: any): string => num(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function StatusBadge({ s }: { s: string | null }) {
   const map: Record<string, string> = {
@@ -56,6 +59,22 @@ export default function ConciliacaoBancaria() {
   const [busy, setBusy] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // filtro / ordenação / paginação da tabela de lançamentos
+  const [filterText, setFilterText] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [sortKey, setSortKey] = useState<"date" | "name" | "amount" | "status" | "title">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
+
+  // modal de conciliação
+  const [modalItem, setModalItem] = useState<Item | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [tab, setTab] = useState<"sug" | "search">("sug");
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<Title[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/reconciliation/filters", { credentials: "include" })
@@ -94,7 +113,7 @@ export default function ConciliacaoBancaria() {
       .catch(() => setDetail({ items: [], matchesByItem: {}, suggestions: {} }))
       .finally(() => setLoadingDetail(false));
   };
-  const openStatement = (s: Statement) => { setSelected(s); setDetail(null); loadDetail(s); };
+  const openStatement = (s: Statement) => { setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
   const refresh = async () => { if (selected) await loadDetail(selected); await loadStatements(); };
 
   const post = async (url: string, body: any) => {
@@ -104,16 +123,61 @@ export default function ConciliacaoBancaria() {
     return j;
   };
 
-  const doReconcile = async (item: Item, title: any) => {
-    const msg = `Conciliar este lançamento (${fmtMoney(item.amount)}) com o título ${title.title || ""} — ${title.name || ""}?\n\nIsso DÁ BAIXA no título (marca como pago).`;
-    if (!window.confirm(msg)) return;
-    setBusy(item.id);
-    try {
-      await post(`/api/reconciliation/items/${item.id}/reconcile`, { by: me, titles: [{ kind: title.kind, id: title.id, amount: Number(item.amount) }] });
-      await refresh();
-    } catch (e: any) { alert("Erro ao conciliar: " + e.message); }
-    finally { setBusy(""); }
+  const items: Item[] = detail?.items || [];
+  const matchesByItem: Record<string, any[]> = detail?.matchesByItem || {};
+  const suggestions: Record<string, any> = detail?.suggestions || {};
+
+  // título/nome resolvido do item (p/ ordenação e exibição)
+  const itemTitleStr = (it: Item): string => {
+    const ms = matchesByItem[it.id] || [];
+    if (ms.length) return String(ms[0].r_title || ms[0].p_title || "");
+    const sg = suggestions[it.id];
+    if (sg?.titles?.length) return String(sg.titles[0].title || "");
+    return "";
   };
+  const itemNameStr = (it: Item): string => String(it.origin_name || it.description || "");
+
+  const viewItems = useMemo(() => {
+    let arr = items.slice();
+    const q = filterText.trim().toLowerCase();
+    if (q) {
+      const qd = q.replace(/\D/g, "");
+      arr = arr.filter((it) =>
+        (it.description || "").toLowerCase().includes(q) ||
+        (it.origin_name || "").toLowerCase().includes(q) ||
+        itemTitleStr(it).toLowerCase().includes(q) ||
+        (qd && (it.document || "").replace(/\D/g, "").includes(qd)) ||
+        (qd && String(it.amount).replace(/\D/g, "").includes(qd))
+      );
+    }
+    if (filterStatus) arr = arr.filter((it) => (it.reconciliation_status || "pending") === filterStatus);
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      let va: any, vb: any;
+      if (sortKey === "date") { va = a.transaction_date || ""; vb = b.transaction_date || ""; }
+      else if (sortKey === "amount") { va = num(a.amount); vb = num(b.amount); }
+      else if (sortKey === "status") { va = a.reconciliation_status || "pending"; vb = b.reconciliation_status || "pending"; }
+      else if (sortKey === "title") { va = itemTitleStr(a).toLowerCase(); vb = itemTitleStr(b).toLowerCase(); }
+      else { va = itemNameStr(a).toLowerCase(); vb = itemNameStr(b).toLowerCase(); }
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+    return arr;
+  }, [items, matchesByItem, suggestions, filterText, filterStatus, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(viewItems.length / pageSize));
+  const curPage = Math.min(page, totalPages - 1);
+  const pageItems = viewItems.slice(curPage * pageSize, curPage * pageSize + pageSize);
+  useEffect(() => { setPage(0); }, [filterText, filterStatus, sortKey, sortDir]);
+
+  const setSort = (k: typeof sortKey) => {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir("asc"); }
+  };
+  const Arrow = ({ k }: { k: typeof sortKey }) => <span className="text-gray-400">{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</span>;
+
+  // ---- ações simples (ignore/undo) ----
   const doIgnore = async (item: Item) => {
     if (!window.confirm(`Ignorar este lançamento (${fmtMoney(item.amount)})? Não dá baixa em nada.`)) return;
     setBusy(item.id);
@@ -129,6 +193,57 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
 
+  // ---- modal de conciliação (carrinho) ----
+  const openModal = (it: Item) => {
+    setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]);
+  };
+  const closeModal = () => { setModalItem(null); setCart([]); };
+  const itemAmt = modalItem ? Math.abs(num(modalItem.amount)) : 0;
+  const cartTotal = cart.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
+  const delta = Math.round((itemAmt - cartTotal) * 100) / 100;
+
+  const addToCart = (t: Title) => {
+    setCart((prev) => {
+      if (prev.some((c) => c.id === t.id && c.kind === t.kind)) return prev;
+      const cur = prev.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
+      const remaining = Math.max(0, Math.round((itemAmt - cur) * 100) / 100);
+      const defAmt = remaining > 0 ? remaining : Math.abs(num(t.amount));
+      return [...prev, { kind: t.kind, id: t.id, title: t.title, name: t.name, amount: defAmt, interest: 0, discount: 0 }];
+    });
+  };
+  const removeCart = (idx: number) => setCart((prev) => prev.filter((_, i) => i !== idx));
+  const setCartField = (idx: number, field: "amount" | "interest" | "discount", val: string) =>
+    setCart((prev) => prev.map((c, i) => (i === idx ? { ...c, [field]: num(val) } : c)));
+
+  const searchTitles = async (q: string) => {
+    if (!modalItem) return;
+    setSearchLoading(true);
+    try {
+      const type = modalItem.type === "C" ? "C" : "D";
+      const r = await fetch(`/api/reconciliation/titles/search?type=${type}&q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const j = await r.json();
+      setSearchResults(j.titles || []);
+    } catch { setSearchResults([]); }
+    finally { setSearchLoading(false); }
+  };
+
+  const confirmReconcile = async () => {
+    if (!modalItem || !cart.length) return;
+    if (Math.abs(delta) >= 0.01) { alert(`O total do carrinho (${fmtMoney(cartTotal)}) precisa igualar o valor do extrato (${fmtMoney(itemAmt)}). Δ = ${fmtMoney(delta)}.`); return; }
+    if (!window.confirm(`Conciliar ${fmtMoney(itemAmt)} com ${cart.length} título(s)? Isso DÁ BAIXA (marca como pago).`)) return;
+    setBusy(modalItem.id);
+    try {
+      await post(`/api/reconciliation/items/${modalItem.id}/reconcile`, {
+        by: me,
+        titles: cart.map((c) => ({ kind: c.kind, id: c.id, amount: num(c.amount), interest: num(c.interest), discount: num(c.discount) })),
+      });
+      closeModal();
+      await refresh();
+    } catch (e: any) { alert("Erro ao conciliar: " + e.message); }
+    finally { setBusy(""); }
+  };
+
+  // ---- OFX / delete ----
   const onPickOfx = () => {
     if (!account) { alert("Selecione a CONTA (no filtro acima) antes de importar o OFX."); return; }
     fileRef.current?.click();
@@ -141,20 +256,12 @@ export default function ConciliacaoBancaria() {
     try {
       const text = await file.text();
       const j = await post("/api/reconciliation/import-ofx", { ofxText: text, accountId: account, by: me, fileName: file.name });
-      alert(
-        `OFX importado: ${j.inserted} lançamento(s) novo(s)` +
-        (j.skipped ? `, ${j.skipped} já existia(m)` : "") +
-        (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : ".")
-      );
+      alert(`OFX importado: ${j.inserted} lançamento(s) novo(s)` + (j.skipped ? `, ${j.skipped} já existia(m)` : "") + (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : "."));
       await loadStatements();
-      if (j.statementId) {
-        const s: any = { id: j.statementId, file_name: j.fileName, source: "ofx", start_date: j.period?.start, end_date: j.period?.end, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance };
-        openStatement(s);
-      }
+      if (j.statementId) openStatement({ id: j.statementId, file_name: j.fileName, source: "ofx", start_date: j.period?.start, end_date: j.period?.end, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance } as any);
     } catch (err: any) { alert("Erro ao importar OFX: " + err.message); }
     finally { setImporting(false); }
   };
-
   const doDeleteStatement = async (s: Statement, e?: any) => {
     if (e) e.stopPropagation();
     if ((s.reconciled || 0) > 0) { alert(`Este extrato tem ${s.reconciled} item(ns) já conciliado(s). Desfaça as conciliações antes de remover.`); return; }
@@ -168,9 +275,8 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
 
-  const items: Item[] = detail?.items || [];
-  const matchesByItem: Record<string, any[]> = detail?.matchesByItem || {};
-  const suggestions: Record<string, any> = detail?.suggestions || {};
+  const pend = viewItems.filter((i) => (i.reconciliation_status || "pending") === "pending").length;
+  const conc = viewItems.filter((i) => i.reconciliation_status === "reconciled").length;
 
   return (
     <div className="p-6">
@@ -198,7 +304,7 @@ export default function ConciliacaoBancaria() {
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
         <div className="border rounded-lg overflow-hidden">
           <div className="px-4 py-2 border-b bg-gray-50 font-semibold text-sm">Extratos Importados</div>
-          <div className="max-h-[72vh] overflow-auto divide-y">
+          <div className="max-h-[74vh] overflow-auto divide-y">
             {loadingList && <div className="p-4 text-sm text-gray-400">Carregando…</div>}
             {!loadingList && statements.length === 0 && <div className="p-4 text-sm text-gray-400">Nenhum extrato.</div>}
             {statements.map((s) => (
@@ -211,108 +317,212 @@ export default function ConciliacaoBancaria() {
                   </div>
                   <div className="text-[11px] text-gray-400 mt-0.5">{s.account_name || ""}{s.omie_instance_id ? ` · ${s.omie_instance_id}` : ""}{s.source ? ` · ${s.source}` : ""}</div>
                 </button>
-                <button
-                  onClick={(e) => doDeleteStatement(s, e)}
-                  disabled={busy === "stmt:" + s.id}
-                  title={(s.reconciled || 0) > 0 ? "Desfaça as conciliações antes de remover" : "Remover extrato importado"}
-                  className="absolute top-2 right-2 text-gray-300 hover:text-red-600 text-sm disabled:opacity-40"
-                >🗑</button>
+                <button onClick={(e) => doDeleteStatement(s, e)} disabled={busy === "stmt:" + s.id} title={(s.reconciled || 0) > 0 ? "Desfaça as conciliações antes de remover" : "Remover extrato importado"} className="absolute top-2 right-2 text-gray-300 hover:text-red-600 text-sm disabled:opacity-40">🗑</button>
               </div>
             ))}
           </div>
         </div>
 
         <div className="border rounded-lg overflow-hidden">
-          <div className="px-4 py-2 border-b bg-gray-50 font-semibold text-sm">
-            {selected ? `${selected.file_name || "Extrato"} — ${selected.items} itens` : "Selecione um extrato"}
+          <div className="px-4 py-2 border-b bg-gray-50 flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-sm">{selected ? `${selected.file_name || "Extrato"}` : "Selecione um extrato"}</span>
+            {selected && <span className="text-xs text-gray-500">{viewItems.length} lançamentos · <span className="text-amber-600">{pend} pend.</span> · <span className="text-green-600">{conc} conc.</span></span>}
+            <div className="flex-1" />
+            {selected && (
+              <>
+                <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Filtrar (nome, valor, título, doc)…" className="border rounded px-2 py-1 text-xs w-56" />
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border rounded px-2 py-1 text-xs">
+                  <option value="">Todas as situações</option>
+                  <option value="pending">Pendentes</option>
+                  <option value="reconciled">Conciliados</option>
+                  <option value="ignored">Ignorados</option>
+                </select>
+              </>
+            )}
           </div>
           {!selected && <div className="p-8 text-center text-gray-400">Selecione um extrato na lista ao lado</div>}
           {selected && loadingDetail && <div className="p-8 text-center text-gray-400">Carregando itens…</div>}
           {selected && !loadingDetail && (
-            <div className="max-h-[72vh] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white border-b">
-                  <tr className="text-left text-xs text-gray-500">
-                    <th className="px-3 py-2">Data</th>
-                    <th className="px-3 py-2 text-right">Valor</th>
-                    <th className="px-3 py-2">Descrição</th>
-                    <th className="px-3 py-2">Situação</th>
-                    <th className="px-3 py-2">Conciliação / Sugestão</th>
-                    <th className="px-3 py-2">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {items.map((it) => {
-                    const ms = matchesByItem[it.id] || [];
-                    const sg = suggestions[it.id];
-                    const isBusy = busy === it.id;
-                    const st = it.reconciliation_status || "pending";
-                    return (
-                      <tr key={it.id} className="align-top">
-                        <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
-                        <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>
-                          {it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}
-                        </td>
-                        <td className="px-3 py-2 max-w-[260px]">
-                          <div className="truncate" title={it.description}>{it.description}</div>
-                          {it.document ? <div className="text-[11px] text-gray-400">{it.document}</div> : null}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap"><StatusBadge s={st} /></td>
-                        <td className="px-3 py-2">
-                          {ms.length > 0 && (
-                            <div className="space-y-1">
-                              {ms.map((m, idx) => (
-                                <div key={idx} className="text-xs">
-                                  <span className="text-gray-500">{m.receivable_id ? "Receber" : "Pagar"} </span>
-                                  <span className="font-medium">{m.r_title || m.p_title || "—"}</span>{" "}
-                                  <span className="text-gray-600">{m.r_name || m.p_name || ""}</span>{" "}
-                                  <span className="text-gray-400">({fmtMoney(m.title_amount_settled || m.amount)})</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {ms.length === 0 && sg && (
-                            <div className="space-y-1">
-                              {sg.counterparty && (
-                                <div className="text-xs">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 mr-1">sugestão</span>
-                                  <span className="font-medium">{sg.counterparty.name}</span>
-                                  {sg.counterparty.category ? <span className="text-gray-500"> · {sg.counterparty.category}</span> : null}
-                                  <span className="text-gray-400"> · {sg.counterparty.via === "cpf_cnpj" ? "por documento" : "por descrição"} ({sg.counterparty.matchCount}×)</span>
-                                </div>
-                              )}
-                              {(sg.titles || []).map((t: any, idx: number) => (
-                                <div key={idx} className="text-xs text-gray-600 flex items-center gap-2">
-                                  <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">título</span>
-                                  <span>{t.kind === "receivable" ? "Receber" : "Pagar"} {t.title || "—"} · {t.name || ""} · {fmtMoney(t.amount)}{t.instance ? ` · ${t.instance}` : ""}</span>
-                                  {st === "pending" && (
-                                    <button disabled={isBusy} onClick={() => doReconcile(it, t)} className="px-2 py-0.5 rounded bg-green-600 text-white text-[11px] disabled:opacity-50">Conciliar</button>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {ms.length === 0 && !sg && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
-                          {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {st === "pending" && (
-                            <button disabled={isBusy} onClick={() => doIgnore(it)} className="px-2 py-0.5 rounded border text-gray-600 text-[11px] disabled:opacity-50">Ignorar</button>
-                          )}
-                          {(st === "reconciled" || st === "ignored") && (
-                            <button disabled={isBusy} onClick={() => doUndo(it)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 text-[11px] disabled:opacity-50">Desfazer</button>
-                          )}
-                          {isBusy && <span className="text-[11px] text-gray-400 ml-1">…</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="max-h-[64vh] overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white border-b z-10">
+                    <tr className="text-left text-xs text-gray-500">
+                      <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("date")}>Data<Arrow k="date" /></th>
+                      <th className="px-3 py-2 text-right cursor-pointer select-none" onClick={() => setSort("amount")}>Valor<Arrow k="amount" /></th>
+                      <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("name")}>Nome / Descrição<Arrow k="name" /></th>
+                      <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("status")}>Situação<Arrow k="status" /></th>
+                      <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("title")}>Título / Sugestão<Arrow k="title" /></th>
+                      <th className="px-3 py-2">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {pageItems.map((it) => {
+                      const ms = matchesByItem[it.id] || [];
+                      const sg = suggestions[it.id];
+                      const isBusy = busy === it.id;
+                      const st = it.reconciliation_status || "pending";
+                      return (
+                        <tr key={it.id} className="align-top">
+                          <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
+                          <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>{it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}</td>
+                          <td className="px-3 py-2 max-w-[260px]">
+                            <div className="truncate" title={it.description}>{it.origin_name || it.description}</div>
+                            {it.document ? <div className="text-[11px] text-gray-400">{it.document}</div> : null}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap"><StatusBadge s={st} /></td>
+                          <td className="px-3 py-2">
+                            {ms.length > 0 && (
+                              <div className="space-y-1">
+                                {ms.map((m, idx) => (
+                                  <div key={idx} className="text-xs">
+                                    <span className="text-gray-500">{m.receivable_id ? "Receber" : "Pagar"} </span>
+                                    <span className="font-medium">{m.r_title || m.p_title || "—"}</span>{" "}
+                                    <span className="text-gray-600">{m.r_name || m.p_name || ""}</span>{" "}
+                                    <span className="text-gray-400">({fmtMoney(m.title_amount_settled || m.amount)})</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {ms.length === 0 && sg && sg.counterparty && (
+                              <div className="text-xs">
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 mr-1">sugestão</span>
+                                <span className="font-medium">{sg.counterparty.name}</span>
+                                {sg.counterparty.category ? <span className="text-gray-500"> · {sg.counterparty.category}</span> : null}
+                                <span className="text-gray-400"> · {sg.counterparty.via === "cpf_cnpj" ? "por doc" : "por descr"} ({sg.counterparty.matchCount}×)</span>
+                              </div>
+                            )}
+                            {ms.length === 0 && sg && (sg.titles || []).length > 0 && (
+                              <div className="text-[11px] text-gray-500 mt-0.5">{(sg.titles || []).length} título(s) por valor</div>
+                            )}
+                            {ms.length === 0 && !sg && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
+                            {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {st === "pending" && (
+                              <div className="flex gap-1">
+                                <button disabled={isBusy} onClick={() => openModal(it)} className="px-2 py-0.5 rounded bg-green-600 text-white text-[11px] disabled:opacity-50">Conciliar</button>
+                                <button disabled={isBusy} onClick={() => doIgnore(it)} className="px-2 py-0.5 rounded border text-gray-600 text-[11px] disabled:opacity-50">Ignorar</button>
+                              </div>
+                            )}
+                            {(st === "reconciled" || st === "ignored") && (
+                              <button disabled={isBusy} onClick={() => doUndo(it)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 text-[11px] disabled:opacity-50">Desfazer</button>
+                            )}
+                            {isBusy && <span className="text-[11px] text-gray-400 ml-1">…</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {pageItems.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400 text-sm">Nenhum lançamento.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-2 border-t bg-gray-50 text-xs text-gray-600">
+                  <span>Página {curPage + 1} de {totalPages} · {viewItems.length} lançamentos</span>
+                  <div className="flex gap-1">
+                    <button disabled={curPage === 0} onClick={() => setPage(0)} className="px-2 py-1 rounded border disabled:opacity-40">« Início</button>
+                    <button disabled={curPage === 0} onClick={() => setPage(curPage - 1)} className="px-2 py-1 rounded border disabled:opacity-40">‹ Anterior</button>
+                    <button disabled={curPage >= totalPages - 1} onClick={() => setPage(curPage + 1)} className="px-2 py-1 rounded border disabled:opacity-40">Próxima ›</button>
+                    <button disabled={curPage >= totalPages - 1} onClick={() => setPage(totalPages - 1)} className="px-2 py-1 rounded border disabled:opacity-40">Fim »</button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
+
+      {/* MODAL Conciliar Transação */}
+      {modalItem && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={closeModal}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b flex items-start justify-between">
+              <div>
+                <div className="font-bold text-gray-800">Conciliar Transação</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {modalItem.type === "C" ? "Crédito" : "Débito"}: <span className="font-medium">{fmtMoney(modalItem.amount)}</span> em {fmtDate(modalItem.transaction_date)} — {modalItem.description}
+                </div>
+              </div>
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+
+            {/* carrinho */}
+            <div className="px-5 py-3 border-b bg-gray-50">
+              <div className="flex items-center justify-between text-xs mb-2">
+                <span className="font-semibold text-gray-600">🛒 Carrinho de Conciliação</span>
+                <span>Extrato: <b>{fmtMoney(itemAmt)}</b> · Carrinho: <b className={cartTotal ? "" : "text-gray-400"}>{fmtMoney(cartTotal)}</b> · Δ <b className={Math.abs(delta) < 0.01 ? "text-green-600" : "text-red-600"}>{fmtMoney(delta)}</b></span>
+              </div>
+              {cart.length === 0 && <div className="text-xs text-gray-400 italic">Adicione um ou mais títulos abaixo. Você pode informar juros e desconto; o total (principal + juros − desconto) deve igualar o valor do extrato.</div>}
+              {cart.map((c, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-xs py-1 border-t first:border-t-0">
+                  <span className="flex-1 truncate"><b>{c.title || "—"}</b> · {c.name || ""} <span className="text-gray-400">({c.kind === "receivable" ? "Receber" : "Pagar"})</span></span>
+                  <label className="text-gray-400">R$<input type="number" step="0.01" value={c.amount} onChange={(e) => setCartField(idx, "amount", e.target.value)} className="w-20 border rounded px-1 py-0.5 ml-0.5" /></label>
+                  <label className="text-gray-400">juros<input type="number" step="0.01" value={c.interest} onChange={(e) => setCartField(idx, "interest", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
+                  <label className="text-gray-400">desc<input type="number" step="0.01" value={c.discount} onChange={(e) => setCartField(idx, "discount", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
+                  <button onClick={() => removeCart(idx)} className="text-red-500 hover:text-red-700">✕</button>
+                </div>
+              ))}
+            </div>
+
+            {/* abas */}
+            <div className="px-5 pt-2 flex gap-4 text-sm border-b">
+              <button onClick={() => setTab("sug")} className={`pb-2 ${tab === "sug" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>✨ Sugestões</button>
+              <button onClick={() => { setTab("search"); if (!searchResults.length) searchTitles(""); }} className={`pb-2 ${tab === "search" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>🔎 Buscar Título</button>
+            </div>
+
+            <div className="px-5 py-3 overflow-auto flex-1">
+              {tab === "sug" && (
+                <div className="space-y-2">
+                  {(() => {
+                    const sg = suggestions[modalItem.id];
+                    const titles: Title[] = (sg?.titles || []);
+                    if (!titles.length) return <div className="text-sm text-gray-400">Sem sugestão automática. Use “Buscar Título”.</div>;
+                    return titles.map((t, idx) => (
+                      <div key={idx} className="flex items-center gap-2 border rounded px-3 py-2">
+                        <div className="flex-1 text-sm">
+                          <div><b>{t.title || "—"}</b> · {t.name || ""} <span className="text-gray-400">({t.kind === "receivable" ? "Receber" : "Pagar"})</span></div>
+                          <div className="text-xs text-gray-500">{fmtMoney(t.amount)} · venc {fmtDate(t.due)}{t.instance ? ` · ${t.instance}` : ""}</div>
+                        </div>
+                        <button onClick={() => addToCart(t)} disabled={cart.some((c) => c.id === t.id)} className="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40">+ Adicionar</button>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              )}
+              {tab === "search" && (
+                <div>
+                  <div className="flex gap-2 mb-3">
+                    <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") searchTitles(searchQ); }} placeholder="Buscar por nº do título, nome, documento ou valor…" className="flex-1 border rounded px-3 py-1.5 text-sm" />
+                    <button onClick={() => searchTitles(searchQ)} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm">Buscar</button>
+                  </div>
+                  {searchLoading && <div className="text-sm text-gray-400">Buscando…</div>}
+                  {!searchLoading && searchResults.length === 0 && <div className="text-sm text-gray-400">Nenhum título em aberto encontrado.</div>}
+                  <div className="space-y-2">
+                    {searchResults.map((t, idx) => (
+                      <div key={idx} className="flex items-center gap-2 border rounded px-3 py-2">
+                        <div className="flex-1 text-sm">
+                          <div><b>{t.title || "—"}</b> · {t.name || ""}</div>
+                          <div className="text-xs text-gray-500">{fmtMoney(t.amount)} · venc {fmtDate(t.due)}{t.instance ? ` · ${t.instance}` : ""}{t.document ? ` · ${t.document}` : ""}</div>
+                        </div>
+                        <button onClick={() => addToCart(t)} disabled={cart.some((c) => c.id === t.id)} className="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40">+ Adicionar</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t flex items-center justify-between">
+              <span className="text-xs text-gray-500">{modalItem.type === "C" ? "Recebimento (títulos a receber)" : "Pagamento (títulos a pagar)"}</span>
+              <div className="flex gap-2">
+                <button onClick={closeModal} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
+                <button onClick={confirmReconcile} disabled={!cart.length || Math.abs(delta) >= 0.01 || busy === modalItem.id} className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-40">Conciliar {cart.length ? `(${fmtMoney(cartTotal)})` : ""}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
