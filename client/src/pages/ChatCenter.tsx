@@ -1555,7 +1555,7 @@ function ChatCenterInner() {
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                          {isAdmin && (
+                          {true && (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
