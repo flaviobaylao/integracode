@@ -58,6 +58,8 @@ export default function PurchaseRadar() {
   const [showPayable, setShowPayable] = useState(false);
   const [showEntry, setShowEntry] = useState(false);
   const [entryMappings, setEntryMappings] = useState<any[]>([]);
+  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  const [supplierForm, setSupplierForm] = useState<any>({ name: "", cnpj: "", cpf: "", stateRegistration: "", defaultChartAccountId: "", defaultCategory: "", omieInstanceId: "" });
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
@@ -99,6 +101,19 @@ export default function PurchaseRadar() {
       return (j.rows || []).filter((m: any) => m.is_active !== false);
     },
   });
+
+  const { data: supplierMatch } = useQuery<any>({
+    queryKey: ["/api/suppliers/match", selectedInvoice?.supplierDocument],
+    queryFn: async () => {
+      const doc = selectedInvoice?.supplierDocument || "";
+      if (!doc) return { supplier: null };
+      const res = await fetch(`/api/suppliers/match?document=${encodeURIComponent(doc)}`, { credentials: "include" });
+      if (!res.ok) return { supplier: null };
+      return res.json();
+    },
+    enabled: !!(selectedInvoice?.supplierDocument) && showDetail,
+  });
+  const matchedSupplier = supplierMatch?.supplier || null;
 
   const importXml = useMutation({
     mutationFn: async (xml: string) => {
@@ -156,6 +171,19 @@ export default function PurchaseRadar() {
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/synced-table/raw_materials"] });
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
+
+  const createSupplier = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/suppliers", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Fornecedor cadastrado" });
+      setShowSupplierForm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/suppliers/match", selectedInvoice?.supplierDocument] });
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
@@ -581,6 +609,31 @@ export default function PurchaseRadar() {
                 </div>
               )}
 
+              <div className="rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-sm">
+                    <span className="text-xs text-muted-foreground">Fornecedor no cadastro:</span>{" "}
+                    {matchedSupplier ? (
+                      <span className="font-medium text-emerald-700">✓ {matchedSupplier.name} (cadastrado)</span>
+                    ) : (
+                      <span className="font-medium text-amber-700">não cadastrado</span>
+                    )}
+                  </div>
+                  {!matchedSupplier && (
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const doc = (selectedInvoice.supplierDocument || "").replace(/\D/g, "");
+                      setSupplierForm({ name: selectedInvoice.supplierName || "", cnpj: doc.length === 14 ? doc : "", cpf: doc.length === 11 ? doc : "", stateRegistration: selectedInvoice.supplierIe || "", defaultChartAccountId: "", defaultCategory: "", omieInstanceId: selectedInvoice.omieInstanceId || "" });
+                      setShowSupplierForm(true);
+                    }}>
+                      <Plus className="h-4 w-4 mr-1" /> Cadastrar fornecedor
+                    </Button>
+                  )}
+                </div>
+                {matchedSupplier?.default_chart_account_id && (
+                  <p className="text-xs text-muted-foreground mt-1">Plano de contas padrão do fornecedor será sugerido ao classificar.</p>
+                )}
+              </div>
+
               {Array.isArray(selectedInvoice.items) && selectedInvoice.items.length > 0 && (
                 <div>
                   <Label className="text-xs text-muted-foreground mb-2 block">Itens ({selectedInvoice.items.length})</Label>
@@ -634,7 +687,8 @@ export default function PurchaseRadar() {
                   <Button
                     size="sm"
                     onClick={() => {
-                      setClassifyData({ chartAccountId: "", isStockPurchase: false, notes: "" });
+                      const def = matchedSupplier?.default_chart_account_id && chartAccounts.some((a: any) => a.id === matchedSupplier.default_chart_account_id) ? matchedSupplier.default_chart_account_id : "";
+                      setClassifyData({ chartAccountId: def, isStockPurchase: false, notes: "" });
                       setShowClassify(true);
                     }}
                   >
@@ -813,6 +867,57 @@ export default function PurchaseRadar() {
               onClick={() => createPayable.mutate({ id: selectedInvoice?.id, ...payableData })}
             >
               {createPayable.isPending ? "Criando..." : "Criar Conta a Pagar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSupplierForm} onOpenChange={setShowSupplierForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cadastrar Fornecedor</DialogTitle>
+            <DialogDescription>Cadastro gerido no INTEGRA 2.0. Preenchido a partir da NF; ajuste se necessário.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nome</Label>
+              <Input value={supplierForm.name} onChange={(e) => setSupplierForm((p: any) => ({ ...p, name: e.target.value }))} className="mt-1" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>CNPJ</Label>
+                <Input value={supplierForm.cnpj} onChange={(e) => setSupplierForm((p: any) => ({ ...p, cnpj: e.target.value }))} className="mt-1" />
+              </div>
+              <div>
+                <Label>CPF</Label>
+                <Input value={supplierForm.cpf} onChange={(e) => setSupplierForm((p: any) => ({ ...p, cpf: e.target.value }))} className="mt-1" />
+              </div>
+            </div>
+            <div>
+              <Label>Inscrição Estadual</Label>
+              <Input value={supplierForm.stateRegistration} onChange={(e) => setSupplierForm((p: any) => ({ ...p, stateRegistration: e.target.value }))} className="mt-1" />
+            </div>
+            <div>
+              <Label>Plano de Contas padrão (opcional)</Label>
+              <Select value={supplierForm.defaultChartAccountId} onValueChange={(v) => setSupplierForm((p: any) => ({ ...p, defaultChartAccountId: v }))}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                <SelectContent>
+                  {chartAccounts.map((acc: any) => (
+                    <SelectItem key={acc.id} value={acc.id}>{acc.code ? `${acc.code} - ` : ""}{acc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">Se definido, futuras compras deste fornecedor já vêm classificadas.</p>
+            </div>
+            <div>
+              <Label>Categoria padrão (opcional)</Label>
+              <Input value={supplierForm.defaultCategory} onChange={(e) => setSupplierForm((p: any) => ({ ...p, defaultCategory: e.target.value }))} className="mt-1" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSupplierForm(false)}>Cancelar</Button>
+            <Button disabled={!supplierForm.name || createSupplier.isPending} onClick={() => createSupplier.mutate(supplierForm)}>
+              {createSupplier.isPending ? "Salvando..." : "Cadastrar"}
             </Button>
           </DialogFooter>
         </DialogContent>
