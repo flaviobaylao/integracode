@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,8 @@ export default function ConciliacaoBancaria() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [me, setMe] = useState<string>("");
   const [busy, setBusy] = useState<string>("");
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     fetch("/api/reconciliation/filters", { credentials: "include" })
@@ -127,6 +129,32 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
 
+  const onPickOfx = () => {
+    if (!account) { alert("Selecione a CONTA (no filtro acima) antes de importar o OFX."); return; }
+    fileRef.current?.click();
+  };
+  const onOfxFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const j = await post("/api/reconciliation/import-ofx", { ofxText: text, accountId: account, by: me, fileName: file.name });
+      alert(
+        `OFX importado: ${j.inserted} lançamento(s) novo(s)` +
+        (j.skipped ? `, ${j.skipped} já existia(m)` : "") +
+        (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : ".")
+      );
+      await loadStatements();
+      if (j.statementId) {
+        const s: any = { id: j.statementId, file_name: j.fileName, source: "ofx", start_date: j.period?.start, end_date: j.period?.end, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance };
+        openStatement(s);
+      }
+    } catch (err: any) { alert("Erro ao importar OFX: " + err.message); }
+    finally { setImporting(false); }
+  };
+
   const items: Item[] = detail?.items || [];
   const matchesByItem: Record<string, any[]> = detail?.matchesByItem || {};
   const suggestions: Record<string, any> = detail?.suggestions || {};
@@ -149,7 +177,8 @@ export default function ConciliacaoBancaria() {
           {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <div className="flex-1" />
-        <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded bg-blue-500/50 text-white cursor-not-allowed">⬆ Importar OFX</button>
+        <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
+        <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
         <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border text-gray-500 cursor-not-allowed">🏦 Importar via BB API</button>
         <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border border-amber-400 text-amber-600 cursor-not-allowed">⚙ Acertar baixas pendentes</button>
       </div>
