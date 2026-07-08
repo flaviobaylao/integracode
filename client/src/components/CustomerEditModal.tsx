@@ -69,6 +69,8 @@ export default function CustomerEditModal({
     checkActiveStatus();
   }, [customer?.id, isOpen, isLead]);
 
+  const { data: instances = [] } = useQuery<any[]>({ queryKey: ["/api/omie/instances/public"] });
+
   const [formData, setFormData] = useState({
     name: "",
     fantasyName: "",
@@ -92,6 +94,7 @@ export default function CustomerEditModal({
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
     isConsumerClient: false, // Cliente Consumidor - destaque verde
+    omieInstanceId: "",
     paymentMethod: "", // Condicao de pagamento do cliente (sobrepoe forma+prazo da venda)
     boletoDays: "" as any,
     collectionDiscount: "" as any,
@@ -178,6 +181,7 @@ export default function CustomerEditModal({
       boletoDays: (formData as any).boletoDays === "" || (formData as any).boletoDays == null ? null : Number((formData as any).boletoDays),
       paymentInstallments: (formData as any).paymentInstallments === "" || (formData as any).paymentInstallments == null ? null : Number((formData as any).paymentInstallments),
       collectionDiscount: (formData as any).collectionDiscount === "" || (formData as any).collectionDiscount == null ? null : String((formData as any).collectionDiscount),
+      omieInstanceId: (formData as any).omieInstanceId || null,
     };
     
     // Se é novo lead (isLead = true e customer = null), cria novo
@@ -310,6 +314,7 @@ export default function CustomerEditModal({
         deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
         isConsumerClient: (customer as any).isConsumerClient || false,
+        omieInstanceId: (customer as any).omieInstanceId || "",
         paymentMethod: (customer as any).paymentMethod || "",
         boletoDays: (customer as any).boletoDays ?? "",
         collectionDiscount: (customer as any).collectionDiscount ?? "",
@@ -522,6 +527,25 @@ export default function CustomerEditModal({
                   <SelectItem key={user.id} value={user.id}>
                     {user.firstName} {user.lastName} ({user.email})
                   </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Instancia (Empresa Emissora) */}
+          <div>
+            <Label htmlFor="omieInstanceId">Instância (Empresa Emissora)</Label>
+            <Select
+              value={(formData as any).omieInstanceId || "__none__"}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, omieInstanceId: value === "__none__" ? "" : value } as any))}
+            >
+              <SelectTrigger data-testid="select-omie-instance">
+                <SelectValue placeholder="Selecione a empresa/instância" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Não definida</SelectItem>
+                {Array.isArray(instances) && (instances as any[]).filter((i: any) => i.isActive !== false).map((i: any) => (
+                  <SelectItem key={i.id} value={i.id}>{i.displayName || i.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

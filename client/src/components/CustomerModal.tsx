@@ -120,6 +120,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     retry: false,
   });
 
+  const { data: instances } = useQuery({
+    queryKey: ['/api/omie/instances/public'],
+    retry: false,
+  });
+
   const form = useForm<InsertCustomer>({
     resolver: zodResolver(insertCustomerSchema),
     defaultValues: {
@@ -140,6 +145,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       weekdays: '[]',
       visitPeriodicity: 'semanal',
       icmsCsosn: '102',
+      omieInstanceId: '',
       isSupplier: false,
       paymentMethod: undefined,
       boletoDays: null,
@@ -193,6 +199,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         weekdays: weekdaysJson,
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
         icmsCsosn: (customer as any).icmsCsosn || '102',
+        omieInstanceId: (customer as any).omieInstanceId || '',
         isSupplier: (customer as any).isSupplier || false,
         paymentMethod: (customer as any).paymentMethod || undefined,
         boletoDays: (customer as any).boletoDays ?? null,
@@ -230,6 +237,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         weekdays: '[]',
         visitPeriodicity: 'semanal',
       icmsCsosn: '102',
+      omieInstanceId: '',
       isSupplier: false,
       paymentMethod: undefined,
       boletoDays: null,
@@ -1081,6 +1089,37 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           {canManageRouteAndPeriodicity 
                             ? "Defina com que frequência o cliente deve ser visitado" 
                             : "Apenas administradores podem alterar a periodicidade"}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="omieInstanceId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <span>Instância (Empresa Emissora)</span>
+                        </FormLabel>
+                        <Select value={field.value || '__none__'} onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-omie-instance">
+                              <SelectValue placeholder="Selecione a empresa/instância" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="__none__">Não definida</SelectItem>
+                            {Array.isArray(instances) && (instances as any[]).filter((i: any) => i.isActive !== false).map((i: any) => (
+                              <SelectItem key={i.id} value={i.id}>{i.displayName || i.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormDescription className="text-xs">
+                          Empresa/CNPJ emissor de NF-e e cobranca para este cliente (GYN, BSB, IND, SERV).
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
