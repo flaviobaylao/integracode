@@ -118,12 +118,15 @@ export default function BillingPipeline() {
 
   const syncNowMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest('POST', '/api/billing-pipeline/sync-now');
+      // Cutover (08/jul): pipeline gerido no 2.0 — apenas recarrega a tela, sem puxar do Integra 1.0.
+      await queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      return true;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
-      toast({ title: 'Pipeline sincronizado', description: 'Dados atualizados a partir do Integra 1.0' });
+      toast({ title: 'Pipeline atualizado', description: 'Tela recarregada (fonte: Integra 2.0)' });
     },
     onError: (error: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
