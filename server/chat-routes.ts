@@ -853,40 +853,45 @@ export function registerChatRoutes(app: Express): void {
 
   // Migrar TODO o historico de conversas do 1.0 -> 2.0 (fire-and-forget, idempotente)
   async function runChatHistoryMigration(dryRun: boolean) {
-    const src1 = process.env.REPLIT_DATABASE_URL;
     const out: any[] = [];
     const { Client } = await import("pg");
-    const src = new Client({ connectionString: src1, ssl: { rejectUnauthorized: false } });
-    const tgt = new Client({ connectionString: process.env.DATABASE_URL, ssl: (process.env.DATABASE_URL || "").includes("railway") ? false : undefined });
+    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 20000, query_timeout: 60000 });
     try {
-      await src.connect(); await tgt.connect();
+      await src.connect();
       for (const t of ["chat_customers", "chat_conversations", "chat_messages"]) {
         const info: any = { table: t };
         try {
-          const tgtColsQ = await tgt.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name=$1", [t]);
+          const tgtColsQ: any = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name=${t}`);
           const srcColsQ = await src.query("SELECT column_name FROM information_schema.columns WHERE table_name=$1", [t]);
-          const tgtCols = new Map<string, string>(tgtColsQ.rows.map((r: any) => [r.column_name, r.data_type]));
+          const tgtCols = new Map<string, string>((tgtColsQ.rows || []).map((r: any) => [r.column_name, r.data_type]));
           const srcCols = new Set<string>(srcColsQ.rows.map((r: any) => r.column_name));
           const cols = Array.from(tgtCols.keys()).filter((c) => srcCols.has(c));
-          const jsonCols = new Set<string>(cols.filter((c) => { const d = tgtCols.get(c) || ""; return d === "json" || d === "jsonb"; }));
           if (!cols.includes("id")) { info.skip = "sem coluna id"; out.push(info); continue; }
+          const tgtIdsQ: any = await db.execute(sql.raw(`SELECT id FROM "${t}"`));
           const srcIdsQ = await src.query(`SELECT id FROM "${t}"`);
-          const tgtIdsQ = await tgt.query(`SELECT id FROM "${t}"`);
-          const tgtIds = new Set<string>(tgtIdsQ.rows.map((r: any) => String(r.id)));
+          const tgtIds = new Set<string>((tgtIdsQ.rows || []).map((r: any) => String(r.id)));
           const missing = srcIdsQ.rows.map((r: any) => String(r.id)).filter((id: string) => !tgtIds.has(id));
-          info.total_1_0 = srcIdsQ.rowCount; info.tinha_2_0 = tgtIdsQ.rowCount; info.faltando = missing.length;
+          info.total_1_0 = srcIdsQ.rowCount; info.tinha_2_0 = (tgtIdsQ.rows || []).length; info.faltando = missing.length;
           if (dryRun || missing.length === 0) { out.push(info); continue; }
-          const colList = cols.map((c) => `"${c}"`).join(",");
-          const ph = cols.map((_, i) => `$${i + 1}`).join(",");
-          const insertSql = `INSERT INTO "${t}" (${colList}) VALUES (${ph}) ON CONFLICT (id) DO NOTHING`;
+          const colListRaw = cols.map((c) => `"${c}"`).join(",");
           let inserted = 0, failed = 0; const errs: string[] = [];
-          for (let i = 0; i < missing.length; i += 500) {
-            const chunk = missing.slice(i, i + 500);
-            const rowsQ = await src.query(`SELECT ${colList} FROM "${t}" WHERE id::text = ANY($1)`, [chunk]);
+          for (let k = 0; k < missing.length; k += 500) {
+            const chunk = missing.slice(k, k + 500);
+            const rowsQ = await src.query(`SELECT ${colListRaw} FROM "${t}" WHERE id::text = ANY($1)`, [chunk]);
             for (const row of rowsQ.rows) {
-              const vals = cols.map((c) => { let v = (row as any)[c]; if (jsonCols.has(c) && v !== null && typeof v === "object") v = JSON.stringify(v); return v; });
-              try { const r = await tgt.query(insertSql, vals); inserted += r.rowCount || 0; }
-              catch (e: any) { failed++; if (errs.length < 8) errs.push(`${(row as any).id}: ${String(e?.message || e).slice(0, 80)}`); }
+              const valExprs = cols.map((c) => {
+                const dt = tgtCols.get(c) || "";
+                let v = (row as any)[c];
+                if ((dt === "json" || dt === "jsonb") && v !== null) {
+                  const jsonStr = typeof v === "string" ? v : JSON.stringify(v);
+                  return sql`${jsonStr}::${sql.raw(dt)}`;
+                }
+                return sql`${v}`;
+              });
+              try {
+                await db.execute(sql`INSERT INTO ${sql.identifier(t)} (${sql.raw(colListRaw)}) VALUES (${sql.join(valExprs, sql`, `)}) ON CONFLICT (id) DO NOTHING`);
+                inserted++;
+              } catch (e: any) { failed++; if (errs.length < 8) errs.push(`${(row as any).id}: ${String(e?.message || e).slice(0, 90)}`); }
             }
           }
           info.inserido = inserted; info.falhou = failed; if (errs.length) info.erros = errs;
@@ -894,11 +899,12 @@ export function registerChatRoutes(app: Express): void {
         out.push(info);
       }
       const resumo = JSON.stringify({ at: new Date().toISOString(), dryRun, resultado: out });
-      try { await tgt.query("INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1,$2,$3,now()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", ["chat_migration_last", resumo, "migrate-chat-history"]); } catch (e) { console.error("[MIGRATE-CHAT] persist status:", e); }
+      try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${resumo}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${resumo}, updated_by='migrate-chat-history', updated_at=now()`); } catch (e) { console.error("[MIGRATE-CHAT] persist:", e); }
     } catch (error: any) {
       console.error("[MIGRATE-CHAT] Erro:", error);
-      try { await tgt.query("INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1,$2,$3,now()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", ["chat_migration_last", JSON.stringify({ at: new Date().toISOString(), erro: String(error?.message || error).slice(0, 200) }), "migrate-chat-history"]); } catch {}
-    } finally { try { await src.end(); } catch {} try { await tgt.end(); } catch {} }
+      const resumo = JSON.stringify({ at: new Date().toISOString(), erro: String(error?.message || error).slice(0, 200) });
+      try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${resumo}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${resumo}, updated_by='migrate-chat-history', updated_at=now()`); } catch {}
+    } finally { try { await src.end(); } catch {} }
   }
   app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
     if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: "REPLIT_DATABASE_URL nao configurado" });
