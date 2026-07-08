@@ -62,6 +62,7 @@ export default function PurchaseRadar() {
   const [supplierForm, setSupplierForm] = useState<any>({ name: "", cnpj: "", cpf: "", stateRegistration: "", defaultChartAccountId: "", defaultCategory: "", omieInstanceId: "" });
   const [chaveInput, setChaveInput] = useState("");
   const [chaveInstance, setChaveInstance] = useState("");
+  const [radarResult, setRadarResult] = useState<any>(null);
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
@@ -195,14 +196,28 @@ export default function PurchaseRadar() {
       const res = await apiRequest("POST", "/api/purchases/import-by-key", { chave, instanceId });
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "NF-e importada pela chave" });
+    onSuccess: (data: any) => {
+      toast({ title: data?.enriched ? "XML completo importado (itens carregados)" : "NF-e importada pela chave" });
       setChaveInput("");
-      setActiveTab("list");
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+      if (data?.invoice && showDetail) { setSelectedInvoice(data.invoice); } else { setActiveTab("list"); }
+    },
+    onError: (err: any) => toast({ title: "Erro ao importar pela chave", description: err.message, variant: "destructive" }),
+  });
+
+  const radarScan = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/purchases/radar/scan", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setRadarResult(data);
+      toast({ title: `Radar: ${data?.found ?? 0} nova(s) nota(s) detectada(s)` });
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
     },
-    onError: (err: any) => toast({ title: "Erro ao importar pela chave", description: err.message, variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Erro no radar", description: err.message, variant: "destructive" }),
   });
 
   const updateStatus = useMutation({
@@ -505,6 +520,25 @@ export default function PurchaseRadar() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex flex-col gap-3">
+                <Button onClick={() => radarScan.mutate()} disabled={radarScan.isPending} className="w-full md:w-auto">
+                  <Radar className="h-4 w-4 mr-1" /> {radarScan.isPending ? "Buscando na SEFAZ..." : "Buscar notas na SEFAZ"}
+                </Button>
+                {radarResult && (
+                  <div className="rounded-lg border p-3 text-sm">
+                    <p className="font-medium mb-1">{radarResult.found ?? 0} nova(s) nota(s) · {radarResult.scanned ?? 0} empresa(s) consultada(s)</p>
+                    <div className="space-y-1">
+                      {(radarResult.instances || []).map((r: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span>{r.instance} ({formatDoc(r.cnpj)})</span>
+                          <span className={r.error ? "text-red-600" : "text-muted-foreground"}>{r.error ? r.error : `${r.found} nova(s) · NSU ${r.ultNSU}`}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">As notas detectadas entram como "Detectada" (só o resumo). Abra a nota e use "Baixar XML (SEFAZ)" para trazer os itens completos. Clique novamente em "Buscar" para paginar mais notas.</p>
+                  </div>
+                )}
+              </div>
               {(() => {
                 const certData = certificates as any;
                 const certInstances = certData?.instances || [];
@@ -792,6 +826,15 @@ export default function PurchaseRadar() {
                 )}
                 {selectedInvoice.isStockPurchase && selectedInvoice.stockProcessed && (
                   <Badge className="bg-emerald-100 text-emerald-800 self-center"><CheckCircle2 className="h-3 w-3 mr-1 inline" />Estoque processado</Badge>
+                )}
+                {selectedInvoice.status === "detected" && selectedInvoice.accessKey && selectedInvoice.omieInstanceId && (
+                  <Button
+                    size="sm"
+                    onClick={() => importByKey.mutate({ chave: selectedInvoice.accessKey, instanceId: selectedInvoice.omieInstanceId })}
+                    disabled={importByKey.isPending}
+                  >
+                    <Search className="h-4 w-4 mr-1" /> {importByKey.isPending ? "Baixando..." : "Baixar XML (SEFAZ)"}
+                  </Button>
                 )}
                 {!["paid", "cancelled"].includes(selectedInvoice.status) && (
                   <Button
