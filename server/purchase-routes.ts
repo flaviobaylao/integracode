@@ -170,6 +170,81 @@ async function ensurePurchaseInvoicesTable() {
   }
 }
 
+let __radarRunning = false;
+// Executa o Radar de Compras (Distribuição DFe da SEFAZ) para todas as instâncias ativas.
+// Reutilizável pelo endpoint manual E pelo agendador automático (sem HTTP/auth).
+export async function runRadarScan(createdBy: string = "radar-auto"): Promise<any> {
+  if (__radarRunning) return { ok: false, skipped: true, reason: "scan já em andamento" };
+  __radarRunning = true;
+  try {
+    const onlyDig = (v: any) => (v == null ? "" : String(v)).replace(/\D/g, "");
+    const { INSTANCE_COMPANY_DATA } = await import("./nfe-routes");
+    const { fetchDistribuicaoDFe } = await import("./sefaz-service");
+    const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
+    const instancesWithCnpj = instances.filter((i: any) => onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj));
+    if (instancesWithCnpj.length === 0) {
+      return { ok: true, message: "Nenhuma instância com CNPJ cadastrado.", scanned: 0, found: 0, instances: [] };
+    }
+    const ourCnpjs = new Set<string>();
+    for (const i of instances) { const c = onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj); if (c) ourCnpjs.add(c); }
+    const getSetting = async (k: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${k} LIMIT 1`); const rows = (r as any).rows || r; return rows[0]?.value ?? null; };
+    const setSetting = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, 'radar-compras') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'radar-compras', updated_at = now()`); };
+
+    const results: any[] = [];
+    let totalFound = 0;
+    for (const inst of instancesWithCnpj) {
+      const cd: any = (INSTANCE_COMPANY_DATA as any)[inst.name];
+      const cnpj = onlyDig(cd?.cnpj || inst.cnpj);
+      const uf = cd?.uf || "GO";
+      if (!cnpj) continue;
+      const envVal = await getSetting("fiscal_env_" + inst.id);
+      const ambiente: "producao" | "homologacao" = envVal === "homologacao" ? "homologacao" : "producao";
+      let ultNSU = onlyDig(await getSetting("dfe_ult_nsu_" + cnpj)) || "0";
+      let found = 0, calls = 0, err: string | null = null, cStat: string | null = null;
+      try {
+        while (calls < 4) {
+          calls++;
+          const r: any = await fetchDistribuicaoDFe({ cnpj, uf, ultNSU, ambiente });
+          cStat = r?.cStat || null;
+          if (!r?.ok && r?.error) { err = r.error; break; }
+          for (const doc of (r.docs || [])) {
+            if ((doc.type === "resumo" || doc.type === "nota") && doc.accessKey && !doc.isCancellation && !ourCnpjs.has(onlyDig(doc.supplierDocument))) {
+              const [ex] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, doc.accessKey));
+              if (!ex) {
+                await db.insert(purchaseInvoices).values({
+                  accessKey: doc.accessKey,
+                  invoiceNumber: doc.invoiceNumber,
+                  series: doc.series || "1",
+                  issueDate: doc.issueDate || null,
+                  supplierName: doc.supplierName || "(a identificar)",
+                  supplierDocument: doc.supplierDocument || "",
+                  supplierIe: doc.supplierIe,
+                  totalValue: doc.totalValue || "0",
+                  items: [],
+                  status: "detected",
+                  omieInstanceId: inst.id,
+                  detectedAt: nowBrazil(),
+                  createdBy,
+                });
+                found++; totalFound++;
+              }
+            }
+          }
+          const newUlt = onlyDig(r.ultNSU) || ultNSU;
+          const maxNSU = onlyDig(r.maxNSU) || newUlt;
+          ultNSU = newUlt;
+          await setSetting("dfe_ult_nsu_" + cnpj, ultNSU);
+          if (r.cStat === "137") break;
+          try { if (BigInt(ultNSU || "0") >= BigInt(maxNSU || "0")) break; } catch (_e) { break; }
+        }
+      } catch (e: any) { err = e.message; }
+      results.push({ instance: inst.name, cnpj, ambiente, found, ultNSU, calls, cStat, error: err });
+    }
+    try { await setSetting("radar_auto_last", JSON.stringify({ at: new Date().toISOString(), by: createdBy, found: totalFound, instances: results })); } catch (_e) {}
+    return { ok: true, scanned: instancesWithCnpj.length, found: totalFound, instances: results };
+  } finally { __radarRunning = false; }
+}
+
 export function registerPurchaseRoutes(app: Express) {
   ensurePurchaseInvoicesTable();
 
@@ -278,70 +353,8 @@ export function registerPurchaseRoutes(app: Express) {
 
   app.post("/api/purchases/radar/scan", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
     try {
-      const onlyDig = (v: any) => (v == null ? "" : String(v)).replace(/\D/g, "");
-      const { INSTANCE_COMPANY_DATA } = await import("./nfe-routes");
-      const { fetchDistribuicaoDFe } = await import("./sefaz-service");
-      const instances = await db.select().from(omieInstances).where(eq(omieInstances.isActive, true));
-      const instancesWithCnpj = instances.filter((i: any) => onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj));
-      if (instancesWithCnpj.length === 0) {
-        return res.json({ ok: true, message: "Nenhuma instância com CNPJ cadastrado.", scanned: 0, found: 0, instances: [] });
-      }
-      const ourCnpjs = new Set<string>();
-      for (const i of instances) { const c = onlyDig((INSTANCE_COMPANY_DATA as any)?.[i.name]?.cnpj || i.cnpj); if (c) ourCnpjs.add(c); }
-      const getSetting = async (k: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${k} LIMIT 1`); const rows = (r as any).rows || r; return rows[0]?.value ?? null; };
-      const setSetting = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, 'radar-compras') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'radar-compras', updated_at = now()`); };
-
-      const results: any[] = [];
-      let totalFound = 0;
-      for (const inst of instancesWithCnpj) {
-        const cd: any = (INSTANCE_COMPANY_DATA as any)[inst.name];
-        const cnpj = onlyDig(cd?.cnpj || inst.cnpj);
-        const uf = cd?.uf || "GO";
-        if (!cnpj) continue;
-        const envVal = await getSetting("fiscal_env_" + inst.id);
-        const ambiente: "producao" | "homologacao" = envVal === "homologacao" ? "homologacao" : "producao";
-        let ultNSU = onlyDig(await getSetting("dfe_ult_nsu_" + cnpj)) || "0";
-        let found = 0, calls = 0, err: string | null = null, cStat: string | null = null;
-        try {
-          while (calls < 4) {
-            calls++;
-            const r: any = await fetchDistribuicaoDFe({ cnpj, uf, ultNSU, ambiente });
-            cStat = r?.cStat || null;
-            if (!r?.ok && r?.error) { err = r.error; break; }
-            for (const doc of (r.docs || [])) {
-              if ((doc.type === "resumo" || doc.type === "nota") && doc.accessKey && !doc.isCancellation && !ourCnpjs.has(onlyDig(doc.supplierDocument))) {
-                const [ex] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.accessKey, doc.accessKey));
-                if (!ex) {
-                  await db.insert(purchaseInvoices).values({
-                    accessKey: doc.accessKey,
-                    invoiceNumber: doc.invoiceNumber,
-                    series: doc.series || "1",
-                    issueDate: doc.issueDate || null,
-                    supplierName: doc.supplierName || "(a identificar)",
-                    supplierDocument: doc.supplierDocument || "",
-                    supplierIe: doc.supplierIe,
-                    totalValue: doc.totalValue || "0",
-                    items: [],
-                    status: "detected",
-                    omieInstanceId: inst.id,
-                    detectedAt: nowBrazil(),
-                    createdBy: req.userId,
-                  });
-                  found++; totalFound++;
-                }
-              }
-            }
-            const newUlt = onlyDig(r.ultNSU) || ultNSU;
-            const maxNSU = onlyDig(r.maxNSU) || newUlt;
-            ultNSU = newUlt;
-            await setSetting("dfe_ult_nsu_" + cnpj, ultNSU);
-            if (r.cStat === "137") break;
-            try { if (BigInt(ultNSU || "0") >= BigInt(maxNSU || "0")) break; } catch (_e) { break; }
-          }
-        } catch (e: any) { err = e.message; }
-        results.push({ instance: inst.name, cnpj, ambiente, found, ultNSU, calls, cStat, error: err });
-      }
-      res.json({ ok: true, scanned: instancesWithCnpj.length, found: totalFound, instances: results });
+      const out = await runRadarScan(req.userId || "radar-manual");
+      res.json(out);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

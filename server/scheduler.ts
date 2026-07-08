@@ -9,6 +9,7 @@ import { generateDailyRoute } from './routeOptimizationService';
 import { generateAndSaveAllReports } from './ai-reports-service';
 import { redistributeTimedOutConversations } from './chat-distribution-service';
 import { nowBrazil } from './brazilTimezone';
+import { runRadarScan } from './purchase-routes';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -34,6 +35,17 @@ cron.schedule('0 6 * * *', async () => {
   }
 }, {
   timezone: "America/Sao_Paulo"
+});
+
+// Radar de Compras (Distribuição DFe da SEFAZ) — traz automaticamente as NF-e
+// emitidas CONTRA os CNPJs da Honest, de hora em hora (cadência segura p/ a SEFAZ).
+cron.schedule('17 * * * *', async () => {
+  try {
+    const out = await runRadarScan('radar-auto');
+    if (out && out.found) console.log(`🛰️ [RADAR-COMPRAS] scan automático: ${out.found} nova(s) nota(s) detectada(s)`);
+  } catch (error: any) {
+    console.error('❌ [RADAR-COMPRAS] erro no scan automático:', error.message);
+  }
 });
 
 // Sincronizar usuários como agentes e clientes para agenda na inicialização
