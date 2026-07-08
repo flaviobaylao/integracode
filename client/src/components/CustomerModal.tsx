@@ -1035,7 +1035,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                 size="sm"
                                 onClick={() => handleWeekdayToggle(option.value)}
                                 disabled={!canManageRouteAndPeriodicity}
-                                className={isSelected ? "bg-honest-blue hover:bg-honest-blue/90" : ""}
+                                className={isSelected ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                                 data-testid={`button-weekday-${option.value}`}
                               >
                                 {option.label}
@@ -1562,7 +1562,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                 <Button 
                   type="submit" 
                   disabled={customerMutation.isPending}
-                  className="bg-honest-blue hover:bg-honest-blue/90"
+                  className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-600"
                   data-testid="button-save-customer"
                 >
                   {customerMutation.isPending ? 'Salvando...' : customer ? 'Atualizar' : 'Criar'}
