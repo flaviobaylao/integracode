@@ -55,6 +55,7 @@ interface Conversation {
   customerId: string;
   customerName: string;
   customerPhone: string;
+  customerLinked?: boolean;
   agentId?: string;
   agentName?: string;
   assignedAgentId?: string;
@@ -250,6 +251,16 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
                 <Badge variant="destructive" className="text-[10px] h-4">
                   Urgente
                 </Badge>
+              )}
+              {conv.customerLinked && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full bg-green-500 text-white text-[9px] font-medium px-1.5 h-4 shrink-0"
+                  title="Telefone vinculado ao cadastro do cliente"
+                  data-testid={`badge-customer-linked-${conv.id}`}
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5"><path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 011.4-1.4l3.1 3.1 6.8-6.8a1 1 0 011.4 0z" clipRule="evenodd"/></svg>
+                  Cliente
+                </span>
               )}
             </div>
           </div>
