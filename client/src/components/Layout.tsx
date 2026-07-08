@@ -115,7 +115,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'justificativas', label: 'Justificar Visitas', icon: 'fas fa-clipboard-check', available: true, badge: null },
         { id: 'minha-agenda', label: 'Minha Agenda', icon: 'fas fa-calendar-day', available: true, badge: null },
         { id: 'visitas-dia', label: 'Visitas', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
-        { id: 'resumo-visitas', label: 'Resumo de Visitas', icon: 'fas fa-calendar-check', available: canAccessReports, badge: null },
+        { id: 'resumo-visitas', label: 'Resumo de Visitas', icon: 'fas fa-calendar-check', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
       ],
     },
     {
@@ -201,7 +201,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#f43f5e',
       icon: 'fas fa-dollar-sign',
       items: [
-        { id: 'fin-receivables', label: 'Contas a Receber', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+        { id: 'fin-receivables', label: 'Contas a Receber', icon: 'fas fa-file-invoice-dollar', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'fin-payables', label: 'Contas a Pagar', icon: 'fas fa-money-check-alt', available: canAccessReports, badge: null },
         { id: 'fin-overdue', label: 'Débitos Vencidos', icon: 'fas fa-exclamation-triangle', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'fin-blocked', label: 'Pedidos Bloqueados', icon: 'fas fa-ban', available: canAccessReports || isVendedor || isTelemarketing, badge: blockedOrdersCount > 0 ? blockedOrdersCount : null },
@@ -242,7 +242,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       items: [
         { id: 'whatsapp', label: 'WhatsApp', icon: 'fab fa-whatsapp', available: canAccessReports, badge: null },
         { id: 'telefones-clientes', label: 'Telefones de Clientes', icon: 'fas fa-address-book', available: canAccessReports || isTelemarketing, badge: null },
-        { id: 'central-atendimento', label: 'Central de Atendimento', icon: 'fas fa-headset', available: isTelemarketing, badge: null },
+        { id: 'central-atendimento', label: 'Central de Atendimento', icon: 'fas fa-headset', available: isTelemarketing || isVendedor, badge: null },
         { id: 'telemarketing', label: 'Central de Telemarketing', icon: 'fas fa-comments', available: canAccessReports, badge: null },
         { id: 'telemarketing-dashboard', label: 'Central de Atendimento', icon: 'fas fa-comments', available: canAccessReports, badge: null },
         { id: 'telemarketing-analysis', label: 'Dashboard de Conversas', icon: 'fas fa-chart-bar', available: canAccessReports, badge: null },
@@ -327,7 +327,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return items
       .filter(item => item.available)
       .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
+      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
   };
 
   const visibleGroups = useMemo(() => {
