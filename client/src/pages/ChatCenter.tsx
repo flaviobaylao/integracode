@@ -56,6 +56,7 @@ interface Conversation {
   customerName: string;
   customerPhone: string;
   customerLinked?: boolean;
+  channelPhone?: string | null;
   agentId?: string;
   agentName?: string;
   assignedAgentId?: string;
@@ -358,6 +359,12 @@ function ChatCenterInner() {
     refetchInterval: 30000,
   });
   const onlineAgents = onlineAgentsData?.agents || [];
+
+  // Canais Umbler (honest1-4) para o seletor de canal por conversa
+  const { data: channelsData } = useQuery<{ canais: { phone: string; nome: string; tipo: string; status: string }[] }>({
+    queryKey: ['/api/chat/umbler-talk/channels'],
+    staleTime: 300000,
+  });
 
   // Mutation para transferir conversa
   const transferMutation = useMutation({
@@ -917,6 +924,27 @@ function ChatCenterInner() {
   });
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
+
+  const setChannelMutation = useMutation({
+    mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
+      const response = await apiRequest('PATCH', `/api/chat/conversations/${id}`, { channelPhone });
+      return response.json();
+    },
+    onSuccess: () => { toast({ title: "Canal atualizado" }); queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] }); },
+    onError: (e: any) => { toast({ title: "Erro ao trocar canal", description: e.message, variant: "destructive" }); },
+  });
+  // canais WhatsApp broker rotulados honest1-4 (dedup por telefone, melhor status)
+  const waChannels = (() => {
+    const raw = (channelsData?.canais || []).filter((c) => c.phone && /broker/i.test(String(c.tipo || '')) && /honest/i.test(String(c.nome || '')));
+    const rank = (st: string) => st === 'Live' ? 4 : st === 'Offline' ? 3 : st === 'Disabled' ? 2 : 1;
+    const byPhone: Record<string, { phone: string; nome: string; status: string }> = {};
+    for (const c of raw) {
+      const ph = String(c.phone).replace(/\D/g, '');
+      const cur = byPhone[ph];
+      if (!cur || rank(c.status) > rank(cur.status)) byPhone[ph] = { phone: ph, nome: c.nome, status: c.status };
+    }
+    return Object.values(byPhone).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+  })();
 
   const [phonebookData, setPhonebookData] = useState<{ name: string; phone: string } | null>(null);
 
@@ -1510,6 +1538,25 @@ function ChatCenterInner() {
                             </Tooltip>
                           </TooltipProvider>
                         </div>
+                        {waChannels.length > 0 && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-600">
+                            <span>📡 Canal:</span>
+                            <select
+                              value={selectedChat.channelPhone ? String(selectedChat.channelPhone).replace(/\D/g, '') : "5562992682630"}
+                              onChange={(e) => setChannelMutation.mutate({ id: selectedChat.id, channelPhone: e.target.value })}
+                              disabled={setChannelMutation.isPending}
+                              className="border rounded px-1.5 py-0.5 text-xs"
+                              data-testid="select-channel"
+                              title="Canal de saída (WhatsApp) usado nesta conversa"
+                            >
+                              {waChannels.map((c) => (
+                                <option key={c.phone} value={c.phone} disabled={c.status !== 'Live'}>
+                                  {(c.nome || c.phone)}{c.status !== 'Live' ? ` (${c.status})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
                           <User className="w-3 h-3" />
                           <span>Vendedor: <strong>{sellerName}</strong></span>
