@@ -573,10 +573,10 @@ function PayablesTab() {
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/payables', data),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
       setShowCreate(false);
-      toast({ title: 'Conta a pagar criada com sucesso' });
+      toast({ title: res?.recurring ? `${res.count} contas a pagar criadas` : 'Conta a pagar criada com sucesso' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
@@ -649,7 +649,7 @@ function PayablesTab() {
         <div><Label className="text-xs">Emissão até</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento de</Label><Input type="date" value={dueDateStart} onChange={e => setDueDateStart(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento até</Label><Input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)} className="w-[150px]" /></div>
-        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', source: 'manual' }); setShowCreate(true); }} className="ml-auto">
+        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Pagar
         </Button>
       </div>
@@ -759,10 +759,60 @@ function PayablesTab() {
                 </Select>
               </div>
             </div>
+            <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Repetição</Label>
+                  <Select value={form.recurFreq || 'none'} onValueChange={v => setForm({ ...form, recurFreq: v })}>
+                    <SelectTrigger data-testid="select-recur-freq"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Não se repete</SelectItem>
+                      <SelectItem value="daily">Diariamente</SelectItem>
+                      <SelectItem value="weekly">Semanalmente</SelectItem>
+                      <SelectItem value="monthly">Mensalmente</SelectItem>
+                      <SelectItem value="yearly">Anualmente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.recurFreq && form.recurFreq !== 'none' && (
+                  <div>
+                    <Label>Repetir a cada</Label>
+                    <div className="flex items-center gap-2">
+                      <Input type="number" min="1" className="w-20" value={form.recurInterval ?? 1} onChange={e => setForm({ ...form, recurInterval: e.target.value })} />
+                      <span className="text-sm text-muted-foreground">{form.recurFreq === 'daily' ? 'dia(s)' : form.recurFreq === 'weekly' ? 'semana(s)' : form.recurFreq === 'monthly' ? 'mês(es)' : 'ano(s)'}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {form.recurFreq && form.recurFreq !== 'none' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Termina</Label>
+                    <Select value={form.recurEndType || 'count'} onValueChange={v => setForm({ ...form, recurEndType: v })}>
+                      <SelectTrigger data-testid="select-recur-end"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="count">Após N ocorrências</SelectItem>
+                        <SelectItem value="date">Em uma data</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    {(form.recurEndType || 'count') === 'date' ? (
+                      <><Label>Data final</Label><Input type="date" value={form.recurUntil || ''} onChange={e => setForm({ ...form, recurUntil: e.target.value })} /></>
+                    ) : (
+                      <><Label>Ocorrências</Label><Input type="number" min="1" max="120" value={form.recurCount ?? 12} onChange={e => setForm({ ...form, recurCount: e.target.value })} /></>
+                    )}
+                  </div>
+                </div>
+              )}
+              {form.recurFreq && form.recurFreq !== 'none' && (
+                <p className="text-xs text-muted-foreground">Serão criados vários lançamentos a partir do vencimento informado, conforme a regra acima.</p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button onClick={() => createMutation.mutate({ ...form, source: 'manual' })} disabled={createMutation.isPending}>
+            <Button onClick={() => createMutation.mutate({ ...form, source: 'manual', recurrence: (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined })} disabled={createMutation.isPending}>
               {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
             </Button>
           </DialogFooter>
