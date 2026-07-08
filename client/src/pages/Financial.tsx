@@ -104,7 +104,7 @@ function useInstanceNames(): Record<string, string> {
   return map;
 }
 
-function ReceivablesTab() {
+function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('vencida');
@@ -204,7 +204,7 @@ function ReceivablesTab() {
 
   return (
     <div className="space-y-4">
-      <ReconcileButton table="receivables" />
+      {!readOnly && <ReconcileButton table="receivables" />}
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <Label className="text-xs">Instância</Label>
@@ -268,9 +268,11 @@ function ReceivablesTab() {
           <Label className="text-xs">Vencimento até</Label>
           <Input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)} className="w-[150px]" />
         </div>
+{!readOnly && (
         <Button onClick={() => { setForm({ title: '', customerName: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '' }); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Receber
         </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -313,10 +315,10 @@ function ReceivablesTab() {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" title="Cobrança (boleto/PIX)" onClick={async () => { try { const resp = await fetch(`/api/financial/receivables/${r.id}/cobranca`, { credentials: 'include' }); const c = await resp.json(); if (c.hasCharge && c.viewUrl) { window.open(c.viewUrl, '_blank'); return; } if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return; const em = await fetch(`/api/financial/receivables/${r.id}/emit-boleto`, { method: 'POST', credentials: 'include' }); const j = await em.json(); if ((j.success || j.ok) && j.viewUrl) { window.open(j.viewUrl, '_blank'); } else { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); } } catch (e: any) { alert('Erro: ' + (e?.message || e)); } }}><QrCode className="h-4 w-4 text-blue-600" /></Button>
+                      {!readOnly && (<><Button variant="ghost" size="icon" title="Cobrança (boleto/PIX)" onClick={async () => { try { const resp = await fetch(`/api/financial/receivables/${r.id}/cobranca`, { credentials: 'include' }); const c = await resp.json(); if (c.hasCharge && c.viewUrl) { window.open(c.viewUrl, '_blank'); return; } if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return; const em = await fetch(`/api/financial/receivables/${r.id}/emit-boleto`, { method: 'POST', credentials: 'include' }); const j = await em.json(); if ((j.success || j.ok) && j.viewUrl) { window.open(j.viewUrl, '_blank'); } else { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); } } catch (e: any) { alert('Erro: ' + (e?.message || e)); } }}><QrCode className="h-4 w-4 text-blue-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -2448,6 +2450,7 @@ const TAB_CONFIG: Record<string, { label: string; icon: any }> = {
 export default function Financial() {
   const { user } = useAuth();
   const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canViewReceivables = isFullAccess || (!!user?.role && ['vendedor', 'telemarketing'].includes(user.role));
   const searchString = useSearch();
   const urlTab = new URLSearchParams(searchString).get('tab');
   const defaultTab = isFullAccess ? 'receivables' : 'overdue';
@@ -2465,7 +2468,7 @@ export default function Financial() {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'receivables': return isFullAccess ? <ReceivablesTab /> : null;
+      case 'receivables': return canViewReceivables ? <ReceivablesTab readOnly={!isFullAccess} /> : null;
       case 'payables': return isFullAccess ? <PayablesTab /> : null;
       case 'overdue': return <OverdueDebtsManagement />;
       case 'blocked': return <BlockedOrdersManagement user={user as any} />;
