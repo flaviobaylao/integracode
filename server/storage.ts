@@ -6830,6 +6830,35 @@ export class DatabaseStorage implements IStorage {
         const currTotal = currentMonthMap.get(c.id) || 0;
         monthlyTotalsMap.set(c.id, { previousMonth: prevTotal, currentMonth: currTotal });
       }
+
+      // POSITIVAÇÃO do mês (comprou no mês) — abrangente e incluindo faturas do INTEGRA 1.0.
+      // Fonte: billing_pipeline (venda registrada no 2.0) OU receivables (todo faturamento vira
+      // recebível; a tabela receivables é sincronizada do 1.0 e também nativa do 2.0).
+      try {
+        const recMonth = await db
+          .select({ customerId: receivables.customerId, customerDocument: receivables.customerDocument })
+          .from(receivables)
+          .where(and(
+            gte(receivables.issueDate, currentMonthStart),
+            sql`${receivables.issueDate} <= ${currentMonthEnd}`,
+            sql`${receivables.amount}::numeric > 0`,
+            sql`${receivables.status} <> 'cancelada'`,
+          ));
+        const recIds = new Set<string>();
+        const recDocs = new Set<string>();
+        for (const r of recMonth) {
+          if (r.customerId) recIds.add(String(r.customerId));
+          const d = String(r.customerDocument || '').replace(/\D/g, '');
+          if (d.length >= 11) recDocs.add(d);
+        }
+        for (const c of customersData) {
+          const byPipeline = (currentMonthMap.get(c.id) || 0) > 0;
+          const byRecId = recIds.has(String(c.id));
+          const doc = String((c as any).cnpj || '').replace(/\D/g, '') || String((c as any).cpf || '').replace(/\D/g, '');
+          const byRecDoc = doc.length >= 11 && recDocs.has(doc);
+          positivationMap.set(c.id, byPipeline || byRecId || byRecDoc);
+        }
+      } catch (e: any) { console.warn('positivação (receivables) falhou:', e?.message); }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
