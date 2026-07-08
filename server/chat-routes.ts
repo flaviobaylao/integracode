@@ -825,6 +825,32 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Re-vincula CONVERSAS existentes ao cadastro via agenda (phonebook): atualiza o nome do cliente
+  // nas conversas/chat_customers pelo contato da agenda (que carrega o customerId do cadastro).
+  // Corrige as conversas que ficaram com nome antigo/so-numero apos popular a agenda.
+  app.post("/api/chat/relink-conversations-from-phonebook", authenticateUser, async (req, res) => {
+    try {
+      const convs = await storage.getChatConversations();
+      let updated = 0, jaOk = 0, semMatch = 0; const erros: string[] = [];
+      for (const conv of (convs as any[])) {
+        try {
+          const normalizedPhone = normalizePhoneNumber(conv.customerPhone || '');
+          if (!normalizedPhone) { semMatch++; continue; }
+          const pb = await storage.getPhonebookContactByPhone(normalizedPhone);
+          if (!pb || !pb.name) { semMatch++; continue; }
+          if (conv.customerName === pb.name) { jaOk++; continue; }
+          await storage.updateChatConversation(conv.id, { customerName: pb.name } as any);
+          if (conv.customerId) { try { await storage.updateChatCustomer(conv.customerId, { name: pb.name } as any); } catch {} }
+          updated++;
+        } catch (e: any) { if (erros.length < 10) erros.push(String(e?.message || e).slice(0, 60)); }
+      }
+      res.json({ success: true, total: (convs as any[]).length, updated, jaOk, semMatch, erros });
+    } catch (error: any) {
+      console.error('[RELINK-CONVERSAS] Erro:', error);
+      res.status(500).json({ error: 'Erro ao re-vincular conversas', details: error.message });
+    }
+  });
+
   // ============================================================
   // CHAT AGENTS CRUD
   // ============================================================
