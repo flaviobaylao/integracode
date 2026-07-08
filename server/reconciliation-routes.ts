@@ -265,6 +265,46 @@ export function registerReconciliation(app: Express) {
     } catch (_e) { /* best-effort */ }
   }
 
+  // Buscar títulos em aberto (aba "Buscar Título" do modal) — C=receber, D=pagar
+  app.get("/api/reconciliation/titles/search", async (req, res) => {
+    try {
+      const type = String(req.query.type || "C").toUpperCase() === "D" ? "D" : "C";
+      const q = String(req.query.q || "").trim();
+      const limit = Math.min(parseInt(String(req.query.limit || "30")) || 30, 100);
+      const like = `%${q}%`;
+      const qDigits = q.replace(/\D/g, "");
+      const qNumRaw = q.replace(/[^0-9.,]/g, "").replace(/\./g, "").replace(",", ".");
+      const qNum = qNumRaw ? parseFloat(qNumRaw) : NaN;
+      if (type === "C") {
+        const conds: any[] = [sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        if (q) {
+          const ors: any[] = [sql`title_number ILIKE ${like}`, sql`customer_name ILIKE ${like}`];
+          if (qDigits) ors.push(sql`COALESCE(customer_document,'') ILIKE ${'%' + qDigits + '%'}`);
+          if (!isNaN(qNum)) ors.push(sql`round(amount::numeric,2) = ${qNum}`);
+          conds.push(sql`(${sql.join(ors, sql` OR `)})`);
+        }
+        const r = await db.execute(sql`
+          SELECT id, title_number, customer_name, customer_document, amount, due_date, omie_instance_id
+          FROM receivables WHERE ${sql.join(conds, sql` AND `)}
+          ORDER BY due_date NULLS LAST LIMIT ${limit}`);
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id })) });
+      } else {
+        const conds: any[] = [sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        if (q) {
+          const ors: any[] = [sql`title_number ILIKE ${like}`, sql`supplier_name ILIKE ${like}`];
+          if (qDigits) ors.push(sql`COALESCE(supplier_document,'') ILIKE ${'%' + qDigits + '%'}`);
+          if (!isNaN(qNum)) ors.push(sql`round(amount::numeric,2) = ${qNum}`);
+          conds.push(sql`(${sql.join(ors, sql` OR `)})`);
+        }
+        const r = await db.execute(sql`
+          SELECT id, title_number, supplier_name, supplier_document, amount, due_date, omie_instance_id
+          FROM payables WHERE ${sql.join(conds, sql` AND `)}
+          ORDER BY due_date NULLS LAST LIMIT ${limit}`);
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id })) });
+      }
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   app.post("/api/reconciliation/items/:id/ignore", async (req, res) => {
     try {
       const id = req.params.id;
