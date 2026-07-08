@@ -852,12 +852,21 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // Migrar TODO o historico de conversas do 1.0 -> 2.0 (fire-and-forget, idempotente)
+  async function writeChatMigStatus(obj: any) {
+    const v = JSON.stringify(obj);
+    try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${v}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${v}, updated_by='migrate-chat-history', updated_at=now()`); } catch (e) { console.error("[MIGRATE-CHAT] persist:", e); }
+  }
   async function runChatHistoryMigration(dryRun: boolean) {
     const out: any[] = [];
+    await writeChatMigStatus({ at: new Date().toISOString(), step: "iniciando", dryRun });
     const { Client } = await import("pg");
     const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 20000, query_timeout: 60000 });
     try {
-      await src.connect();
+      await Promise.race([
+        src.connect(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout conectando ao 1.0 (25s)")), 25000)),
+      ]);
+      await writeChatMigStatus({ at: new Date().toISOString(), step: "conectado ao 1.0", dryRun });
       for (const t of ["chat_customers", "chat_conversations", "chat_messages"]) {
         const info: any = { table: t };
         try {
@@ -898,12 +907,10 @@ export function registerChatRoutes(app: Express): void {
         } catch (e: any) { info.erroTabela = String(e?.message || e).slice(0, 140); }
         out.push(info);
       }
-      const resumo = JSON.stringify({ at: new Date().toISOString(), dryRun, resultado: out });
-      try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${resumo}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${resumo}, updated_by='migrate-chat-history', updated_at=now()`); } catch (e) { console.error("[MIGRATE-CHAT] persist:", e); }
+      await writeChatMigStatus({ at: new Date().toISOString(), step: "concluido", dryRun, resultado: out });
     } catch (error: any) {
       console.error("[MIGRATE-CHAT] Erro:", error);
-      const resumo = JSON.stringify({ at: new Date().toISOString(), erro: String(error?.message || error).slice(0, 200) });
-      try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${resumo}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${resumo}, updated_by='migrate-chat-history', updated_at=now()`); } catch {}
+      await writeChatMigStatus({ at: new Date().toISOString(), step: "erro", erro: String(error?.message || error).slice(0, 200), parcial: out });
     } finally { try { await src.end(); } catch {} }
   }
   app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
