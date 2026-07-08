@@ -217,7 +217,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'conciliacao-bancaria', label: 'Conciliação Bancária', icon: 'fas fa-money-check', available: canAccessReports, badge: null },
         { id: 'conferencia-pagamentos', label: 'Conferência de Pagamentos', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
         { id: 'auditoria-cobrancas', label: 'Auditoria de Cobranças', icon: 'fas fa-user-shield', available: canAccessReports, badge: null },
-        { id: 'radar-compras', label: 'Radar de Compras', icon: 'fas fa-satellite-dish', available: canAccessReports, badge: null },
+        { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         { id: 'pix-charges', label: 'PIX', icon: 'fas fa-qrcode', available: canAccessReports, badge: null },
       ],
     },
