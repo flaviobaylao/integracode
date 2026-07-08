@@ -533,6 +533,8 @@ function PayablesTab() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   const buildUrl = () => {
     const p = new URLSearchParams();
@@ -600,6 +602,20 @@ function PayablesTab() {
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) { await apiRequest('DELETE', `/api/financial/payables/${id}`); }
+      return ids.length;
+    },
+    onSuccess: (n: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
+      setShowBulkDelete(false);
+      setSelectedIds([]);
+      toast({ title: `${n} conta(s) excluída(s)` });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+
   const paymentMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', `/api/financial/payables/${selectedItem?.id}/payments`, data),
     onSuccess: () => {
@@ -652,6 +668,11 @@ function PayablesTab() {
         <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Pagar
         </Button>
+        {selectedIds.length > 0 && (
+          <Button variant="destructive" onClick={() => setShowBulkDelete(true)} data-testid="btn-bulk-delete-payables">
+            <Trash2 className="w-4 h-4 mr-2" />Excluir selecionados ({selectedIds.length})
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -661,6 +682,7 @@ function PayablesTab() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-8"><input type="checkbox" className="h-4 w-4 cursor-pointer" aria-label="Selecionar todos" checked={filtered.length > 0 && filtered.slice(0, 300).every((p: any) => selectedIds.includes(p.id))} onChange={e => { const vis = filtered.slice(0, 300).map((p: any) => p.id); setSelectedIds(e.target.checked ? Array.from(new Set([...selectedIds, ...vis])) : selectedIds.filter(id => !vis.includes(id))); }} /></TableHead>
                 <TableHead>Título</TableHead>
                 <TableHead>Fornecedor</TableHead>
                 <TableHead>CNPJ/CPF</TableHead>
@@ -676,9 +698,10 @@ function PayablesTab() {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
+                <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
               ) : filtered.slice(0, 300).map((p: any) => (
                 <TableRow key={p.id}>
+                  <TableCell className="w-8"><input type="checkbox" className="h-4 w-4 cursor-pointer" aria-label="Selecionar" checked={selectedIds.includes(p.id)} onChange={e => setSelectedIds(e.target.checked ? [...selectedIds, p.id] : selectedIds.filter(id => id !== p.id))} /></TableCell>
                   <TableCell className="font-medium">{p.titleNumber || '-'}</TableCell>
                   <TableCell>{p.supplierName || '-'}</TableCell>
                   <TableCell className="text-xs">{p.supplierDocument || '-'}</TableCell>
@@ -699,10 +722,10 @@ function PayablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 300 && (<TableRow><TableCell colSpan={11} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, fornecedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
+              {filtered.length > 300 && (<TableRow><TableCell colSpan={12} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, fornecedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
                   {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
-                  <TableCell colSpan={4}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
+                  <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amountPaid) || 0), 0))}</TableCell>
                   <TableCell colSpan={5} className="text-muted-foreground">Saldo a pagar: {formatCurrency(filtered.reduce((s: number, p: any) => s + ((Number(p.amount) || 0) - (Number(p.amountPaid) || 0)), 0))}</TableCell>
@@ -712,6 +735,23 @@ function PayablesTab() {
           </Table>
         </div>
       )}
+
+      <Dialog open={showBulkDelete} onOpenChange={setShowBulkDelete}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Excluir contas selecionadas</DialogTitle>
+            <DialogDescription>
+              Você está prestes a excluir <strong>{selectedIds.length}</strong> conta(s) a pagar. Esta ação NÃO poderá ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkDelete(false)}>Cancelar</Button>
+            <Button variant="destructive" onClick={() => bulkDeleteMutation.mutate(selectedIds)} disabled={bulkDeleteMutation.isPending} data-testid="btn-confirm-bulk-delete">
+              {bulkDeleteMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Excluir selecionados
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
