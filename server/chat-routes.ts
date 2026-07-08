@@ -3414,6 +3414,7 @@ export function registerChatRoutes(app: Express): void {
           customerId: conv.customerId,
           customerName: displayName,
           customerPhone: conv.customerPhone || customer?.phone || "-",
+          customerLinked: !!(phonebookContact && (phonebookContact as any).customerId),
           agentId: conv.agentId,
           agentName: creatorAgent?.name,
           assignedAgentId: conv.assignedAgentId,
