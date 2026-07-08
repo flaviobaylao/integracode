@@ -370,7 +370,7 @@ function ChatCenterInner() {
   const transferMutation = useMutation({
     mutationFn: async ({ conversationId, toAgentId }: { conversationId: string; toAgentId: string }) => {
       const response = await apiRequest('POST', `/api/chat/conversations/${conversationId}/transfer`, { toAgentId });
-      return response.json();
+      return response;
     },
     onSuccess: () => {
       toast({ title: "Conversa transferida com sucesso" });
@@ -387,7 +387,7 @@ function ChatCenterInner() {
   const finishMutation = useMutation({
     mutationFn: async (conversationId: string) => {
       const response = await apiRequest('PATCH', `/api/chat/conversations/${conversationId}/finish`, {});
-      return response.json();
+      return response;
     },
     onSuccess: () => {
       toast({ title: "Atendimento finalizado com sucesso" });
@@ -928,7 +928,7 @@ function ChatCenterInner() {
   const setChannelMutation = useMutation({
     mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
       const response = await apiRequest('PATCH', `/api/chat/conversations/${id}`, { channelPhone });
-      return response.json();
+      return response;
     },
     onSuccess: () => { toast({ title: "Canal atualizado" }); queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] }); },
     onError: (e: any) => { toast({ title: "Erro ao trocar canal", description: e.message, variant: "destructive" }); },
