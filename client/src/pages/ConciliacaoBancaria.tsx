@@ -193,7 +193,6 @@ export default function ConciliacaoBancaria() {
         <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
         <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
         <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border text-gray-500 cursor-not-allowed">🏦 Importar via BB API</button>
-        <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border border-amber-400 text-amber-600 cursor-not-allowed">⚙ Acertar baixas pendentes</button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
