@@ -1731,6 +1731,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: req.body.latitude === '' ? null : req.body.latitude,
         longitude: req.body.longitude === '' ? null : req.body.longitude,
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
+        // cpf/cnpj/document vazios -> NULL (evita colisao na unique customers_cpf_unique ao criar cliente so-CNPJ)
+        cpf: (String(req.body.cpf ?? '').replace(/\D/g, '').length ? req.body.cpf : null),
+        cnpj: (String(req.body.cnpj ?? '').replace(/\D/g, '').length ? req.body.cnpj : null),
+        document: (String(req.body.document ?? '').replace(/\D/g, '').length ? req.body.document : null),
         route: req.body.route || '', // Default vazio para route (campo deprecated)
         phone: req.body.phone || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
         address: req.body.address || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
