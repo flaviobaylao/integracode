@@ -377,7 +377,7 @@ export default function CustomerManagement() {
             </Button>
           )}
           <Button
-            className="bg-honest-blue hover:bg-blue-700"
+            className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-600"
             onClick={() => setShowModal(true)}
             data-testid="button-new-customer"
           >
