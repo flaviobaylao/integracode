@@ -283,6 +283,30 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.json({ ok: true, created, skipped, errs });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
+  // Religa cards do pipeline cujo customer_id NAO resolve (id sintetico 'billing-') casando por DOCUMENTO
+  // com um cliente real do cadastro. Corrige rota (as coordenadas do cliente passam a ser encontradas).
+  app.post('/api/admin/pipeline/heal-customer-links', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const items = await storage.getBillingPipelineItems();
+      const custs = await storage.getCustomers();
+      const custIds = new Set((custs as any[]).map((c: any) => c.id));
+      const byDoc = new Map<string, string>();
+      for (const c of custs as any[]) { const d = String((c as any).cnpj || (c as any).cpf || (c as any).document || '').replace(/\D/g, ''); if (d.length >= 11 && !byDoc.has(d)) byDoc.set(d, c.id); }
+      let healed = 0, jaOk = 0, semMatch = 0; const amostra: any[] = [];
+      for (const it of items as any[]) {
+        if (it.stage === 'entregue') continue;
+        if (it.customerId && custIds.has(it.customerId)) { jaOk++; continue; }
+        const doc = String(it.customerDocument || '').replace(/\D/g, '');
+        const real = doc.length >= 11 ? byDoc.get(doc) : null;
+        if (real) {
+          try { await db.execute(sql`UPDATE billing_pipeline SET customer_id = ${real} WHERE id = ${it.id}`); healed++; if (amostra.length < 15) amostra.push({ card: it.id, cliente: it.customerName, de: it.customerId, para: real }); }
+          catch (e: any) { /* ignora */ }
+        } else { semMatch++; }
+      }
+      res.json({ ok: true, healed, jaOk, semMatch, amostra });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Monitor: quantos orfaos nos ultimos N dias + resumo da auditoria
   app.get('/api/admin/pipeline/orphans-status', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {

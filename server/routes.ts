@@ -1472,33 +1472,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
       }
       
-      // Se o ID começa com "billing-", estamos atualizando coordenadas de um billing
+      // Se o ID comeca com "billing-", e um card do PIPELINE cujo cliente nao resolveu (id sintetico
+      // 'billing-'||billing_pipeline.id). ANTES atualizava a tabela 'billings' (legado, sem lat/long) -> 500.
+      // Correto: resolver o CLIENTE REAL do card (por customer_id, senao por DOCUMENTO) e salvar a coordenada nele,
+      // religando o card ao cliente (some o id sintetico e a rota passa a achar as coordenadas).
       if (id.startsWith('billing-')) {
-        const billingId = id.replace('billing-', '');
-        
-        // Atualizar apenas latitude e longitude no billing
+        const pid = id.replace('billing-', '');
         if (req.body.latitude !== undefined && req.body.longitude !== undefined) {
-          await db.update(billingsTable)
-            .set({
+          let realCustId: string | null = null;
+          try {
+            const bpRows: any = await db.execute(sql`SELECT customer_id, customer_document FROM billing_pipeline WHERE id = ${pid} LIMIT 1`);
+            const bp = bpRows?.rows?.[0];
+            if (bp) {
+              if (bp.customer_id) { const c = await storage.getCustomer(bp.customer_id); if (c) realCustId = c.id; }
+              if (!realCustId && bp.customer_document) {
+                const doc = String(bp.customer_document).replace(/\D/g, '');
+                if (doc.length >= 11) { const c = await storage.getCustomerByDocument(doc); if (c) realCustId = c.id; }
+              }
+            }
+          } catch (e: any) { console.error('[BILLING-COORDS] resolve erro:', e?.message); }
+          if (realCustId) {
+            await storage.updateCustomer(realCustId, {
               latitude: req.body.latitude ? String(req.body.latitude) : null,
-              longitude: req.body.longitude ? String(req.body.longitude) : null
-            })
-            .where(eq(billingsTable.id, billingId));
-          
-          console.log(`📍 [BILLING-COORDS] Coordenadas atualizadas para billing ${billingId}`);
-          
-          // Retornar um objeto simulando um customer
-          return res.json({
-            id,
-            latitude: req.body.latitude,
-            longitude: req.body.longitude,
-            message: "Coordenadas atualizadas com sucesso"
-          });
+              longitude: req.body.longitude ? String(req.body.longitude) : null,
+            } as any);
+            try { await db.execute(sql`UPDATE billing_pipeline SET customer_id = ${realCustId} WHERE id = ${pid}`); } catch {}
+            console.log(`📍 [BILLING-COORDS] Coordenadas salvas no cliente ${realCustId} (card ${pid} religado)`);
+            return res.json({ id, customerId: realCustId, latitude: req.body.latitude, longitude: req.body.longitude, message: "Coordenadas salvas no cliente" });
+          }
+          return res.status(404).json({ message: "Cliente do pedido nao encontrado no cadastro (por id nem por documento). Cadastre/vincule o cliente antes de salvar coordenadas." });
         }
-        
-        return res.status(400).json({ message: "Apenas latitude e longitude podem ser atualizadas para billings" });
+        return res.status(400).json({ message: "Apenas latitude e longitude podem ser atualizadas para pedidos do pipeline" });
       }
-      
       // Check if customer exists
       const existingCustomer = await storage.getCustomer(id);
       if (!existingCustomer) {
