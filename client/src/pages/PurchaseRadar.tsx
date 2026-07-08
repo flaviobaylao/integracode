@@ -60,6 +60,8 @@ export default function PurchaseRadar() {
   const [entryMappings, setEntryMappings] = useState<any[]>([]);
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] = useState<any>({ name: "", cnpj: "", cpf: "", stateRegistration: "", defaultChartAccountId: "", defaultCategory: "", omieInstanceId: "" });
+  const [chaveInput, setChaveInput] = useState("");
+  const [chaveInstance, setChaveInstance] = useState("");
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
@@ -186,6 +188,21 @@ export default function PurchaseRadar() {
       queryClient.invalidateQueries({ queryKey: ["/api/suppliers/match", selectedInvoice?.supplierDocument] });
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
+
+  const importByKey = useMutation({
+    mutationFn: async ({ chave, instanceId }: any) => {
+      const res = await apiRequest("POST", "/api/purchases/import-by-key", { chave, instanceId });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "NF-e importada pela chave" });
+      setChaveInput("");
+      setActiveTab("list");
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+    },
+    onError: (err: any) => toast({ title: "Erro ao importar pela chave", description: err.message, variant: "destructive" }),
   });
 
   const updateStatus = useMutation({
@@ -429,6 +446,48 @@ export default function PurchaseRadar() {
                 className="w-full"
               >
                 {importXml.isPending ? "Importando..." : "Importar NF-e"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Search className="h-5 w-5" />
+                Importar pela Chave de Acesso (SEFAZ)
+              </CardTitle>
+              <CardDescription>
+                Informe a chave de 44 dígitos e a empresa destinatária. O sistema baixa o XML na SEFAZ usando o certificado A1 do CNPJ.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label>Empresa destinatária (CNPJ com certificado)</Label>
+                <Select value={chaveInstance} onValueChange={setChaveInstance}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
+                  <SelectContent>
+                    {instances.filter((i: any) => i.isActive !== false && i.cnpj).map((i: any) => (
+                      <SelectItem key={i.id} value={i.id}>{i.name} — {i.cnpj}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Chave de Acesso (44 dígitos)</Label>
+                <Input
+                  value={chaveInput}
+                  onChange={(e) => setChaveInput(e.target.value.replace(/\D/g, "").slice(0, 44))}
+                  placeholder="00000000000000000000000000000000000000000000"
+                  className="mt-1 font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground mt-1">{chaveInput.replace(/\D/g, "").length}/44 dígitos</p>
+              </div>
+              <Button
+                onClick={() => importByKey.mutate({ chave: chaveInput, instanceId: chaveInstance })}
+                disabled={chaveInput.replace(/\D/g, "").length !== 44 || !chaveInstance || importByKey.isPending}
+                className="w-full"
+              >
+                {importByKey.isPending ? "Buscando na SEFAZ..." : "Buscar e importar"}
               </Button>
             </CardContent>
           </Card>
