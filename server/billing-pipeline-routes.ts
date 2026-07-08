@@ -242,6 +242,47 @@ export function registerBillingPipelineRoutes(app: Express) {
     try { const days = Number(req.body?.days) || 7; const r = await reconcileOrphanOrders(days); res.json({ ok: true, ...r }); }
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
+
+  // Forcar criacao de card 'faturado' p/ NFs ESPECIFICAS (sem dedup cliente+valor).
+  // Recupera NF rejeitada/orfa que a rede de seguranca pulou por dedup. So evita duplicar pelo NUMERO exato da NF.
+  app.post('/api/admin/pipeline/create-cards-for-nfs', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const numbers = (req.body?.numbers || []).map((n: any) => String(n).replace(/\D/g, '')).filter(Boolean);
+      if (!numbers.length) return res.status(400).json({ error: 'informe numbers[]' });
+      const existing = await storage.getBillingPipelineItems();
+      const haveInv = new Set(existing.map((i: any) => String(i.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean));
+      let created = 0, skipped = 0; const errs: string[] = [];
+      for (const num of numbers) {
+        if (haveInv.has(num)) { skipped++; continue; }
+        try {
+          const rows: any = await db.select().from(fiscalInvoices).where(sql`${fiscalInvoices.invoiceNumber}::text = ${num}`).limit(1);
+          const nf = rows?.[0];
+          if (!nf) { errs.push(`NF ${num} nao encontrada`); continue; }
+          const customer = nf.customerId ? await storage.getCustomer(nf.customerId) : null;
+          const seller = (customer as any)?.sellerId ? await storage.getUser((customer as any).sellerId) : null;
+          await storage.createBillingPipelineItem({
+            salesCardId: null,
+            customerId: nf.customerId || null,
+            customerName: nf.customerName || (customer as any)?.fantasyName || (customer as any)?.name || 'Cliente',
+            customerDocument: nf.customerCnpjCpf || (customer as any)?.cnpj || (customer as any)?.cpf || null,
+            sellerId: (customer as any)?.sellerId || null,
+            sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
+            stage: 'faturado',
+            orderNumber: `NF-${nf.invoiceNumber}`,
+            saleValue: nf.totalInvoice || null,
+            invoiceNumber: `NF-${nf.invoiceNumber}`,
+            omieInstanceId: nf.omieInstanceId || null,
+            notes: nf.status === 'rejected' ? 'NF REJEITADA na SEFAZ - preencher UF do cliente e re-transmitir (nao re-faturar, evita NF duplicada)' : null,
+            stageHistory: [{ stage: 'faturado', changedAt: (nf.emissionDate ? new Date(nf.emissionDate) : nowBrazil()).toISOString(), changedBy: 'create-card-manual' }],
+            createdBy: nf.status === 'rejected' ? 'reconcile-nf-rej' : 'reconcile-nf',
+            ...(nf.emissionDate ? { createdAt: new Date(nf.emissionDate) } : {}),
+          } as any);
+          haveInv.add(num); created++;
+        } catch (e: any) { errs.push(`${num}: ${e?.message || e}`); }
+      }
+      res.json({ ok: true, created, skipped, errs });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
   // Monitor: quantos orfaos nos ultimos N dias + resumo da auditoria
   app.get('/api/admin/pipeline/orphans-status', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
