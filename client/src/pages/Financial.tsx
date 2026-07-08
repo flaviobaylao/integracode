@@ -520,7 +520,7 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
 function PayablesTab() {
   const [instanceId, setInstanceId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusMulti, setStatusMulti] = useState<string[]>([]);
   const [sourceFilter, setSourceFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -537,7 +537,6 @@ function PayablesTab() {
   const buildUrl = () => {
     const p = new URLSearchParams();
     if (instanceId) p.set('instanceId', instanceId);
-    if (statusFilter) p.set('status', statusFilter);
     if (sourceFilter) p.set('source', sourceFilter);
     if (startDate) p.set('startDate', startDate);
     if (endDate) p.set('endDate', endDate);
@@ -549,7 +548,7 @@ function PayablesTab() {
 
   const instanceNames = useInstanceNames();
   const { data: payables = [], isLoading } = useQuery<any[]>({
-    queryKey: ['/api/financial/payables', instanceId, statusFilter, sourceFilter, startDate, endDate, dueDateStart, dueDateEnd],
+    queryKey: ['/api/financial/payables', instanceId, sourceFilter, startDate, endDate, dueDateStart, dueDateEnd],
     queryFn: () => fetch(buildUrl(), { credentials: 'include' }).then(r => r.json()),
   });
 
@@ -562,6 +561,11 @@ function PayablesTab() {
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       if (!(p.supplierName || '').toLowerCase().includes(q) && !(p.supplierDocument || '').includes(q)) return false;
+    }
+    if (statusMulti.length > 0) {
+      const eff = (p.status === 'a_vencer' && p.dueDate && new Date(p.dueDate) < new Date()) ? 'vencida' : p.status;
+      const label = eff === 'a_vencer' ? 'A Vencer' : eff === 'paga' ? 'Paga' : eff === 'vencida' ? 'Atrasada' : eff === 'cancelada' ? 'Cancelada' : String(eff);
+      if (!statusMulti.includes(label)) return false;
     }
     return true;
   });
@@ -626,17 +630,8 @@ function PayablesTab() {
             <ExportExcelButton testId="export-payables" onClick={() => exportToExcel(filtered.map((p: any) => ({ Titulo: p.titleNumber, Fornecedor: p.supplierName, Documento: p.supplierDocument, Descricao: p.description, Valor: Number(p.amount || 0), ValorPago: Number(p.amountPaid || 0), Status: p.status, Vencimento: p.dueDate ? new Date(p.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-pagar")} />
           </div>
         <div>
-          <Label className="text-xs">Status</Label>
-          <Select value={statusFilter || 'all'} onValueChange={v => setStatusFilter(v === 'all' ? '' : v)}>
-            <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="a_vencer">A Vencer</SelectItem>
-              <SelectItem value="paga">Paga</SelectItem>
-              <SelectItem value="vencida">Vencida</SelectItem>
-              <SelectItem value="cancelada">Cancelada</SelectItem>
-            </SelectContent>
-          </Select>
+          <Label className="text-xs block mb-1">Status</Label>
+          <MultiSelect label="Status" options={['A Vencer', 'Paga', 'Atrasada', 'Cancelada']} selected={statusMulti} onChange={setStatusMulti} testId="filter-status-payables" />
         </div>
         <div>
           <Label className="text-xs">Origem</Label>
