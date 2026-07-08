@@ -146,7 +146,12 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     if (existing.find(i => i.salesCardId === salesCard.id)) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
 
     const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
-    const seller = salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null;
+    // Vendedor do pedido = quem REGISTROU (createdByEmail); fallback = vendedor do cadastro do cliente (system/auto/reconcile)
+    let registeringUser: any = null;
+    const _cbe = String(createdByEmail || '').trim();
+    if (_cbe && !/^(system|auto|reconcile)/i.test(_cbe)) { try { registeringUser = await storage.getUserByEmail(_cbe); } catch {} }
+    const effectiveSellerId = registeringUser ? registeringUser.id : (salesCard.sellerId || null);
+    const seller = registeringUser || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
 
     let omieInstanceName = '';
     if (customer?.omieInstanceId) {
@@ -159,7 +164,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       customerId: salesCard.customerId,
       customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
       customerDocument: customer?.cnpj || customer?.cpf || null,
-      sellerId: salesCard.sellerId || null,
+      sellerId: effectiveSellerId,
       sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
       stage: 'pedido',
       orderNumber: `INT-${salesCard.id.substring(0, 8)}`,
@@ -173,9 +178,9 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       stageHistory: [{
         stage: 'pedido',
         changedAt: (salesCard.createdAt ? new Date(salesCard.createdAt) : nowBrazil()).toISOString(),
-        changedBy: `auto (${internalBillingActivatedBy || createdByEmail})`
+        changedBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`
       }],
-      createdBy: `auto (${internalBillingActivatedBy || createdByEmail})`,
+      createdBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`,
       // DATA DE REGISTRO do pedido = quando o vendedor registrou (createdAt do sales_card), nao a hora da reconciliacao
       ...(salesCard.createdAt ? { createdAt: new Date(salesCard.createdAt) } : {}),
     });
