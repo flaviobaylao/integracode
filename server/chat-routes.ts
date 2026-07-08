@@ -851,15 +851,13 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Migrar TODO o historico de conversas do 1.0 -> 2.0 (idempotente, insere so o que falta)
-  app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
-    const dryRun = req.body?.dryRun === true;
+  // Migrar TODO o historico de conversas do 1.0 -> 2.0 (fire-and-forget, idempotente)
+  async function runChatHistoryMigration(dryRun: boolean) {
     const src1 = process.env.REPLIT_DATABASE_URL;
-    if (!src1) return res.status(400).json({ error: "REPLIT_DATABASE_URL nao configurado" });
+    const out: any[] = [];
     const { Client } = await import("pg");
     const src = new Client({ connectionString: src1, ssl: { rejectUnauthorized: false } });
     const tgt = new Client({ connectionString: process.env.DATABASE_URL, ssl: (process.env.DATABASE_URL || "").includes("railway") ? false : undefined });
-    const out: any[] = [];
     try {
       await src.connect(); await tgt.connect();
       for (const t of ["chat_customers", "chat_conversations", "chat_messages"]) {
@@ -892,14 +890,28 @@ export function registerChatRoutes(app: Express): void {
             }
           }
           info.inserido = inserted; info.falhou = failed; if (errs.length) info.erros = errs;
-        } catch (e: any) { info.erroTabela = String(e?.message || e).slice(0, 120); }
+        } catch (e: any) { info.erroTabela = String(e?.message || e).slice(0, 140); }
         out.push(info);
       }
-      res.json({ ok: true, dryRun, resultado: out });
+      const resumo = JSON.stringify({ at: new Date().toISOString(), dryRun, resultado: out });
+      try { await tgt.query("INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1,$2,$3,now()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", ["chat_migration_last", resumo, "migrate-chat-history"]); } catch (e) { console.error("[MIGRATE-CHAT] persist status:", e); }
     } catch (error: any) {
       console.error("[MIGRATE-CHAT] Erro:", error);
-      res.status(500).json({ error: "Falha na migracao do historico de chat", details: String(error?.message || error).slice(0, 200) });
+      try { await tgt.query("INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ($1,$2,$3,now()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=now()", ["chat_migration_last", JSON.stringify({ at: new Date().toISOString(), erro: String(error?.message || error).slice(0, 200) }), "migrate-chat-history"]); } catch {}
     } finally { try { await src.end(); } catch {} try { await tgt.end(); } catch {} }
+  }
+  app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
+    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: "REPLIT_DATABASE_URL nao configurado" });
+    const dryRun = req.body?.dryRun === true;
+    res.json({ started: true, dryRun, note: "rodando em background; veja /api/admin/chat/migrate-history-from-1-0/status" });
+    runChatHistoryMigration(dryRun).catch((e) => console.error("[MIGRATE-CHAT] bg:", e));
+  });
+  app.get("/api/admin/chat/migrate-history-from-1-0/status", authenticateUser, async (req: any, res: any) => {
+    try {
+      const r = await db.execute(sql`SELECT value, updated_at FROM system_settings WHERE key='chat_migration_last'`);
+      const row = (r as any).rows?.[0];
+      res.json(row ? { ...JSON.parse(row.value), updated_at: row.updated_at } : { none: true });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 120) }); }
   });
 
   // ============================================================
