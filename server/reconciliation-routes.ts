@@ -585,4 +585,21 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // ---- Remover extrato importado (trava: recusa se houver item conciliado) -
+  app.post("/api/reconciliation/statements/:id/delete", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const st = rowsOf(await db.execute(sql`SELECT id, file_name FROM bank_statements WHERE id = ${id}`))[0];
+      if (!st) return res.status(404).json({ error: "extrato nao encontrado" });
+      const rec = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM bank_statement_items WHERE statement_id = ${id} AND reconciliation_status = 'reconciled'`))[0];
+      if (Number(rec?.n || 0) > 0) return res.status(409).json({ error: `extrato tem ${rec.n} item(ns) conciliado(s); desfaca as conciliacoes antes de remover`, reconciled: rec.n });
+      await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id IN (SELECT id FROM bank_statement_items WHERE statement_id = ${id})`);
+      const delItems = rowsOf(await db.execute(sql`DELETE FROM bank_statement_items WHERE statement_id = ${id} RETURNING id`));
+      await db.execute(sql`DELETE FROM bank_statements WHERE id = ${id}`);
+      res.json({ ok: true, statementId: id, fileName: st.file_name, deletedItems: delItems.length, by });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
 }
