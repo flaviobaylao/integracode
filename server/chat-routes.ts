@@ -861,6 +861,7 @@ export function registerChatRoutes(app: Express): void {
     await writeChatMigStatus({ at: new Date().toISOString(), step: "iniciando", dryRun });
     const { Client } = await import("pg");
     const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 20000, query_timeout: 60000 });
+    src.on("error", (e: any) => { console.error("[MIGRATE-CHAT] src client error:", e?.message || e); });
     try {
       await Promise.race([
         src.connect(),
