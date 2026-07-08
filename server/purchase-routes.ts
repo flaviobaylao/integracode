@@ -568,5 +568,91 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+
+  // ===== Fornecedores — cadastro GERIDO no 2.0 (suppliers, sync do 1.0 cortado) =====
+  const supDigits = (v: any) => (v == null ? "" : String(v)).replace(/\D/g, "");
+  const supRows = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+
+  app.get("/api/suppliers", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const search = (req.query.search as string) || "";
+      const like = `%${search}%`;
+      const r = await db.execute(sql`
+        SELECT id, name, company_name, cnpj, cpf, state_registration, email, phone,
+               default_chart_account_id, default_category, omie_instance_id, is_active
+        FROM suppliers
+        WHERE is_active IS NOT FALSE
+          AND (${search} = '' OR name ILIKE ${like} OR company_name ILIKE ${like} OR cnpj ILIKE ${like} OR cpf ILIKE ${like})
+        ORDER BY name LIMIT 500`);
+      res.json(supRows(r));
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get("/api/suppliers/match", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const doc = supDigits(req.query.document);
+      if (!doc || doc.length < 11) return res.json({ supplier: null });
+      const r = await db.execute(sql`
+        SELECT id, name, company_name, cnpj, cpf, state_registration, email, phone,
+               default_chart_account_id, default_category, omie_instance_id, is_active
+        FROM suppliers
+        WHERE regexp_replace(COALESCE(cnpj,''), '\D', '', 'g') = ${doc}
+           OR regexp_replace(COALESCE(cpf,''),  '\D', '', 'g') = ${doc}
+        LIMIT 1`);
+      res.json({ supplier: supRows(r)[0] || null });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/suppliers", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const b = req.body || {};
+      const name = (b.name || b.companyName || "").toString().trim();
+      if (!name) return res.status(400).json({ error: "Nome do fornecedor obrigatório" });
+      const cnpj = supDigits(b.cnpj);
+      const cpf = supDigits(b.cpf);
+      if (cnpj || cpf) {
+        const ex = await db.execute(sql`
+          SELECT id FROM suppliers
+          WHERE (${cnpj} <> '' AND regexp_replace(COALESCE(cnpj,''),'\D','','g') = ${cnpj})
+             OR (${cpf}  <> '' AND regexp_replace(COALESCE(cpf,''), '\D','','g') = ${cpf})
+          LIMIT 1`);
+        const exRows = supRows(ex);
+        if (exRows[0]) return res.status(409).json({ error: "Fornecedor já cadastrado", existingId: exRows[0].id });
+      }
+      const r = await db.execute(sql`
+        INSERT INTO suppliers (id, name, company_name, cnpj, cpf, state_registration, email, phone,
+          contact_name, address, address_number, neighborhood, city, state, zip_code,
+          default_chart_account_id, default_category, omie_instance_id, notes, is_active, created_at, updated_at)
+        VALUES (gen_random_uuid(), ${name}, ${b.companyName || null}, ${cnpj || null}, ${cpf || null},
+          ${b.stateRegistration || null}, ${b.email || null}, ${b.phone || null}, ${b.contactName || null},
+          ${b.address || null}, ${b.addressNumber || null}, ${b.neighborhood || null}, ${b.city || null},
+          ${b.state || null}, ${supDigits(b.zipCode) || null}, ${b.defaultChartAccountId || null},
+          ${b.defaultCategory || null}, ${b.omieInstanceId || null}, ${b.notes || null}, true, NOW(), NOW())
+        RETURNING id, name, cnpj, cpf, default_chart_account_id, default_category`);
+      res.json(supRows(r)[0]);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.put("/api/suppliers/:id", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const b = req.body || {};
+      const r = await db.execute(sql`
+        UPDATE suppliers SET
+          name = COALESCE(${b.name ?? null}, name),
+          company_name = COALESCE(${b.companyName ?? null}, company_name),
+          email = COALESCE(${b.email ?? null}, email),
+          phone = COALESCE(${b.phone ?? null}, phone),
+          default_chart_account_id = COALESCE(${b.defaultChartAccountId ?? null}, default_chart_account_id),
+          default_category = COALESCE(${b.defaultCategory ?? null}, default_category),
+          is_active = COALESCE(${b.isActive ?? null}, is_active),
+          updated_at = NOW()
+        WHERE id = ${req.params.id}
+        RETURNING id`);
+      const rows = supRows(r);
+      if (!rows[0]) return res.status(404).json({ error: "Fornecedor não encontrado" });
+      res.json({ ok: true, id: rows[0].id });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   console.log("✅ Purchase/Radar routes registered");
 }
