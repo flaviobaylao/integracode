@@ -41,6 +41,38 @@ function normalizeFinancialBody(body: any): any {
   return out;
 }
 
+function addMonthsUTC(base: Date, n: number): Date {
+  const r = new Date(base.getTime());
+  const day = r.getUTCDate();
+  r.setUTCDate(1);
+  r.setUTCMonth(r.getUTCMonth() + n);
+  const dim = new Date(Date.UTC(r.getUTCFullYear(), r.getUTCMonth() + 1, 0)).getUTCDate();
+  r.setUTCDate(Math.min(day, dim));
+  return r;
+}
+
+function buildRecurrenceDates(base: Date, rec: any): Date[] {
+  const interval = Math.max(1, parseInt(rec.interval) || 1);
+  const MAX = 120;
+  const step = (i: number): Date => {
+    if (rec.freq === 'daily') { const d = new Date(base.getTime()); d.setUTCDate(d.getUTCDate() + interval * i); return d; }
+    if (rec.freq === 'weekly') { const d = new Date(base.getTime()); d.setUTCDate(d.getUTCDate() + interval * 7 * i); return d; }
+    if (rec.freq === 'monthly') return addMonthsUTC(base, interval * i);
+    if (rec.freq === 'yearly') return addMonthsUTC(base, interval * 12 * i);
+    return new Date(base.getTime());
+  };
+  const dates: Date[] = [];
+  if (rec.endType === 'date' && rec.until) {
+    const until = new Date(rec.until);
+    for (let i = 0; i < MAX; i++) { const d = step(i); if (d.getTime() > until.getTime()) break; dates.push(d); }
+  } else {
+    const count = Math.min(MAX, Math.max(1, parseInt(rec.count) || 1));
+    for (let i = 0; i < count; i++) dates.push(step(i));
+  }
+  if (dates.length === 0) dates.push(new Date(base.getTime()));
+  return dates;
+}
+
 export function registerFinancialRoutes(app: Express) {
 
   // ============================================================================
@@ -538,6 +570,14 @@ export function registerFinancialRoutes(app: Express) {
       const user = (req as any).user;
       const data: any = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       if (!data.issueDate) data.issueDate = new Date();
+      const rec = req.body.recurrence;
+      if (rec && rec.freq && rec.freq !== 'none') {
+        const base = data.dueDate instanceof Date ? data.dueDate : (data.dueDate ? new Date(data.dueDate) : new Date());
+        const dates = buildRecurrenceDates(base, rec);
+        const items: any[] = [];
+        for (const d of dates) { items.push(await storage.createPayable({ ...data, dueDate: d })); }
+        return res.status(201).json({ recurring: true, count: items.length, items });
+      }
       const payable = await storage.createPayable(data);
       res.status(201).json(payable);
     } catch (error: any) {
