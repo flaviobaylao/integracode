@@ -529,5 +529,44 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  app.post("/api/purchases/:id/process-raw-materials", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const { itemMappings } = req.body;
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "NF de compra não encontrada" });
+      if (!invoice.isStockPurchase) return res.status(400).json({ error: "NF não marcada como compra de estoque" });
+      if (invoice.stockProcessed) return res.status(400).json({ error: "Entrada de estoque já processada para esta NF" });
+      if (!itemMappings || !Array.isArray(itemMappings) || itemMappings.length === 0) {
+        return res.status(400).json({ error: "Mapeamento de itens obrigatório" });
+      }
+      const results: any[] = [];
+      for (const mapping of itemMappings) {
+        const rawMaterialId = mapping.rawMaterialId;
+        const qty = Number(mapping.quantity);
+        if (!rawMaterialId || !qty || isNaN(qty)) continue;
+        const uc = (mapping.unitCost !== undefined && mapping.unitCost !== null && mapping.unitCost !== "") ? Number(mapping.unitCost) : null;
+        const [cur] = await db.execute(sql`SELECT quantity, unit_cost FROM raw_materials WHERE id = ${rawMaterialId} LIMIT 1`);
+        if (!cur) continue;
+        const prev = Number((cur as any).quantity || 0);
+        const next = prev + qty;
+        await db.execute(sql`UPDATE raw_materials SET quantity = ${next}, unit_cost = COALESCE(${uc}, unit_cost), updated_at = NOW() WHERE id = ${rawMaterialId}`);
+        await db.execute(sql`
+          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, notes, created_by, created_at, unit_cost)
+          VALUES (gen_random_uuid(), ${rawMaterialId}, 'entrada_compra', ${qty}, ${prev}, ${next}, ${`Entrada NF ${invoice.invoiceNumber || "SN"} - ${invoice.supplierName}`}, ${req.userId}, NOW(), ${uc})
+        `);
+        results.push({ rawMaterialId, quantity: qty, previousQuantity: prev, newQuantity: next, unitCost: uc });
+      }
+      if (results.length === 0) return res.status(400).json({ error: "Nenhum item válido para dar entrada" });
+      const [updatedInvoice] = await db.update(purchaseInvoices)
+        .set({ stockProcessed: true, updatedAt: nowBrazil() })
+        .where(eq(purchaseInvoices.id, req.params.id))
+        .returning();
+      res.json({ invoice: updatedInvoice, entries: results });
+    } catch (err: any) {
+      console.error("[PURCHASES] Process raw materials error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   console.log("✅ Purchase/Radar routes registered");
 }
