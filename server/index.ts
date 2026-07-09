@@ -2601,19 +2601,19 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
 
       const au = rowsOf(await db.execute(sql`
-        SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf
+        SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid
         FROM active_customers ac
         LEFT JOIN customers c ON c.id = ac.customer_id
         WHERE ac.is_active IS NOT FALSE`));
-      const universe: { id: string | null; doc: string }[] = [];
+      const universe: { id: string | null; doc: string; sid: string | null; pos: boolean }[] = [];
       const seen = new Set<string>();
       for (const r of au) {
         const rid = r.rid ? String(r.rid) : null;
         const doc = digits(r.cnpj) || digits(r.cpf);
         const key = rid || (doc ? 'doc:' + doc : '');
-        if (!key || seen.has(key)) { if (!key) universe.push({ id: null, doc: '' }); continue; }
+        if (!key || seen.has(key)) { if (!key) universe.push({ id: null, doc: '', sid: r.sid ? String(r.sid) : null, pos: false }); continue; }
         seen.add(key);
-        universe.push({ id: rid, doc });
+        universe.push({ id: rid, doc, sid: r.sid ? String(r.sid) : null, pos: false });
       }
       const totalAtivos = universe.length;
 
@@ -2644,7 +2644,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         let d: Date | null = null;
         if (u.id && firstById.has(u.id)) d = firstById.get(u.id) as Date;
         if (u.doc && firstByDoc.has(u.doc)) { const dd = firstByDoc.get(u.doc) as Date; if (!d || dd < d) d = dd; }
-        if (d) { positivados++; firstDates.push(d); }
+        if (d) { positivados++; firstDates.push(d); u.pos = true; }
       }
 
       const nowBr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
@@ -2685,8 +2685,37 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       for (let i = serie.length - 1; i >= 0; i--) { if (serie[i]._past && serie[i].real !== null) { serie[i].projecao = serie[i].real; break; } }
       for (const s of serie) delete s._past;
 
+      // ── Comparativo POR VENDEDOR (positivação % + faturamento do mês) ──
+      const fatByCid = new Map<string, number>();
+      for (const r of rowsOf(await db.execute(sql`
+        SELECT customer_id AS cid, COALESCE(SUM(sale_value),0) AS total
+        FROM billing_pipeline
+        WHERE created_at >= date_trunc('month', (now() at time zone 'America/Sao_Paulo'))
+          AND created_at < date_trunc('month', (now() at time zone 'America/Sao_Paulo')) + interval '1 month'
+          AND COALESCE(sale_value,0) > 0
+        GROUP BY customer_id`))) fatByCid.set(String(r.cid), Number(r.total || 0));
+      const us = rowsOf(await db.execute(sql`SELECT id, first_name, last_name, email, omie_vendor_code FROM users`));
+      const uById = new Map<string, any>(); const uByCode = new Map<string, any>();
+      const nm = (u: any) => ((String(u.first_name || '').trim() + ' ' + String(u.last_name || '').trim()).trim() || (u.email ? String(u.email).split('@')[0] : '') || 'Sem vendedor');
+      for (const u of us) { uById.set(String(u.id), u); if (u.omie_vendor_code) uByCode.set(String(u.omie_vendor_code), u); }
+      const resolveSeller = (sid: string | null) => { if (!sid) return 'Sem vendedor'; const st = String(sid); const u = uById.get(st) || uByCode.get(st) || uByCode.get(st.replace('omie-vendor-', '')); return u ? nm(u) : 'Sem vendedor'; };
+      const perSeller = new Map<string, { total: number; positivados: number; faturamento: number }>();
+      for (const u of universe) {
+        const sname = resolveSeller(u.sid);
+        const e = perSeller.get(sname) || { total: 0, positivados: 0, faturamento: 0 };
+        e.total++;
+        if (u.pos) e.positivados++;
+        if (u.id && fatByCid.has(u.id)) e.faturamento += fatByCid.get(u.id) as number;
+        perSeller.set(sname, e);
+      }
+      const porVendedor = Array.from(perSeller.entries())
+        .map(([vendedor, e]) => ({ vendedor, total: e.total, positivados: e.positivados, percentual: e.total > 0 ? Math.round((e.positivados / e.total) * 1000) / 10 : 0, faturamento: Math.round(e.faturamento * 100) / 100 }))
+        .filter(v => v.total >= 3)
+        .sort((a, b) => b.faturamento - a.faturamento);
+
       res.json({
         mes: mo + 1, ano: y,
+        porVendedor,
         totalAtivos, positivados, percentual: pctAtual,
         diasUteisTotal, diasUteisDecorridos, diasUteisRestantes,
         projetadoPositivados, projetadoPercentual: pctProjetado,
