@@ -13,7 +13,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
 
   // 1) Universo: clientes na lista de Ativos (resolvidos no cadastro)
   const au = rowsOf(await db.execute(sql`
-    SELECT c.id AS rid, c.name AS nome, c.city AS cidade, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid
+    SELECT c.id AS rid, c.name AS nome, c.city AS cidade, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid, c.weekdays AS weekdays
     FROM active_customers ac
     LEFT JOIN customers c ON c.id = ac.customer_id
     WHERE ac.is_active IS NOT FALSE AND c.id IS NOT NULL`));
@@ -62,37 +62,85 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     const key = String(u.id);
     const e = bySeller.get(key) || { u, naoPos: [], total: 0 };
     e.total++;
-    if (!pos) e.naoPos.push({ nome: String(r.nome || 'Cliente'), cidade: String(r.cidade || '') });
+    if (!pos) e.naoPos.push({ nome: String(r.nome || 'Cliente'), cidade: String(r.cidade || ''), weekdays: r.weekdays });
     bySeller.set(key, e);
   }
 
   const nowBr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
   const mes = nowBr.getMonth() + 1, ano = nowBr.getFullYear();
+  // Helpers de dia de rota (weekdays do cadastro)
+  const dayOrder = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
+  const dayFull: Record<string, string> = { Seg: 'Segunda', Ter: 'Terça', Qua: 'Quarta', Qui: 'Quinta', Sex: 'Sexta', Sab: 'Sábado', Dom: 'Domingo' };
+  const normDay = (t: any): string | null => {
+    const x = String(t || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (x.startsWith('seg')) return 'Seg'; if (x.startsWith('ter')) return 'Ter'; if (x.startsWith('qua')) return 'Qua';
+    if (x.startsWith('qui')) return 'Qui'; if (x.startsWith('sex')) return 'Sex'; if (x.startsWith('sab')) return 'Sab'; if (x.startsWith('dom')) return 'Dom';
+    return null;
+  };
+  const parseWeekdays = (w: any): string[] => {
+    let arr: any[] = [];
+    if (Array.isArray(w)) arr = w;
+    else if (typeof w === 'string') { const t = w.trim(); if (t) { try { const p = JSON.parse(t); arr = Array.isArray(p) ? p : t.split(/[,;]/); } catch { arr = t.split(/[,;]/); } } }
+    const out: string[] = [];
+    for (const x of arr) { const d = normDay(x); if (d && !out.includes(d)) out.push(d); }
+    out.sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+    return out;
+  };
   const plano: any[] = [];
   for (const [, e] of bySeller) {
     if (e.naoPos.length === 0) continue;
-    e.naoPos.sort((a, b) => a.nome.localeCompare(b.nome));
     const vendedorNome = nm(e.u);
     const mm = String(mes).padStart(2, '0');
+    const positivados = e.total - e.naoPos.length;
+    const pctFat = e.total > 0 ? Math.round((positivados / e.total) * 100) : 0;
     const footer = `\n\n💪 Vamos positivá-los hoje!`;
     const BUDGET = 1900; // limite do Umbler é 2000 chars — margem de segurança
-    const mkHeader = (part: number, tot: number) => `☀️ Bom dia, ${vendedorNome}!${tot > 1 ? ` (parte ${part}/${tot})` : ''}\n\n📋 Clientes ativos da sua carteira ainda *NÃO positivados* em ${mm}/${ano} (${e.naoPos.length} de ${e.total}):\n\n`;
-    const lines = e.naoPos.map((c, i) => `${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}`);
-    // Divide em partes: cada mensagem <= BUDGET. Reserva o header do pior caso (parte 99/99) + footer.
-    const worstHeader = mkHeader(99, 99).length;
-    const chunks: string[] = [];
-    let curBody = '';
-    for (const line of lines) {
-      const candidate = curBody ? (curBody + '\n' + line) : line;
-      if (curBody && (worstHeader + candidate.length + footer.length) > BUDGET) { chunks.push(curBody); curBody = line; }
-      else { curBody = candidate; }
+    const mkHeader = (part: number, tot: number) => `☀️ Bom dia, ${vendedorNome}!${tot > 1 ? ` (parte ${part}/${tot})` : ''}\n💰 ${pctFat}% da sua carteira já faturou este mês (${positivados} de ${e.total}).\n\n📋 Clientes ativos ainda *NÃO positivados* em ${mm}/${ano} (${e.naoPos.length} de ${e.total}) — por dia de rota:\n`;
+
+    // Agrupa por dia de rota (primeiro weekday do cadastro); alfabético dentro de cada dia.
+    const groups = new Map<string, { nome: string; cidade: string }[]>();
+    for (const c of e.naoPos) {
+      const days = parseWeekdays((c as any).weekdays);
+      const key = days[0] || 'Sem';
+      const g = groups.get(key) || [];
+      g.push({ nome: c.nome, cidade: c.cidade });
+      groups.set(key, g);
     }
-    if (curBody) chunks.push(curBody);
+    const orderedKeys = Array.from(groups.keys()).sort((a, b) => {
+      const ia = a === 'Sem' ? 99 : dayOrder.indexOf(a); const ib = b === 'Sem' ? 99 : dayOrder.indexOf(b);
+      return ia - ib;
+    });
+    const lines: string[] = [];
+    let firstG = true;
+    for (const key of orderedKeys) {
+      const label = key === 'Sem' ? 'Sem dia de rota' : dayFull[key];
+      if (!firstG) lines.push(''); firstG = false;
+      lines.push(`🗓️ *${label}*`);
+      const arr = groups.get(key)!.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      arr.forEach((c, i) => lines.push(`${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}`));
+    }
+
+    // Divide em partes <= BUDGET, ciente do dia (repete o cabeçalho do dia com "(cont.)" quando quebra no meio).
+    const worstHeader = mkHeader(99, 99).length;
+    const maxBody = BUDGET - worstHeader - footer.length;
+    const chunks: string[] = [];
+    let cur = ''; let curDay: string | null = null;
+    const headerOf = (ln: string) => ln.startsWith('🗓️ ') ? ln.replace('🗓️ ', '').replace(/\*/g, '').replace(/ \(cont\.\)$/, '') : null;
+    for (const ln of lines) {
+      const cand = cur === '' ? ln : cur + '\n' + ln;
+      if (cur !== '' && cand.length > maxBody) {
+        chunks.push(cur);
+        const h = headerOf(ln);
+        if (!h && curDay) cur = `🗓️ *${curDay} (cont.)*\n` + ln; else cur = ln;
+      } else { cur = cand; }
+      const h2 = headerOf(ln); if (h2) curDay = h2;
+    }
+    if (cur !== '') chunks.push(cur);
     const tot = chunks.length || 1;
     const msgs = chunks.map((b, idx) => mkHeader(idx + 1, tot) + b + (idx === tot - 1 ? footer : ''));
     const sellerPhone = digits(e.u.phone);
     const destinatarios = Array.from(new Set([...(sellerPhone.length >= 10 ? [sellerPhone] : []), ...gestores, ...fixos]));
-    plano.push({ vendedor: vendedorNome, sellerId: String(e.u.id), sellerPhone: sellerPhone || null, naoPositivados: e.naoPos.length, total: e.total, destinatarios, _msgs: msgs });
+    plano.push({ vendedor: vendedorNome, sellerId: String(e.u.id), sellerPhone: sellerPhone || null, naoPositivados: e.naoPos.length, positivados, pctFaturamento: pctFat, total: e.total, destinatarios, _msgs: msgs });
   }
 
   let enviados = 0, falhas = 0; const detalhes: any[] = [];
