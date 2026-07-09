@@ -2732,7 +2732,9 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   app.get('/api/admin/positivacao/alerta-vendedores', async (req: Request, res: Response) => {
     try {
       const apply = String(req.query.apply || '') === '1' || String(req.query.apply || '') === 'true';
-      const out = await enviarAlertaPositivacaoVendedores(apply);
+      const toOverride = req.query.to ? String(req.query.to) : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : undefined;
+      const out = await enviarAlertaPositivacaoVendedores(apply, { toOverride, limit });
       res.json(out);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });

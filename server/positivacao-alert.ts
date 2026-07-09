@@ -5,7 +5,9 @@ import { sendUmblerTalkText } from './chat-routes';
 // Alerta diário: lista de clientes ativos NÃO positivados no mês, por vendedor.
 // Destinatários: telefone do vendedor (users.phone) + gestores (admin/administrative com telefone) + números fixos.
 // Positivado = comprou no mês (billing_pipeline OU receivable — inclui faturas do 1.0).
-export async function enviarAlertaPositivacaoVendedores(apply: boolean): Promise<any> {
+export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: { toOverride?: string; limit?: number }): Promise<any> {
+  const toOverride = opts && opts.toOverride ? String(opts.toOverride).replace(/[^0-9]/g, '') : '';
+  const limit = opts && opts.limit && opts.limit > 0 ? opts.limit : 0;
   const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
   const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
 
@@ -82,8 +84,10 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean): Promise
 
   let enviados = 0, falhas = 0; const detalhes: any[] = [];
   if (apply) {
-    for (const p of plano) {
-      for (const to of p.destinatarios) {
+    const alvo = limit > 0 ? plano.slice(0, limit) : plano;
+    for (const p of alvo) {
+      const dests = (toOverride && toOverride.length >= 10) ? [toOverride] : p.destinatarios;
+      for (const to of dests) {
         try { const rr = await sendUmblerTalkText(to, p._msg); if (rr.success) enviados++; else { falhas++; detalhes.push({ to, err: rr.error }); } }
         catch (err: any) { falhas++; detalhes.push({ to, err: String(err) }); }
         await new Promise(r => setTimeout(r, 400));
@@ -96,7 +100,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean): Promise
       if (!n) await db.execute(sql.raw("INSERT INTO system_settings (key,value,updated_by) VALUES ('positivacao_alerta_last','" + stamp + "','cron-positivacao')"));
     } catch { }
   }
-  return { apply, mes, ano, vendedoresComLista: plano.length, gestores: gestores.length, fixos, enviados, falhas, detalhes: detalhes.slice(0, 20), plano: plano.map(({ _msg, ...rest }) => rest) };
+  return { apply, mes, ano, vendedoresComLista: plano.length, gestores: gestores.length, fixos, enviados, falhas, detalhes: detalhes.slice(0, 20), plano: plano.map(({ _msg, ...rest }) => ({ ...rest, msg: _msg })) };
 }
 
 // Wrapper do cron: só envia se a flag estiver ligada (system_settings 'positivacao_alerta_ativo' = 'on').
