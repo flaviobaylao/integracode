@@ -659,6 +659,32 @@ export function registerBillingPipelineRoutes(app: Express) {
         return res.json({ success: true, already: true, message: 'NF-e já está autorizada.' });
       }
 
+      // 🔄 REFRESH do destinatário: a NF guardou os dados no momento da emissão (IE/UF podiam estar vazios).
+      // Antes de re-transmitir, atualiza IE/UF/endereço a partir do CADASTRO ATUAL do cliente
+      // (casa por DOCUMENTO da nota p/ pegar a unidade certa; fallback customerId). Sem isso, corrigir o
+      // cadastro não surtia efeito e a SEFAZ rejeitava de novo (ex.: "IE do destinatário não informada").
+      try {
+        const nfFull: any = await storage.getFiscalInvoice(nf.id);
+        const digits = (v: any) => String(v || '').replace(/\D/g, '');
+        let cust: any = null;
+        const nfDoc = digits(nfFull?.customerCnpjCpf);
+        if (nfDoc.length >= 11) cust = await storage.getCustomerByDocument(nfDoc);
+        if (!cust && nfFull?.customerId) cust = await storage.getCustomer(nfFull.customerId);
+        if (!cust && item.customerId) cust = await storage.getCustomer(item.customerId);
+        if (cust) {
+          const ie = (cust as any).stateRegistration || (cust as any).state_registration || '';
+          const upd: any = {};
+          if (ie) upd.customerIe = ie;
+          if ((cust as any).state) upd.customerUf = (cust as any).state;
+          if ((cust as any).zipCode) upd.customerCep = (cust as any).zipCode;
+          if ((cust as any).address) upd.customerAddress = (cust as any).address;
+          if ((cust as any).city) upd.customerCity = (cust as any).city;
+          if ((cust as any).neighborhood) upd.customerBairro = (cust as any).neighborhood;
+          if ((cust as any).phone) upd.customerPhone = (cust as any).phone;
+          if (Object.keys(upd).length) { await storage.updateFiscalInvoice(nf.id, upd); console.log(`[RETRY-NFE] destinatário atualizado da NF ${nf.id}:`, Object.keys(upd).join(',')); }
+        }
+      } catch (e: any) { console.warn('[RETRY-NFE] falha ao atualizar destinatário (segue):', e?.message); }
+
       // Re-transmite a MESMA NF (draft/rejected).
       const emitRes: any = await sefazService.emitNfe(nf.id);
       if (emitRes?.success) return res.json({ success: true });
