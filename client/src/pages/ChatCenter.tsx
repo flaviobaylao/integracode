@@ -1124,11 +1124,28 @@ function ChatCenterInner() {
   })();
   const displaySellerName = registrySellerName || sellerName;
 
-  // Atendente = e-mail do atendente que está conversando (assignedAgent > agent)
-  const attendantAgent = agents.find(a => a.id === (selectedChat?.assignedAgentId || selectedChat?.agentId));
+  // Atendente = e-mail do atendente que está conversando
+  const resolveAgentLabel = (idOrUserId: any): string | null => {
+    if (!idOrUserId) return null;
+    const ag = agents.find(a => a.id === idOrUserId || a.userId === idOrUserId);
+    return ag ? (ag.email || ag.name || null) : null;
+  };
+  const lastAgentMsgLabel = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if ((messages as any[])[i]?.senderType === 'agent') {
+        return resolveAgentLabel((messages as any[])[i].senderId);
+      }
+    }
+    return null;
+  })();
   const attendantEmail = (selectedChat?.assignedAgentId === 'chatgpt')
     ? 'ChatGPT'
-    : (attendantAgent?.email || attendantAgent?.name || selectedChat?.assignedAgentName || selectedChat?.agentName || 'Carregando...');
+    : (resolveAgentLabel(selectedChat?.assignedAgentId)
+        || resolveAgentLabel(selectedChat?.agentId)
+        || selectedChat?.assignedAgentName
+        || selectedChat?.agentName
+        || lastAgentMsgLabel
+        || 'Não atribuído');
 
   // Nome do remetente exibido no card de cada mensagem
   const senderLabelForMsg = (msg: any): string => {
