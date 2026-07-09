@@ -520,6 +520,8 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/receivables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
+      const exists = await storage.getReceivable(req.params.id);
+      if (!exists) return res.status(404).json({ message: 'Recebível não encontrado' });
       const b = req.body || {};
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
@@ -636,6 +638,8 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
+      const exists = await storage.getPayable(req.params.id);
+      if (!exists) return res.status(404).json({ message: 'Conta a pagar não encontrada' });
       const b = req.body || {};
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
