@@ -16,7 +16,7 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle
+  Power, CheckSquare, X, ArrowRightCircle, Copy
 } from 'lucide-react';
 
 interface BillingPipelineItem {
@@ -200,6 +200,15 @@ export default function BillingPipeline() {
       setDetailItem((prev) => prev ? ({ ...prev, ...vars.data } as any) : prev);
     },
     onError: (e: any) => toast({ title: 'Erro ao salvar', description: e.message, variant: 'destructive' }),
+  });
+  const duplicateMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('POST', `/api/billing-pipeline/${id}/duplicate`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: 'Pedido duplicado', description: 'Uma cópia foi criada na etapa "Pedido", pronta para faturar.' });
+      setDetailItem(null);
+    },
+    onError: (e: any) => toast({ title: 'Erro ao duplicar', description: e?.message || 'Não foi possível duplicar o pedido.', variant: 'destructive' }),
   });
   const startEdit = () => {
     if (!detailItem) return;
@@ -908,7 +917,22 @@ export default function BillingPipeline() {
                 </div>
               )}
               {!editMode && (
-              <div className="border-t pt-4">
+              <div className="border-t pt-4 space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Ações</label>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300"
+                    onClick={() => detailItem && duplicateMutation.mutate(detailItem.id)}
+                    disabled={duplicateMutation.isPending}
+                    data-testid="button-duplicate-order"
+                  >
+                    {duplicateMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Copy className="h-3 w-3 mr-1" />}
+                    Duplicar Pedido
+                  </Button>
+                </div>
+                <div>
                 <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Mover para etapa</label>
                 <div className="flex flex-wrap gap-1.5">
                   {STAGES.filter(s => s.key !== detailItem.stage).map(s => {
@@ -930,6 +954,7 @@ export default function BillingPipeline() {
                       </Button>
                     );
                   })}
+                </div>
                 </div>
               </div>
               )}

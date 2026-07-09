@@ -1,4 +1,5 @@
 import { Express } from 'express';
+import { randomUUID } from 'crypto';
 import { storage } from './storage';
 import { nowBrazil } from './brazilTimezone';
 import { authenticateUser } from './authMiddleware';
@@ -438,6 +439,51 @@ export function registerBillingPipelineRoutes(app: Express) {
       res.json({ success: true, item });
     } catch (error: any) {
       console.error('❌ [BILLING-PIPELINE] Bypass error:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // DUPLICAR PEDIDO: cria um NOVO item do pipeline (etapa 'pedido') copiando os dados do original.
+  // ⚠️ Gera salesCardId e orderNumber NOVOS e ÚNICOS para que a cópia seja faturável como NF-e
+  // INDEPENDENTE. A trava de idempotência (commit a0723fe) casa por sales_card_id/orderNumber — se o
+  // duplicado reusasse os do original, o faturamento devolveria a NF já existente em vez de emitir outra.
+  app.post('/api/billing-pipeline/:id/duplicate', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const original = await storage.getBillingPipelineItem(req.params.id);
+      if (!original) return res.status(404).json({ message: 'Pedido não encontrado' });
+
+      const user = req.currentUser || req.user;
+      const newCardId = randomUUID();
+
+      const dup = await storage.createBillingPipelineItem({
+        salesCardId: newCardId,
+        customerId: original.customerId,
+        customerName: original.customerName,
+        customerDocument: original.customerDocument || null,
+        sellerId: original.sellerId || null,
+        sellerName: original.sellerName || null,
+        stage: 'pedido',
+        orderNumber: `INT-${newCardId.substring(0, 8)}`,
+        invoiceNumber: null,
+        saleValue: original.saleValue || null,
+        paymentMethod: original.paymentMethod || null,
+        operationType: original.operationType || null,
+        products: (original.products as any) || null,
+        notes: `Duplicado de ${original.orderNumber || original.salesCardId || 'pedido'}${original.notes ? ' — ' + original.notes : ''}`,
+        omieInstanceId: original.omieInstanceId || null,
+        omieInstanceName: original.omieInstanceName || null,
+        stageHistory: [{
+          stage: 'pedido',
+          changedAt: nowBrazil().toISOString(),
+          changedBy: user?.email || 'system',
+        }],
+        createdBy: user?.email || null,
+      });
+
+      console.log(`📋 [BILLING-PIPELINE] Pedido ${original.id} duplicado → ${dup.id} (novo card ${newCardId}) por ${user?.email}`);
+      res.json({ success: true, item: dup });
+    } catch (error: any) {
+      console.error('❌ [BILLING-PIPELINE] Duplicate error:', error);
       res.status(500).json({ message: error.message });
     }
   });
