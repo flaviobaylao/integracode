@@ -10,6 +10,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
   const limit = opts && opts.limit && opts.limit > 0 ? opts.limit : 0;
   const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
   const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
+  const unesc = (v: any) => String(v || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#0?34;/g, '"').replace(/&apos;/g, "'");
 
   // 1) Universo: clientes na lista de Ativos (resolvidos no cadastro)
   const au = rowsOf(await db.execute(sql`
@@ -62,7 +63,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     const key = String(u.id);
     const e = bySeller.get(key) || { u, naoPos: [], total: 0 };
     e.total++;
-    if (!pos) e.naoPos.push({ nome: String(r.nome || 'Cliente'), cidade: String(r.cidade || ''), weekdays: r.weekdays });
+    if (!pos) e.naoPos.push({ nome: unesc(r.nome || 'Cliente'), cidade: unesc(r.cidade || ''), weekdays: r.weekdays });
     bySeller.set(key, e);
   }
 
