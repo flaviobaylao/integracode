@@ -187,7 +187,6 @@ run();
     (async () => {
       try {
         await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
-        await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar`).catch(() => {});
                 const pgMod = await import('pg');
         const PgClient = (pgMod.default && pgMod.default.Client) || pgMod.Client;
         const client = new PgClient({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -2069,6 +2068,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
   db.execute(sql`ALTER TABLE digital_certificates ADD COLUMN IF NOT EXISTS pfx_data varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
