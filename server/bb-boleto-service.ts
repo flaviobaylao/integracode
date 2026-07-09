@@ -181,6 +181,7 @@ export async function registrarBoleto(
       const ex: any = await db.execute(sql`
         SELECT id, nosso_numero, linha_digitavel, codigo_barras, pix_copia_e_cola
         FROM boleto_charges WHERE receivable_id = ${params.receivableId}
+          AND status <> 'cancelado' AND status <> 'cancelada'
         ORDER BY created_at DESC LIMIT 1
       `);
       if (ex.rows?.[0]) {
@@ -323,6 +324,33 @@ export async function registrarBoleto(
     pixCopiaECola: pixCopiaECola || undefined,
     raw: bbData,
   };
+}
+
+/** Baixa/cancela um boleto no BB (comando de baixa) — deixa o boleto IMPAGÁVEL no banco. */
+export async function cancelarBoleto(accountId: string, charge: any): Promise<{ ok: boolean; sandbox: boolean; error?: string; alreadyBaixado?: boolean }> {
+  const sandbox = isSandbox();
+  const account = await storage.getFinancialAccount(accountId);
+  if (!account) return { ok: false, sandbox, error: 'Conta financeira nao encontrada' };
+  const numeroConvenio = digits(String(account.bbConvenio || charge?.numero_convenio || ''));
+  const nossoNumero = digits(String(charge?.nosso_numero || ''));
+  if (!numeroConvenio || !nossoNumero) return { ok: false, sandbox, error: 'Convenio/nosso numero ausentes para baixa' };
+  const numeroTituloCliente = '000' + pad(numeroConvenio, 7) + nossoNumero;
+  try {
+    const token = await getAccessToken(account);
+    const client = createApiClient(account);
+    console.log(`🚫 [BB-BOLETO] Baixando/cancelando boleto ${numeroTituloCliente} (${sandbox ? 'sandbox' : 'PRODUCAO'})`);
+    await client.post(`/boletos/${numeroTituloCliente}/baixar`, { numeroConvenio: parseInt(numeroConvenio, 10) }, { headers: { Authorization: `Bearer ${token}` } });
+    return { ok: true, sandbox };
+  } catch (err: any) {
+    const detail = err?.response?.data ? JSON.stringify(err.response.data).slice(0, 500) : err?.message;
+    // Se o BB indicar que ja esta baixado/liquidado/inexistente, tratar como ja cancelado (idempotente).
+    if (/baix|liquid|inexist|nao\s+exist|n[aã]o\s+exist|j[aá]\s+/i.test(String(detail || ''))) {
+      console.warn('[BB-BOLETO] baixa: BB indica ja baixado/inexistente — tratando como cancelado:', detail);
+      return { ok: true, sandbox, alreadyBaixado: true };
+    }
+    console.error('❌ [BB-BOLETO] Falha ao baixar/cancelar:', detail);
+    return { ok: false, sandbox, error: `BB: ${detail}` };
+  }
 }
 
 /** Consulta um boleto registrado no BB pelo numeroTituloCliente (20 digitos). */

@@ -16,7 +16,7 @@ import { registerChargeGuarantee } from "./charge-guarantee-routes";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { authenticateUser, requireRole } from './authMiddleware';
-import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto } from "./bb-boleto-service";
+import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
 
@@ -2340,11 +2340,47 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
     try {
       const id = req.params.id;
-      const b: any = await db.execute(sql`SELECT id, status FROM boleto_charges WHERE receivable_id = ${id} ORDER BY created_at DESC LIMIT 1`);
-      if (b.rows?.[0]) { const bc = b.rows[0]; return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}` }); }
-      const p: any = await db.execute(sql`SELECT id, status FROM pix_charges WHERE receivable_id = ${id} ORDER BY created_at DESC LIMIT 1`);
-      if (p.rows?.[0]) { const pc = p.rows[0]; return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}` }); }
+      const ymd = (d: any) => { try { return new Date(d).toISOString().slice(0, 10); } catch { return ''; } };
+      const rq: any = await db.execute(sql`SELECT due_date FROM receivables WHERE id = ${id} LIMIT 1`);
+      const recDue = rq.rows?.[0]?.due_date || null;
+      const b: any = await db.execute(sql`SELECT id, status, data_vencimento FROM boleto_charges WHERE receivable_id = ${id} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed }); }
+      const p: any = await db.execute(sql`SELECT id, status, due_date FROM pix_charges WHERE receivable_id = ${id} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      if (p.rows?.[0]) { const pc = p.rows[0]; const changed = !!(recDue && pc.due_date && ymd(recDue) !== ymd(pc.due_date)); return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}`, chargeDueDate: pc.due_date, receivableDueDate: recDue, dueDateChanged: changed }); }
       res.json({ hasCharge: false });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Gera NOVA cobranca (boleto hibrido) com o vencimento ATUAL do recebivel, CANCELANDO a anterior no BB.
+  // Uso: apos alterar a data de vencimento de um recebivel que ja tem cobranca.
+  app.post("/api/financial/receivables/:id/regenerate-charge", async (req, res) => {
+    try {
+      const recId = req.params.id;
+      const resolved = await boletoParamsFromReceivable(recId);
+      if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado" });
+      const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "nenhuma conta com boleto BB habilitado" });
+
+      // Cobranca ativa atual (boleto tem prioridade).
+      const bq: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${recId} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      const boleto = bq.rows?.[0];
+      let canceladoAnterior = false;
+      if (boleto) {
+        if (/(liquid|pag|receb)/i.test(String(boleto.status || ''))) return res.status(409).json({ error: "Boleto anterior ja liquidado — nao e possivel regerar." });
+        const cancel = await cancelarBoleto(accId, boleto);
+        if (!cancel.ok) return res.status(422).json({ error: "Falha ao cancelar o boleto anterior no BB: " + (cancel.error || "") });
+        await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+        canceladoAnterior = true;
+      } else {
+        // PIX ativo: marca cancelado no sistema (cob PIX expira; baixa no BB e follow-up).
+        const upd: any = await db.execute(sql`UPDATE pix_charges SET status = 'cancelado' WHERE receivable_id = ${recId} AND status <> 'cancelado' AND status <> 'cancelada'`);
+        canceladoAnterior = ((upd?.rowCount ?? 0) as number) > 0;
+      }
+
+      const result: any = await registrarBoleto(accId, resolved.params);
+      if (result.success && result.boletoChargeId) result.viewUrl = `/api/boleto-view/${result.boletoChargeId}`;
+      return res.status(result.success ? 200 : 422).json({ ...result, canceladoAnterior });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
