@@ -234,6 +234,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
     {
+      groupLabel: 'Compras',
+      color: 'bg-amber-500',
+      bgColor: 'bg-amber-50',
+      textColor: 'text-amber-700',
+      hexColor: '#f59e0b',
+      icon: 'fas fa-cart-shopping',
+      items: [
+        { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
+      ],
+    },
+    {
       groupLabel: 'Comunicação',
       color: 'bg-teal-500',
       bgColor: 'bg-teal-50',
