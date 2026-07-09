@@ -1642,6 +1642,26 @@ function ChatCenterInner() {
                             <span>👤 Atendente: {agents.find(a => a.id === selectedChat.agentId)?.name || "Carregando..."}</span>
                           </div>
                         )}
+                        {(() => {
+                          const headerLabels = labelsForConv(selectedChat.id);
+                          return headerLabels.length > 0 ? (
+                            <div className="flex flex-wrap items-center gap-1 mt-2" data-testid="header-conversation-labels">
+                              <span className="text-xs text-gray-500">🏷️</span>
+                              {headerLabels.map((l: any) => (
+                                <button
+                                  key={l.id}
+                                  type="button"
+                                  onClick={() => setShowLabelsModal(true)}
+                                  className="inline-flex items-center rounded-full text-white text-[11px] font-medium px-2 h-5 hover:opacity-90"
+                                  style={{ backgroundColor: l.color }}
+                                  title={`Etiqueta: ${l.name} (clique para gerenciar)`}
+                                >
+                                  {l.name}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                       <div className="flex flex-col gap-2 items-end">
                         <Badge className={getStatusColor(selectedChat.status)}>
