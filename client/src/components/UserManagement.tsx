@@ -21,6 +21,7 @@ const userFormSchema = z.object({
   email: z.string().email("Email inválido"),
   password: z.string().min(6, "Senha deve ter no mínimo 6 caracteres"),
   firstName: z.string().min(1, "Nome é obrigatório"),
+  phone: z.string().optional(),
   lastName: z.string().min(1, "Sobrenome é obrigatório"),
   role: z.enum(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria']),
   route: z.string().optional(),
@@ -36,6 +37,7 @@ export default function UserManagement() {
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [editPhone, setEditPhone] = useState<string>("");
   const [filterRole, setFilterRole] = useState<string>("all");
 
   const { data: users = [], isLoading } = useQuery<User[]>({
@@ -58,6 +60,7 @@ export default function UserManagement() {
       password: "",
       firstName: "",
       lastName: "",
+      phone: "",
       role: "vendedor",
       route: "",
       isActive: true,
@@ -141,11 +144,11 @@ export default function UserManagement() {
   });
 
   const updateUserRoleMutation = useMutation({
-    mutationFn: async ({ id, role }: { id: string; role: string }) => {
+    mutationFn: async ({ id, role, phone }: { id: string; role: string; phone?: string }) => {
       const response = await fetch(`/api/users/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role, phone: phone ?? null }),
       });
       if (!response.ok) throw new Error('Failed to update user role');
       return response.json();
@@ -262,6 +265,7 @@ export default function UserManagement() {
   const handleEditRole = (user: User) => {
     setSelectedUser(user);
     editForm.setValue('role', user.role as 'admin' | 'vendedor' | 'telemarketing');
+    setEditPhone((user as any).phone || "");
     setIsEditDialogOpen(true);
   };
 
@@ -278,7 +282,7 @@ export default function UserManagement() {
 
   const onEditSubmit = (data: { role: string }) => {
     if (selectedUser) {
-      updateUserRoleMutation.mutate({ id: selectedUser.id, role: data.role });
+      updateUserRoleMutation.mutate({ id: selectedUser.id, role: data.role, phone: editPhone });
     }
   };
 
@@ -387,6 +391,20 @@ export default function UserManagement() {
 
                 <FormField
                   control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Telefone (WhatsApp)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="55629XXXXXXXX" data-testid="input-phone" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name="role"
                   render={({ field }) => (
                     <FormItem>
@@ -487,6 +505,12 @@ export default function UserManagement() {
                   </FormItem>
                 )}
               />
+
+              <div>
+                <FormLabel>Telefone (WhatsApp)</FormLabel>
+                <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="55629XXXXXXXX" data-testid="input-edit-phone" className="mt-1" />
+                <p className="text-xs text-muted-foreground mt-1">Usado nas automações de comunicação (ex.: alerta diário de positivação).</p>
+              </div>
 
               <div className="flex justify-end space-x-2 pt-4">
                 <Button
@@ -615,6 +639,7 @@ export default function UserManagement() {
               <TableRow>
                 <TableHead>Nome</TableHead>
                 <TableHead>Email</TableHead>
+                <TableHead>Telefone</TableHead>
                 <TableHead>Perfil</TableHead>
                 <TableHead>Rota</TableHead>
                 <TableHead>Status</TableHead>
@@ -628,6 +653,7 @@ export default function UserManagement() {
                     {user.firstName} {user.lastName}
                   </TableCell>
                   <TableCell>{user.email}</TableCell>
+                  <TableCell>{(user as any).phone || "-"}</TableCell>
                   <TableCell>
                     <Badge variant={getRoleBadgeVariant(user.role)}>
                       {getRoleLabel(user.role)}
@@ -698,7 +724,7 @@ export default function UserManagement() {
               ))}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-gray-500 py-8">
+                  <TableCell colSpan={7} className="text-center text-gray-500 py-8">
                     Nenhum usuário encontrado
                   </TableCell>
                 </TableRow>
