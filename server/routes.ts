@@ -1193,13 +1193,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/users', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const validatedData = insertUserSchema.parse(req.body);
+      // Evita o erro genérico quando o email já existe (coluna email é única):
+      // retorna uma mensagem clara para o usuário.
+      if (validatedData.email) {
+        const existing = await storage.getUserByEmail(String(validatedData.email).trim());
+        if (existing) {
+          const quem = `${existing.firstName || ''} ${existing.lastName || ''}`.trim();
+          return res.status(409).json({ message: `Este email já está cadastrado${quem ? ` (${quem})` : ''}. Use outro email.` });
+        }
+      }
       const newUser = await storage.createUser(validatedData);
-      
       res.status(201).json(newUser);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating user:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Dados inválidos", errors: error.errors });
+      }
+      // Violação de unicidade (email duplicado) — fallback com mensagem clara
+      if (error?.code === '23505' || /duplicate key|unique constraint|users_email/i.test(String(error?.message || ''))) {
+        return res.status(409).json({ message: "Este email já está cadastrado. Use outro email." });
       }
       res.status(500).json({ message: "Failed to create user" });
     }
