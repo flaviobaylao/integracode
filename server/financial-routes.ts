@@ -520,7 +520,18 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/receivables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
-      const data = { ...req.body, receivableId: req.params.id, createdBy: user?.email || null };
+      const b = req.body || {};
+      const rawDate = b.paidAt || b.paymentDate || b.paidDate;
+      const data: any = {
+        receivableId: req.params.id,
+        paidAt: rawDate ? new Date(rawDate) : new Date(),
+        amount: String(b.amount ?? '0'),
+        paymentMethod: b.paymentMethod || null,
+        financialAccountId: b.financialAccountId || null,
+        reference: b.reference || null,
+        notes: b.notes || null,
+        createdBy: user?.email || null,
+      };
       const payment = await storage.createReceivablePayment(data);
       
       const receivable = await storage.getReceivable(req.params.id);
@@ -625,7 +636,18 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = (req as any).user;
-      const data = { ...req.body, payableId: req.params.id, createdBy: user?.email || null };
+      const b = req.body || {};
+      const rawDate = b.paidAt || b.paymentDate || b.paidDate;
+      const data: any = {
+        payableId: req.params.id,
+        paidAt: rawDate ? new Date(rawDate) : new Date(),
+        amount: String(b.amount ?? '0'),
+        paymentMethod: b.paymentMethod || null,
+        financialAccountId: b.financialAccountId || null,
+        reference: b.reference || null,
+        notes: b.notes || null,
+        createdBy: user?.email || null,
+      };
       const payment = await storage.createPayablePayment(data);
 
       const payable = await storage.getPayable(req.params.id);
