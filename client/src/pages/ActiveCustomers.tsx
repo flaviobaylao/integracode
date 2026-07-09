@@ -242,6 +242,7 @@ export default function ActiveCustomers() {
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkSeller, setBulkSeller] = useState("");
   const [bulkPeriodicity, setBulkPeriodicity] = useState("");
+  const [bulkVirtualType, setBulkVirtualType] = useState("");
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkStartDate, setBulkStartDate] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -895,12 +896,13 @@ export default function ActiveCustomers() {
       if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
       if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
       if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
+      if (bulkVirtualType) fields.virtualService = bulkVirtualType === 'virtual';
       return await apiRequest('POST', '/api/customers/bulk-update', { ids: Array.from(selectedCustomerIds), fields });
     },
     onSuccess: async (r: any) => {
       const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
       toast({ title: "Clientes atualizados", description: `${j.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s).` });
-      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate("");
+      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType("");
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
     },
@@ -1594,6 +1596,14 @@ export default function ActiveCustomers() {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-xs font-medium mb-1">Tipo (Atendimento)</label>
+                  <select value={bulkVirtualType} onChange={(e) => setBulkVirtualType(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-virtual-type">
+                    <option value="">— não alterar —</option>
+                    <option value="virtual">Virtual</option>
+                    <option value="presencial">Presencial</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs font-medium mb-1">Dias de Visita <span className="text-gray-400">(marque para alterar)</span></label>
                   <div className="flex flex-wrap gap-2">
                     {[['Seg', 'Segunda'], ['Ter', 'Terça'], ['Qua', 'Quarta'], ['Qui', 'Quinta'], ['Sex', 'Sexta'], ['Sab', 'Sábado'], ['Dom', 'Domingo']].map(([v, l]) => (
@@ -1612,7 +1622,7 @@ export default function ActiveCustomers() {
               <div className="px-5 py-3 border-t flex justify-end gap-2">
                 <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
                 <button
-                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
                   disabled={bulkUpdateMutation.isPending}
                   className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
                 >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>

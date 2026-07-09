@@ -2837,6 +2837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (fields?.visitPeriodicity && ['semanal', 'quinzenal', 'mensal'].includes(String(fields.visitPeriodicity))) patch.visitPeriodicity = String(fields.visitPeriodicity);
       if (Array.isArray(fields?.weekdays) && fields.weekdays.length > 0) patch.weekdays = JSON.stringify(fields.weekdays);
       if (fields?.serviceStartDate) { const d = new Date(fields.serviceStartDate); if (!isNaN(d.getTime())) patch.serviceStartDate = d; }
+      if (typeof fields?.virtualService === 'boolean') patch.virtualService = fields.virtualService;
       if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
       let updated = 0; const errors: string[] = [];
       for (const id of ids) {
