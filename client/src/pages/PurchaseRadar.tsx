@@ -84,7 +84,7 @@ export default function PurchaseRadar() {
   });
 
   const { data: chartAccounts = [] } = useQuery<any[]>({
-    queryKey: ["/api/chart-of-accounts"],
+    queryKey: ["/api/financial/chart-of-accounts"],
   });
 
   const { data: instances = [] } = useQuery<any[]>({
