@@ -132,6 +132,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       name: '',
       cpf: '',
       cnpj: '',
+      stateRegistration: '',
       companyName: '',
       fantasyName: '',
       phone: '',
@@ -186,6 +187,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         name: customer.name || '',
         cpf: (customer as any).cpf || '',
         cnpj: (customer as any).cnpj || '',
+        stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || '',
         companyName: (customer as any).companyName || '',
         fantasyName: (customer as any).fantasyName || '',
         phone: customer.phone || '',
@@ -224,6 +226,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         name: '',
         cpf: '',
         cnpj: '',
+        stateRegistration: '',
         companyName: '',
         fantasyName: '',
         phone: '',
@@ -655,6 +658,30 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             )}
                           </Button>
                         </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name={"stateRegistration" as any}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Inscrição Estadual</FormLabel>
+                        <FormControl>
+                          <Input
+                            data-testid="input-state-registration"
+                            placeholder="IE (ou ISENTO)"
+                            value={(field.value as any) || ''}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

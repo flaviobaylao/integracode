@@ -77,6 +77,7 @@ export default function CustomerEditModal({
     companyName: "",
     cpf: "",
     cnpj: "",
+    stateRegistration: "",
     email: "",
     phone: "",
     address: "",
@@ -297,6 +298,7 @@ export default function CustomerEditModal({
         companyName: customer.companyName || "",
         cpf: customer.cpf || "",
         cnpj: customer.cnpj || "",
+        stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || "",
         email: customer.email || "",
         phone: customer.phone || "",
         address: customer.address || "",
@@ -379,6 +381,21 @@ export default function CustomerEditModal({
                 value={formData.cnpj}
                 onChange={handleChange}
                 data-testid="input-customer-cnpj"
+              />
+            </div>
+          </div>
+
+          {/* Inscrição Estadual */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="stateRegistration">Inscrição Estadual</Label>
+              <Input
+                id="stateRegistration"
+                name="stateRegistration"
+                value={(formData as any).stateRegistration}
+                onChange={handleChange}
+                placeholder="IE (ou ISENTO)"
+                data-testid="input-customer-ie"
               />
             </div>
           </div>
