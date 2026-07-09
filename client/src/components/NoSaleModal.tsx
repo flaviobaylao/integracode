@@ -125,7 +125,7 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2">
             <XCircle className="h-6 w-6 text-red-600" />

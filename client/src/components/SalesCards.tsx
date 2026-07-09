@@ -738,7 +738,7 @@ export default function SalesCards() {
 
       {/* No Sale Dialog */}
       <Dialog open={actionDialog.type === 'no-sale'} onOpenChange={() => setActionDialog({ type: null, card: null })}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Marcar como Não Venda</DialogTitle>
           </DialogHeader>
