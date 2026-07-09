@@ -383,6 +383,55 @@ export function registerReconciliation(app: Express) {
   });
 
 
+  // Criar Novo (aba do modal, igual ao 1.0): cria um titulo (conta a pagar/receber) na hora
+  // com os dados do lancamento do banco e JA concilia (da baixa) contra o item do extrato.
+  app.post("/api/reconciliation/items/:id/create-and-reconcile", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const b = req.body || {};
+      const by = (b.by || "conciliacao-2.0").toString();
+      const tipo = (b.tipo === "receber" || b.tipo === "receivable") ? "receber" : "pagar";
+      const amount = Number(b.amount || 0);
+      if (!(amount > 0)) return res.status(400).json({ error: "valor invalido" });
+      const item = rowsOf(await db.execute(sql`
+        SELECT i.*, s.omie_instance_id AS s_instance, s.financial_account_id AS s_account
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id WHERE i.id = ${id}`))[0];
+      if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (item.reconciliation_status === "reconciled") return res.status(409).json({ error: "item ja conciliado" });
+      const method = (b.paymentMethod || pickMethod(item.description)).toString();
+      const paidAtISO = (b.paidAt ? new Date(b.paidAt) : new Date(item.transaction_date || Date.now())).toISOString();
+      const accountId = item.s_account || null;
+      const instanceId = b.omieInstanceId || item.s_instance || null;
+      const issue = b.issueDate ? new Date(b.issueDate) : new Date(item.transaction_date || Date.now());
+      const due = b.dueDate ? new Date(b.dueDate) : issue;
+      const desc = (b.description || item.description || "").toString().slice(0, 300);
+      const name = (b.name || item.description || "Sem nome").toString().slice(0, 120);
+      const doc = (b.document || "").toString();
+      const category = b.category ? String(b.category) : null;
+
+      let titleId: string; let kind: "receivable" | "payable";
+      if (tipo === "receber") {
+        const rec: any = await storage.createReceivable({ customerName: name, customerDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, category, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", createdBy: by } as any);
+        titleId = rec.id; kind = "receivable";
+        await settleReceivable(titleId, amount, method, accountId, paidAtISO, by);
+      } else {
+        const pay: any = await storage.createPayable({ supplierName: name, supplierDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", source: "manual", createdBy: by, notes: category ? ("Categoria: " + category) : null } as any);
+        titleId = pay.id; kind = "payable";
+        await settlePayable(titleId, amount, method, accountId, paidAtISO, by);
+      }
+      await db.execute(sql`
+        INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
+        VALUES (gen_random_uuid(), ${id}, ${kind === "receivable" ? titleId : null}, ${kind === "payable" ? titleId : null}, ${amount.toFixed(2)}, ${"manual_novo"}, ${amount.toFixed(2)}, ${"0.00"}, ${"0.00"}, ${by}, now())`);
+      const note = `Conciliado (titulo criado) por ${by} em ${new Date().toISOString()}`;
+      await db.execute(sql`
+        UPDATE bank_statement_items SET reconciliation_status = 'reconciled',
+          matched_receivable_id = ${kind === "receivable" ? titleId : null}, matched_payable_id = ${kind === "payable" ? titleId : null},
+          matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note} WHERE id = ${id}`);
+      try { await evolvePattern(item, { type: kind === "receivable" ? "customer" : "supplier", id: null, name, document: doc || null, category }, instanceId, by); } catch {}
+      res.json({ ok: true, status: "reconciled", created: { kind, id: titleId } });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // ---- Desfazer conciliação (reverte a baixa) ------------------------------
   app.post("/api/reconciliation/items/:id/undo", async (req, res) => {
     try {
