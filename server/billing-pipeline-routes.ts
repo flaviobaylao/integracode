@@ -8,6 +8,25 @@ import { createImmediateCharge } from './bb-pix-service';
 import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards } from '@shared/schema';
+import { resolveDestinationUf } from './cep-uf';
+
+// Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
+// sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
+// da nota (evita nota rejeitada órfã e deixa o card acionável após corrigir o cadastro).
+async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; message?: string }> {
+  try {
+    const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
+    const destUf = resolveDestinationUf({ state: (customer as any)?.state, cep: (customer as any)?.zipCode });
+    if (!destUf) {
+      const nome = item.customerName || (customer as any)?.name || 'cliente';
+      return { valid: false, message: `Cadastro incompleto: informe a UF (estado) ou o CEP de "${nome}" antes de faturar. Sem a UF a NF-e é rejeitada pela SEFAZ (CFOP incorreto).` };
+    }
+    return { valid: true };
+  } catch {
+    // Falha ao checar o cadastro não bloqueia (a própria emissão ainda valida a UF).
+    return { valid: true };
+  }
+}
 
 const BILLING_STAGES = ['pedido', 'a_faturar', 'faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
@@ -460,6 +479,13 @@ export function registerBillingPipelineRoutes(app: Express) {
           });
         }
 
+        // Cadastro fiscal incompleto (sem UF/CEP) → barra antes de travar/baixar estoque/criar a nota.
+        const fiscalCheck = await validateCustomerFiscalData(item);
+        if (!fiscalCheck.valid) {
+          console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - cadastro sem UF/CEP`);
+          return res.status(400).json({ message: fiscalCheck.message, fiscalDataError: true, details: fiscalCheck.message });
+        }
+
         // 🔒 TRAVA DE IDEMPOTÊNCIA (evita NF-e e baixa de estoque duplicadas em faturamento concorrente).
         // UPDATE atômico: só o 1º request que "reivindicar" o item (stage != faturado) prossegue; os demais param.
         const __claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now() WHERE id = ${req.params.id} AND stage <> 'faturado'`);
@@ -573,6 +599,12 @@ export function registerBillingPipelineRoutes(app: Express) {
           let fiscalInvoiceId: string | undefined;
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
+            // Cadastro fiscal incompleto (sem UF/CEP) → não fatura este item.
+            const fiscalCheck = await validateCustomerFiscalData(item);
+            if (!fiscalCheck.valid) {
+              results.push({ id, success: false, error: fiscalCheck.message });
+              continue;
+            }
             // 🔒 TRAVA DE IDEMPOTÊNCIA (claim atômico) — evita NF-e/estoque duplicados em faturamento concorrente.
             const __claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now() WHERE id = ${id} AND stage <> 'faturado'`);
             if (((__claim?.rowCount ?? __claim?.rowsAffected ?? 0) as number) !== 1) {
