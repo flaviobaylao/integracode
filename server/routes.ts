@@ -195,6 +195,23 @@ async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: st
   }
 }
 
+// Normaliza latitude/longitude para valor numérico aceito pela coluna `numeric`.
+// Aceita string com vírgula decimal (padrão BR, ex.: "-16,64") ou ponto.
+// - undefined (campo ausente no payload) -> undefined (Drizzle ignora; NÃO sobrescreve valor atual em update)
+// - vazio ('' / null) OU valor não-numérico -> null (limpa/ignora com segurança)
+//   (evita "invalid input syntax for type numeric" -> 500 ao criar/editar cliente).
+function normalizeCoord(v: any): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  let s = String(v).trim();
+  if (s === '') return null;
+  // Vírgula decimal -> ponto; remove espaços internos (ex.: "-16, 64")
+  s = s.replace(/\s+/g, '').replace(',', '.');
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return String(n);
+}
+
 // Helper to parse object storage path
 function parseObjectStoragePath(path: string): { bucketName: string; objectName: string } {
   if (!path.startsWith('/')) path = `/${path}`;
@@ -1594,7 +1611,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cleanedData: any = {};
       Object.keys(req.body).forEach(key => {
         const value = req.body[key];
-        if (['latitude', 'longitude', 'lastSaleValue'].includes(key)) {
+        if (['latitude', 'longitude'].includes(key)) {
+          cleanedData[key] = normalizeCoord(value);
+        } else if (key === 'lastSaleValue') {
           cleanedData[key] = value === '' ? null : value;
         } else if (['cpf', 'cnpj', 'document'].includes(key)) {
           // Documento vazio/em branco -> NULL (evita colisao na unique constraint
@@ -1728,8 +1747,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         weekdays: normalizedWeekdays, // ✅ String JSON normalizada
         deliveryWeekdays: autoDeliveryDays, // ✅ Dias de entrega calculados automaticamente (2 dias úteis após rota) - APENAS SINALIZAÇÃO
         receivingWeekdays: req.body.receivingWeekdays || [], // ✅ Dias de recebimento (configurado MANUALMENTE) - USADO PARA ROTEIRIZAÇÃO
-        latitude: req.body.latitude === '' ? null : req.body.latitude,
-        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        latitude: normalizeCoord(req.body.latitude),
+        longitude: normalizeCoord(req.body.longitude),
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
         // cpf/cnpj/document vazios -> NULL (evita colisao na unique customers_cpf_unique ao criar cliente so-CNPJ)
         cpf: (String(req.body.cpf ?? '').replace(/\D/g, '').length ? req.body.cpf : null),
@@ -2104,8 +2123,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         // Se normalizedWeekdaysJson foi definido, usar; senão, não incluir no update (manter valor existente)
         ...(normalizedWeekdaysJson !== undefined && { weekdays: normalizedWeekdaysJson }),
-        latitude: req.body.latitude === '' ? null : req.body.latitude,
-        longitude: req.body.longitude === '' ? null : req.body.longitude,
+        latitude: normalizeCoord(req.body.latitude),
+        longitude: normalizeCoord(req.body.longitude),
         lastSaleValue: req.body.lastSaleValue === '' ? null : req.body.lastSaleValue,
         // Documento vazio -> NULL (evita colisao na unique constraint cpf/cnpj)
         ...(req.body.cpf !== undefined && { cpf: __blankDoc(req.body.cpf) }),
