@@ -2341,12 +2341,14 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try {
       const id = req.params.id;
       const ymd = (d: any) => { try { return new Date(d).toISOString().slice(0, 10); } catch { return ''; } };
-      const rq: any = await db.execute(sql`SELECT due_date FROM receivables WHERE id = ${id} LIMIT 1`);
+      const rq: any = await db.execute(sql`SELECT due_date, customer_name, amount FROM receivables WHERE id = ${id} LIMIT 1`);
       const recDue = rq.rows?.[0]?.due_date || null;
-      const b: any = await db.execute(sql`SELECT id, status, data_vencimento FROM boleto_charges WHERE receivable_id = ${id} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
-      if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed }); }
-      const p: any = await db.execute(sql`SELECT id, status, due_date FROM pix_charges WHERE receivable_id = ${id} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
-      if (p.rows?.[0]) { const pc = p.rows[0]; const changed = !!(recDue && pc.due_date && ymd(recDue) !== ymd(pc.due_date)); return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}`, chargeDueDate: pc.due_date, receivableDueDate: recDue, dueDateChanged: changed }); }
+      const customerName = rq.rows?.[0]?.customer_name || null;
+      const amount = rq.rows?.[0]?.amount || null;
+      const b: any = await db.execute(sql`SELECT to_jsonb(bc) AS row, bc.id, bc.status, bc.data_vencimento FROM boleto_charges bc WHERE bc.receivable_id = ${id} AND bc.status <> 'cancelado' AND bc.status <> 'cancelada' ORDER BY bc.created_at DESC LIMIT 1`);
+      if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, boleto: bc.row }); }
+      const p: any = await db.execute(sql`SELECT to_jsonb(pc) AS row, pc.id, pc.status, pc.due_date FROM pix_charges pc WHERE pc.receivable_id = ${id} AND pc.status <> 'cancelado' AND pc.status <> 'cancelada' ORDER BY pc.created_at DESC LIMIT 1`);
+      if (p.rows?.[0]) { const pc = p.rows[0]; const changed = !!(recDue && pc.due_date && ymd(recDue) !== ymd(pc.due_date)); return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}`, chargeDueDate: pc.due_date, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, pix: pc.row }); }
       res.json({ hasCharge: false });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
