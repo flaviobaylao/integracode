@@ -10,6 +10,7 @@ import { generateAndSaveAllReports } from './ai-reports-service';
 import { redistributeTimedOutConversations } from './chat-distribution-service';
 import { nowBrazil } from './brazilTimezone';
 import { runRadarScan } from './purchase-routes';
+import { runPositivacaoAlertaCron } from './positivacao-alert';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -39,6 +40,11 @@ cron.schedule('0 6 * * *', async () => {
 
 // Radar de Compras (Distribuição DFe da SEFAZ) — traz automaticamente as NF-e
 // emitidas CONTRA os CNPJs da Honest, de hora em hora (cadência segura p/ a SEFAZ).
+// Alerta diário 07:50 (BRT): lista de clientes ativos NÃO positivados por vendedor (WhatsApp).
+cron.schedule('50 7 * * *', async () => {
+  await runPositivacaoAlertaCron();
+}, { timezone: 'America/Sao_Paulo' });
+
 cron.schedule('17 * * * *', async () => {
   try {
     const out = await runRadarScan('radar-auto');
