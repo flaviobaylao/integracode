@@ -1,6 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import ReconcileButton from "@/components/ReconcileButton";
 import { useState, useEffect } from 'react';
+import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearch } from 'wouter';
 import { apiRequest, queryClient } from '@/lib/queryClient';
@@ -166,6 +167,34 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   });
   if (sortAZ) filtered.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
 
+  // Emite o DOCUMENTO de cobrança (boleto/PIX) em PDF, idêntico ao do pipeline de faturamento.
+  const emitirCobranca = async (r: any) => {
+    try {
+      const load = async () => { const rp = await fetch(`/api/financial/receivables/${r.id}/cobranca`, { credentials: 'include' }); return rp.json(); };
+      let c = await load();
+      if (c.hasCharge && c.dueDateChanged) {
+        const fmt = (d: any) => d ? new Date(d).toLocaleDateString('pt-BR') : '?';
+        if (confirm('O vencimento da cobrança mudou (cobrança ' + fmt(c.chargeDueDate) + ' → conta ' + fmt(c.receivableDueDate) + ').\n\nGerar NOVA cobrança com o novo vencimento e CANCELAR a anterior no banco?')) {
+          const rg = await fetch('/api/financial/receivables/' + r.id + '/regenerate-charge', { method: 'POST', credentials: 'include' });
+          const jr = await rg.json();
+          if (!(jr.success || jr.ok)) { alert('Falha ao regerar cobrança: ' + (jr.error || jr.persistError || 'erro')); return; }
+          c = await load();
+        }
+      }
+      if (!c.hasCharge) {
+        if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return;
+        const em = await fetch(`/api/financial/receivables/${r.id}/emit-boleto`, { method: 'POST', credentials: 'include' });
+        const j = await em.json();
+        if (!(j.success || j.ok)) { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); return; }
+        c = await load();
+      }
+      if (!c.hasCharge || (!c.boleto && !c.pix)) { alert('Cobrança não encontrada.'); return; }
+      const data: CobrancaData = { itemId: r.id, customerName: c.customerName || r.customerName, invoiceNumber: r.titleNumber, saleValue: c.amount || r.amount, boleto: c.boleto || null, pix: c.pix || null };
+      const n = await generateMultiCobrancaPdf([data]);
+      if (n === 0) alert('Cobrança sem boleto/PIX para gerar.');
+    } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/receivables', data),
     onSuccess: () => {
@@ -327,7 +356,7 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      {!readOnly && (<><Button variant="ghost" size="icon" title="Cobrança (boleto/PIX)" onClick={async () => { try { const resp = await fetch(`/api/financial/receivables/${r.id}/cobranca`, { credentials: 'include' }); const c = await resp.json(); if (c.hasCharge && c.dueDateChanged) { const fmt = (d: any) => d ? new Date(d).toLocaleDateString('pt-BR') : '?'; if (confirm('O vencimento da cobranca mudou (cobranca ' + fmt(c.chargeDueDate) + ' -> conta ' + fmt(c.receivableDueDate) + ').\n\nGerar NOVA cobranca com o novo vencimento e CANCELAR a anterior no banco?')) { const rg = await fetch('/api/financial/receivables/' + r.id + '/regenerate-charge', { method: 'POST', credentials: 'include' }); const jr = await rg.json(); if ((jr.success || jr.ok) && jr.viewUrl) { window.open(jr.viewUrl, '_blank'); } else { alert('Falha ao regerar cobranca: ' + (jr.error || jr.persistError || 'erro')); } return; } if (c.viewUrl) { window.open(c.viewUrl, '_blank'); } return; } if (c.hasCharge && c.viewUrl) { window.open(c.viewUrl, '_blank'); return; } if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return; const em = await fetch(`/api/financial/receivables/${r.id}/emit-boleto`, { method: 'POST', credentials: 'include' }); const j = await em.json(); if ((j.success || j.ok) && j.viewUrl) { window.open(j.viewUrl, '_blank'); } else { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); } } catch (e: any) { alert('Erro: ' + (e?.message || e)); } }}><QrCode className="h-4 w-4 text-blue-600" /></Button>
+                      {!readOnly && (<><Button variant="ghost" size="icon" title="Cobrança (boleto/PIX)" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
