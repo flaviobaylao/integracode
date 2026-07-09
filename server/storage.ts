@@ -8244,21 +8244,36 @@ export class DatabaseStorage implements IStorage {
       : await db.select().from(billingPipeline).orderBy(desc(billingPipeline.createdAt));
     // Enriquece com o status fiscal da NF (autorizada/cancelada/rejeitada) p/ colorir o card no pipeline.
     try {
-      const nums = Array.from(new Set(
-        (rows as any[]).map(r => String(r.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean).map(Number)
-      ));
-      if (nums.length > 0) {
-        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status, id: fiscalInvoices.id })
-          .from(fiscalInvoices).where(inArray(fiscalInvoices.invoiceNumber, nums as any));
-        const map = new Map<string, string>();
-        const idByNum = new Map<string, string>();
-        const errIds: string[] = [];
+      const rowsA = rows as any[];
+      // Resolve a NF de CADA item por sales_card_id → ref(notes) → número (nesta ordem de
+      // especificidade). Casar só por número herdava o status da nota de OUTRA filial que
+      // compartilha o mesmo número (ex.: 104147 autorizada de um CNPJ x rejeitada de outro).
+      const cards = Array.from(new Set(rowsA.map(r => r.salesCardId).filter(Boolean)));
+      const refs = Array.from(new Set(rowsA.map(r => r.orderNumber ? ('Pedido pipeline interno - ' + r.orderNumber) : null).filter(Boolean)));
+      const nums = Array.from(new Set(rowsA.map(r => String(r.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean).map(Number)));
+      if (cards.length || refs.length || nums.length) {
+        const conds: any[] = [];
+        if (cards.length) conds.push(inArray(fiscalInvoices.salesCardId, cards as any));
+        if (refs.length) conds.push(inArray(fiscalInvoices.notes, refs as any));
+        if (nums.length) conds.push(inArray(fiscalInvoices.invoiceNumber, nums as any));
+        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status, id: fiscalInvoices.id, card: fiscalInvoices.salesCardId, notes: fiscalInvoices.notes })
+          .from(fiscalInvoices).where(or(...conds));
+        const byCard = new Map<string, any>();
+        const byRef = new Map<string, any>();
+        const byNum = new Map<string, any>();
         for (const f of fis as any[]) {
-          if (f.n != null) {
-            map.set(String(f.n), f.st);
-            idByNum.set(String(f.n), f.id);
-            if (['rejected', 'rejeitada', 'draft'].includes(String(f.st))) errIds.push(f.id);
-          }
+          if (f.card) byCard.set(String(f.card), f);
+          if (f.notes) byRef.set(String(f.notes), f);
+          if (f.n != null && !byNum.has(String(f.n))) byNum.set(String(f.n), f); // fallback (1º encontrado)
+        }
+        const resolved: Array<{ r: any; f: any }> = [];
+        const errIds: string[] = [];
+        for (const r of rowsA) {
+          let f = (r.salesCardId && byCard.get(String(r.salesCardId)))
+            || (r.orderNumber && byRef.get('Pedido pipeline interno - ' + r.orderNumber))
+            || null;
+          if (!f) { const k = String(r.invoiceNumber || '').replace(/\D/g, ''); if (k) f = byNum.get(k) || null; }
+          if (f) { resolved.push({ r, f }); if (['rejected', 'rejeitada', 'draft'].includes(String(f.st))) errIds.push(f.id); }
         }
         // Motivo do erro (último evento de erro) p/ NFs rejeitadas/rascunho — mostra no card + habilita re-tentar.
         const errByInvId = new Map<string, string>();
@@ -8271,13 +8286,9 @@ export class DatabaseStorage implements IStorage {
             for (const e of evs as any[]) { if (e.inv && !errByInvId.has(String(e.inv))) errByInvId.set(String(e.inv), e.msg || e.dsc || ''); }
           } catch {}
         }
-        for (const r of rows as any[]) {
-          const k = String(r.invoiceNumber || '').replace(/\D/g, '');
-          if (k && map.has(k)) {
-            r.fiscalStatus = map.get(k);
-            const invId = idByNum.get(k);
-            if (invId && errByInvId.has(invId)) (r as any).fiscalError = errByInvId.get(invId);
-          }
+        for (const { r, f } of resolved) {
+          r.fiscalStatus = f.st;
+          if (f.id && errByInvId.has(String(f.id))) (r as any).fiscalError = errByInvId.get(String(f.id));
         }
       }
     } catch {}
