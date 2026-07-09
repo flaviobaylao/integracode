@@ -882,7 +882,7 @@ export function registerNfeRoutes(app: Express) {
         totalCofins: originalInvoice.totalCofins || '0',
         totalIpi: originalInvoice.totalIpi || '0',
         totalInvoice: originalInvoice.totalInvoice,
-        paymentMethod: originalInvoice.paymentMethod || 'a_prazo',
+        paymentMethod: 'sem_pagamento',
         notes: `NF-e de DEVOLUÇÃO referente à NF-e nº ${originalInvoice.invoiceNumber || 'N/A'} (chave: ${originalInvoice.accessKey || 'N/A'}). Motivo: ${justification}`,
         environment: originalInvoice.environment || 'homologacao',
         omieInstanceId: originalInvoice.omieInstanceId,
