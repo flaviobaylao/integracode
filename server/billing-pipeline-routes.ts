@@ -460,6 +460,14 @@ export function registerBillingPipelineRoutes(app: Express) {
           });
         }
 
+        // 🔒 TRAVA DE IDEMPOTÊNCIA (evita NF-e e baixa de estoque duplicadas em faturamento concorrente).
+        // UPDATE atômico: só o 1º request que "reivindicar" o item (stage != faturado) prossegue; os demais param.
+        const __claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now() WHERE id = ${req.params.id} AND stage <> 'faturado'`);
+        if (((__claim?.rowCount ?? __claim?.rowsAffected ?? 0) as number) !== 1) {
+          console.warn(`🔁 [BILLING-PIPELINE] Faturamento duplicado evitado para item ${req.params.id} (já faturado/em faturamento).`);
+          return res.status(409).json({ message: 'Item já faturado ou em faturamento — NF-e duplicada evitada.', duplicatePrevented: true });
+        }
+
         let lotMap: Record<string, string[]> = {};
         try {
           lotMap = await deductStockForBilling(item, user);
@@ -565,6 +573,13 @@ export function registerBillingPipelineRoutes(app: Express) {
           let fiscalInvoiceId: string | undefined;
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
+            // 🔒 TRAVA DE IDEMPOTÊNCIA (claim atômico) — evita NF-e/estoque duplicados em faturamento concorrente.
+            const __claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now() WHERE id = ${id} AND stage <> 'faturado'`);
+            if (((__claim?.rowCount ?? __claim?.rowsAffected ?? 0) as number) !== 1) {
+              console.warn(`🔁 [BATCH] Faturamento duplicado evitado para item ${id}.`);
+              results.push({ id, success: false, error: 'Já faturado — NF-e duplicada evitada' });
+              continue;
+            }
             let lotMap: Record<string, string[]> = {};
             try {
               lotMap = await deductStockForBilling(item, user);
@@ -750,6 +765,18 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
 }
 
 async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>) {
+  // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
+  const __ref = item.orderNumber || item.salesCardId;
+  if (__ref) {
+    try {
+      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + __ref} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      const __row = (__ex?.rows ?? __ex ?? [])[0];
+      if (__row && __row.id) {
+        console.warn('[NFE-DEDUP] NF-e já existe p/ pedido ' + __ref + ' (id ' + __row.id + ') — emissão duplicada evitada.');
+        return { id: __row.id, invoiceNumber: __row.invoice_number };
+      }
+    } catch (e: any) { console.warn('[NFE-DEDUP] falha ao checar duplicata (segue):', e?.message); }
+  }
   const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
 
   let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
