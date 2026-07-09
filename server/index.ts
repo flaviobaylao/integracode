@@ -187,6 +187,7 @@ run();
     (async () => {
       try {
         await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
+        await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar`).catch(() => {});
                 const pgMod = await import('pg');
         const PgClient = (pgMod.default && pgMod.default.Client) || pgMod.Client;
         const client = new PgClient({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
