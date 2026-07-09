@@ -76,6 +76,8 @@ interface Conversation {
 interface Agent {
   id: string;
   name: string;
+  email?: string;
+  userId?: string;
   status: string;
 }
 
@@ -666,6 +668,7 @@ function ChatCenterInner() {
 
   // ===== Etiquetas (labels) das conversas =====
   const [showLabelsModal, setShowLabelsModal] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#3B82F6");
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
@@ -1107,6 +1110,38 @@ function ChatCenterInner() {
     }
   });
   const sellerName = (sellerInfoData as any)?.sellerName || "Carregando...";
+
+  // Cliente cadastrado vinculado à conversa (casado pelo telefone: últimos 8 dígitos)
+  const linkedCustomer = (() => {
+    const d = (selectedChat?.customerPhone || '').replace(/\D/g, '');
+    return d.length >= 8 ? custByPhone.get(d.slice(-8)) : null;
+  })();
+  // Vendedor = vendedor do cliente cadastrado (busca no cadastro de Clientes Ativos)
+  const registrySellerName = (() => {
+    const s = (linkedCustomer as any)?.seller;
+    if (s && (s.firstName || s.lastName)) return `${s.firstName || ''} ${s.lastName || ''}`.trim();
+    return null;
+  })();
+  const displaySellerName = registrySellerName || sellerName;
+
+  // Atendente = e-mail do atendente que está conversando (assignedAgent > agent)
+  const attendantAgent = agents.find(a => a.id === (selectedChat?.assignedAgentId || selectedChat?.agentId));
+  const attendantEmail = (selectedChat?.assignedAgentId === 'chatgpt')
+    ? 'ChatGPT'
+    : (attendantAgent?.email || attendantAgent?.name || selectedChat?.assignedAgentName || selectedChat?.agentName || 'Carregando...');
+
+  // Nome do remetente exibido no card de cada mensagem
+  const senderLabelForMsg = (msg: any): string => {
+    if (msg?.senderType === 'agent') {
+      const ag = agents.find(a => a.userId === msg.senderId || a.id === msg.senderId);
+      return ag?.name || ag?.email || selectedChat?.assignedAgentName || 'Atendente';
+    }
+    if (msg?.senderId === 'system') {
+      return selectedChat?.assignedAgentName || 'Sistema';
+    }
+    const meta = (msg?.metadata || {}) as any;
+    return meta.pushName || meta.senderName || selectedChat?.customerName || 'Cliente';
+  };
 
   // Scroll automático para a última mensagem
   useEffect(() => {
@@ -1635,13 +1670,11 @@ function ChatCenterInner() {
                         )}
                         <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
                           <User className="w-3 h-3" />
-                          <span>Vendedor: <strong>{sellerName}</strong></span>
+                          <span>Vendedor: <strong>{displaySellerName}</strong></span>
                         </div>
-                        {selectedChat.agentId && (
-                          <div className="flex items-center gap-2 mt-2 text-xs text-green-600 font-semibold">
-                            <span>👤 Atendente: {agents.find(a => a.id === selectedChat.agentId)?.name || "Carregando..."}</span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2 mt-2 text-xs text-green-600 font-semibold">
+                          <span>👤 Atendente: {attendantEmail}</span>
+                        </div>
                         {(() => {
                           const headerLabels = labelsForConv(selectedChat.id);
                           return headerLabels.length > 0 ? (
@@ -1737,7 +1770,18 @@ function ChatCenterInner() {
                     {/* Histórico de Atribuições */}
                     {assignmentHistory && assignmentHistory.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
-                        <p className="text-xs font-semibold text-gray-600 mb-2">📋 Histórico de Atribuições:</p>
+                        <button
+                          type="button"
+                          onClick={() => setShowHistory(v => !v)}
+                          className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1 hover:text-gray-800"
+                          data-testid="button-toggle-history"
+                          title={showHistory ? "Ocultar histórico" : "Mostrar histórico"}
+                        >
+                          <span>{showHistory ? "▼" : "▶"}</span>
+                          📋 Histórico de Atribuições
+                          <span className="text-gray-400 font-normal">({assignmentHistory.length})</span>
+                        </button>
+                        {showHistory && (
                         <div className="space-y-1 max-h-24 overflow-y-auto">
                           {(assignmentHistory as any[]).map((item: any, idx: number) => (
                             <div key={idx} className="text-[10px] text-gray-500 flex items-center gap-1">
@@ -1756,6 +1800,7 @@ function ChatCenterInner() {
                             </div>
                           ))}
                         </div>
+                        )}
                       </div>
                     )}
                   </CardHeader>
@@ -1787,11 +1832,9 @@ function ChatCenterInner() {
                                       : "bg-gray-200 text-gray-900"
                                   }`}
                                 >
-                                {msg.senderType !== "agent" && (
-                                  <div className="text-xs font-semibold mb-1 opacity-80">
-                                    👤 {sellerName}
-                                  </div>
-                                )}
+                                <div className="text-xs font-semibold mb-1 opacity-80">
+                                  👤 {senderLabelForMsg(msg)}
+                                </div>
                                 {msg.messageType === 'location' && (msg.content || '').includes('[Localização:') ? (
                                   <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
                                     <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
@@ -2050,7 +2093,8 @@ function ChatCenterInner() {
                   }
                 }
               }}
-              isAdmin={isAdmin} labelObjsFor={labelsForConv}
+              isAdmin={user?.role === 'admin'}
+              currentUserId={(user as any)?.id}
               hasActiveConversation={!!selectedConversation}
             />
           </div>

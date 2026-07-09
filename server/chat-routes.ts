@@ -4359,7 +4359,15 @@ export function registerChatRoutes(app: Express): void {
   app.get("/api/chat/quick-templates", authenticateUser, async (req, res) => {
     try {
       const templates = await storage.getChatQuickMessages() || [];
-      res.json(templates);
+      // Enriquecer com o nome de quem criou (para exibir "criado por")
+      let users: any[] = [];
+      try { users = await storage.getUsers(); } catch {}
+      const nameById = new Map<string, string>(users.map((u: any) => [u.id, (`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || '')]));
+      const enriched = (templates as any[]).map((t: any) => ({
+        ...t,
+        createdByName: nameById.get(t.createdBy) || null,
+      }));
+      res.json(enriched);
     } catch (error: any) {
       console.error("[CHAT-TEMPLATES] Erro:", error);
       res.status(500).json({ error: "Erro ao buscar templates" });
@@ -4381,11 +4389,13 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // POST /api/chat/quick-templates - Criar template (apenas admin/coordinator/administrative)
-  app.post("/api/chat/quick-templates", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+  // POST /api/chat/quick-templates - Criar template (qualquer usuário; limite de 2 para não-admin)
+  app.post("/api/chat/quick-templates", authenticateUser, async (req, res) => {
     try {
       const { title, content, category, imageUrl, messageType, sortOrder } = req.body;
-      const userId = (req as any).currentUser?.id;
+      const currentUser = (req as any).currentUser;
+      const userId = currentUser?.id;
+      const isAdmin = currentUser?.role === 'admin';
 
       if (!title) {
         return res.status(400).json({ error: "Título é obrigatório" });
@@ -4393,6 +4403,15 @@ export function registerChatRoutes(app: Express): void {
 
       if (!content && !imageUrl) {
         return res.status(400).json({ error: "Conteúdo ou imagem são obrigatórios" });
+      }
+
+      // Limite de 2 templates por usuário (admin é ilimitado)
+      if (!isAdmin) {
+        const all = await storage.getChatQuickMessages() || [];
+        const mine = (all as any[]).filter((t: any) => t.createdBy === userId);
+        if (mine.length >= 2) {
+          return res.status(400).json({ error: "Você já atingiu o limite de 2 templates. Exclua um para criar outro." });
+        }
       }
 
       const template = await storage.createChatQuickMessage({
@@ -4414,15 +4433,21 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // PUT /api/chat/quick-templates/:id - Atualizar template (apenas admin/coordinator/administrative)
-  app.put("/api/chat/quick-templates/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+  // PUT /api/chat/quick-templates/:id - Atualizar template (dono ou admin)
+  app.put("/api/chat/quick-templates/:id", authenticateUser, async (req, res) => {
     try {
       const { id } = req.params;
       const { title, content, category, imageUrl, messageType, sortOrder, isActive } = req.body;
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin';
 
       const existing = await storage.getChatQuickMessage(id);
       if (!existing) {
         return res.status(404).json({ error: "Template não encontrado" });
+      }
+
+      if (!isAdmin && existing.createdBy !== currentUser?.id) {
+        return res.status(403).json({ error: "Você só pode editar os templates que você criou." });
       }
 
       const updateData: any = {};
@@ -4443,16 +4468,22 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // DELETE /api/chat/quick-templates/:id - Deletar template (apenas admin/coordinator/administrative)
-  app.delete("/api/chat/quick-templates/:id", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+  // DELETE /api/chat/quick-templates/:id - Deletar template (dono ou admin)
+  app.delete("/api/chat/quick-templates/:id", authenticateUser, async (req, res) => {
     try {
       const { id } = req.params;
-      
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin';
+
       const existing = await storage.getChatQuickMessage(id);
       if (!existing) {
         return res.status(404).json({ error: "Template não encontrado" });
       }
-      
+
+      if (!isAdmin && existing.createdBy !== currentUser?.id) {
+        return res.status(403).json({ error: "Você só pode excluir os templates que você criou." });
+      }
+
       await storage.deleteChatQuickMessage(id);
       console.log(`🗑️ [TEMPLATE] Template deletado: ${id}`);
       res.json({ success: true, message: "Template deletado" });
