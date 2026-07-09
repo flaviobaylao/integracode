@@ -5790,6 +5790,93 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // ===== Etiquetas (labels) das conversas =====
+  // Cria as tabelas idempotentemente (o app não roda migração no deploy)
+  db.execute(sql`CREATE TABLE IF NOT EXISTS chat_labels (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), name varchar NOT NULL, color varchar NOT NULL DEFAULT '#3B82F6', created_by varchar NOT NULL, created_by_name varchar, created_at timestamp DEFAULT now())`)
+    .then(() => db.execute(sql`CREATE TABLE IF NOT EXISTS chat_conversation_labels (conversation_id varchar NOT NULL, label_id varchar NOT NULL, created_at timestamp DEFAULT now(), PRIMARY KEY (conversation_id, label_id))`))
+    .catch((e: any) => console.warn('⚠️ [LABELS] create tables:', e?.message));
+
+  // Listar todas as etiquetas (compartilhadas p/ marcar; canEdit = dono ou admin)
+  app.get("/api/chat/labels", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      const rows: any = await db.execute(sql`SELECT id, name, color, created_by, created_by_name, created_at FROM chat_labels ORDER BY created_at ASC`);
+      const isAdmin = currentUser?.role === 'admin';
+      const labels = (rows?.rows || []).map((l: any) => ({
+        id: l.id, name: l.name, color: l.color, createdBy: l.created_by, createdByName: l.created_by_name,
+        canEdit: isAdmin || l.created_by === currentUser?.id,
+      }));
+      res.json({ labels });
+    } catch (e: any) { console.error('[LABELS] list:', e); res.status(500).json({ error: e?.message }); }
+  });
+
+  // Criar etiqueta (máx 5 por usuário)
+  app.post("/api/chat/labels", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      const name = String(req.body?.name || '').trim().slice(0, 40);
+      const color = String(req.body?.color || '#3B82F6').slice(0, 20);
+      if (!name) return res.status(400).json({ error: "Nome da etiqueta é obrigatório" });
+      const cntQ: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM chat_labels WHERE created_by = ${currentUser.id}`);
+      const n = cntQ?.rows?.[0]?.n || 0;
+      if (n >= 5) return res.status(400).json({ error: "Limite de 5 etiquetas por usuário atingido" });
+      const uname = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(' ').trim() || currentUser.email || '';
+      const ins: any = await db.execute(sql`INSERT INTO chat_labels (name, color, created_by, created_by_name) VALUES (${name}, ${color}, ${currentUser.id}, ${uname}) RETURNING id`);
+      res.json({ ok: true, id: ins?.rows?.[0]?.id });
+    } catch (e: any) { console.error('[LABELS] create:', e); res.status(500).json({ error: e?.message }); }
+  });
+
+  // Editar etiqueta (somente dono ou admin)
+  app.patch("/api/chat/labels/:id", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      const { id } = req.params;
+      const q: any = await db.execute(sql`SELECT created_by FROM chat_labels WHERE id = ${id} LIMIT 1`);
+      const row = q?.rows?.[0];
+      if (!row) return res.status(404).json({ error: "Etiqueta não encontrada" });
+      if (currentUser.role !== 'admin' && row.created_by !== currentUser.id) return res.status(403).json({ error: "Você só pode alterar suas próprias etiquetas" });
+      if (req.body?.name !== undefined) { const nm = String(req.body.name).trim().slice(0, 40); if (nm) await db.execute(sql`UPDATE chat_labels SET name = ${nm} WHERE id = ${id}`); }
+      if (req.body?.color !== undefined) { const cl = String(req.body.color).slice(0, 20); await db.execute(sql`UPDATE chat_labels SET color = ${cl} WHERE id = ${id}`); }
+      res.json({ ok: true });
+    } catch (e: any) { console.error('[LABELS] update:', e); res.status(500).json({ error: e?.message }); }
+  });
+
+  // Excluir etiqueta (somente dono ou admin)
+  app.delete("/api/chat/labels/:id", authenticateUser, async (req, res) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      const { id } = req.params;
+      const q: any = await db.execute(sql`SELECT created_by FROM chat_labels WHERE id = ${id} LIMIT 1`);
+      const row = q?.rows?.[0];
+      if (!row) return res.status(404).json({ error: "Etiqueta não encontrada" });
+      if (currentUser.role !== 'admin' && row.created_by !== currentUser.id) return res.status(403).json({ error: "Você só pode excluir suas próprias etiquetas" });
+      await db.execute(sql`DELETE FROM chat_conversation_labels WHERE label_id = ${id}`);
+      await db.execute(sql`DELETE FROM chat_labels WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (e: any) { console.error('[LABELS] delete:', e); res.status(500).json({ error: e?.message }); }
+  });
+
+  // Todas as marcações conversa->etiqueta
+  app.get("/api/chat/conversation-labels", authenticateUser, async (_req, res) => {
+    try {
+      const rows: any = await db.execute(sql`SELECT conversation_id, label_id FROM chat_conversation_labels`);
+      res.json({ items: (rows?.rows || []).map((r: any) => ({ conversationId: r.conversation_id, labelId: r.label_id })) });
+    } catch (e: any) { console.error('[LABELS] map:', e); res.status(500).json({ error: e?.message }); }
+  });
+
+  // Definir as etiquetas de uma conversa (substitui o conjunto) — qualquer atendente pode marcar
+  app.post("/api/chat/conversations/:id/labels", authenticateUser, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const labelIds: string[] = Array.isArray(req.body?.labelIds) ? req.body.labelIds.map((x: any) => String(x)) : [];
+      await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${id}`);
+      for (const lid of labelIds) {
+        await db.execute(sql`INSERT INTO chat_conversation_labels (conversation_id, label_id) VALUES (${id}, ${lid}) ON CONFLICT DO NOTHING`);
+      }
+      res.json({ ok: true, count: labelIds.length });
+    } catch (e: any) { console.error('[LABELS] set conv labels:', e); res.status(500).json({ error: e?.message }); }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
 

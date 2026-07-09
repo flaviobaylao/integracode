@@ -220,7 +220,8 @@ function VirtualAttendancePanel() {
 }
 
 // Componente Auxiliar para Item de Conversa
-function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData, isAdmin }: any) {
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData, isAdmin, labelObjsFor }: any) {
+  const convLabelObjs = (labelObjsFor ? labelObjsFor(conv.id) : []) as any[];
   return (
     <div
       className={`w-full text-left p-3 rounded-lg transition-colors relative ${
@@ -288,6 +289,13 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
           <UserPlus className="h-4 w-4" />
         </button>
       </div>
+      {convLabelObjs.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {convLabelObjs.map((l: any) => (
+            <span key={l.id} className="inline-flex items-center rounded-full text-white text-[9px] font-medium px-1.5 h-4" style={{ backgroundColor: l.color }} title={`Etiqueta: ${l.name}`}>{l.name}</span>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-2 mt-2">
         <Badge className={`text-[10px] ${getStatusColor(conv.status)}`}>
           {conv.status === 'new' ? 'Nova' : 
@@ -655,6 +663,58 @@ function ChatCenterInner() {
 
   // Fetch agent detailed stats (admin only)
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+
+  // ===== Etiquetas (labels) das conversas =====
+  const [showLabelsModal, setShowLabelsModal] = useState(false);
+  const [newLabelName, setNewLabelName] = useState("");
+  const [newLabelColor, setNewLabelColor] = useState("#3B82F6");
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
+  const [editLabelName, setEditLabelName] = useState("");
+  const [editLabelColor, setEditLabelColor] = useState("#3B82F6");
+  const { data: labelsData } = useQuery<{ labels: any[] }>({
+    queryKey: ['/api/chat/labels'],
+    queryFn: async () => { const r = await fetch('/api/chat/labels', { credentials: 'include' }); return r.ok ? r.json() : { labels: [] }; },
+  });
+  const labels: any[] = labelsData?.labels || [];
+  const myLabelCount = labels.filter(l => l.createdBy === (user as any)?.id).length;
+  const { data: convLabelsData } = useQuery<{ items: any[] }>({
+    queryKey: ['/api/chat/conversation-labels'],
+    queryFn: async () => { const r = await fetch('/api/chat/conversation-labels', { credentials: 'include' }); return r.ok ? r.json() : { items: [] }; },
+    refetchInterval: 15000,
+  });
+  const labelById = new Map<string, any>(labels.map(l => [l.id, l]));
+  const labelIdsByConv = new Map<string, string[]>();
+  (convLabelsData?.items || []).forEach((it: any) => {
+    const arr = labelIdsByConv.get(it.conversationId) || [];
+    arr.push(it.labelId); labelIdsByConv.set(it.conversationId, arr);
+  });
+  const labelsForConv = (convId: string) => (labelIdsByConv.get(convId) || []).map(id => labelById.get(id)).filter(Boolean);
+  const invalidateLabels = () => queryClient.invalidateQueries({ queryKey: ['/api/chat/labels'] });
+  const createLabelMutation = useMutation({
+    mutationFn: async () => await apiRequest('POST', '/api/chat/labels', { name: newLabelName, color: newLabelColor }),
+    onSuccess: () => { setNewLabelName(''); setNewLabelColor('#3B82F6'); invalidateLabels(); toast({ title: 'Etiqueta criada' }); },
+    onError: (e: any) => toast({ title: 'Erro ao criar etiqueta', description: e?.message || String(e), variant: 'destructive' }),
+  });
+  const updateLabelMutation = useMutation({
+    mutationFn: async ({ id, name, color }: any) => await apiRequest('PATCH', `/api/chat/labels/${id}`, { name, color }),
+    onSuccess: () => { setEditingLabelId(null); invalidateLabels(); },
+    onError: (e: any) => toast({ title: 'Erro ao alterar etiqueta', description: e?.message || String(e), variant: 'destructive' }),
+  });
+  const deleteLabelMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('DELETE', `/api/chat/labels/${id}`),
+    onSuccess: () => { invalidateLabels(); queryClient.invalidateQueries({ queryKey: ['/api/chat/conversation-labels'] }); },
+    onError: (e: any) => toast({ title: 'Erro ao excluir etiqueta', description: e?.message || String(e), variant: 'destructive' }),
+  });
+  const setConvLabelsMutation = useMutation({
+    mutationFn: async ({ convId, labelIds }: any) => await apiRequest('POST', `/api/chat/conversations/${convId}/labels`, { labelIds }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/chat/conversation-labels'] }),
+    onError: (e: any) => toast({ title: 'Erro ao marcar conversa', description: e?.message || String(e), variant: 'destructive' }),
+  });
+  const toggleConvLabel = (convId: string, labelId: string) => {
+    const current = labelIdsByConv.get(convId) || [];
+    const next = current.includes(labelId) ? current.filter(x => x !== labelId) : [...current, labelId];
+    setConvLabelsMutation.mutate({ convId, labelIds: next });
+  };
   const { data: agentStatsData } = useQuery({
     queryKey: ["/api/chat/agents/detailed-stats"],
     enabled: isAdmin,
@@ -1366,7 +1426,7 @@ function ChatCenterInner() {
                                       formatLastMessageTime={formatLastMessageTime}
                                       onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                       setPhonebookData={setPhonebookData}
-                                      isAdmin={isAdmin}
+                                      isAdmin={isAdmin} labelObjsFor={labelsForConv}
                                     />
                                   ))}
                                 </div>
@@ -1388,7 +1448,7 @@ function ChatCenterInner() {
                                     formatLastMessageTime={formatLastMessageTime}
                                     onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                     setPhonebookData={setPhonebookData}
-                                    isAdmin={isAdmin}
+                                    isAdmin={isAdmin} labelObjsFor={labelsForConv}
                                   />
                                 ))}
                               </div>
@@ -1439,7 +1499,7 @@ function ChatCenterInner() {
                                 formatLastMessageTime={formatLastMessageTime}
                                 onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                 setPhonebookData={setPhonebookData}
-                                isAdmin={isAdmin}
+                                isAdmin={isAdmin} labelObjsFor={labelsForConv}
                               />
                             ))}
                           </div>
@@ -1488,7 +1548,7 @@ function ChatCenterInner() {
                                 formatLastMessageTime={formatLastMessageTime}
                                 onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                 setPhonebookData={setPhonebookData}
-                                isAdmin={isAdmin}
+                                isAdmin={isAdmin} labelObjsFor={labelsForConv}
                               />
                             ))}
                           </div>
@@ -1590,6 +1650,7 @@ function ChatCenterInner() {
                            selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
                         </Badge>
                         <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="text-xs" onClick={() => setShowLabelsModal(true)} data-testid="button-open-labels" title="Etiquetas da conversa">🏷️ Etiquetas</Button>
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1969,7 +2030,7 @@ function ChatCenterInner() {
                   }
                 }
               }}
-              isAdmin={isAdmin}
+              isAdmin={isAdmin} labelObjsFor={labelsForConv}
               hasActiveConversation={!!selectedConversation}
             />
           </div>
@@ -2098,6 +2159,75 @@ function ChatCenterInner() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {showLabelsModal && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setShowLabelsModal(false); setEditingLabelId(null); }}>
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 py-3 border-b flex items-center justify-between">
+                <div className="font-bold text-gray-800">🏷️ Etiquetas</div>
+                <button onClick={() => { setShowLabelsModal(false); setEditingLabelId(null); }} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              </div>
+              <div className="px-5 py-4 space-y-4 text-sm">
+                {selectedConversation && (
+                  <div>
+                    <div className="text-xs font-semibold text-gray-600 mb-2">Marcar esta conversa</div>
+                    {labels.length === 0 ? <p className="text-xs text-gray-400">Nenhuma etiqueta criada ainda.</p> : (
+                      <div className="flex flex-wrap gap-2">
+                        {labels.map((l: any) => {
+                          const on = (labelIdsByConv.get(selectedConversation) || []).includes(l.id);
+                          return (
+                            <button key={l.id} onClick={() => toggleConvLabel(selectedConversation, l.id)}
+                              className="inline-flex items-center gap-1 rounded-full px-2.5 h-7 text-xs font-medium border transition"
+                              style={on ? { backgroundColor: l.color, borderColor: l.color, color: '#fff' } : { borderColor: l.color, color: '#374151', background: '#fff' }}>
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: on ? '#fff' : l.color }} />
+                              {l.name}{on ? ' ✓' : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="border-t pt-3">
+                  <div className="text-xs font-semibold text-gray-600 mb-2">Gerenciar etiquetas <span className="text-gray-400">({myLabelCount}/5 suas)</span></div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input type="color" value={newLabelColor} onChange={(e) => setNewLabelColor(e.target.value)} className="w-9 h-9 rounded border p-0.5" title="Cor" />
+                    <input value={newLabelName} onChange={(e) => setNewLabelName(e.target.value)} placeholder="Nova etiqueta" maxLength={40} className="flex-1 border rounded px-2 py-1.5" data-testid="input-new-label" />
+                    <button onClick={() => { if (newLabelName.trim()) createLabelMutation.mutate(); }} disabled={createLabelMutation.isPending || myLabelCount >= 5 || !newLabelName.trim()} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm disabled:opacity-50" data-testid="button-create-label">Criar</button>
+                  </div>
+                  {myLabelCount >= 5 && <p className="text-[11px] text-amber-600 mb-2">Você atingiu o limite de 5 etiquetas.</p>}
+                  <div className="space-y-1.5">
+                    {labels.length === 0 && <p className="text-xs text-gray-400">Nenhuma etiqueta.</p>}
+                    {labels.map((l: any) => (
+                      <div key={l.id} className="flex items-center gap-2 border rounded px-2 py-1.5">
+                        {editingLabelId === l.id ? (
+                          <>
+                            <input type="color" value={editLabelColor} onChange={(e) => setEditLabelColor(e.target.value)} className="w-8 h-8 rounded border p-0.5" />
+                            <input value={editLabelName} onChange={(e) => setEditLabelName(e.target.value)} maxLength={40} className="flex-1 border rounded px-2 py-1" />
+                            <button onClick={() => updateLabelMutation.mutate({ id: l.id, name: editLabelName, color: editLabelColor })} className="text-green-600 text-xs font-medium">Salvar</button>
+                            <button onClick={() => setEditingLabelId(null)} className="text-gray-400 text-xs">Cancelar</button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
+                            <span className="flex-1 truncate">{l.name}</span>
+                            <span className="text-[10px] text-gray-400 truncate max-w-[90px]" title={l.createdByName}>{l.createdByName || ''}</span>
+                            {l.canEdit && (
+                              <>
+                                <button onClick={() => { setEditingLabelId(l.id); setEditLabelName(l.name); setEditLabelColor(l.color); }} className="text-blue-600 text-xs">Editar</button>
+                                <button onClick={() => { if (window.confirm(`Excluir a etiqueta "${l.name}"?`)) deleteLabelMutation.mutate(l.id); }} className="text-red-500 text-xs">Excluir</button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
