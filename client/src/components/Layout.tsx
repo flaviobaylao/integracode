@@ -607,9 +607,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between">
+      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
         {/* Mobile Menu Button */}
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
@@ -699,9 +699,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </div>
       </header>
 
-      <div className="flex">
+      <div className="flex flex-1 min-h-0">
         {/* Sidebar - Seções (Desktop) */}
-        <nav className="hidden md:flex flex-col w-[72px] bg-white shadow-sm h-[calc(100vh-73px)] sticky top-0 border-r border-gray-200">
+        <nav className="hidden md:flex flex-col w-[72px] bg-white shadow-sm h-full border-r border-gray-200">
           <div className="flex-1 overflow-y-auto py-2 px-1.5 space-y-1">
             {visibleGroups.map(group => {
               const isActive = selectedSection === group.groupLabel && showingSectionOptions;
@@ -750,7 +750,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </nav>
 
         {/* Main Content Area */}
-        <main className="flex-1 min-w-0 overflow-x-auto min-h-[calc(100vh-73px)]">
+        <main className="flex-1 min-w-0 overflow-auto h-full">
           {showingSectionOptions && selectedGroup ? (
             renderSectionCards(selectedGroup)
           ) : (
