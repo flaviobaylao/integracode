@@ -221,6 +221,7 @@ export const customers = pgTable("customers", {
   cnpj: varchar("cnpj").unique(),
   companyName: varchar("company_name"), // Razão social para PJ
   fantasyName: varchar("fantasy_name"), // Nome fantasia para PJ
+  segmentoPrincipal: varchar("segmento_principal"), // Segmento de negócio derivado do CNAE do CNPJ
   phone: varchar("phone").notNull(),
   contact: varchar("contact"), // Nome do contato principal
   email: varchar("email"),

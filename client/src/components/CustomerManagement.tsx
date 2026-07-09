@@ -92,6 +92,7 @@ export default function CustomerManagement() {
   const [sortAZ, setSortAZ] = useState(false);
   const [routeDateFilter, setRouteDateFilter] = useState('');
   const [positivationFilter, setPositivationFilter] = useState('all');
+  const [segmentFilter, setSegmentFilter] = useState('all');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
@@ -248,9 +249,12 @@ export default function CustomerManagement() {
                                (positivationFilter === 'no' && !customer.isPositivatedThisMonth);
     
     const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller((customer as any).sellerName || customer.sellerId));
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation;
+    const matchesSegment = segmentFilter === 'all' ||
+                          (segmentFilter === '__none__' ? !customer.segmentoPrincipal : customer.segmentoPrincipal === segmentFilter);
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment;
   }) || [];
   if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
+  const segmentOptions = Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b)));
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -430,6 +434,18 @@ export default function CustomerManagement() {
                 <SelectItem value="all">Todos</SelectItem>
                 <SelectItem value="yes">SIM</SelectItem>
                 <SelectItem value="no">NÃO</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={segmentFilter} onValueChange={setSegmentFilter}>
+              <SelectTrigger data-testid="select-segment-filter">
+                <SelectValue placeholder="Segmento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os segmentos</SelectItem>
+                {segmentOptions.map((seg: any) => (
+                  <SelectItem key={seg} value={seg}>{seg}</SelectItem>
+                ))}
+                <SelectItem value="__none__">Sem segmento</SelectItem>
               </SelectContent>
             </Select>
             <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />

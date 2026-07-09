@@ -237,6 +237,7 @@ export default function ActiveCustomers() {
   const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
   const [selectedPersonType, setSelectedPersonType] = useState<string>("");
+  const [selectedSegment, setSelectedSegment] = useState<string>("");
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkSeller, setBulkSeller] = useState("");
@@ -786,6 +787,14 @@ export default function ActiveCustomers() {
     )
   ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
+  const segmentOptions = Array.from(
+    new Set(
+      activeCustomers
+        .map(ac => ac.customer?.segmentoPrincipal)
+        .filter(Boolean) as string[]
+    )
+  ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
   // Função para calcular variação percentual
   const calcVariation = (prev: number, curr: number): number => {
     if (prev === 0 && curr === 0) return -Infinity; // Sem atividade = último na ordenação
@@ -849,7 +858,8 @@ export default function ActiveCustomers() {
       const ptDigits = (ac.document || '').replace(/\D/g, '');
       const personType = (ac.customer as any)?.customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
       const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType;
+      const matchesSegment = !selectedSegment || (selectedSegment === '__none__' ? !ac.customer?.segmentoPrincipal : ac.customer?.segmentoPrincipal === selectedSegment);
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -1153,6 +1163,19 @@ export default function ActiveCustomers() {
                 <SelectContent>
                   <SelectItem value="pessoa_juridica">Pessoa Jurídica</SelectItem>
                   <SelectItem value="pessoa_fisica">Pessoa Física</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={selectedSegment || '__all__'} onValueChange={(v) => setSelectedSegment(v === '__all__' ? '' : v)}>
+                <SelectTrigger className="w-[160px] h-9" data-testid="select-segment-filter">
+                  <SelectValue placeholder="Segmento" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todos os segmentos</SelectItem>
+                  {segmentOptions.map((seg) => (
+                    <SelectItem key={seg} value={seg}>{seg}</SelectItem>
+                  ))}
+                  <SelectItem value="__none__">Sem segmento</SelectItem>
                 </SelectContent>
               </Select>
 

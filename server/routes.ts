@@ -429,6 +429,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // Garante a coluna de Segmento Principal (derivado do CNAE do CNPJ) — aditivo e idempotente
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS segmento_principal varchar`);
+  } catch (e: any) { console.warn('⚠️ ALTER segmento_principal:', e?.message); }
+
   // Auto-resolve default Omie instance ID for env-var-based service
   await resolveDefaultInstanceId(storage);
   
