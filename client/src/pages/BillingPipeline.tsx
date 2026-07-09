@@ -32,6 +32,7 @@ interface BillingPipelineItem {
   invoiceNumber: string | null;
   saleValue: string | null;
   fiscalStatus?: string | null;
+  fiscalError?: string | null;
   paymentMethod: string | null;
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
@@ -173,6 +174,20 @@ export default function BillingPipeline() {
     onError: (error: any) => {
       toast({ title: 'Erro ao mover item', description: error.message, variant: 'destructive' });
     }
+  });
+
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const retryInvoiceMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('POST', `/api/billing-pipeline/${id}/retry-invoice`, {}),
+    onMutate: (id: string) => { setRetryingId(id); },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: data?.already ? 'NF-e já autorizada' : 'Faturamento reprocessado', description: 'NF-e transmitida com sucesso.' });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Falha ao re-tentar faturamento', description: error?.message || 'Erro ao transmitir a NF-e.', variant: 'destructive' });
+    },
+    onSettled: () => setRetryingId(null),
   });
 
   const updateItemMutation = useMutation({
@@ -671,6 +686,8 @@ export default function BillingPipeline() {
                       isFirst={stage.key === STAGES[0].key}
                       isLast={stage.key === STAGES[STAGES.length - 1].key}
                       isMoving={moveStageMutation.isPending}
+                      onRetryInvoice={() => retryInvoiceMutation.mutate(item.id)}
+                      isRetrying={retryingId === item.id}
                     />
                   ))}
                 </div>
@@ -998,6 +1015,8 @@ function KanbanCard({
   isFirst,
   isLast,
   isMoving,
+  onRetryInvoice,
+  isRetrying,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -1010,6 +1029,8 @@ function KanbanCard({
   isFirst: boolean;
   isLast: boolean;
   isMoving: boolean;
+  onRetryInvoice: () => void;
+  isRetrying: boolean;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isCancelled = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'].includes(fs) || stage.key === 'bloqueado';
@@ -1072,6 +1093,24 @@ function KanbanCard({
           {formatDate(item.createdAt)}
         </div>
 
+        {stage.key !== 'bloqueado' && (['rejected', 'rejeitada', 'denied', 'draft'].includes(fs) || !!item.fiscalError) && (
+          <div className="rounded bg-red-50 dark:bg-red-900/20 border border-red-200 p-1.5 space-y-1">
+            <p className="text-[10px] text-red-700 leading-snug">
+              <span className="font-semibold">Falha no faturamento:</span>{' '}
+              {item.fiscalError || 'NF-e não autorizada (ficou em rascunho).'}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 w-full text-[11px] border-red-300 text-red-700 hover:bg-red-100"
+              disabled={isRetrying}
+              onClick={(e) => { e.stopPropagation(); onRetryInvoice(); }}
+            >
+              <RefreshCw className={`h-3 w-3 mr-1 ${isRetrying ? 'animate-spin' : ''}`} />
+              {isRetrying ? 'Re-tentando...' : 'Re-tentar faturamento'}
+            </Button>
+          </div>
+        )}
         <div className="flex items-center justify-between pt-1 border-t">
           <Button
             variant="ghost"
