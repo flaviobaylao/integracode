@@ -68,15 +68,25 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
 
   const nowBr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
   const mes = nowBr.getMonth() + 1, ano = nowBr.getFullYear();
-  const MAX = 60;
   const plano: any[] = [];
   for (const [, e] of bySeller) {
     if (e.naoPos.length === 0) continue;
     e.naoPos.sort((a, b) => a.nome.localeCompare(b.nome));
-    const linhas = e.naoPos.slice(0, MAX).map((c, i) => `${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}`);
-    const extra = e.naoPos.length > MAX ? `\n... e mais ${e.naoPos.length - MAX} cliente(s).` : '';
     const vendedorNome = nm(e.u);
-    const msg = `☀️ Bom dia, ${vendedorNome}!\n\n📋 Clientes ativos da sua carteira ainda *NÃO positivados* em ${String(mes).padStart(2, '0')}/${ano} (${e.naoPos.length} de ${e.total}):\n\n${linhas.join('\n')}${extra}\n\n💪 Vamos positivá-los hoje!`;
+    const header = `☀️ Bom dia, ${vendedorNome}!\n\n📋 Clientes ativos da sua carteira ainda *NÃO positivados* em ${String(mes).padStart(2, '0')}/${ano} (${e.naoPos.length} de ${e.total}):\n\n`;
+    const footer = `\n\n💪 Vamos positivá-los hoje!`;
+    const BUDGET = 1900; // limite do Umbler é 2000 chars — margem de segurança
+    let body = ''; let shown = 0;
+    for (let i = 0; i < e.naoPos.length; i++) {
+      const c = e.naoPos[i];
+      const line = `${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}\n`;
+      const restante = e.naoPos.length - (shown + 1);
+      const moreLine = restante > 0 ? `... e mais ${restante} cliente(s).` : '';
+      if ((header.length + body.length + line.length + moreLine.length + footer.length) > BUDGET) break;
+      body += line; shown++;
+    }
+    const extra = shown < e.naoPos.length ? `... e mais ${e.naoPos.length - shown} cliente(s).` : '';
+    const msg = header + body + extra + footer;
     const sellerPhone = digits(e.u.phone);
     const destinatarios = Array.from(new Set([...(sellerPhone.length >= 10 ? [sellerPhone] : []), ...gestores, ...fixos]));
     plano.push({ vendedor: vendedorNome, sellerId: String(e.u.id), sellerPhone: sellerPhone || null, naoPositivados: e.naoPos.length, total: e.total, destinatarios, _msg: msg });
