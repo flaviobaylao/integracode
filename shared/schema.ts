@@ -175,6 +175,7 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  phone: varchar("phone"),
   role: userRoleEnum("role").notNull().default('vendedor'),
   route: varchar("route"),
   isActive: boolean("is_active").notNull().default(true),
