@@ -634,14 +634,18 @@ export function registerBillingPipelineRoutes(app: Express) {
 
       // Localiza a NF do item: por número (invoiceNumber) OU pela referência do pedido nas notes.
       const numRef = String(item.invoiceNumber || '').replace(/\D/g, '');
-      const ref = item.orderNumber || item.salesCardId;
       let nf: any = null;
       if (numRef) {
         const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} ORDER BY created_at DESC LIMIT 1`);
         nf = (byNum?.rows ?? byNum ?? [])[0] || null;
       }
-      if (!nf && ref) {
-        const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + ref} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      // Chave à prova de colisão: sales_card_id COMPLETO (o ref 'INT-<8 hex>' colide entre cartões).
+      if (!nf && item.salesCardId) {
+        const byCard: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        nf = (byCard?.rows ?? byCard ?? [])[0] || null;
+      }
+      if (!nf && !item.salesCardId && item.orderNumber) {
+        const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
         nf = (byRef?.rows ?? byRef ?? [])[0] || null;
       }
 
@@ -837,17 +841,24 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
 
 async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>) {
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
-  const __ref = item.orderNumber || item.salesCardId;
-  if (__ref) {
-    try {
-      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + __ref} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
-      const __row = (__ex?.rows ?? __ex ?? [])[0];
-      if (__row && __row.id) {
-        console.warn('[NFE-DEDUP] NF-e já existe p/ pedido ' + __ref + ' (id ' + __row.id + ') — emissão duplicada evitada.');
-        return { id: __row.id, invoiceNumber: __row.invoice_number };
-      }
-    } catch (e: any) { console.warn('[NFE-DEDUP] falha ao checar duplicata (segue):', e?.message); }
-  }
+  // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
+  //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
+  //    → um pedido de um cliente acabava vinculado à NF de OUTRO cliente (mesmo 'INT-xxxxxxxx').
+  //    Só cai no ref por notes quando o item não tem salesCardId (e restringe a NFs sem card).
+  try {
+    let __row: any = null;
+    if (item.salesCardId) {
+      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      __row = (__ex?.rows ?? __ex ?? [])[0];
+    } else if (item.orderNumber) {
+      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      __row = (__ex?.rows ?? __ex ?? [])[0];
+    }
+    if (__row && __row.id) {
+      console.warn('[NFE-DEDUP] NF-e já existe p/ pedido (card ' + (item.salesCardId || item.orderNumber) + ', id ' + __row.id + ') — emissão duplicada evitada.');
+      return { id: __row.id, invoiceNumber: __row.invoice_number };
+    }
+  } catch (e: any) { console.warn('[NFE-DEDUP] falha ao checar duplicata (segue):', e?.message); }
   const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
 
   let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
@@ -942,6 +953,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     totalProducts: totalValue.toFixed(2),
     totalInvoice: totalValue.toFixed(2),
     paymentMethod: item.paymentMethod || 'a_vista',
+    salesCardId: item.salesCardId || null,
     notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
     emissionDate: nowBrazil(),
     environment: invEnv,
