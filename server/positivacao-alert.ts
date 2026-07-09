@@ -73,23 +73,26 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     if (e.naoPos.length === 0) continue;
     e.naoPos.sort((a, b) => a.nome.localeCompare(b.nome));
     const vendedorNome = nm(e.u);
-    const header = `☀️ Bom dia, ${vendedorNome}!\n\n📋 Clientes ativos da sua carteira ainda *NÃO positivados* em ${String(mes).padStart(2, '0')}/${ano} (${e.naoPos.length} de ${e.total}):\n\n`;
+    const mm = String(mes).padStart(2, '0');
     const footer = `\n\n💪 Vamos positivá-los hoje!`;
     const BUDGET = 1900; // limite do Umbler é 2000 chars — margem de segurança
-    let body = ''; let shown = 0;
-    for (let i = 0; i < e.naoPos.length; i++) {
-      const c = e.naoPos[i];
-      const line = `${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}\n`;
-      const restante = e.naoPos.length - (shown + 1);
-      const moreLine = restante > 0 ? `... e mais ${restante} cliente(s).` : '';
-      if ((header.length + body.length + line.length + moreLine.length + footer.length) > BUDGET) break;
-      body += line; shown++;
+    const mkHeader = (part: number, tot: number) => `☀️ Bom dia, ${vendedorNome}!${tot > 1 ? ` (parte ${part}/${tot})` : ''}\n\n📋 Clientes ativos da sua carteira ainda *NÃO positivados* em ${mm}/${ano} (${e.naoPos.length} de ${e.total}):\n\n`;
+    const lines = e.naoPos.map((c, i) => `${i + 1}. ${c.nome}${c.cidade ? ' — ' + c.cidade : ''}`);
+    // Divide em partes: cada mensagem <= BUDGET. Reserva o header do pior caso (parte 99/99) + footer.
+    const worstHeader = mkHeader(99, 99).length;
+    const chunks: string[] = [];
+    let curBody = '';
+    for (const line of lines) {
+      const candidate = curBody ? (curBody + '\n' + line) : line;
+      if (curBody && (worstHeader + candidate.length + footer.length) > BUDGET) { chunks.push(curBody); curBody = line; }
+      else { curBody = candidate; }
     }
-    const extra = shown < e.naoPos.length ? `... e mais ${e.naoPos.length - shown} cliente(s).` : '';
-    const msg = header + body + extra + footer;
+    if (curBody) chunks.push(curBody);
+    const tot = chunks.length || 1;
+    const msgs = chunks.map((b, idx) => mkHeader(idx + 1, tot) + b + (idx === tot - 1 ? footer : ''));
     const sellerPhone = digits(e.u.phone);
     const destinatarios = Array.from(new Set([...(sellerPhone.length >= 10 ? [sellerPhone] : []), ...gestores, ...fixos]));
-    plano.push({ vendedor: vendedorNome, sellerId: String(e.u.id), sellerPhone: sellerPhone || null, naoPositivados: e.naoPos.length, total: e.total, destinatarios, _msg: msg });
+    plano.push({ vendedor: vendedorNome, sellerId: String(e.u.id), sellerPhone: sellerPhone || null, naoPositivados: e.naoPos.length, total: e.total, destinatarios, _msgs: msgs });
   }
 
   let enviados = 0, falhas = 0; const detalhes: any[] = [];
@@ -98,9 +101,11 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     for (const p of alvo) {
       const dests = (toOverride && toOverride.length >= 10) ? [toOverride] : p.destinatarios;
       for (const to of dests) {
-        try { const rr = await sendUmblerTalkText(to, p._msg); if (rr.success) enviados++; else { falhas++; detalhes.push({ to, err: rr.error }); } }
-        catch (err: any) { falhas++; detalhes.push({ to, err: String(err) }); }
-        await new Promise(r => setTimeout(r, 400));
+        for (const m of p._msgs) {
+          try { const rr = await sendUmblerTalkText(to, m); if (rr.success) enviados++; else { falhas++; detalhes.push({ to, err: rr.error }); } }
+          catch (err: any) { falhas++; detalhes.push({ to, err: String(err) }); }
+          await new Promise(r => setTimeout(r, 600));
+        }
       }
     }
     try {
@@ -110,7 +115,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
       if (!n) await db.execute(sql.raw("INSERT INTO system_settings (key,value,updated_by) VALUES ('positivacao_alerta_last','" + stamp + "','cron-positivacao')"));
     } catch { }
   }
-  return { apply, mes, ano, vendedoresComLista: plano.length, gestores: gestores.length, fixos, enviados, falhas, detalhes: detalhes.slice(0, 20), plano: plano.map(({ _msg, ...rest }) => ({ ...rest, msg: _msg })) };
+  return { apply, mes, ano, vendedoresComLista: plano.length, gestores: gestores.length, fixos, enviados, falhas, detalhes: detalhes.slice(0, 20), plano: plano.map(({ _msgs, ...rest }) => ({ ...rest, partes: _msgs.length, msgs: _msgs })) };
 }
 
 // Wrapper do cron: só envia se a flag estiver ligada (system_settings 'positivacao_alerta_ativo' = 'on').
