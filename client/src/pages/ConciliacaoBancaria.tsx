@@ -71,7 +71,8 @@ export default function ConciliacaoBancaria() {
   // modal de conciliação
   const [modalItem, setModalItem] = useState<Item | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [tab, setTab] = useState<"sug" | "search">("sug");
+  const [tab, setTab] = useState<"sug" | "search" | "novo">("sug");
+  const [novo, setNovo] = useState<any>({});
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState<Title[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -240,6 +241,38 @@ export default function ConciliacaoBancaria() {
       closeModal();
       await refresh();
     } catch (e: any) { alert("Erro ao conciliar: " + e.message); }
+    finally { setBusy(""); }
+  };
+
+  const initNovo = () => {
+    if (!modalItem) return;
+    const d = (() => { try { return new Date(modalItem.transaction_date).toISOString().slice(0, 10); } catch { return ""; } })();
+    setNovo({
+      tipo: modalItem.type === "C" ? "receber" : "pagar",
+      name: modalItem.description || "",
+      document: "",
+      amount: itemAmt,
+      issueDate: d, dueDate: d,
+      description: modalItem.description || "",
+      category: "",
+      omieInstanceId: instance || "",
+    });
+  };
+  const createAndReconcile = async () => {
+    if (!modalItem) return;
+    const amt = num(novo.amount);
+    if (!(amt > 0)) { alert("Informe um valor válido."); return; }
+    if (!String(novo.name || "").trim()) { alert("Informe o nome do " + (novo.tipo === "receber" ? "cliente" : "fornecedor") + "."); return; }
+    if (!window.confirm(`Criar ${novo.tipo === "receber" ? "conta a receber" : "conta a pagar"} de ${fmtMoney(amt)} e CONCILIAR (dar baixa) com este lançamento?`)) return;
+    setBusy(modalItem.id);
+    try {
+      await post(`/api/reconciliation/items/${modalItem.id}/create-and-reconcile`, {
+        by: me, tipo: novo.tipo, name: novo.name, document: novo.document,
+        amount: amt, issueDate: novo.issueDate || null, dueDate: novo.dueDate || null,
+        description: novo.description, category: novo.category || null, omieInstanceId: novo.omieInstanceId || null,
+      });
+      closeModal(); await refresh();
+    } catch (e: any) { alert("Erro ao criar/conciliar: " + e.message); }
     finally { setBusy(""); }
   };
 
@@ -469,6 +502,7 @@ export default function ConciliacaoBancaria() {
             <div className="px-5 pt-2 flex gap-4 text-sm border-b">
               <button onClick={() => setTab("sug")} className={`pb-2 ${tab === "sug" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>✨ Sugestões</button>
               <button onClick={() => { setTab("search"); if (!searchResults.length) searchTitles(""); }} className={`pb-2 ${tab === "search" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>🔎 Buscar Título</button>
+              <button onClick={() => { setTab("novo"); initNovo(); }} className={`pb-2 ${tab === "novo" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>➕ Criar Novo</button>
             </div>
 
             <div className="px-5 py-3 overflow-auto flex-1">
@@ -509,6 +543,56 @@ export default function ConciliacaoBancaria() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+              {tab === "novo" && (
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Tipo:</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${novo.tipo === "receber" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{novo.tipo === "receber" ? "Conta a Receber" : "Conta a Pagar"}</span>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">{novo.tipo === "receber" ? "Cliente" : "Fornecedor"}</label>
+                    <input value={novo.name || ""} onChange={(e) => setNovo({ ...novo, name: e.target.value })} className="w-full border rounded px-3 py-1.5" placeholder="Nome do cliente/fornecedor" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Documento (CPF/CNPJ)</label>
+                      <input value={novo.document || ""} onChange={(e) => setNovo({ ...novo, document: e.target.value })} className="w-full border rounded px-3 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Valor</label>
+                      <input type="number" step="0.01" value={novo.amount ?? ""} onChange={(e) => setNovo({ ...novo, amount: e.target.value })} className="w-full border rounded px-3 py-1.5" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Data de Emissão</label>
+                      <input type="date" value={novo.issueDate || ""} onChange={(e) => setNovo({ ...novo, issueDate: e.target.value })} className="w-full border rounded px-3 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Data de Vencimento</label>
+                      <input type="date" value={novo.dueDate || ""} onChange={(e) => setNovo({ ...novo, dueDate: e.target.value })} className="w-full border rounded px-3 py-1.5" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Instância</label>
+                      <select value={novo.omieInstanceId || ""} onChange={(e) => setNovo({ ...novo, omieInstanceId: e.target.value })} className="w-full border rounded px-3 py-1.5">
+                        <option value="">(do extrato)</option>
+                        {instances.map((i) => <option key={i} value={i}>{i}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Categoria</label>
+                      <input value={novo.category || ""} onChange={(e) => setNovo({ ...novo, category: e.target.value })} className="w-full border rounded px-3 py-1.5" placeholder="Ex.: Salários, Marketing…" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Descrição</label>
+                    <input value={novo.description || ""} onChange={(e) => setNovo({ ...novo, description: e.target.value })} className="w-full border rounded px-3 py-1.5" />
+                  </div>
+                  <button onClick={createAndReconcile} disabled={busy === modalItem.id} className="w-full mt-1 px-4 py-2 rounded bg-green-600 text-white font-medium disabled:opacity-40">Criar e Conciliar {fmtMoney(num(novo.amount))}</button>
                 </div>
               )}
             </div>
