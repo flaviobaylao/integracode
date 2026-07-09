@@ -302,6 +302,19 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     );
   };
 
+  // Aceita coordenadas no formato do Google Maps (ponto decimal). Se o usuário colar
+  // o par "lat, lon" (ex.: "-16.691345, -49.278349") em qualquer um dos campos,
+  // separa automaticamente preenchendo latitude e longitude.
+  const handleCoordInput = (raw: string, onChange: (value: string) => void) => {
+    const pair = raw.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (pair) {
+      form.setValue('latitude', pair[1], { shouldDirty: true, shouldValidate: true });
+      form.setValue('longitude', pair[2], { shouldDirty: true, shouldValidate: true });
+    } else {
+      onChange(raw);
+    }
+  };
+
   const openWaze = () => {
     const latitude = form.watch('latitude');
     const longitude = form.watch('longitude');
@@ -923,9 +936,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <Input
                               {...field}
                               value={field.value || ''}
-                              placeholder="-23.5505"
-                              type="number"
-                              step="any"
+                              onChange={(e) => handleCoordInput(e.target.value, field.onChange)}
+                              placeholder="-16.691345 (ou cole -16.691345, -49.278349)"
+                              type="text"
+                              inputMode="decimal"
                               disabled={coordinatesLocked}
                               className={coordinatesLocked ? "opacity-50 cursor-not-allowed" : ""}
                               data-testid="input-latitude"
@@ -946,9 +960,10 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             <Input
                               {...field}
                               value={field.value || ''}
-                              placeholder="-46.6333"
-                              type="number"
-                              step="any"
+                              onChange={(e) => handleCoordInput(e.target.value, field.onChange)}
+                              placeholder="-49.278349 (ou cole -16.691345, -49.278349)"
+                              type="text"
+                              inputMode="decimal"
                               disabled={coordinatesLocked}
                               className={coordinatesLocked ? "opacity-50 cursor-not-allowed" : ""}
                               data-testid="input-longitude"
