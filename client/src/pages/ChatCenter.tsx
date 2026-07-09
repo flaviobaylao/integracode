@@ -583,23 +583,39 @@ function ChatCenterInner() {
     !conv.customerName.toUpperCase().includes('GRUPO')
   );
 
-  // Filtrar conversas por termo de busca (apenas as normais)
-  const filteredConversations = normalConversations.filter(conv => 
-    conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
-  );
+  // Cadastro de Clientes para busca por nome exato/CNPJ/telefone/palavra avulsa
+  const { data: registeredCustomers = [] } = useQuery<any[]>({
+    queryKey: ['/api/customers'],
+    queryFn: async () => { const r = await fetch('/api/customers', { credentials: 'include' }); return r.ok ? r.json() : []; },
+    staleTime: 5 * 60 * 1000,
+  });
+  const custByPhone = new Map<string, any>();
+  (registeredCustomers as any[]).forEach((c: any) => {
+    const d = (c.phone || '').replace(/\D/g, '');
+    if (d.length >= 8) custByPhone.set(d.slice(-8), c);
+  });
+  const convMatchesSearch = (conv: any) => {
+    const t = searchTerm.trim().toLowerCase();
+    if (!t) return true;
+    const tDigits = t.replace(/\D/g, '');
+    const convPhone = (conv.customerPhone || '').replace(/\D/g, '');
+    if ((conv.customerName || '').toLowerCase().includes(t)) return true;
+    if (tDigits !== '' && convPhone.includes(tDigits)) return true;
+    const cust = convPhone.length >= 8 ? custByPhone.get(convPhone.slice(-8)) : null;
+    if (cust) {
+      if ((cust.name || '').toLowerCase().includes(t)) return true;
+      if ((cust.fantasyName || '').toLowerCase().includes(t)) return true;
+      if ((cust.companyName || '').toLowerCase().includes(t)) return true;
+      if (tDigits !== '' && (cust.cnpj || '').replace(/\D/g, '').includes(tDigits)) return true;
+      if (tDigits !== '' && (cust.cpf || '').replace(/\D/g, '').includes(tDigits)) return true;
+    }
+    return false;
+  };
 
-  // Filtrar conversas SPAM por termo de busca
-  const filteredSpamConversations = spamConversations.filter(conv => 
-    conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
-  );
-
-  // Filtrar conversas GRUPO por termo de busca
-  const filteredGrupoConversations = grupoConversations.filter(conv => 
-    conv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (searchTerm.replace(/\D/g, '') !== '' && (conv.customerPhone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')))
-  );
+  // Filtrar conversas por termo de busca (cruzando com o cadastro de Clientes)
+  const filteredConversations = normalConversations.filter(convMatchesSearch);
+  const filteredSpamConversations = spamConversations.filter(convMatchesSearch);
+  const filteredGrupoConversations = grupoConversations.filter(convMatchesSearch);
 
   // Fetch messages para a conversa selecionada - polling a cada 2 segundos (evita rate limiting)
   const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
@@ -1309,7 +1325,7 @@ function ChatCenterInner() {
                     </div>
                     <div className="flex items-center gap-2 flex-1 max-w-[200px]">
                       <Input 
-                        placeholder="Buscar..." 
+                        placeholder="Buscar: nome, CNPJ, telefone ou palavra..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs"
@@ -1394,7 +1410,7 @@ function ChatCenterInner() {
                     </div>
                     <div className="flex items-center gap-2 flex-1 max-w-[200px]">
                       <Input 
-                        placeholder="Buscar..." 
+                        placeholder="Buscar: nome, CNPJ, telefone ou palavra..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs"
@@ -1443,7 +1459,7 @@ function ChatCenterInner() {
                     </div>
                     <div className="flex items-center gap-2 flex-1 max-w-[200px]">
                       <Input 
-                        placeholder="Buscar..." 
+                        placeholder="Buscar: nome, CNPJ, telefone ou palavra..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs"
@@ -1798,11 +1814,12 @@ function ChatCenterInner() {
                     )}
                     <div className="flex gap-2 items-end">
                       <Textarea
-                        placeholder="Digite sua mensagem (Ctrl+Enter para enviar)..."
+                        placeholder="Digite sua mensagem (Enter envia · Shift+Enter nova linha)..."
                         value={messageText}
                         onChange={(e) => setMessageText(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && e.ctrlKey) {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
                             handleSendMessage();
                           }
                         }}
