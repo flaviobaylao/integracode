@@ -196,17 +196,26 @@ async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: st
 }
 
 // Normaliza latitude/longitude para valor numérico aceito pela coluna `numeric`.
-// Aceita string com vírgula decimal (padrão BR, ex.: "-16,64") ou ponto.
+// Convenção do Google Maps: PONTO é o separador decimal e a VÍRGULA separa "lat, lon".
 // - undefined (campo ausente no payload) -> undefined (Drizzle ignora; NÃO sobrescreve valor atual em update)
 // - vazio ('' / null) OU valor não-numérico -> null (limpa/ignora com segurança)
 //   (evita "invalid input syntax for type numeric" -> 500 ao criar/editar cliente).
+// - par colado do Google Maps ("-16.691345, -49.278349") -> usa a 1ª coordenada (rede de segurança;
+//   o formulário já separa lat/lon ao colar).
+// - número único com vírgula decimal (padrão BR, ex.: "-16,64") -> converte para ponto.
 function normalizeCoord(v: any): string | null | undefined {
   if (v === undefined) return undefined;
   if (v === null) return null;
   let s = String(v).trim();
   if (s === '') return null;
-  // Vírgula decimal -> ponto; remove espaços internos (ex.: "-16, 64")
-  s = s.replace(/\s+/g, '').replace(',', '.');
+  const pair = s.match(/^(-?\d+\.\d+)\s*,\s*-?\d+\.\d+$/); // par "lat, lon" com ponto decimal
+  if (pair) {
+    s = pair[1];
+  } else if (/^-?\d+,\d+$/.test(s.replace(/\s+/g, ''))) {
+    s = s.replace(/\s+/g, '').replace(',', '.'); // vírgula decimal (BR) -> ponto
+  } else {
+    s = s.replace(/\s+/g, '');
+  }
   const n = Number(s);
   if (!Number.isFinite(n)) return null;
   return String(n);
