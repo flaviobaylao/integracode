@@ -152,12 +152,16 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [sortAZ, setSortAZ] = useState(false);
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
   const filtered = receivables.filter((r: any) => {
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
       if (!(r.customerName || '').toLowerCase().includes(q)) return false;
     }
+    if (valueMin !== '' && Number(r.amount || 0) < parseFloat(String(valueMin).replace(',', '.'))) return false;
+    if (valueMax !== '' && Number(r.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
   if (sortAZ) filtered.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
@@ -215,6 +219,14 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Buscar cliente..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[200px]" />
+          </div>
+        </div>
+        <div>
+          <Label className="text-xs">Valor (R$)</Label>
+          <div className="flex gap-1 items-center">
+            <Input type="number" step="0.01" placeholder="mín." value={valueMin} onChange={e => setValueMin(e.target.value)} className="w-[90px]" data-testid="filter-valuemin-receivables" />
+            <span className="text-xs text-muted-foreground">até</span>
+            <Input type="number" step="0.01" placeholder="máx." value={valueMax} onChange={e => setValueMax(e.target.value)} className="w-[90px]" data-testid="filter-valuemax-receivables" />
           </div>
         </div>
           <div>
@@ -559,6 +571,8 @@ function PayablesTab() {
   });
 
   const [sortAZ, setSortAZ] = useState(false);
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
   const filtered = payables.filter((p: any) => {
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
@@ -569,6 +583,8 @@ function PayablesTab() {
       const label = eff === 'a_vencer' ? 'A Vencer' : eff === 'paga' ? 'Paga' : eff === 'vencida' ? 'Atrasada' : eff === 'cancelada' ? 'Cancelada' : String(eff);
       if (!statusMulti.includes(label)) return false;
     }
+    if (valueMin !== '' && Number(p.amount || 0) < parseFloat(String(valueMin).replace(',', '.'))) return false;
+    if (valueMax !== '' && Number(p.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
   if (sortAZ) filtered.sort((a: any, b: any) => String(a.supplierName || '').localeCompare(String(b.supplierName || '')));
@@ -639,6 +655,14 @@ function PayablesTab() {
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 w-[200px]" />
+          </div>
+        </div>
+        <div>
+          <Label className="text-xs">Valor (R$)</Label>
+          <div className="flex gap-1 items-center">
+            <Input type="number" step="0.01" placeholder="mín." value={valueMin} onChange={e => setValueMin(e.target.value)} className="w-[90px]" data-testid="filter-valuemin-payables" />
+            <span className="text-xs text-muted-foreground">até</span>
+            <Input type="number" step="0.01" placeholder="máx." value={valueMax} onChange={e => setValueMax(e.target.value)} className="w-[90px]" data-testid="filter-valuemax-payables" />
           </div>
         </div>
           <div className="flex gap-2 items-end">
