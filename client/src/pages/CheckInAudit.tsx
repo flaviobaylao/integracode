@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +53,7 @@ export default function CheckInAudit() {
     enabled: isAdmin
   });
 
-  const sellers = sellersData?.users?.filter((u: any) => u.role === 'vendedor' && u.isActive) || [];
+  const sellers = sortSellersByType(sellersData?.users?.filter((u: any) => u.role === 'vendedor' && u.isActive) || []);
 
   // Buscar auditoria de check-ins
   const { data, isLoading, refetch } = useQuery<{ checkIns: CheckInRecord[], stats: any }>({

@@ -22,6 +22,7 @@ import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 interface Seller {
@@ -295,12 +296,12 @@ export default function Sellers() {
   const activeSellers = allSellers.filter(s => s.isActive);
   const inactiveSellers = allSellers.filter(s => !s.isActive);
 
-  const displaySellers = (showInactive ? allSellers : activeSellers).filter(s => {
+  const displaySellers = sortSellersByType((showInactive ? allSellers : activeSellers).filter(s => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     return fullName.includes(q) || (s.email || '').toLowerCase().includes(q);
-  });
+  }));
 
   const cltCount = activeSellers.filter(s => s.sellerType === 'vendedor_clt').length;
   const pjCount = activeSellers.filter(s => s.sellerType === 'vendedor_pj').length;

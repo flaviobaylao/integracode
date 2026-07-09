@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { useTableSort, SortableTh } from "@/lib/tableTools";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -84,7 +85,7 @@ export default function LeadsManagement() {
 
   // Filter vendors from users
   const sellers = useMemo(() => {
-    return (allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive);
+    return sortSellersByType((allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive));
   }, [allUsers]);
 
   const createLeadMutation = useMutation({

@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
+import { sortSellerNamesByType } from "@/lib/sellerOrder";
 
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
@@ -147,6 +148,12 @@ export default function ClientsMap() {
     refetchInterval: 30000,
   });
 
+  const { data: usersForType } = useQuery<any[]>({
+    queryKey: ['/api/users'],
+    queryFn: () => apiRequest('GET', '/api/users'),
+    enabled: !!canAccess,
+  });
+
   // Filtrar apenas clientes ativos com coordenadas válidas
   let activeCustomersWithCoords = customers.filter(
     (customer) =>
@@ -180,14 +187,22 @@ export default function ClientsMap() {
     );
   }
 
-  // Extrair vendedores únicos
-  const uniqueSellers = Array.from(
-    new Set(
-      customers
-        .filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
-        .map((c) => (c as any).sellerName)
-    )
-  ).sort() as string[];
+  // Extrair vendedores únicos, ordenados por tipo (CLT, PJ, Telemarketing, Canal)
+  const sellerTypeByName: Record<string, string> = {};
+  for (const u of (Array.isArray(usersForType) ? usersForType : [])) {
+    const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+    if (n && !(n in sellerTypeByName)) sellerTypeByName[n] = u.sellerType || (u.role === 'telemarketing' ? 'telemarketing' : '');
+  }
+  const uniqueSellers = sortSellerNamesByType(
+    Array.from(
+      new Set(
+        customers
+          .filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
+          .map((c) => (c as any).sellerName)
+      )
+    ) as string[],
+    sellerTypeByName,
+  );
 
   // Agrupar clientes por dia da semana (ANTES de aplicar filtro de dia, para atualizar a legenda)
   const customersByDay = {

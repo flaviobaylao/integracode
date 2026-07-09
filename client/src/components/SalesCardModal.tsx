@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { compareSellersByType } from "@/lib/sellerOrder";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -424,6 +425,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                     // Mostrar todos os usuários que podem fazer vendas para administrativos
                     allSellers
                       .filter((seller: any) => ['vendedor', 'coordinator', 'administrative', 'admin'].includes(seller.role) && seller.isActive)
+                      .sort(compareSellersByType)
                       .map((seller: any) => (
                         <SelectItem key={seller.id} value={seller.id} data-testid={`option-seller-${seller.id}`}>
                           {seller.firstName} {seller.lastName} ({seller.email})

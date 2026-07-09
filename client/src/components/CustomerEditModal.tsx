@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { useMutation, useQuery } from "@/lib/queryClient";
 import {
   Dialog,
@@ -540,7 +541,7 @@ export default function CustomerEditModal({
                 <SelectValue placeholder="Selecione um vendedor" />
               </SelectTrigger>
               <SelectContent>
-                {users && Array.isArray(users) && users.filter((u: any) => u.isActive).map((user: any) => (
+                {users && Array.isArray(users) && sortSellersByType(users.filter((u: any) => u.isActive && (u.role === 'vendedor' || u.role === 'telemarketing'))).map((user: any) => (
                   <SelectItem key={user.id} value={user.id}>
                     {user.firstName} {user.lastName} ({user.email})
                   </SelectItem>

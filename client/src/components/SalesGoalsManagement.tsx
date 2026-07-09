@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -161,8 +162,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     (u: User) => u.isActive && ['vendedor', 'telemarketing'].includes(u.role)
   );
 
-  const individualSellers = activeSellers.filter((u: User) => u.role !== 'telemarketing' && u.sellerType !== 'telemarketing');
-  const telemarketingUsers = activeSellers.filter((u: User) => u.role === 'telemarketing' || u.sellerType === 'telemarketing');
+  const individualSellers = sortSellersByType(activeSellers.filter((u: User) => u.role !== 'telemarketing' && u.sellerType !== 'telemarketing'));
+  const telemarketingUsers = sortSellersByType(activeSellers.filter((u: User) => u.role === 'telemarketing' || u.sellerType === 'telemarketing'));
 
   const createGoalMutation = useMutation({
     mutationFn: (goalData: any) => {

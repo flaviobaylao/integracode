@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,7 @@ export default function CheckInPhotos() {
     enabled: isAdmin
   });
 
-  const sellers: any[] = (sellersData || []).filter((u: any) => u.role === 'vendedor' && u.isActive);
+  const sellers: any[] = sortSellersByType((sellersData || []).filter((u: any) => u.role === 'vendedor' && u.isActive));
 
   // Buscar fotos de check-in
   const { data: photosData, isLoading } = useQuery({

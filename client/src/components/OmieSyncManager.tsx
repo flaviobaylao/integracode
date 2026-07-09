@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { compareSellersByType } from "@/lib/sellerOrder";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -653,7 +654,8 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
                         <SelectContent>
                           <SelectItem value="no-seller">Sem vendedor atribuído</SelectItem>
                           {users && Array.isArray(users) ? (users as User[])
-                            .filter((user: User) => user.role === 'vendedor')
+                            .filter((user: User) => user.role === 'vendedor' && user.isActive)
+                            .sort(compareSellersByType)
                             .map((user: User) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName}

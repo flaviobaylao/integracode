@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { orderedActiveSellers } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -421,7 +422,7 @@ export default function VisitRoutes() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos os vendedores</SelectItem>
-                    {Array.isArray(sellers) && sellers.map((seller: any) => (
+                    {Array.isArray(sellers) && orderedActiveSellers(sellers).map((seller: any) => (
                       <SelectItem key={seller.id} value={seller.id}>
                         {seller.firstName} {seller.lastName}
                       </SelectItem>

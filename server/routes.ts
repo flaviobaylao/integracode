@@ -1078,6 +1078,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || `Vendedor ${u.id.slice(0, 4)}`,
           email: u.email || '',
           omieVendorCodes: u.omieVendorCodes,
+          sellerType: (u as any).sellerType || null,
+          role: u.role,
         }));
       
       const dedupGroups = new Map<string, typeof activeSellersRaw>();
@@ -1099,9 +1101,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })[0];
           
           const allIds = [...new Set(group.map(s => s.id))];
-          return { id: primary.id, name: primary.name, allIds };
+          return { id: primary.id, name: primary.name, allIds, sellerType: primary.sellerType, role: primary.role };
         })
-        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+        // Ordena por tipo (Externo CLT, Externo PJ, Telemarketing, Canal, depois sem tipo) e nome.
+        .sort((a, b) => {
+          const rankOf = (s: any) => {
+            const order: Record<string, number> = { vendedor_clt: 0, vendedor_pj: 1, telemarketing: 2, canal: 3 };
+            const t = s.sellerType || '';
+            if (t in order) return order[t];
+            if (s.role === 'telemarketing') return 2;
+            return 99;
+          };
+          const ra = rankOf(a), rb = rankOf(b);
+          if (ra !== rb) return ra - rb;
+          return a.name.localeCompare(b.name, 'pt-BR');
+        });
       
       console.log(`📋 [SELLERS] Retornando ${activeSellers.length} vendedores ativos (de ${activeSellersRaw.length} antes de dedup)`);
       res.json(activeSellers);

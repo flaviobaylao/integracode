@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { sortSellerNamesByType } from "@/lib/sellerOrder";
 
 // Resumo de Visitas e Atendimentos — paridade com o 1.0 (calendário por cliente).
 // Fonte: GET /api/visit-summary?startDate&endDate
@@ -99,7 +100,22 @@ export default function ResumoVisitas() {
   const rows: Row[] = data?.rows || [];
   const days = useMemo(() => eachDay(startDate, endDate), [startDate, endDate]);
 
-  const sellers = useMemo(() => Array.from(new Set(rows.map((r) => r.sellerName).filter(Boolean))).sort(), [rows]);
+  const { data: usersData } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    queryFn: () => fetch("/api/users", { credentials: "include" }).then((r) => r.json()),
+  });
+  const sellerTypeByName = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const u of (Array.isArray(usersData) ? usersData : [])) {
+      const n = `${u.firstName || ""} ${u.lastName || ""}`.trim();
+      if (n && !(n in m)) m[n] = u.sellerType || (u.role === "telemarketing" ? "telemarketing" : "");
+    }
+    return m;
+  }, [usersData]);
+  const sellers = useMemo(
+    () => sortSellerNamesByType(Array.from(new Set(rows.map((r) => r.sellerName).filter(Boolean))) as string[], sellerTypeByName),
+    [rows, sellerTypeByName],
+  );
   const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort(), [rows]);
   const bairros = useMemo(() => Array.from(new Set(rows.map((r) => r.neighborhood).filter(Boolean))).sort(), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);

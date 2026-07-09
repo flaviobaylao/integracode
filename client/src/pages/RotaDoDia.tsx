@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { compareSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -728,7 +729,7 @@ export default function RotaDoDia() {
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing')).map((seller) => (
+                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing')).sort(compareSellersByType).map((seller) => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName}
                     </SelectItem>

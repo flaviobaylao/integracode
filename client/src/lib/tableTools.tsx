@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { sortSellerNamesByType } from "@/lib/sellerOrder";
 
 // ============================================================================
 // Ferramentas compartilhadas p/ telas de tabela.
@@ -55,12 +56,18 @@ export function useActiveSellers() {
       if (activeNames.has(v)) return v;
       return SEM_VENDEDOR;
     };
-    externosNames.sort((a, b) => a.localeCompare(b));
-    internosNames.sort((a, b) => a.localeCompare(b));
-    const sellerOptions = [...externosNames, ...internosNames, SEM_VENDEDOR];
+    // Ordena por tipo: Externo CLT, Externo PJ, Telemarketing, Canal, depois nome.
+    const typeByName: Record<string, string> = {};
+    for (const u of [...externos, ...internos]) {
+      const n = nameOf(u);
+      if (!(n in typeByName)) typeByName[n] = (u.sellerType || (u.role === "telemarketing" ? "telemarketing" : "")) as string;
+    }
+    const externosOrdered = sortSellerNamesByType(externosNames, typeByName);
+    const internosOrdered = sortSellerNamesByType(internosNames, typeByName);
+    const sellerOptions = [...sortSellerNamesByType([...externosNames, ...internosNames], typeByName), SEM_VENDEDOR];
     const sellerGroups = [
-      { label: "Vendedores", options: externosNames },
-      { label: "Telemarketing", options: internosNames },
+      { label: "Vendedores", options: externosOrdered },
+      { label: "Telemarketing", options: internosOrdered },
       { label: "", options: [SEM_VENDEDOR] },
     ].filter((g) => g.options.length > 0);
     const kindOf = (name: string): string =>

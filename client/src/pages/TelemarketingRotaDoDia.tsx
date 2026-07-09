@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { orderedActiveSellers } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -260,7 +261,7 @@ export default function TelemarketingRotaDoDia() {
                     <SelectValue placeholder="Selecione o vendedor" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sellers?.map((seller) => (
+                    {orderedActiveSellers(sellers).map((seller) => (
                       <SelectItem key={seller.id} value={seller.id}>
                         {seller.firstName} {seller.lastName?.charAt(0) || ''}
                       </SelectItem>

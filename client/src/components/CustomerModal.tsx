@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1036,7 +1037,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {Array.isArray(users) && users.filter((user: User) => user.role === 'vendedor' && user.isActive).map((user: User) => (
+                            {Array.isArray(users) && sortSellersByType(users.filter((user: User) => user.role === 'vendedor' && user.isActive)).map((user: User) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName} {user.route && `(${user.route})`}
                               </SelectItem>

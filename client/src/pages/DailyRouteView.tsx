@@ -1,6 +1,7 @@
 console.log('🚀 DailyRouteView CARREGADO - Versão: 2025-11-12 12:34');
 
 import { useState, useEffect } from "react";
+import { sortSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -121,7 +122,7 @@ export default function DailyRouteView() {
     enabled: isAdmin
   });
 
-  const sellers = sellersData?.filter((u: any) => u.role === 'vendedor' && u.isActive) || [];
+  const sellers = sortSellersByType(sellersData?.filter((u: any) => u.role === 'vendedor' && u.isActive) || []);
 
   // DEBUG: Log sellers data
   useEffect(() => {
