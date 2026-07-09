@@ -89,6 +89,7 @@ function formatDate(dateStr: string) {
 
 export default function BillingPipeline() {
   const [search, setSearch] = useState('');
+  const [sellerFilter, setSellerFilter] = useState('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
@@ -469,6 +470,8 @@ export default function BillingPipeline() {
     );
   }
 
+  const sellerNamesInPipeline = Array.from(new Set((items || []).map((i: any) => i.sellerName).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b)));
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="p-4">
@@ -522,18 +525,32 @@ export default function BillingPipeline() {
           </div>
         </div>
 
-        {/* Busca por cliente */}
-        <div className="mb-3 relative w-full max-w-sm">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar pedido por cliente..."
-            className="pl-8 h-9"
-            data-testid="input-search-pipeline"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">×</button>
+        {/* Busca por cliente, NF ou vendedor + filtro de Vendedor */}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-sm">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por cliente, NF ou vendedor..."
+              className="pl-8 h-9"
+              data-testid="input-search-pipeline"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">×</button>
+            )}
+          </div>
+          <select
+            value={sellerFilter}
+            onChange={(e) => setSellerFilter(e.target.value)}
+            className="h-9 border rounded-md px-2 text-sm bg-white dark:bg-gray-800 dark:border-gray-600"
+            data-testid="select-seller-pipeline"
+          >
+            <option value="">Todos os vendedores</option>
+            {sellerNamesInPipeline.map((s: any) => (<option key={s} value={s}>{s}</option>))}
+          </select>
+          {sellerFilter && (
+            <button onClick={() => setSellerFilter('')} className="text-gray-400 hover:text-gray-600 text-sm">Limpar vendedor ×</button>
           )}
         </div>
 
@@ -636,10 +653,17 @@ export default function BillingPipeline() {
         )}
 
         {/* Kanban Board */}
-        <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 120px)' }}>
+        <div className="flex gap-3 overflow-auto pb-4" style={{ maxHeight: 'calc(100vh - 170px)' }}>
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
-            const stageItems = (groupedByStage[stage.key] || []).filter(i => !_q || (i.customerName || '').toLowerCase().includes(_q));
+            const stageItems = (groupedByStage[stage.key] || []).filter(i => {
+              const matchesText = !_q
+                || (i.customerName || '').toLowerCase().includes(_q)
+                || (i.invoiceNumber || '').toLowerCase().includes(_q)
+                || (i.sellerName || '').toLowerCase().includes(_q);
+              const matchesSeller = !sellerFilter || i.sellerName === sellerFilter;
+              return matchesText && matchesSeller;
+            });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             const StageIcon = stage.icon;
             const stageIds = stageItems.map(i => i.id);
@@ -647,7 +671,7 @@ export default function BillingPipeline() {
             const someStageSelected = stageIds.some(id => selectedIds.has(id));
             return (
               <div key={stage.key} className="flex-shrink-0 w-72">
-                <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between`}>
+                <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between sticky top-0 z-20`}>
                   <div className="flex items-center gap-2">
                     {stageItems.length > 0 && (
                       <Checkbox
@@ -1082,12 +1106,26 @@ function KanbanCard({
           )}
         </div>
 
-        {item.omieInstanceName && (
-          <Badge variant="secondary" className="text-[10px]">
-            <MapPin className="h-2.5 w-2.5 mr-0.5" />
-            {item.omieInstanceName}
-          </Badge>
-        )}
+        <div className="flex flex-wrap items-center gap-1">
+          {isCancelled ? (
+            <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">Cancelado</Badge>
+          ) : item.operationType ? (
+            <Badge variant="outline" className="text-[10px] border-slate-300 text-slate-700">
+              {OPERATION_LABELS[item.operationType] || item.operationType}
+            </Badge>
+          ) : null}
+          {item.omieInstanceName && (
+            <Badge variant="secondary" className="text-[10px]">
+              <MapPin className="h-2.5 w-2.5 mr-0.5" />
+              {item.omieInstanceName}
+            </Badge>
+          )}
+          {item.invoiceNumber && (
+            <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50">
+              NF {item.invoiceNumber}
+            </Badge>
+          )}
+        </div>
 
         <div className="text-[10px] text-gray-400">
           {formatDate(item.createdAt)}
