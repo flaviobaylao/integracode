@@ -8248,13 +8248,36 @@ export class DatabaseStorage implements IStorage {
         (rows as any[]).map(r => String(r.invoiceNumber || '').replace(/\D/g, '')).filter(Boolean).map(Number)
       ));
       if (nums.length > 0) {
-        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status })
+        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status, id: fiscalInvoices.id })
           .from(fiscalInvoices).where(inArray(fiscalInvoices.invoiceNumber, nums as any));
         const map = new Map<string, string>();
-        for (const f of fis as any[]) if (f.n != null) map.set(String(f.n), f.st);
+        const idByNum = new Map<string, string>();
+        const errIds: string[] = [];
+        for (const f of fis as any[]) {
+          if (f.n != null) {
+            map.set(String(f.n), f.st);
+            idByNum.set(String(f.n), f.id);
+            if (['rejected', 'rejeitada', 'draft'].includes(String(f.st))) errIds.push(f.id);
+          }
+        }
+        // Motivo do erro (último evento de erro) p/ NFs rejeitadas/rascunho — mostra no card + habilita re-tentar.
+        const errByInvId = new Map<string, string>();
+        if (errIds.length > 0) {
+          try {
+            const evs = await db.select({ inv: fiscalInvoiceEvents.invoiceId, msg: fiscalInvoiceEvents.errorMessage, dsc: fiscalInvoiceEvents.description })
+              .from(fiscalInvoiceEvents)
+              .where(and(inArray(fiscalInvoiceEvents.invoiceId, errIds as any), eq(fiscalInvoiceEvents.status, 'error')))
+              .orderBy(desc(fiscalInvoiceEvents.createdAt));
+            for (const e of evs as any[]) { if (e.inv && !errByInvId.has(String(e.inv))) errByInvId.set(String(e.inv), e.msg || e.dsc || ''); }
+          } catch {}
+        }
         for (const r of rows as any[]) {
           const k = String(r.invoiceNumber || '').replace(/\D/g, '');
-          if (k && map.has(k)) r.fiscalStatus = map.get(k);
+          if (k && map.has(k)) {
+            r.fiscalStatus = map.get(k);
+            const invId = idByNum.get(k);
+            if (invId && errByInvId.has(invId)) (r as any).fiscalError = errByInvId.get(invId);
+          }
         }
       }
     } catch {}

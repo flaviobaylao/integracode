@@ -623,6 +623,51 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Batch delete items
+  // RE-TENTAR FATURAMENTO: re-transmite a MESMA NF (rascunho/rejeitada) do item — NÃO cria outra (evita duplicata).
+  // Usado pelo botão do card vermelho quando a emissão falhou e o problema foi sanado.
+  app.post('/api/billing-pipeline/:id/retry-invoice', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (!item) return res.status(404).json({ success: false, message: 'Item não encontrado' });
+      const user = req.currentUser || req.user;
+      const { sefazService } = await import('./sefaz-service.js');
+
+      // Localiza a NF do item: por número (invoiceNumber) OU pela referência do pedido nas notes.
+      const numRef = String(item.invoiceNumber || '').replace(/\D/g, '');
+      const ref = item.orderNumber || item.salesCardId;
+      let nf: any = null;
+      if (numRef) {
+        const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} ORDER BY created_at DESC LIMIT 1`);
+        nf = (byNum?.rows ?? byNum ?? [])[0] || null;
+      }
+      if (!nf && ref) {
+        const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + ref} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        nf = (byRef?.rows ?? byRef ?? [])[0] || null;
+      }
+
+      // Sem NF nenhuma → o faturamento falhou antes de criar a nota: cria + emite (dedup interno evita duplicar).
+      if (!nf) {
+        const created: any = await createInvoiceFromPipelineItem(item, user);
+        if (created?.invoiceNumber) await storage.updateBillingPipelineItem(item.id, { invoiceNumber: `NF-${created.invoiceNumber}` });
+        const chk: any = await db.execute(sql`SELECT status FROM fiscal_invoices WHERE id = ${created.id} LIMIT 1`);
+        const st = (chk?.rows ?? chk ?? [])[0]?.status;
+        if (st === 'authorized') return res.json({ success: true, invoiceNumber: created.invoiceNumber });
+        return res.status(422).json({ success: false, message: 'NF-e criada mas ainda não autorizada — verifique o cadastro do cliente e tente de novo.' });
+      }
+
+      if (String(nf.status) === 'authorized') {
+        return res.json({ success: true, already: true, message: 'NF-e já está autorizada.' });
+      }
+
+      // Re-transmite a MESMA NF (draft/rejected).
+      const emitRes: any = await sefazService.emitNfe(nf.id);
+      if (emitRes?.success) return res.json({ success: true });
+      return res.status(422).json({ success: false, message: emitRes?.errorMessage || 'Falha ao transmitir a NF-e.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.post('/api/billing-pipeline/batch/delete', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       const { ids } = req.body;
