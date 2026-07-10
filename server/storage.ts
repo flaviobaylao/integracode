@@ -7564,13 +7564,20 @@ export class DatabaseStorage implements IStorage {
     return customer;
   }
   
-  async getCustomerByPhone(phone: string): Promise<Customer | undefined> {
-    const cleanPhone = phone.replace(/\D/g, '');
-    const [customer] = await db
+  async getCustomerByPhone(phone: string): Promise<CustomerWithSeller | undefined> {
+    // Casa o telefone pelos ÚLTIMOS 8 DÍGITOS (robusto a DDI 55 e ao 9º dígito) e
+    // resolve o vendedor pelos dois critérios: users.id = seller_id OU omie_vendor_code = seller_id.
+    const cleanPhone = (phone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 8) return undefined;
+    const last8 = cleanPhone.slice(-8);
+    const [row] = await db
       .select()
       .from(customers)
-      .where(sql`REGEXP_REPLACE(${customers.phone}, '\\D', '') = ${cleanPhone}`);
-    return customer;
+      .leftJoin(users, or(eq(users.id, customers.sellerId), eq(users.omieVendorCode, customers.sellerId)))
+      .where(sql`RIGHT(REGEXP_REPLACE(${customers.phone}, '\\D', '', 'g'), 8) = ${last8}`)
+      .limit(1);
+    if (!row || !row.customers) return undefined;
+    return { ...row.customers, seller: (row.users as any) || null } as any;
   }
   
   async isCustomerInActiveList(customerId: string): Promise<boolean> {
@@ -7862,20 +7869,6 @@ export class DatabaseStorage implements IStorage {
     return { synced, errors };
   }
 
-  async getCustomerByPhone(phone: string): Promise<typeof customers.$inferSelect | undefined> {
-    const cleanPhone = phone.replace(/\D/g, '');
-    const phoneWithoutCountry = cleanPhone.startsWith('55') ? cleanPhone.slice(2) : cleanPhone;
-    
-    const [customer] = await db.select().from(customers)
-      .where(
-        or(
-          like(customers.phone, `%${phoneWithoutCountry}%`),
-          like(customers.phone, `%${cleanPhone}%`)
-        )
-      );
-    return customer;
-  }
-  
   // Virtual Attendance Stats operations
   async logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void> {
     const formattedDate = serviceDate.toISOString().split('T')[0];
