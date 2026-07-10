@@ -112,9 +112,18 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
   const queryClient = useQueryClient();
   const { user } = useAuth();
   
-  // Vendedores não podem alterar dias de visita, periodicidade e atendimento virtual
-  const canManageRouteAndPeriodicity = user?.role !== 'vendedor';
+  // Vendedores não podem alterar atendimento virtual
   const canManageVirtualService = user?.role !== 'vendedor';
+
+  // 🔒 Dias/Periodicidade de visita: QUALQUER usuário pode INCLUIR (quando o campo está vazio);
+  // ALTERAR um valor já preenchido é permitido só a estes administradores (Cinthia e Flávio).
+  const VISIT_ALTER_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const canAlterVisitFields = VISIT_ALTER_ADMINS.includes((user?.email || '').toLowerCase().trim());
+  const originalWeekdaysEmpty = !customer || normalizeWeekdays((customer as any)?.weekdays || '[]').length === 0;
+  const originalPeriodicityEmpty = !customer || !((customer as any)?.visitPeriodicity);
+  // Habilitado se: é o admin permitido, OU o campo estava vazio na abertura (= inclusão liberada a todos)
+  const canManageWeekdays = canAlterVisitFields || originalWeekdaysEmpty;
+  const canManagePeriodicity = canAlterVisitFields || originalPeriodicityEmpty;
 
   const { data: users } = useQuery({
     queryKey: ['/api/users'],
@@ -1064,9 +1073,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <span>Dias de Visita (selecione um ou mais)</span>
                         </FormLabel>
                         <FormDescription className="text-xs">
-                          {canManageRouteAndPeriodicity 
+                          {canManageWeekdays
                             ? "Selecione os dias da semana em que o cliente pode receber visitas. Você pode selecionar múltiplos dias."
-                            : "Apenas administradores podem alterar os dias de visita"}
+                            : "Já definido. Apenas Cinthia e Flávio podem alterar os dias de visita."}
                         </FormDescription>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {weekdayOptions.map((option) => {
@@ -1085,7 +1094,7 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                                 variant={isSelected ? "default" : "outline"}
                                 size="sm"
                                 onClick={() => handleWeekdayToggle(option.value)}
-                                disabled={!canManageRouteAndPeriodicity}
+                                disabled={!canManageWeekdays}
                                 className={isSelected ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                                 data-testid={`button-weekday-${option.value}`}
                               >
@@ -1112,9 +1121,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           <span>Periodicidade de Visita</span>
                         </FormLabel>
                         <Select 
-                          value={field.value} 
+                          value={field.value}
                           onValueChange={field.onChange}
-                          disabled={!canManageRouteAndPeriodicity}
+                          disabled={!canManagePeriodicity}
                         >
                           <FormControl>
                             <SelectTrigger data-testid="select-visit-periodicity">
@@ -1129,9 +1138,9 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                           </SelectContent>
                         </Select>
                         <FormDescription className="text-xs">
-                          {canManageRouteAndPeriodicity 
-                            ? "Defina com que frequência o cliente deve ser visitado" 
-                            : "Apenas administradores podem alterar a periodicidade"}
+                          {canManagePeriodicity
+                            ? "Defina com que frequência o cliente deve ser visitado"
+                            : "Já definido. Apenas Cinthia e Flávio podem alterar a periodicidade."}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
