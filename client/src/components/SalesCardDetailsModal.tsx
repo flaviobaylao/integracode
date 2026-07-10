@@ -827,7 +827,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         {/* Botões de Ação (inclui cards auto-cancelados, p/ permitir atendimento na Rota do Dia) */}
         {(card.status === 'open' || card.status === 'pending' || card.status === 'in_progress' || card.status === 'scheduled' || card.status === 'cancelled' || card.status === 'cancelado') && (
           <div className="border-t pt-4 space-y-4">
-            {/* Botões de Check-in e Check-out */}
+            {/* Check-in (o check-out foi desligado — a visita conclui no check-in) */}
             <div className="flex flex-wrap justify-center gap-3">
               <Button
                 onClick={handleCheckIn}
@@ -842,21 +842,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   <LogIn className="h-4 w-4 mr-2" />
                 )}
                 {displayCard?.checkInTime ? 'Check-in Realizado' : 'Check-in'}
-              </Button>
-              
-              <Button
-                onClick={handleCheckOut}
-                disabled={isCheckingOut || !displayCard?.checkInTime}
-                variant="outline"
-                className="border-purple-600 text-purple-600 hover:bg-purple-50"
-                data-testid="button-check-out"
-              >
-                {isCheckingOut ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <LogOut className="h-4 w-4 mr-2" />
-                )}
-                Check-out
               </Button>
             </div>
 
