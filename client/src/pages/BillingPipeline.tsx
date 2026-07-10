@@ -89,17 +89,22 @@ function operationCategory(item: any): string | null {
 const CATEGORY_LABELS: Record<string, string> = {
   venda: 'Venda',
   cancelado: 'Cancelado',
+  devolucao: 'Devolução',
   amostra: 'Amostra',
   bonificacao: 'Bonificação',
   troca: 'Troca',
   reposicao: 'Reposição',
 };
-const CATEGORY_ORDER = ['venda', 'cancelado', 'amostra', 'bonificacao', 'troca', 'reposicao'];
-// Cores das tags: Venda=verde, Cancelado=vermelho, Amostra=amarelo (demais = neutro)
+const CATEGORY_ORDER = ['venda', 'cancelado', 'devolucao', 'amostra', 'bonificacao', 'troca', 'reposicao'];
+// Cores das tags: Venda=verde, Cancelado=vermelho escuro, Devolução=vermelho claro, Amostra=azul, Troca=amarelo
+// (correspondência por texto para tolerar variações de chave, ex.: 'devolucao'/'devolução')
 function operationBadgeClass(cat: string | null): string {
-  if (cat === 'venda') return 'border-green-300 text-green-700 bg-green-50';
-  if (cat === 'cancelado') return 'border-red-300 text-red-700 bg-red-50';
-  if (cat === 'amostra') return 'border-blue-300 text-blue-700 bg-blue-50';
+  const c = normName(cat || '');
+  if (c.includes('cancel')) return 'border-red-600 text-red-900 bg-red-100';
+  if (c.includes('devolu')) return 'border-red-200 text-red-400 bg-red-50';
+  if (c.includes('venda')) return 'border-green-300 text-green-700 bg-green-50';
+  if (c.includes('amostra')) return 'border-blue-300 text-blue-700 bg-blue-50';
+  if (c.includes('troca')) return 'border-yellow-300 text-yellow-700 bg-yellow-50';
   return 'border-slate-300 text-slate-700';
 }
 
