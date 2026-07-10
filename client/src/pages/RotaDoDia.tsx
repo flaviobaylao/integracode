@@ -122,6 +122,10 @@ export default function RotaDoDia() {
   const [adminCheckOutTime, setAdminCheckOutTime] = useState('');
   const [adminSaving, setAdminSaving] = useState(false);
   
+  // Busca e filtro das Visitas Presenciais
+  const [presentialSearch, setPresentialSearch] = useState('');
+  const [presentialFilter, setPresentialFilter] = useState<'todos' | 'atendidos' | 'pendentes'>('todos');
+
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{ id: string; name: string } | null>(null);
@@ -629,6 +633,29 @@ export default function RotaDoDia() {
     return { comPedidos, semPedido: visits.length - comPedidos, valor };
   }, [route?.visits, customerInfo]);
 
+  // Visitas presenciais (exclui virtuais)
+  const presentialVisits = useMemo(
+    () => (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual'),
+    [route?.visits]
+  );
+  // Clientes com check-out realizado = "Atendidos" (concluídos); demais = "Pendentes"
+  const checkedOutCustomerIds = useMemo(() => {
+    const s = new Set<string>();
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out') s.add(cp.customerId); });
+    return s;
+  }, [route?.checkpoints]);
+  // Aplica busca por cliente + filtro Atendidos/Pendentes
+  const filteredPresentialVisits = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    return presentialVisits.filter((v: any) => {
+      if (q && !((v.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = checkedOutCustomerIds.has(v.customerId);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [presentialVisits, checkedOutCustomerIds, presentialSearch, presentialFilter]);
+
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -1085,8 +1112,30 @@ export default function RotaDoDia() {
 
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Visitas Presenciais ({(route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual').length})</CardTitle>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <CardTitle className="whitespace-nowrap">
+                  Visitas Presenciais ({filteredPresentialVisits.length}{filteredPresentialVisits.length !== presentialVisits.length ? ` de ${presentialVisits.length}` : ''})
+                </CardTitle>
+                {/* Busca por cliente + filtro Atendidos/Pendentes */}
+                <div className="flex flex-1 flex-wrap items-center gap-2 lg:justify-center">
+                  <Input
+                    placeholder="Buscar cliente..."
+                    value={presentialSearch}
+                    onChange={(e) => setPresentialSearch(e.target.value)}
+                    className="h-9 w-full sm:max-w-xs"
+                    data-testid="input-presential-search"
+                  />
+                  <Select value={presentialFilter} onValueChange={(v) => setPresentialFilter(v as 'todos' | 'atendidos' | 'pendentes')}>
+                    <SelectTrigger className="h-9 w-[150px]" data-testid="select-presential-filter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos</SelectItem>
+                      <SelectItem value="atendidos">Atendidos</SelectItem>
+                      <SelectItem value="pendentes">Pendentes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 {(isAdmin || isVendedor || isTelemarketing) && route.id && (
                   <div className="flex gap-2">
                     <Button
@@ -1127,7 +1176,7 @@ export default function RotaDoDia() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {((route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual')).map((visit, index) => {
+                {filteredPresentialVisits.map((visit: any, index: number) => {
                   const checkInCheckpoint = route.checkpoints?.find(
                     cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
                   );
@@ -1424,6 +1473,12 @@ export default function RotaDoDia() {
                     </div>
                   );
                 })}
+
+                {filteredPresentialVisits.length === 0 && presentialVisits.length > 0 && (
+                  <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="presential-empty">
+                    Nenhuma visita corresponde à busca/filtro.
+                  </div>
+                )}
 
                 {(() => {
                   const virtualVisits = (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual');
