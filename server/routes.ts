@@ -12790,7 +12790,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (allBillingIds.length > 0) {
         await storage.updateBillingsStatus(allBillingIds, 'Em Rota');
         console.log(`📦 [SAVE-ROUTES] ${allBillingIds.length} billings atualizados para "Em Rota"`);
-        
+
+        // ✅ Mover os CARDS DO PIPELINE (Kanban) para a fase "Em Rota" (allBillingIds são ids de billing_pipeline).
+        // Sem isto o card permanecia em "Aguardando Rota" mesmo após planejar/salvar a rota.
+        try {
+          const movedRes: any = await db.execute(sql`
+            UPDATE billing_pipeline
+            SET stage = 'em_rota', updated_at = NOW()
+            WHERE id IN (${sql.join(allBillingIds.map((bid) => sql`${bid}`), sql`, `)})
+              AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
+          `);
+          const movedCount = movedRes?.rowCount ?? movedRes?.rows?.length ?? 0;
+          console.log(`🚚 [SAVE-ROUTES] ${movedCount} card(s) do pipeline movidos para a fase "em_rota"`);
+        } catch (e: any) {
+          console.error('[SAVE-ROUTES] Falha ao mover cards do pipeline para "em_rota":', e?.message);
+        }
+
+
         // ✅ SINCRONIZAÇÃO OMIE: Alterar etapa das NFs para "Em Rota" (código 20)
         try {
           console.log(`🔄 [OMIE-SYNC] Iniciando sincronização de etapas para ${allBillingIds.length} billings...`);
