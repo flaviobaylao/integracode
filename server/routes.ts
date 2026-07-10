@@ -20607,12 +20607,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Usa UNION para combinar order_history + omie_order_id
       const ordersResult = await db.execute(sql`
         WITH order_history_orders AS (
-          SELECT 
+          SELECT
             sc.customer_id,
             sc.id as sales_card_id,
             sc.card_number,
             oh.order_date,
-            sc.omie_order_id
+            sc.omie_order_id,
+            sc.sale_value
           FROM order_history oh
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
@@ -20620,11 +20621,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND sc.customer_id = ANY(${customerIds}::text[])
         ),
         omie_orders AS (
-          SELECT 
+          SELECT
             customer_id,
             id as sales_card_id,
             card_number,
-            omie_order_id
+            omie_order_id,
+            sale_value
           FROM sales_cards
           WHERE omie_order_id IS NOT NULL
             AND customer_id = ANY(${customerIds}::text[])
@@ -20638,21 +20640,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
                         DATE(completed_date AT TIME ZONE 'America/Sao_Paulo')) = ${routeDate}::date)
             )
         )
-        SELECT DISTINCT customer_id, sales_card_id, card_number, omie_order_id
+        SELECT DISTINCT customer_id, sales_card_id, card_number, omie_order_id, sale_value
         FROM (
-          SELECT customer_id, sales_card_id, card_number, omie_order_id FROM order_history_orders
+          SELECT customer_id, sales_card_id, card_number, omie_order_id, sale_value FROM order_history_orders
           UNION
-          SELECT customer_id, sales_card_id, card_number, omie_order_id FROM omie_orders
+          SELECT customer_id, sales_card_id, card_number, omie_order_id, sale_value FROM omie_orders
         ) all_orders
       `);
       
       // Indexar pedidos por customerId
-      const ordersMap: Record<string, { cardNumber: string | null; omieOrderId: string | null }[]> = {};
+      const ordersMap: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue: number | null }[]> = {};
       (ordersResult.rows as any[]).forEach(row => {
         if (!ordersMap[row.customer_id]) ordersMap[row.customer_id] = [];
         ordersMap[row.customer_id].push({
           cardNumber: row.card_number,
-          omieOrderId: row.omie_order_id
+          omieOrderId: row.omie_order_id,
+          saleValue: row.sale_value != null ? parseFloat(row.sale_value) : null
         });
       });
       
