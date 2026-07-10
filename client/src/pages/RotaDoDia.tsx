@@ -621,17 +621,23 @@ export default function RotaDoDia() {
   // Métricas de PEDIDOS por visita (visitas físicas, exclui virtuais): com pedido, valor e sem pedido
   const orderStats = useMemo(() => {
     const visits = (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual');
+    // Visitas concluídas = com check-out realizado
+    const concluidas = new Set<string>();
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out') concluidas.add(cp.customerId); });
     let comPedidos = 0;
     let valor = 0;
+    let semPedido = 0; // visitas CONCLUÍDAS (check-out) que NÃO tiveram pedido implantado
     for (const v of visits) {
       const ords = (v.customerId && customerInfo?.orders?.[v.customerId]) || [];
       if (ords.length > 0) {
         comPedidos++;
         valor += ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0);
+      } else if (v.customerId && concluidas.has(v.customerId)) {
+        semPedido++;
       }
     }
-    return { comPedidos, semPedido: visits.length - comPedidos, valor };
-  }, [route?.visits, customerInfo]);
+    return { comPedidos, semPedido, valor };
+  }, [route?.visits, route?.checkpoints, customerInfo]);
 
   // Visitas presenciais (exclui virtuais)
   const presentialVisits = useMemo(
