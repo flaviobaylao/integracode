@@ -70,12 +70,14 @@ function kv(doc: jsPDF, label: string, val: string, y: number) {
 // ── Cabecalho comum com logo ────────────────────────────────────────────────
 function brandHeader(doc: jsPDF, logo: string | null, title: string) {
   putLogo(doc, logo, 12, 9, 32, 13);
-  doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
-  doc.text(COMPANY, 47, 13);
-  doc.setTextColor(80); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
-  doc.text('Goiânia - GO  ·  Fone: (62) 3093-5050', 47, 18);
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+  doc.text(COMPANY, 47, 11.5);
+  doc.setTextColor(80); doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5);
+  doc.text('AVENIDA T 63, nº 4446, QUADRA 03 LOTE 71 SALA 1 E GALPAO, ANHANGUERA', 47, 15);
+  doc.text('Goiânia/GO · CEP 74.335-102 · CNPJ 28.295.493/0002-34', 47, 18);
+  doc.text('Contato: (62) 3093-5050 · (62) 99327-5962 · (62) 99322-9699 · (62) 99578-2812', 47, 21);
   doc.setTextColor(0); doc.setFontSize(15); doc.setFont('helvetica', 'bold');
-  doc.text(title, 198, 15, { align: 'right' });
+  doc.text(title, 198, 14, { align: 'right' });
   doc.setDrawColor(...GREEN); doc.setLineWidth(0.6); doc.line(12, 24, 198, 24); doc.setLineWidth(0.2); doc.setDrawColor(0);
 }
 
