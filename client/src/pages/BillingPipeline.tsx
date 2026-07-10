@@ -855,7 +855,7 @@ export default function BillingPipeline() {
                     {stageItems.length > 0 && (
                       <Checkbox
                         checked={allStageSelected}
-                        className="border-white data-[state=checked]:bg-white data-[state=checked]:text-gray-900 h-4 w-4"
+                        className="border-white data-[state=checked]:bg-white data-[state=checked]:text-gray-900 h-5 w-5"
                         onCheckedChange={() => toggleSelectAllInStage(stage.key)}
                       />
                     )}
@@ -1276,7 +1276,7 @@ function KanbanCard({
             checked={selected}
             onCheckedChange={() => onToggleSelect()}
             onClick={(e) => e.stopPropagation()}
-            className="mt-0.5 h-4 w-4 flex-shrink-0"
+            className="mt-0.5 h-6 w-6 flex-shrink-0"
           />
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm truncate">{item.customerName}</p>
