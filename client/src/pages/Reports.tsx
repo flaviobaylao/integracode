@@ -18,7 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Home, Play, Save, Trash2, FileText, Download, Plus, X, GripVertical,
   Database, Columns, BarChart3, Filter, SortAsc, SortDesc, ChevronRight,
-  Loader2, BookOpen, ArrowUpDown, Settings2, Eye, Copy
+  Loader2, BookOpen, ArrowUpDown, Settings2, Eye, Copy, CalendarDays
 } from 'lucide-react';
 import type { SavedReport } from '@shared/schema';
 
@@ -118,7 +118,11 @@ export default function Reports() {
   const [aggregations, setAggregations] = useState<AggConfig[]>([]);
   const [filters, setFilters] = useState<FilterConfig[]>([]);
   const [orderBy, setOrderBy] = useState<OrderConfig[]>([]);
-  const [limit, setLimit] = useState(1000);
+  const [limit, setLimit] = useState(5000);
+  const [periodEnabled, setPeriodEnabled] = useState(false);
+  const [periodField, setPeriodField] = useState('');
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
   const [result, setResult] = useState<ReportResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -157,6 +161,10 @@ export default function Reports() {
     setAggregations([]);
     setFilters([]);
     setOrderBy([]);
+    setPeriodEnabled(false);
+    setPeriodField('');
+    setPeriodStart('');
+    setPeriodEnd('');
     setResult(null);
   };
 
@@ -199,6 +207,21 @@ export default function Reports() {
     setFilters(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const applyPeriodPreset = (preset: string) => {
+    const today = new Date();
+    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let start = new Date(today);
+    let end = new Date(today);
+    if (preset === 'semana') { start.setDate(today.getDate() - 6); }
+    else if (preset === 'mes') { start = new Date(today.getFullYear(), today.getMonth(), 1); end = new Date(today.getFullYear(), today.getMonth() + 1, 0); }
+    else if (preset === 'mesant') { start = new Date(today.getFullYear(), today.getMonth() - 1, 1); end = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (preset === 'trimestre') { start = new Date(today.getFullYear(), today.getMonth() - 2, 1); end = new Date(today.getFullYear(), today.getMonth() + 1, 0); }
+    else if (preset === 'ano') { start = new Date(today.getFullYear(), 0, 1); end = new Date(today.getFullYear(), 11, 31); }
+    setPeriodStart(fmt(start));
+    setPeriodEnd(fmt(end));
+    setPeriodEnabled(true);
+  };
+
   const addOrderBy = () => {
     const firstField = currentSource?.fields[0]?.key || '';
     setOrderBy(prev => [...prev, { field: firstField, direction: 'asc' }]);
@@ -219,14 +242,17 @@ export default function Reports() {
     }
     setIsExecuting(true);
     try {
+      const effFilters = filters.filter(f => f.operator === 'is_null' || f.operator === 'is_not_null' || f.value);
+      if (periodEnabled && periodField) {
+        if (periodStart) effFilters.push({ field: periodField, operator: 'gte', value: periodStart });
+        if (periodEnd) effFilters.push({ field: periodField, operator: 'lte', value: periodEnd });
+      }
       const config = {
         dataSource,
         columns: selectedColumns,
         groupBy: groupBy.length > 0 ? groupBy : undefined,
         aggregations: aggregations.length > 0 ? aggregations : undefined,
-        filters: filters.filter(f => f.operator === 'is_null' || f.operator === 'is_not_null' || f.value).length > 0
-          ? filters.filter(f => f.operator === 'is_null' || f.operator === 'is_not_null' || f.value)
-          : undefined,
+        filters: effFilters.length > 0 ? effFilters : undefined,
         orderBy: orderBy.length > 0 ? orderBy : undefined,
         limit,
       };
@@ -248,7 +274,7 @@ export default function Reports() {
         name: saveName,
         description: saveDescription,
         dataSource,
-        config: { columns: selectedColumns, groupBy, aggregations, filters, orderBy, limit },
+        config: { columns: selectedColumns, groupBy, aggregations, filters, orderBy, limit, period: { enabled: periodEnabled, field: periodField, start: periodStart, end: periodEnd } },
         isPublic: true,
       });
       queryClient.invalidateQueries({ queryKey: ['/api/reports/saved'] });
@@ -269,7 +295,12 @@ export default function Reports() {
     setAggregations(config.aggregations || []);
     setFilters(config.filters || []);
     setOrderBy(config.orderBy || []);
-    setLimit(config.limit || 1000);
+    setLimit(config.limit || 5000);
+    const pp = config.period || {};
+    setPeriodEnabled(!!pp.enabled);
+    setPeriodField(pp.field || '');
+    setPeriodStart(pp.start || '');
+    setPeriodEnd(pp.end || '');
     setResult(null);
     setActiveTab('builder');
     toast({ title: `Relatório "${report.name}" carregado` });
@@ -544,6 +575,41 @@ export default function Reports() {
                       )}
                     </div>
                   </div>
+
+                  <Card>
+                    <CardHeader className="p-3 pb-2">
+                      <CardTitle className="text-xs flex items-center gap-1.5">
+                        <CalendarDays className="h-3.5 w-3.5 text-blue-500" />
+                        <Checkbox checked={periodEnabled} onCheckedChange={(v) => { const on = !!v; setPeriodEnabled(on); if (on && !periodField) { const df = currentSource?.fields.find(f => f.type === 'date'); if (df) setPeriodField(df.key); } }} />
+                        Período
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0">
+                      {(() => {
+                        const dateFields = currentSource?.fields.filter(f => f.type === 'date') || [];
+                        if (dateFields.length === 0) return <p className="text-xs text-muted-foreground">Esta fonte não tem campo de data.</p>;
+                        return (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Select value={periodField} onValueChange={setPeriodField}>
+                              <SelectTrigger className="h-7 text-xs w-44"><SelectValue placeholder="Campo de data" /></SelectTrigger>
+                              <SelectContent>
+                                {dateFields.map(f => (<SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>))}
+                              </SelectContent>
+                            </Select>
+                            <Input type="date" className="h-7 text-xs w-36" value={periodStart} onChange={e => { setPeriodStart(e.target.value); setPeriodEnabled(true); }} />
+                            <span className="text-xs text-muted-foreground">até</span>
+                            <Input type="date" className="h-7 text-xs w-36" value={periodEnd} onChange={e => { setPeriodEnd(e.target.value); setPeriodEnabled(true); }} />
+                            <div className="flex flex-wrap gap-1">
+                              {([['hoje', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ['mesant', 'Mês Ant.'], ['trimestre', 'Trimestre'], ['ano', 'Ano']] as [string, string][]).map(([pk, pl]) => (
+                                <Button key={pk} size="sm" variant="outline" className="h-7 text-xs px-2" onClick={() => { if (!periodField) { const df = currentSource?.fields.find(f => f.type === 'date'); if (df) setPeriodField(df.key); } applyPeriodPreset(pk); }}>{pl}</Button>
+                              ))}
+                              {periodEnabled && (<Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setPeriodEnabled(false); setPeriodStart(''); setPeriodEnd(''); }}>Limpar</Button>)}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </CardContent>
+                  </Card>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <Card>
