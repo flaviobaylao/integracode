@@ -20173,6 +20173,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Marcar o card como AÇÃO DO ADM (usado quando o adm assume o atendimento completo via botão Ajustar)
+  app.post('/api/daily-routes/:routeId/checkpoints/admin-mark', authenticateUser, async (req: any, res) => {
+    try {
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem assumir o atendimento.' });
+      const email = (req.currentUser.email || '').toLowerCase().trim();
+      const { routeId } = req.params;
+      const { customerId, action } = req.body || {};
+      if (!customerId) return res.status(400).json({ message: 'customerId obrigatório.' });
+      await markAdminAdjustment(routeId, customerId, email, action || 'atendimento', 'card');
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} assumiu o atendimento (${action || 'atendimento'}) do cliente ${customerId}`);
+      res.json({ success: true, message: 'Ação do administrador registrada.' });
+    } catch (error: any) {
+      console.error('Erro no admin-mark:', error);
+      res.status(500).json({ message: 'Erro ao registrar ação do administrador', error: error.message });
+    }
+  });
+
   // Deletar rota inteira (limpar)
   app.delete('/api/daily-routes/:routeId', authenticateUser, async (req: any, res) => {
     try {
