@@ -1033,7 +1033,8 @@ export default function RotaDoDia() {
               {(() => {
                 // Presenciais
                 const presTotal = route.totalVisits || 0;
-                const presConcl = route.completedVisits || 0;
+                // Concluídas = clientes presenciais distintos com CHECK-OUT ao vivo (coerente com "Visitas Sem Pedido")
+                const presConcl = presentialVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
                 const presPend = Math.max(0, presTotal - presConcl);
                 const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
                 // Virtuais
