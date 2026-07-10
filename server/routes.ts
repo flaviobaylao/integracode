@@ -20210,12 +20210,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Criar sales_card para esta visita
       const routeDate = new Date(route.routeDate);
-      
+
+      // sales_cards.recurrence_type e route_day são NOT NULL — derivar da periodicidade do cliente e do dia da rota
+      const periodicityToRecurrence: Record<string, string> = { semanal: 'semanal', quinzenal: 'quinzenal', mensal: 'mensal', bimestral: 'mensal' };
+      const recurrenceType = periodicityToRecurrence[(customer as any).visitPeriodicity as string] || 'semanal';
+      const routeDay = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][routeDate.getDay()];
+
       const newSalesCard = await storage.createSalesCard({
         customerId: customer.id,
         sellerId: route.sellerId,
         scheduledDate: routeDate,
         status: 'pending',
+        routeDay,
+        recurrenceType,
         source: 'manual_route_addition',
         notes: `Visita adicionada manualmente à rota por ${user.name} em ${formatBrazilDateTime(new Date())}`
       });
@@ -20314,13 +20321,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Criar sales_card para o lead (necessário para check-in/check-out)
+      // sales_cards.recurrence_type e route_day são NOT NULL; usar a data da rota (routeDate) e defaults de lead
+      const leadRouteDate = new Date(route.routeDate);
       const salesCard = await storage.createSalesCard({
         customerId: leadId, // Lead ID vai para customerId
         sellerId: route.sellerId,
-        scheduledDate: route.date,
+        scheduledDate: leadRouteDate,
+        status: 'pending',
+        routeDay: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][leadRouteDate.getDay()],
+        recurrenceType: 'semanal',
         source: 'manual_route_addition' as any,
-        recurrence: 'ondemand' as any,
-        weekdays: null as any,
       });
       
       console.log(`➕ Lead ${lead.fantasyName} adicionado à rota ${routeId} com sales_card ${salesCard.id} (${currentOrder.length} → ${newOrder.length} visitas)`);
