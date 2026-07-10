@@ -188,6 +188,7 @@ export default function FiscalInvoices() {
   const [activeTab, setActiveTab] = useState('invoices');
   const [statusFilter, setStatusFilter] = useState('all');
   const [envFilter, setEnvFilter] = useState('all');
+  const [issuerFilter, setIssuerFilter] = useState('all'); // CNPJ (só dígitos) do emitente/filial, ou 'all'
   const [nfSearch, setNfSearch] = useState('');
   const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const [dtStart, setDtStart] = useState('');
@@ -293,10 +294,32 @@ export default function FiscalInvoices() {
     queryKey: ['/api/fiscal-invoices', statusFilter, envFilter],
     queryFn: () => fetch(buildInvoiceUrl(), { credentials: 'include' }).then(r => r.json()),
   });
-  const invoicesFiltered = (invoices || []).filter((inv: any) => (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch)) && dateInRange(inv.emissionDate, dtStart, dtEnd));
+  // Emitente (CNPJ/filial): cada CNPJ tem numeração PRÓPRIA na SEFAZ, então o mesmo número
+  // (ex.: 104147) pode existir em filiais diferentes. Permite filtrar/identificar por emitente.
+  const onlyDigits = (s: any) => String(s || '').replace(/\D/g, '');
+  const issuerOptions = useMemo(() => {
+    const map = new Map<string, string>(); // cnpjDigits -> label curto (filial · código)
+    for (const c of (companyDataList || [])) {
+      const dig = onlyDigits((c as any).cnpj);
+      if (!dig) continue;
+      const filial = dig.length >= 12 ? `${dig.slice(8, 12)}-${dig.slice(12, 14)}` : dig;
+      map.set(dig, `${filial} · ${(c as any).instanceName || (c as any).displayName || ''}`.trim());
+    }
+    return map;
+  }, [companyDataList]);
+  const issuerShort = (cnpj: any) => {
+    const dig = onlyDigits(cnpj);
+    if (!dig) return '-';
+    return issuerOptions.get(dig) || (dig.length >= 12 ? `${dig.slice(8, 12)}-${dig.slice(12, 14)}` : dig);
+  };
+  const invoicesFiltered = (invoices || []).filter((inv: any) =>
+    (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch))
+    && (issuerFilter === 'all' || onlyDigits(inv.issuerCnpj) === issuerFilter)
+    && dateInRange(inv.emissionDate, dtStart, dtEnd));
   const invoicesView = sortRows(invoicesFiltered, (inv: any, key: string) => {
     switch (key) {
       case 'number': return Number(inv.invoiceNumber || 0);
+      case 'issuer': return issuerShort(inv.issuerCnpj);
       case 'customer': return inv.customerName || '';
       case 'cfop': return inv.cfop || '';
       case 'value': return Number(inv.totalInvoice || 0);
@@ -684,13 +707,27 @@ export default function FiscalInvoices() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Emitente (CNPJ/filial)</Label>
+              <Select value={issuerFilter} onValueChange={setIssuerFilter}>
+                <SelectTrigger className="w-[190px]" data-testid="filter-issuer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {Array.from(issuerOptions.entries()).map(([dig, label]) => (
+                    <SelectItem key={dig} value={dig}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Cliente / Nº</Label>
               <Input placeholder="Buscar cliente ou numero..." value={nfSearch} onChange={(e) => setNfSearch(e.target.value)} className="w-[220px]" data-testid="search-nf" />
             </div>
             <div><Label className="text-xs">Periodo (emissao)</Label><div><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} testId="daterange-nf" /></div></div>
             
-            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
-            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); }}>
+            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
+            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
           </div>
@@ -711,6 +748,7 @@ export default function FiscalInvoices() {
                   <TableHeader>
                     <TableRow>
                       <SortableTh label="Número" colKey="number" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Emitente" colKey="issuer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Cliente" colKey="customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="CFOP" colKey="cfop" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Valor Total" colKey="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
@@ -724,6 +762,7 @@ export default function FiscalInvoices() {
                     {invoicesView.map(inv => (
                       <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openDetail(inv.id)}>
                         <TableCell className="font-mono font-medium">{inv.invoiceNumber || '-'}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap text-muted-foreground" title={inv.issuerCnpj || ''}>{issuerShort(inv.issuerCnpj)}</TableCell>
                         <TableCell>
                           <div>
                             <p className="font-medium text-sm">{inv.customerName}</p>
