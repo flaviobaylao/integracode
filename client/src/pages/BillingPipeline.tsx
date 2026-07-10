@@ -99,7 +99,7 @@ const CATEGORY_ORDER = ['venda', 'cancelado', 'amostra', 'bonificacao', 'troca',
 function operationBadgeClass(cat: string | null): string {
   if (cat === 'venda') return 'border-green-300 text-green-700 bg-green-50';
   if (cat === 'cancelado') return 'border-red-300 text-red-700 bg-red-50';
-  if (cat === 'amostra') return 'border-yellow-300 text-yellow-700 bg-yellow-50';
+  if (cat === 'amostra') return 'border-blue-300 text-blue-700 bg-blue-50';
   return 'border-slate-300 text-slate-700';
 }
 
@@ -1292,7 +1292,7 @@ function KanbanCard({
             </Badge>
           )}
           {item.invoiceNumber && (
-            <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700 bg-blue-50">
+            <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50">
               NF {item.invoiceNumber}
             </Badge>
           )}
