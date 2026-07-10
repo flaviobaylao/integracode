@@ -121,7 +121,7 @@ export default function PurchaseRadar() {
   const importXml = useMutation({
     mutationFn: async (xml: string) => {
       const res = await apiRequest("POST", "/api/purchases/import-xml", { xmlContent: xml });
-      return res.json();
+      return res;
     },
     onSuccess: (data) => {
       toast({ title: "XML importado", description: `NF ${data.invoiceNumber || "s/n"} de ${data.supplierName} importada com sucesso.` });
@@ -138,7 +138,7 @@ export default function PurchaseRadar() {
   const classify = useMutation({
     mutationFn: async ({ id, ...data }: any) => {
       const res = await apiRequest("PATCH", `/api/purchases/${id}/classify`, data);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       toast({ title: "NF classificada" });
@@ -152,7 +152,7 @@ export default function PurchaseRadar() {
   const createPayable = useMutation({
     mutationFn: async ({ id, ...data }: any) => {
       const res = await apiRequest("POST", `/api/purchases/${id}/create-payable`, data);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       toast({ title: "Conta a pagar criada" });
@@ -166,7 +166,7 @@ export default function PurchaseRadar() {
   const processRaw = useMutation({
     mutationFn: async ({ id, itemMappings }: any) => {
       const res = await apiRequest("POST", `/api/purchases/${id}/process-raw-materials`, { itemMappings });
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       toast({ title: "Entrada de matéria-prima registrada" });
@@ -181,7 +181,7 @@ export default function PurchaseRadar() {
   const createSupplier = useMutation({
     mutationFn: async (data: any) => {
       const res = await apiRequest("POST", "/api/suppliers", data);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       toast({ title: "Fornecedor cadastrado" });
@@ -194,7 +194,7 @@ export default function PurchaseRadar() {
   const importByKey = useMutation({
     mutationFn: async ({ chave, instanceId }: any) => {
       const res = await apiRequest("POST", "/api/purchases/import-by-key", { chave, instanceId });
-      return res.json();
+      return res;
     },
     onSuccess: (data: any) => {
       toast({ title: data?.enriched ? "XML completo importado (itens carregados)" : "NF-e importada pela chave" });
@@ -209,7 +209,7 @@ export default function PurchaseRadar() {
   const radarScan = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/purchases/radar/scan", {});
-      return res.json();
+      return res;
     },
     onSuccess: (data: any) => {
       setRadarResult(data);
@@ -223,7 +223,7 @@ export default function PurchaseRadar() {
   const updateStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       const res = await apiRequest("PATCH", `/api/purchases/${id}/status`, { status });
-      return res.json();
+      return res;
     },
     onSuccess: (data) => {
       toast({ title: `Status atualizado para ${STATUS_MAP[data.status]?.label || data.status}` });
