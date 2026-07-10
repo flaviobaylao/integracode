@@ -664,14 +664,15 @@ export default function RotaDoDia() {
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
   }, [route?.visits]);
 
-  // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (check-out) + atendimentos virtuais realizados.
+  // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (CHECK-IN) + atendimentos virtuais realizados.
+  // (Regra do check-out desligada: a visita é concluída no CHECK-IN.)
   // Visitas com Pedidos  = concluídas que tiveram pedido implantado
   // Valor Visitas c/ Ped = soma dos pedidos das concluídas
   // Visitas Sem Pedido   = concluídas SEM registro de pedido
   const orderStats = useMemo(() => {
     // Universo de concluídas por customerId
     const concluidas = new Set<string>();
-    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out' && cp.customerId) concluidas.add(cp.customerId); });
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in' && cp.customerId) concluidas.add(cp.customerId); });
     attendedCustomerIds.forEach((id: any) => { if (id) concluidas.add(String(id)); });
     let comPedidos = 0;
     let valor = 0;
@@ -693,10 +694,11 @@ export default function RotaDoDia() {
     () => (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual'),
     [route?.visits]
   );
-  // Clientes com check-out realizado = "Atendidos" (concluídos); demais = "Pendentes"
+  // Clientes com CHECK-IN realizado = "Atendidos" (concluídos); demais = "Pendentes".
+  // (Check-out desligado: a visita conta como atendida/concluída ao fazer o check-in.)
   const checkedOutCustomerIds = useMemo(() => {
     const s = new Set<string>();
-    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out') s.add(cp.customerId); });
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in') s.add(cp.customerId); });
     return s;
   }, [route?.checkpoints]);
   // Aplica busca por cliente + filtro Atendidos/Pendentes
@@ -871,9 +873,8 @@ export default function RotaDoDia() {
         <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Legenda das cores</p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-700 dark:text-gray-300">
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-gray-300 bg-gray-100 dark:bg-gray-700"></span>Aguardando (sem check-in)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-blue-300 bg-blue-100 dark:bg-blue-900"></span>Check-in realizado (em atendimento)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-out)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in/out fora do local (&gt;100m)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-in realizado)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in fora do local (&gt;100m)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Ação do Adm</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
         </div>
@@ -1033,7 +1034,7 @@ export default function RotaDoDia() {
               {(() => {
                 // Presenciais
                 const presTotal = route.totalVisits || 0;
-                // Concluídas = clientes presenciais distintos com CHECK-OUT ao vivo (coerente com "Visitas Sem Pedido")
+                // Concluídas = clientes presenciais distintos com CHECK-IN feito (check-out desligado)
                 const presConcl = presentialVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
                 const presPend = Math.max(0, presTotal - presConcl);
                 const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
@@ -1325,8 +1326,9 @@ export default function RotaDoDia() {
                   }
 
                   const hasOffsite = checkInOffsite || checkOutOffsite;
-                  const isCompleted = !!checkOutCheckpoint;
-                  const isInProgress = !!checkInCheckpoint && !checkOutCheckpoint;
+                  // Check-out desligado: a visita fica CONCLUÍDA (verde) já no check-in.
+                  const isCompleted = !!checkInCheckpoint;
+                  const isInProgress = false;
                   const isLead = (visit as any).visitType === 'lead';
 
                   let statusColor = 'text-gray-600 dark:text-gray-400';
