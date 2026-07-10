@@ -502,10 +502,14 @@ export function registerNfeRoutes(app: Express) {
 
   app.post('/api/fiscal-invoices/batch', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
-      const { invoiceNumbers } = req.body;
+      const { invoiceNumbers, issuerCnpj } = req.body;
       if (!invoiceNumbers || !Array.isArray(invoiceNumbers) || invoiceNumbers.length === 0) {
         return res.status(400).json({ message: 'invoiceNumbers é obrigatório (array)' });
       }
+      // Cada CNPJ emitente tem numeração PRÓPRIA na SEFAZ → o mesmo número pode existir em
+      // filiais diferentes. Quando o emitente é informado, restringe a busca a essa filial
+      // (elimina a ambiguidade de imprimir a DANFE de outra empresa com o mesmo número).
+      const issuerDigits = String(issuerCnpj || '').replace(/\D/g, '');
 
       const allInvoices = await storage.getFiscalInvoices();
       // Para cada numero pedido, pode haver MAIS DE UMA nota com o mesmo numero
@@ -519,7 +523,9 @@ export function registerNfeRoutes(app: Express) {
         const clean = String(raw).replace('NF-', '').trim();
         if (seen.has(clean)) continue;
         seen.add(clean);
-        const candidates = allInvoices.filter(inv => inv.invoiceNumber?.toString() === clean);
+        const candidates = allInvoices.filter(inv =>
+          inv.invoiceNumber?.toString() === clean
+          && (!issuerDigits || String((inv as any).issuerCnpj || '').replace(/\D/g, '') === issuerDigits));
         if (!candidates.length) continue;
         candidates.sort((a: any, b: any) =>
           (score(b) - score(a)) ||
