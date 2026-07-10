@@ -19583,12 +19583,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📊 [ROUTE-METRICS] Rota ${date}: ${ordersCount} pedidos / ${totalVisits} visitas = ${performanceIndex}% performance`);
 
+      // Ajustes admin de check-in/out (mapa por customerId) — pinta card de roxo + tag "Adm - email" no front
+      let adminAdjustments: Record<string, any> = {};
+      try {
+        const aaRows: any = await db.execute(sql`SELECT admin_adjustments FROM daily_routes WHERE id = ${route.id} LIMIT 1`);
+        adminAdjustments = aaRows?.rows?.[0]?.admin_adjustments || {};
+      } catch {}
+
       res.json({
         route: {
           ...route,
           visits: visits.filter(Boolean),
           checkpoints,
           segments,
+          adminAdjustments,
           sellerHome: {
             latitude: parseFloat(route.startLatitude),
             longitude: parseFloat(route.startLongitude)
@@ -20052,10 +20060,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error('Erro ao cancelar visita:', error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: 'Erro ao cancelar visita',
-        error: error.message 
+        error: error.message
       });
+    }
+  });
+
+  // ========================================================================
+  // AJUSTE ADMIN de check-in/check-out na ROTA DO DIA (editar/adicionar/remover)
+  // Só os 3 administradores autorizados. Toda ação marca o card (por customerId)
+  // no mapa daily_routes.admin_adjustments -> frontend pinta de ROXO + tag "Adm - email".
+  // ========================================================================
+  const ADMIN_CHECKIN_EDITORS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const isCheckinAdmin = (req: any) => ADMIN_CHECKIN_EDITORS.includes((req.currentUser?.email || '').toLowerCase().trim());
+  const routeDateStr = (rd: any): string => new Date(rd).toISOString().slice(0, 10);
+  const brtTimestamp = (dateStr: string, hhmm: string): string => new Date(`${dateStr}T${hhmm}:00-03:00`).toISOString();
+  async function markAdminAdjustment(routeId: string, customerId: string, email: string, action: string, field: string) {
+    try {
+      await db.execute(sql`
+        UPDATE daily_routes
+        SET admin_adjustments = COALESCE(admin_adjustments, '{}'::jsonb) || jsonb_build_object(
+              ${customerId}::text,
+              jsonb_build_object('by', ${email}::text, 'at', ${new Date().toISOString()}::text, 'action', ${action}::text, 'field', ${field}::text)
+            ),
+            updated_at = NOW()
+        WHERE id = ${routeId}
+      `);
+    } catch (e: any) {
+      console.error('[ADMIN-CHECKIN] Falha ao marcar admin_adjustments:', e?.message);
+    }
+  }
+
+  // Editar HORÁRIO de um check-in/check-out existente
+  app.patch('/api/daily-routes/checkpoints/:checkpointId/admin-edit', authenticateUser, async (req: any, res) => {
+    try {
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem ajustar check-in/check-out.' });
+      const email = (req.currentUser.email || '').toLowerCase().trim();
+      const { checkpointId } = req.params;
+      const { time } = req.body || {};
+      if (!/^\d{2}:\d{2}$/.test(String(time || ''))) return res.status(400).json({ message: 'Horário inválido (use HH:mm).' });
+      const cp = await storage.getRouteCheckpointById(checkpointId);
+      if (!cp) return res.status(404).json({ message: 'Check-in/out não encontrado.' });
+      const rows: any = await db.execute(sql`SELECT route_date FROM daily_routes WHERE id = ${cp.dailyRouteId} LIMIT 1`);
+      const rd = rows?.rows?.[0]?.route_date;
+      if (!rd) return res.status(404).json({ message: 'Rota não encontrada.' });
+      const newTs = brtTimestamp(routeDateStr(rd), String(time));
+      await db.execute(sql`UPDATE route_checkpoints SET checkpoint_time = ${newTs} WHERE id = ${checkpointId}`);
+      await markAdminAdjustment(cp.dailyRouteId, cp.customerId, email, 'edit', cp.checkpointType);
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} editou ${cp.checkpointType} do cliente ${cp.customerId} para ${time}`);
+      res.json({ success: true, message: 'Horário ajustado.' });
+    } catch (error: any) {
+      console.error('Erro no admin-edit de checkpoint:', error);
+      res.status(500).json({ message: 'Erro ao ajustar horário', error: error.message });
+    }
+  });
+
+  // Adicionar um check-in/check-out que não existe
+  app.post('/api/daily-routes/:routeId/checkpoints/admin-add', authenticateUser, async (req: any, res) => {
+    try {
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem ajustar check-in/check-out.' });
+      const email = (req.currentUser.email || '').toLowerCase().trim();
+      const { routeId } = req.params;
+      const { customerId, checkpointType, time } = req.body || {};
+      if (!customerId || !['check_in', 'check_out'].includes(checkpointType)) return res.status(400).json({ message: 'customerId e checkpointType (check_in|check_out) obrigatórios.' });
+      if (!/^\d{2}:\d{2}$/.test(String(time || ''))) return res.status(400).json({ message: 'Horário inválido (use HH:mm).' });
+      const rrows: any = await db.execute(sql`SELECT route_date, seller_id, start_latitude, start_longitude FROM daily_routes WHERE id = ${routeId} LIMIT 1`);
+      const route = rrows?.rows?.[0];
+      if (!route) return res.status(404).json({ message: 'Rota não encontrada.' });
+      // Já existe checkpoint deste tipo? -> usar editar
+      const exist: any = await db.execute(sql`SELECT id FROM route_checkpoints WHERE daily_route_id = ${routeId} AND customer_id = ${customerId} AND checkpoint_type = ${checkpointType} LIMIT 1`);
+      if (exist?.rows?.length) return res.status(409).json({ message: 'Já existe este check-in/out. Use editar.' });
+      // Resolver visit_id (sales_card) e coordenadas do cliente
+      const scrows: any = await db.execute(sql`SELECT id FROM sales_cards WHERE customer_id = ${customerId} ORDER BY created_at DESC LIMIT 1`);
+      const visitId = scrows?.rows?.[0]?.id || customerId;
+      const crows: any = await db.execute(sql`SELECT latitude, longitude FROM customers WHERE id = ${customerId} LIMIT 1`);
+      const lat = crows?.rows?.[0]?.latitude ?? route.start_latitude;
+      const lng = crows?.rows?.[0]?.longitude ?? route.start_longitude;
+      const seqrows: any = await db.execute(sql`SELECT COALESCE(MAX(sequence_number), 0) + 1 AS seq FROM route_checkpoints WHERE daily_route_id = ${routeId}`);
+      const seq = Number(seqrows?.rows?.[0]?.seq || 1);
+      const newTs = brtTimestamp(routeDateStr(route.route_date), String(time));
+      await db.execute(sql`
+        INSERT INTO route_checkpoints
+          (daily_route_id, visit_id, customer_id, seller_id, checkpoint_type, checkpoint_latitude, checkpoint_longitude, checkpoint_time, sequence_number, validation_status, is_automatic, is_off_route)
+        VALUES
+          (${routeId}, ${visitId}, ${customerId}, ${route.seller_id}, ${checkpointType}, ${lat}, ${lng}, ${newTs}, ${seq}, 'validated', false, false)
+      `);
+      await markAdminAdjustment(routeId, customerId, email, 'add', checkpointType);
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} adicionou ${checkpointType} ao cliente ${customerId} (${time})`);
+      res.json({ success: true, message: 'Check-in/out adicionado.' });
+    } catch (error: any) {
+      console.error('Erro no admin-add de checkpoint:', error);
+      res.status(500).json({ message: 'Erro ao adicionar check-in/out', error: error.message });
+    }
+  });
+
+  // Remover um check-in/check-out lançado
+  app.delete('/api/daily-routes/checkpoints/:checkpointId/admin', authenticateUser, async (req: any, res) => {
+    try {
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem ajustar check-in/check-out.' });
+      const email = (req.currentUser.email || '').toLowerCase().trim();
+      const { checkpointId } = req.params;
+      const cp = await storage.getRouteCheckpointById(checkpointId);
+      if (!cp) return res.status(404).json({ message: 'Check-in/out não encontrado.' });
+      await db.execute(sql`DELETE FROM route_checkpoints WHERE id = ${checkpointId}`);
+      await markAdminAdjustment(cp.dailyRouteId, cp.customerId, email, 'remove', cp.checkpointType);
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} removeu ${cp.checkpointType} do cliente ${cp.customerId}`);
+      res.json({ success: true, message: 'Check-in/out removido.' });
+    } catch (error: any) {
+      console.error('Erro no admin-delete de checkpoint:', error);
+      res.status(500).json({ message: 'Erro ao remover check-in/out', error: error.message });
     }
   });
 
