@@ -20076,19 +20076,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const isCheckinAdmin = (req: any) => ADMIN_CHECKIN_EDITORS.includes((req.currentUser?.email || '').toLowerCase().trim());
   const routeDateStr = (rd: any): string => new Date(rd).toISOString().slice(0, 10);
   const brtTimestamp = (dateStr: string, hhmm: string): string => new Date(`${dateStr}T${hhmm}:00-03:00`).toISOString();
-  async function markAdminAdjustment(routeId: string, customerId: string, email: string, action: string, field: string) {
+  const cpLabel = (t: string): string => (t === 'check_in' ? 'Check-in' : t === 'check_out' ? 'Check-out' : t);
+  const hhmmBRT = (ts: any): string | null => {
+    if (!ts) return null;
+    try { return new Date(ts).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); } catch { return null; }
+  };
+  // Registra uma ALTERAÇÃO EFETIVA feita por um admin como entrada de histórico (de -> para).
+  // Estrutura: admin_adjustments[customerId] = { by, at, changes: [{ field, from, to, by, at }] }
+  // O card só fica ROXO quando existir pelo menos 1 entrada em changes.
+  async function appendAdminChange(routeId: string, customerId: string, email: string, field: string, from: any, to: any) {
     try {
-      await db.execute(sql`
-        UPDATE daily_routes
-        SET admin_adjustments = COALESCE(admin_adjustments, '{}'::jsonb) || jsonb_build_object(
-              ${customerId}::text,
-              jsonb_build_object('by', ${email}::text, 'at', ${new Date().toISOString()}::text, 'action', ${action}::text, 'field', ${field}::text)
-            ),
-            updated_at = NOW()
-        WHERE id = ${routeId}
-      `);
+      const rows: any = await db.execute(sql`SELECT admin_adjustments FROM daily_routes WHERE id = ${routeId} LIMIT 1`);
+      const adj: Record<string, any> = rows?.rows?.[0]?.admin_adjustments || {};
+      const now = new Date().toISOString();
+      const entry = adj[customerId] && typeof adj[customerId] === 'object' ? adj[customerId] : { by: email, at: now, changes: [] };
+      if (!Array.isArray(entry.changes)) entry.changes = [];
+      entry.changes.push({ field, from: from ?? null, to: to ?? null, by: email, at: now });
+      entry.by = email;
+      entry.at = now;
+      adj[customerId] = entry;
+      await db.execute(sql`UPDATE daily_routes SET admin_adjustments = ${JSON.stringify(adj)}::jsonb, updated_at = NOW() WHERE id = ${routeId}`);
     } catch (e: any) {
-      console.error('[ADMIN-CHECKIN] Falha ao marcar admin_adjustments:', e?.message);
+      console.error('[ADMIN-CHECKIN] Falha ao registrar alteração admin:', e?.message);
     }
   }
 
@@ -20105,9 +20114,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rows: any = await db.execute(sql`SELECT route_date FROM daily_routes WHERE id = ${cp.dailyRouteId} LIMIT 1`);
       const rd = rows?.rows?.[0]?.route_date;
       if (!rd) return res.status(404).json({ message: 'Rota não encontrada.' });
+      const oldHHmm = hhmmBRT(cp.checkpointTime);
       const newTs = brtTimestamp(routeDateStr(rd), String(time));
       await db.execute(sql`UPDATE route_checkpoints SET checkpoint_time = ${newTs} WHERE id = ${checkpointId}`);
-      await markAdminAdjustment(cp.dailyRouteId, cp.customerId, email, 'edit', cp.checkpointType);
+      if (oldHHmm !== String(time)) {
+        await appendAdminChange(cp.dailyRouteId, cp.customerId, email, cpLabel(cp.checkpointType), oldHHmm, String(time));
+      }
       console.log(`🟣 [ADMIN-CHECKIN] ${email} editou ${cp.checkpointType} do cliente ${cp.customerId} para ${time}`);
       res.json({ success: true, message: 'Horário ajustado.' });
     } catch (error: any) {
@@ -20146,7 +20158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         VALUES
           (${routeId}, ${visitId}, ${customerId}, ${route.seller_id}, ${checkpointType}, ${lat}, ${lng}, ${newTs}, ${seq}, 'validated', false, false)
       `);
-      await markAdminAdjustment(routeId, customerId, email, 'add', checkpointType);
+      await appendAdminChange(routeId, customerId, email, cpLabel(checkpointType), null, String(time));
       console.log(`🟣 [ADMIN-CHECKIN] ${email} adicionou ${checkpointType} ao cliente ${customerId} (${time})`);
       res.json({ success: true, message: 'Check-in/out adicionado.' });
     } catch (error: any) {
@@ -20163,8 +20175,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { checkpointId } = req.params;
       const cp = await storage.getRouteCheckpointById(checkpointId);
       if (!cp) return res.status(404).json({ message: 'Check-in/out não encontrado.' });
+      const oldHHmm = hhmmBRT(cp.checkpointTime);
       await db.execute(sql`DELETE FROM route_checkpoints WHERE id = ${checkpointId}`);
-      await markAdminAdjustment(cp.dailyRouteId, cp.customerId, email, 'remove', cp.checkpointType);
+      await appendAdminChange(cp.dailyRouteId, cp.customerId, email, cpLabel(cp.checkpointType), oldHHmm, null);
       console.log(`🟣 [ADMIN-CHECKIN] ${email} removeu ${cp.checkpointType} do cliente ${cp.customerId}`);
       res.json({ success: true, message: 'Check-in/out removido.' });
     } catch (error: any) {
@@ -20173,20 +20186,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Marcar o card como AÇÃO DO ADM (usado quando o adm assume o atendimento completo via botão Ajustar)
-  app.post('/api/daily-routes/:routeId/checkpoints/admin-mark', authenticateUser, async (req: any, res) => {
+  // Registrar uma ALTERAÇÃO EFETIVA feita pelo adm durante o atendimento completo (detectada por diff no frontend).
+  // Só é chamado quando algo realmente mudou (check-in/out, pedido). Abrir a tela NÃO marca mais o card.
+  app.post('/api/daily-routes/:routeId/checkpoints/admin-record', authenticateUser, async (req: any, res) => {
     try {
-      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem assumir o atendimento.' });
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem registrar ajustes.' });
       const email = (req.currentUser.email || '').toLowerCase().trim();
       const { routeId } = req.params;
-      const { customerId, action } = req.body || {};
-      if (!customerId) return res.status(400).json({ message: 'customerId obrigatório.' });
-      await markAdminAdjustment(routeId, customerId, email, action || 'atendimento', 'card');
-      console.log(`🟣 [ADMIN-CHECKIN] ${email} assumiu o atendimento (${action || 'atendimento'}) do cliente ${customerId}`);
-      res.json({ success: true, message: 'Ação do administrador registrada.' });
+      const { customerId, field, from, to } = req.body || {};
+      if (!customerId || !field) return res.status(400).json({ message: 'customerId e field obrigatórios.' });
+      await appendAdminChange(routeId, customerId, email, String(field), from ?? null, to ?? null);
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} alterou "${field}" do cliente ${customerId}: ${from ?? '—'} -> ${to ?? '—'}`);
+      res.json({ success: true, message: 'Alteração registrada.' });
     } catch (error: any) {
-      console.error('Erro no admin-mark:', error);
-      res.status(500).json({ message: 'Erro ao registrar ação do administrador', error: error.message });
+      console.error('Erro no admin-record:', error);
+      res.status(500).json({ message: 'Erro ao registrar alteração do administrador', error: error.message });
     }
   });
 
