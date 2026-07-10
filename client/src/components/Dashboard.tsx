@@ -130,6 +130,13 @@ export default function Dashboard() {
   const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
   const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
+  // Faturamento diário: vendas de HOJE vs MESMO DIA da semana passada (billing_pipeline)
+  const dailyTodaySales = Number(stats.todaySales) || 0;
+  const dailyLastWeek = Number(stats.lastWeekSameDaySales) || 0;
+  const dailyPct = dailyLastWeek > 0 ? Math.round(((dailyTodaySales - dailyLastWeek) / dailyLastWeek) * 100) : null;
+  const todayISO = bounds.today;
+  const lastWeekISO = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
+
   const blocked: any[] = ov.blocked || [];
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
@@ -163,7 +170,23 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
-          <CardContent><div className="text-lg font-bold text-gray-800">{brl(dailyRevenue.length ? dailyRevenue[dailyRevenue.length - 1].v : 0)}</div><Sparkline data={dailyRevenue} /><div className="text-xs mt-1 text-gray-400">Ultimo dia com venda</div></CardContent>
+          <CardContent>
+            <div className="flex items-end justify-between gap-2">
+              <div>
+                <div className="text-[11px] text-gray-500">Hoje</div>
+                <div className="text-lg font-bold text-emerald-600">{brl(dailyTodaySales)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] text-gray-500">Mesmo dia sem. passada</div>
+                <div className="text-sm font-semibold text-gray-500">{brl(dailyLastWeek)}</div>
+              </div>
+            </div>
+            {dailyPct !== null && (
+              <div className="text-xs mt-0.5"><span className={dailyPct >= 0 ? "text-green-600" : "text-red-600"}>{dailyPct >= 0 ? "+" : ""}{dailyPct}% vs mesmo dia sem. passada</span></div>
+            )}
+            <Sparkline data={dailyRevenue} highlight={[lastWeekISO, todayISO]} />
+            <div className="text-xs mt-1 text-gray-400"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 align-middle mr-1"></span>Hoje e mesmo dia da semana passada</div>
+          </CardContent>
         </Card>
       </div>
 
@@ -228,15 +251,6 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Vendas Efetivas do Mes</CardTitle>
-            <div className="text-sm text-gray-600">{(vem.label || monthLabel())} - {brl(vem.value)}</div>
-          </div>
-        </CardHeader>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle className="text-base">Pedidos e Notas Fiscais</CardTitle>
@@ -277,7 +291,7 @@ export default function Dashboard() {
   );
 }
 
-function Sparkline(props: { data: { d: string; v: number }[] }) {
+function Sparkline(props: { data: { d: string; v: number }[]; highlight?: string[] }) {
   const data = props.data;
   if (!data.length) return <div className="text-xs text-gray-400 h-11 flex items-center">Sem dados</div>;
   const w = 240, h = 44, pad = 3;
@@ -286,18 +300,19 @@ function Sparkline(props: { data: { d: string; v: number }[] }) {
   const min = Math.min(...vals, 0);
   const range = max - min || 1;
   const n = data.length;
-  const pts = data.map((x, i) => {
-    const px = pad + (n <= 1 ? 0 : (i / (n - 1)) * (w - 2 * pad));
-    const py = h - pad - ((x.v - min) / range) * (h - 2 * pad);
-    return px.toFixed(1) + "," + py.toFixed(1);
-  }).join(" ");
+  const coord = (x: { d: string; v: number }, i: number) => ({
+    px: pad + (n <= 1 ? 0 : (i / (n - 1)) * (w - 2 * pad)),
+    py: h - pad - ((x.v - min) / range) * (h - 2 * pad),
+  });
+  const pts = data.map((x, i) => { const c = coord(x, i); return c.px.toFixed(1) + "," + c.py.toFixed(1); }).join(" ");
+  const hl = new Set(props.highlight || []);
   const last = data[n - 1];
-  const lx = pad + (n <= 1 ? 0 : (w - 2 * pad));
-  const ly = h - pad - ((last.v - min) / range) * (h - 2 * pad);
+  const lc = coord(last, n - 1);
   return (
     <svg viewBox={"0 0 " + w + " " + h} className="w-full h-11 mt-1" preserveAspectRatio="none">
       <polyline points={pts} fill="none" stroke="#10b981" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-      <circle cx={lx} cy={ly} r="2" fill="#10b981" />
+      <circle cx={lc.px} cy={lc.py} r="2" fill="#10b981" />
+      {data.map((x, i) => hl.has(x.d) ? (() => { const c = coord(x, i); return (<circle key={"hl" + i} cx={c.px} cy={c.py} r="3.2" fill="#f59e0b" stroke="#fff" strokeWidth="1" />); })() : null)}
     </svg>
   );
 }
