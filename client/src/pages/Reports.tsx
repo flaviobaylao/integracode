@@ -132,6 +132,71 @@ function ReportChart({ mode, result, chartX, chartY, setChartX, setChartY, label
   );
 }
 
+function ReportPivot({ result, pivotCol, setPivotCol, labelOf, typeOf }: any) {
+  const cols: string[] = result.columns;
+  const numericCols = cols.filter((c: string) => { const t = typeOf(c); return t === 'currency' || t === 'number'; });
+  const dimCols = cols.filter((c: string) => !numericCols.includes(c));
+  const valueKey = numericCols[0];
+  if (!valueKey || dimCols.length === 0) {
+    return <div className="p-4 text-xs text-muted-foreground">Para a Tabela Dinâmica, agrupe por 2+ campos e adicione um Totalizador (ex.: Soma de um valor) antes de executar.</div>;
+  }
+  const colKey = pivotCol && dimCols.includes(pivotCol) ? pivotCol : dimCols[dimCols.length - 1];
+  const rowKeys = dimCols.filter((c: string) => c !== colKey);
+  const valType = typeOf(valueKey);
+  const fmtVal = (v: number) => valType === 'currency' ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : v.toLocaleString('pt-BR');
+  const colVals = Array.from(new Set(result.rows.map((r: any) => String(r[colKey] ?? '—')))).sort();
+  const rowMap = new Map<string, any>();
+  for (const r of result.rows) {
+    const label = rowKeys.map((k: string) => String(r[k] ?? '—'));
+    const rk = label.join(' | ') || 'Total';
+    if (!rowMap.has(rk)) rowMap.set(rk, { label, cells: {} as Record<string, number> });
+    const cv = String(r[colKey] ?? '—');
+    rowMap.get(rk).cells[cv] = (rowMap.get(rk).cells[cv] || 0) + (Number(r[valueKey]) || 0);
+  }
+  const rowsArr = Array.from(rowMap.values());
+  return (
+    <div className="p-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">Coluna (pivô):</span>
+        <Select value={colKey} onValueChange={setPivotCol}>
+          <SelectTrigger className="h-7 text-xs w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>{dimCols.map((c: string) => (<SelectItem key={c} value={c}>{labelOf(c)}</SelectItem>))}</SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">Valores: {labelOf(valueKey)} (Soma)</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-gray-50 dark:bg-gray-800">
+              {rowKeys.map((k: string) => (<th key={k} className="text-left p-2 font-semibold whitespace-nowrap border">{labelOf(k)}</th>))}
+              {colVals.map((cv: string) => (<th key={cv} className="text-right p-2 font-semibold whitespace-nowrap border">{cv}</th>))}
+              <th className="text-right p-2 font-semibold whitespace-nowrap border">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowsArr.map((row: any, ri: number) => {
+              const rowTotal = colVals.reduce((acc: number, cv: string) => acc + (row.cells[cv] || 0), 0);
+              return (
+                <tr key={ri} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  {rowKeys.length === 0 && <td className="p-2 whitespace-nowrap border">Total</td>}
+                  {row.label.map((lv: string, li: number) => (<td key={li} className="p-2 whitespace-nowrap border">{lv}</td>))}
+                  {colVals.map((cv: string) => (<td key={cv} className="p-2 text-right whitespace-nowrap border">{row.cells[cv] !== undefined ? fmtVal(row.cells[cv]) : ''}</td>))}
+                  <td className="p-2 text-right whitespace-nowrap border font-semibold">{fmtVal(rowTotal)}</td>
+                </tr>
+              );
+            })}
+            <tr className="bg-blue-50 dark:bg-blue-900/20 font-semibold border-t-2">
+              <td className="p-2 border" colSpan={Math.max(1, rowKeys.length)}>Total</td>
+              {colVals.map((cv: string) => { const ct = rowsArr.reduce((acc: number, r: any) => acc + (r.cells[cv] || 0), 0); return (<td key={cv} className="p-2 text-right border">{fmtVal(ct)}</td>); })}
+              <td className="p-2 text-right border">{fmtVal(rowsArr.reduce((acc: number, r: any) => acc + colVals.reduce((a2: number, cv: string) => a2 + (r.cells[cv] || 0), 0), 0))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function formatCellValue(value: any, type: string): string {
   if (value === null || value === undefined) return '—';
   if (type === 'currency') {
@@ -180,9 +245,10 @@ export default function Reports() {
   const [periodField, setPeriodField] = useState('');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
-  const [viewMode, setViewMode] = useState<'tabela' | 'barras' | 'pizza' | 'linha'>('tabela');
+  const [viewMode, setViewMode] = useState<'tabela' | 'pivo' | 'barras' | 'pizza' | 'linha'>('tabela');
   const [chartX, setChartX] = useState('');
   const [chartY, setChartY] = useState('');
+  const [pivotCol, setPivotCol] = useState('');
   const [result, setResult] = useState<ReportResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -833,7 +899,7 @@ export default function Reports() {
                           </CardTitle>
                           <div className="flex items-center gap-2">
                             <div className="flex gap-1">
-                              {([['tabela', 'Tabela'], ['barras', 'Barras'], ['pizza', 'Pizza'], ['linha', 'Linha']] as [any, string][]).map(([vm, vl]) => (
+                              {([['tabela', 'Tabela'], ['pivo', 'Pivô'], ['barras', 'Barras'], ['pizza', 'Pizza'], ['linha', 'Linha']] as [any, string][]).map(([vm, vl]) => (
                                 <Button key={vm} size="sm" variant={viewMode === vm ? 'default' : 'outline'} className="h-7 text-xs px-2" onClick={() => setViewMode(vm)}>{vl}</Button>
                               ))}
                             </div>
@@ -842,7 +908,9 @@ export default function Reports() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        {viewMode !== 'tabela' ? (
+                        {viewMode === 'pivo' ? (
+                          <ReportPivot result={result} pivotCol={pivotCol} setPivotCol={setPivotCol} labelOf={getColumnLabel} typeOf={getColumnType} />
+                        ) : viewMode !== 'tabela' ? (
                           <ReportChart mode={viewMode} result={result} chartX={chartX} chartY={chartY} setChartX={setChartX} setChartY={setChartY} labelOf={getColumnLabel} typeOf={getColumnType} />
                         ) : (
                         <div className="overflow-x-auto">
