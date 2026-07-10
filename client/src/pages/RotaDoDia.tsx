@@ -171,7 +171,7 @@ export default function RotaDoDia() {
 
   // Buscar pedidos do dia e débitos para os clientes da rota
   interface CustomerInfoResponse {
-    orders: Record<string, { cardNumber: string | null; omieOrderId: string | null }[]>;
+    orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
     debts: Record<string, number>;
   }
   
@@ -596,6 +596,21 @@ export default function RotaDoDia() {
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
   }, [route?.visits]);
 
+  // Métricas de PEDIDOS por visita (visitas físicas, exclui virtuais): com pedido, valor e sem pedido
+  const orderStats = useMemo(() => {
+    const visits = (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual');
+    let comPedidos = 0;
+    let valor = 0;
+    for (const v of visits) {
+      const ords = (v.customerId && customerInfo?.orders?.[v.customerId]) || [];
+      if (ords.length > 0) {
+        comPedidos++;
+        valor += ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0);
+      }
+    }
+    return { comPedidos, semPedido: visits.length - comPedidos, valor };
+  }, [route?.visits, customerInfo]);
+
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -904,55 +919,6 @@ export default function RotaDoDia() {
                       )}
                     </Button>
                   )}
-                  {(() => {
-                    const hasCheckins = route.checkpoints?.some((cp: any) => cp.checkpointType === 'check_in');
-                    const lunchBreak = (route.progress as any)?.lunchBreak;
-                    const lunchStatus = lunchBreak?.status || null;
-                    const canMarkLunch = hasCheckins && !lunchStatus;
-                    
-                    if (!lunchStatus && canMarkLunch) {
-                      return (
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => markLunchBreakMutation.mutate(route.id)}
-                          disabled={markLunchBreakMutation.isPending}
-                          className="bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800"
-                          data-testid="button-lunch-break"
-                        >
-                          <UtensilsCrossed className="mr-2 h-4 w-4" />
-                          {markLunchBreakMutation.isPending ? 'Marcando...' : 'Iniciar Almoço'}
-                        </Button>
-                      );
-                    } else if (lunchStatus === 'pending') {
-                      return (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled
-                          className="bg-amber-100 dark:bg-amber-900 border-amber-300 dark:border-amber-700"
-                          data-testid="button-lunch-break-pending"
-                        >
-                          <UtensilsCrossed className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" />
-                          Aguardando Retorno
-                        </Button>
-                      );
-                    } else if (lunchStatus === 'completed') {
-                      return (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled
-                          className="bg-green-100 dark:bg-green-900 border-green-300 dark:border-green-700"
-                          data-testid="button-lunch-break-completed"
-                        >
-                          <UtensilsCrossed className="mr-2 h-4 w-4 text-green-600 dark:text-green-400" />
-                          Almoço Concluído
-                        </Button>
-                      );
-                    }
-                    return null;
-                  })()}
                   <Badge variant={route.routeStatus === 'completed' ? 'default' : 'secondary'}>
                     {route.routeStatus === 'completed' ? 'Concluída' : 'Em andamento'}
                   </Badge>
@@ -1002,44 +968,6 @@ export default function RotaDoDia() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
-                    <Clock className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Tempo Médio</p>
-                    <p className="text-2xl font-bold">{routeMetrics.averageVisitTime} min</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-lg">
-                    <Navigation className="h-6 w-6 text-purple-600 dark:text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Rota Planejada</p>
-                    <p className="text-xl font-bold">{formatDistance(routeMetrics.plannedDistance)}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
-                    <Navigation className="h-6 w-6 text-orange-600 dark:text-orange-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Rota Executada</p>
-                    <p className="text-xl font-bold">{formatDistance(routeMetrics.executedDistance * 1000)}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-teal-100 dark:bg-teal-900 rounded-lg">
-                    <Clock className="h-6 w-6 text-teal-600 dark:text-teal-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Carga Horária</p>
-                    <p className="text-xl font-bold" data-testid="worked-hours">
-                      {(route.progress as any)?.workedHours?.formatted || '-'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
                   <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
                     <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
                   </div>
@@ -1053,38 +981,32 @@ export default function RotaDoDia() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-red-100 dark:bg-red-900 rounded-lg">
-                    <UtensilsCrossed className="h-6 w-6 text-red-600 dark:text-red-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Tempo de Almoço</p>
-                    <p className="text-xl font-bold" data-testid="lunch-time">
-                      {(route.progress as any)?.lunchBreak
-                        ? (route.progress as any).lunchBreak.formatted
-                        : '1h 30min (padrão)'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
                   <div className="p-3 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
-                    <CheckCircle className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                    <ShoppingCart className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Pedidos</p>
-                    <p className="text-2xl font-bold" data-testid="orders-count">
-                      {(route.progress as any)?.ordersCount ?? 0}
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Visitas com Pedidos</p>
+                    <p className="text-2xl font-bold" data-testid="visits-with-orders">{orderStats.comPedidos}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                    <DollarSign className="h-6 w-6 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Valor Visitas com Pedidos</p>
+                    <p className="text-xl font-bold" data-testid="orders-value">
+                      R$ {orderStats.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
-                    <Target className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                  <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                    <MapPin className="h-6 w-6 text-orange-600 dark:text-orange-400" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Performance</p>
-                    <p className="text-2xl font-bold" data-testid="performance-index">
-                      {(route.progress as any)?.performanceIndex ?? 0}%
-                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Visitas Sem Pedido</p>
+                    <p className="text-2xl font-bold" data-testid="visits-without-orders">{orderStats.semPedido}</p>
                   </div>
                 </div>
               </div>
