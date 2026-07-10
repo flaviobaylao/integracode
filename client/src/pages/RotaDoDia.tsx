@@ -874,8 +874,8 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-blue-300 bg-blue-100 dark:bg-blue-900"></span>Check-in realizado (em atendimento)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-out)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in/out fora do local (&gt;100m)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Roxo escuro — Ação do Adm</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Amarelo ouro — Lead</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Ação do Adm</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
         </div>
       </div>
 
