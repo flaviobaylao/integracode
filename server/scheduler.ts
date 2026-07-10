@@ -11,6 +11,7 @@ import { redistributeTimedOutConversations } from './chat-distribution-service';
 import { nowBrazil } from './brazilTimezone';
 import { runRadarScan } from './purchase-routes';
 import { runPositivacaoAlertaCron } from './positivacao-alert';
+import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -43,6 +44,12 @@ cron.schedule('0 6 * * *', async () => {
 // Alerta diário 07:50 (BRT): lista de clientes ativos NÃO positivados por vendedor (WhatsApp).
 cron.schedule('50 7 * * *', async () => {
   await runPositivacaoAlertaCron();
+}, { timezone: 'America/Sao_Paulo' });
+
+// Alerta diário 08:00 (BRT), SOMENTE DIAS ÚTEIS: débitos vencidos dos clientes da carteira por vendedor (WhatsApp).
+// O guard de dia útil (Seg-Sex + feriados nacionais) fica dentro de runDebitosVencidosAlertaCron.
+cron.schedule('0 8 * * *', async () => {
+  await runDebitosVencidosAlertaCron();
 }, { timezone: 'America/Sao_Paulo' });
 
 cron.schedule('17 * * * *', async () => {
