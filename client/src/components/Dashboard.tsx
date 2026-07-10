@@ -101,15 +101,15 @@ export default function Dashboard() {
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0, completedNames: [] as string[], missedNames: [] as string[] }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0, completedNames: [] as string[], missedNames: [] as string[], clientesAtenderNames: [] as string[] }; map.set(S, w); }
       for (const v of N.visits || []) {
         if (!dset.has(v.date)) continue;
-        if (v.isScheduled) w.clientesAtender++;
+        if (v.isScheduled) { w.clientesAtender++; w.clientesAtenderNames.push(N.customerName || "-"); }
         if (!v.isPast) continue;
         const k = visitColor(v);
         if (k === "green" || k === "yellow") { w.completedVisits++; w.completedNames.push(N.customerName || "-"); }
         else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += expectedValue(v); w.missedNames.push(N.customerName || "-"); }
-        if (v.hasOrder) w.revenue += v.orderValue || 0;
+        if (v.isScheduled && v.hasOrder) w.revenue += v.orderValue || 0;
       }
     }
     return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
@@ -124,7 +124,9 @@ export default function Dashboard() {
     return Object.keys(m).sort().map((d) => ({ d, v: m[d] }));
   }, [data]);
 
-  const today = Number(stats.todaySales) || 0;
+  // Vendas Hoje = total "a Faturar" + total das "NFs emitidas hoje"
+  const today = ((ov.aFaturar || ov.unbilled || []) as any[]).reduce((a, x) => a + (Number(x.sale_value) || 0), 0)
+    + ((ov.nfsHoje || ov.todayInvoices || []) as any[]).reduce((a, x) => a + (Number(x.total_invoice) || 0), 0);
   const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
   const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
@@ -198,7 +200,7 @@ export default function Dashboard() {
                 {sellers.map((x) => (
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{x.clientesAtender}</td>
+                    <td className="py-2 px-3 text-right tabular-nums"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Clientes a atender - " + x.sellerName, names: x.clientesAtenderNames })}>{x.clientesAtender}</button></td>
                     <td className="py-2 px-3 text-right tabular-nums text-green-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Visitas Efetivadas - " + x.sellerName, names: x.completedNames })}>{x.completedVisits}</button></td>
                     <td className="py-2 px-3 text-right tabular-nums font-semibold text-gray-800">{brl(x.revenue)}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-red-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Nao Efetivadas - " + x.sellerName, names: x.missedNames })}>{x.missedVisits}</button></td>
