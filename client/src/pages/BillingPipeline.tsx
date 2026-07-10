@@ -108,6 +108,16 @@ function operationBadgeClass(cat: string | null): string {
   return 'border-slate-300 text-slate-700';
 }
 
+// Cor da tag da INSTÂNCIA Omie: fundo escuro + fonte clara (BSB=verde, GYN=azul, SERV=amarelo, IND=roxo)
+function instanceBadgeClass(name: string | null): string {
+  const n = (name || '').toUpperCase();
+  if (n.includes('BSB')) return 'bg-green-700 text-green-100 border-green-700';
+  if (n.includes('GYN')) return 'bg-blue-700 text-blue-100 border-blue-700';
+  if (n.includes('SERV')) return 'bg-yellow-700 text-yellow-100 border-yellow-700';
+  if (n.includes('IND')) return 'bg-purple-700 text-purple-100 border-purple-700';
+  return 'bg-gray-200 text-gray-700 border-gray-300';
+}
+
 // Normaliza um nome para comparação (minúsculas, sem acentos, sem pontuação, espaços colapsados)
 function normName(s: string): string {
   return (s || '')
@@ -181,6 +191,7 @@ export default function BillingPipeline() {
   const [search, setSearch] = useState('');
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
+  const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
@@ -608,6 +619,9 @@ export default function BillingPipeline() {
   const opOptions = Array.from(new Set((items || []).map((i: any) => operationCategory(i)).filter(Boolean) as string[]))
     .sort((a, b) => (CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)))
     .map((v) => ({ value: v, label: CATEGORY_LABELS[v] || v }));
+  const instanceOptions = Array.from(new Set((items || []).map((i: any) => i.omieInstanceName).filter(Boolean) as string[]))
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
 
   const toggleInSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (v: string) =>
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
@@ -696,9 +710,17 @@ export default function BillingPipeline() {
             onClear={() => setOpFilter(new Set())}
             testid="select-operation-pipeline"
           />
-          {(sellerFilter.size > 0 || opFilter.size > 0 || search) && (
+          <MultiSelectFilter
+            label="Instância"
+            options={instanceOptions}
+            selected={instanceFilter}
+            onToggle={toggleInSet(setInstanceFilter)}
+            onClear={() => setInstanceFilter(new Set())}
+            testid="select-instance-pipeline"
+          />
+          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || search) && (
             <button
-              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); }}
+              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); }}
               className="text-gray-400 hover:text-gray-600 text-sm"
               data-testid="clear-all-filters-pipeline"
             >Limpar filtros ×</button>
@@ -817,7 +839,9 @@ export default function BillingPipeline() {
               // (3) Tipo de Operação — múltipla seleção
               const cat = operationCategory(i);
               const matchesOp = opFilter.size === 0 || (cat != null && opFilter.has(cat));
-              return matchesText && matchesSeller && matchesOp;
+              // (4) Instância — múltipla seleção
+              const matchesInstance = instanceFilter.size === 0 || (!!i.omieInstanceName && instanceFilter.has(i.omieInstanceName));
+              return matchesText && matchesSeller && matchesOp && matchesInstance;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             const StageIcon = stage.icon;
@@ -1291,7 +1315,7 @@ function KanbanCard({
             );
           })()}
           {item.omieInstanceName && (
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className={`text-[10px] ${instanceBadgeClass(item.omieInstanceName)}`}>
               <MapPin className="h-2.5 w-2.5 mr-0.5" />
               {item.omieInstanceName}
             </Badge>
