@@ -9,6 +9,7 @@ export interface ReportFieldDef {
   type: 'text' | 'number' | 'date' | 'boolean' | 'currency';
   category: string;
   dbColumn?: string;
+  sqlExpr?: string;
 }
 
 export interface DataSourceDef {
@@ -39,7 +40,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'neighborhood', label: 'Bairro', type: 'text', category: 'Endereço', dbColumn: 'c.neighborhood' },
       { key: 'zip_code', label: 'CEP', type: 'text', category: 'Endereço', dbColumn: 'c.zip_code' },
       { key: 'address', label: 'Endereço', type: 'text', category: 'Endereço', dbColumn: 'c.address' },
-      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name' },
+      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'visit_periodicity', label: 'Periodicidade', type: 'text', category: 'Comercial', dbColumn: 'c.visit_periodicity' },
       { key: 'is_lead', label: 'É Lead?', type: 'boolean', category: 'Status', dbColumn: 'c.is_lead' },
       { key: 'is_active', label: 'Ativo?', type: 'boolean', category: 'Status', dbColumn: 'c.is_active' },
@@ -79,7 +80,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'customer_city', label: 'Cidade Cliente', type: 'text', category: 'Cliente', dbColumn: 'c.city' },
       { key: 'customer_state', label: 'UF Cliente', type: 'text', category: 'Cliente', dbColumn: 'c.state' },
       { key: 'customer_neighborhood', label: 'Bairro Cliente', type: 'text', category: 'Cliente', dbColumn: 'c.neighborhood' },
-      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name' },
+      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'status', label: 'Status', type: 'text', category: 'Status', dbColumn: 'sc.status' },
       { key: 'operation_type', label: 'Tipo Operação', type: 'text', category: 'Operação', dbColumn: 'sc.operation_type' },
       { key: 'payment_method', label: 'Forma Pagamento', type: 'text', category: 'Operação', dbColumn: 'sc.payment_method' },
@@ -135,7 +136,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'client_name', label: 'Cliente', type: 'text', category: 'Cliente', dbColumn: 'od.client_name' },
       { key: 'customer_city', label: 'Cidade', type: 'text', category: 'Cliente', dbColumn: 'c.city' },
       { key: 'customer_state', label: 'UF', type: 'text', category: 'Cliente', dbColumn: 'c.state' },
-      { key: 'seller_name_join', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name' },
+      { key: 'seller_name_join', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'total_amount', label: 'Valor Total Débito', type: 'currency', category: 'Valores', dbColumn: 'od.total_amount' },
       { key: 'max_days_overdue', label: 'Dias em Atraso (Máx)', type: 'number', category: 'Atraso', dbColumn: 'od.max_days_overdue' },
       { key: 'omie_instance_id', label: 'Instância Omie', type: 'text', category: 'Integração', dbColumn: 'od.omie_instance_id' },
@@ -147,7 +148,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     description: 'Metas mensais dos vendedores',
     baseQuery: `SELECT sg.*, u.name as seller_name FROM sales_goals sg LEFT JOIN users u ON sg.seller_id = u.id`,
     fields: [
-      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Identificação', dbColumn: 'u.name' },
+      { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Identificação', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'month', label: 'Mês', type: 'number', category: 'Período', dbColumn: 'sg.month' },
       { key: 'year', label: 'Ano', type: 'number', category: 'Período', dbColumn: 'sg.year' },
       { key: 'positivation_goal', label: 'Meta Positivação', type: 'number', category: 'Metas', dbColumn: 'sg.positivation_goal' },
@@ -161,7 +162,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     description: 'Rotas de entrega e paradas',
     baseQuery: `SELECT dr.*, u.name as driver_name FROM delivery_routes dr LEFT JOIN users u ON dr.driver_id = u.id`,
     fields: [
-      { key: 'driver_name', label: 'Motorista', type: 'text', category: 'Identificação', dbColumn: 'u.name' },
+      { key: 'driver_name', label: 'Motorista', type: 'text', category: 'Identificação', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'route_date', label: 'Data Rota', type: 'date', category: 'Datas', dbColumn: 'dr.route_date' },
       { key: 'status', label: 'Status', type: 'text', category: 'Status', dbColumn: 'dr.status' },
       { key: 'total_stops', label: 'Total Paradas', type: 'number', category: 'Métricas', dbColumn: 'dr.total_stops' },
@@ -176,7 +177,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     description: 'Colaboradores e vendedores do sistema',
     baseQuery: `SELECT u.id, u.name, u.email, u.role, u.is_active, u.omie_vendor_code, u.created_at FROM users u`,
     fields: [
-      { key: 'name', label: 'Nome', type: 'text', category: 'Identificação', dbColumn: 'u.name' },
+      { key: 'name', label: 'Nome', type: 'text', category: 'Identificação', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'email', label: 'Email', type: 'text', category: 'Contato', dbColumn: 'u.email' },
       { key: 'role', label: 'Cargo', type: 'text', category: 'Acesso', dbColumn: 'u.role' },
       { key: 'is_active', label: 'Ativo?', type: 'boolean', category: 'Status', dbColumn: 'u.is_active' },
@@ -214,7 +215,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     fields: [
       { key: 'nf_numero', label: 'Número NF', type: 'text', category: 'Nota', dbColumn: 'fi.invoice_number' },
       { key: 'nf_cliente', label: 'Cliente', type: 'text', category: 'Nota', dbColumn: 'fi.customer_name' },
-      { key: 'nf_seller_name', label: 'Vendedor', type: 'text', category: 'Nota', dbColumn: 'u.name' },
+      { key: 'nf_seller_name', label: 'Vendedor', type: 'text', category: 'Nota', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'product_name', label: 'Produto', type: 'text', category: 'Produto', dbColumn: 'ii.product_name' },
       { key: 'product_code', label: 'Código', type: 'text', category: 'Produto', dbColumn: 'ii.product_code' },
       { key: 'ncm', label: 'NCM', type: 'text', category: 'Fiscal', dbColumn: 'ii.ncm' },
@@ -302,6 +303,12 @@ function sanitizeIdentifier(str: string): string {
   return str.replace(/[^a-zA-Z0-9_\.]/g, '');
 }
 
+function fieldSql(field: ReportFieldDef): string | null {
+  if (field.sqlExpr) return field.sqlExpr;
+  if (field.dbColumn) return sanitizeIdentifier(field.dbColumn);
+  return null;
+}
+
 function extractFromClause(baseQuery: string): string {
   const fromIdx = baseQuery.toUpperCase().indexOf(' FROM ');
   if (fromIdx === -1) throw new Error('Invalid base query: no FROM clause');
@@ -330,8 +337,9 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
   if (hasGroupBy) {
     for (const gKey of config.groupBy!) {
       const field = fieldMap.get(gKey);
-      if (!field || !field.dbColumn) continue;
-      const col = sanitizeIdentifier(field.dbColumn);
+      if (!field) continue;
+      const col = fieldSql(field);
+      if (!col) continue;
       selectParts.push(`${col} AS "${sanitizeIdentifier(gKey)}"`);
       resultColumns.push(gKey);
     }
@@ -340,8 +348,9 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
   if (hasAggregations) {
     for (const agg of config.aggregations!) {
       const field = fieldMap.get(agg.field);
-      if (!field || !field.dbColumn) continue;
-      const col = sanitizeIdentifier(field.dbColumn);
+      if (!field) continue;
+      const col = fieldSql(field);
+      if (!col) continue;
       const alias = `${agg.fn}_${sanitizeIdentifier(agg.field)}`;
       switch (agg.fn) {
         case 'sum': selectParts.push(`COALESCE(SUM(CAST(${col} AS numeric)), 0) AS "${alias}"`); break;
@@ -359,8 +368,9 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
     const cols = config.columns.length > 0 ? config.columns : source.fields.map(f => f.key);
     for (const key of cols) {
       const field = fieldMap.get(key);
-      if (!field || !field.dbColumn) continue;
-      const col = sanitizeIdentifier(field.dbColumn);
+      if (!field) continue;
+      const col = fieldSql(field);
+      if (!col) continue;
       selectParts.push(`${col} AS "${sanitizeIdentifier(key)}"`);
       resultColumns.push(key);
     }
@@ -378,8 +388,9 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
   if (config.filters && config.filters.length > 0) {
     for (const filter of config.filters) {
       const field = fieldMap.get(filter.field);
-      if (!field || !field.dbColumn) continue;
-      const col = sanitizeIdentifier(field.dbColumn);
+      if (!field) continue;
+      const col = fieldSql(field);
+      if (!col) continue;
 
       switch (filter.operator) {
         case 'eq':
@@ -424,9 +435,8 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
 
   if (hasGroupBy) {
     const groupCols = config.groupBy!
-      .map(k => fieldMap.get(k)?.dbColumn)
-      .filter(Boolean)
-      .map(c => sanitizeIdentifier(c!));
+      .map(k => { const f = fieldMap.get(k); return f ? fieldSql(f) : null; })
+      .filter(Boolean) as string[];
     if (groupCols.length > 0) {
       query += ` GROUP BY ${groupCols.join(', ')}`;
     }
@@ -440,8 +450,9 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
         orderParts.push(`"${sanitizeIdentifier(ord.field)}" ${ord.direction === 'desc' ? 'DESC' : 'ASC'}`);
       } else {
         const field = fieldMap.get(ord.field);
-        if (field?.dbColumn) {
-          orderParts.push(`${sanitizeIdentifier(field.dbColumn)} ${ord.direction === 'desc' ? 'DESC' : 'ASC'}`);
+        const oc = field ? fieldSql(field) : null;
+        if (oc) {
+          orderParts.push(`${oc} ${ord.direction === 'desc' ? 'DESC' : 'ASC'}`);
         }
       }
     }
