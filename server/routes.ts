@@ -1501,6 +1501,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔒 Dias/Periodicidade de visita: só estes admins podem ALTERAR um valor já preenchido.
+  // Inclusão (campo vazio) é liberada a todos. Remove do req.body qualquer ALTERAÇÃO não autorizada.
+  const VISIT_ALTER_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  function guardVisitFieldsAlteration(req: any, existingCustomer: any) {
+    const email = (req.currentUser?.email || '').toLowerCase().trim();
+    if (VISIT_ALTER_ADMINS.includes(email)) return; // admin permitido: pode alterar
+    // weekdays
+    if (req.body.weekdays !== undefined) {
+      let existingWd: string[] = [];
+      try { existingWd = existingCustomer?.weekdays ? normalizeWeekdayInput(existingCustomer.weekdays) : []; } catch { existingWd = []; }
+      if (existingWd.length > 0) {
+        let incomingWd: string[] = [];
+        try { incomingWd = normalizeWeekdayInput(req.body.weekdays); } catch { incomingWd = []; }
+        const a = [...existingWd].sort().join(',');
+        const b = [...incomingWd].sort().join(',');
+        if (a !== b) {
+          console.warn(`🔒 [VISIT-GUARD] ${email || 'usuário'} tentou ALTERAR dias de visita (${a} → ${b}); bloqueado, mantido o valor atual.`);
+          delete req.body.weekdays;
+          delete req.body.deliveryWeekdays;
+        }
+      }
+    }
+    // periodicity
+    if (req.body.visitPeriodicity !== undefined) {
+      const existingP = existingCustomer?.visitPeriodicity;
+      if (existingP && String(existingP) !== String(req.body.visitPeriodicity)) {
+        console.warn(`🔒 [VISIT-GUARD] ${email || 'usuário'} tentou ALTERAR periodicidade (${existingP} → ${req.body.visitPeriodicity}); bloqueado.`);
+        delete req.body.visitPeriodicity;
+      }
+    }
+  }
+
   app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -1566,7 +1598,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!existingCustomer) {
         return res.status(404).json({ message: "Cliente não encontrado" });
       }
-      
+
+      // 🔒 ALTERAÇÃO de Dias/Periodicidade de visita: só estes admins (Cinthia/Flávio) podem MUDAR um valor já preenchido.
+      // Inclusão (campo estava vazio) é liberada a todos. Se um usuário não autorizado tentar alterar, mantemos o valor atual.
+      guardVisitFieldsAlteration(req, existingCustomer);
+
       // Validate and normalize weekdays if provided
       let normalizedWeekdays: string[] | null = null;
       if (req.body.weekdays !== undefined) {
@@ -2094,7 +2130,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Other roles (vendedor, motorista) cannot update customer data
         return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
       }
-      
+
+      // 🔒 ALTERAÇÃO de Dias/Periodicidade de visita: só Cinthia/Flávio podem mudar um valor já preenchido (inclusão liberada a todos)
+      {
+        const existingForGuard = await storage.getCustomer(id);
+        if (existingForGuard) guardVisitFieldsAlteration(req, existingForGuard);
+      }
+
       // DEBUG: Log do payload recebido
       console.log('📍 PUT /api/customers/:id - Payload recebido:', {
         id,
