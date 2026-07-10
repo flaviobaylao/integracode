@@ -383,7 +383,7 @@ export default function Reports() {
         limit,
       };
       const res = await apiRequest('POST', '/api/reports/execute', config);
-      const data = await res.json();
+      const data = res;
       setResult(data);
       toast({ title: `${data.totalRows.toLocaleString('pt-BR')} registros encontrados` });
     } catch (err: any) {
