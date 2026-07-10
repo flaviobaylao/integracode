@@ -60,7 +60,7 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
   const createCustomerMutation = useMutation({
     mutationFn: async (customerData: { name: string; phone: string }) => {
       const response = await apiRequest("POST", "/api/customers", customerData);
-      return response.json() as Customer;
+      return response as Customer;
     },
     onSuccess: (newCustomer) => {
       toast({
