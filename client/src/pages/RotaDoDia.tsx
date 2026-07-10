@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { compareSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -121,7 +121,10 @@ export default function RotaDoDia() {
   const [adminCheckInTime, setAdminCheckInTime] = useState('');
   const [adminCheckOutTime, setAdminCheckOutTime] = useState('');
   const [adminSaving, setAdminSaving] = useState(false);
-  
+  // Sessão de "atendimento completo" assumida por um adm: usada para detectar alterações EFETIVAS (diff) e só então marcar o card.
+  const [adminActingCustomerId, setAdminActingCustomerId] = useState<string | null>(null);
+  const adminSnapshotRef = useRef<any>(null);
+
   // Busca e filtro das Visitas Presenciais
   const [presentialSearch, setPresentialSearch] = useState('');
   const [presentialFilter, setPresentialFilter] = useState<'todos' | 'atendidos' | 'pendentes'>('todos');
@@ -595,17 +598,33 @@ export default function RotaDoDia() {
     }
   };
 
-  // Abrir o ATENDIMENTO COMPLETO como Adm: marca o card (roxo escuro + email do adm) e abre a tela de atendimento
+  // "Fotografa" o estado atual da visita (check-in/out + pedidos) para depois detectar ALTERAÇÕES EFETIVAS.
+  const buildVisitSnapshot = (customerId: string) => {
+    const cps = (route?.checkpoints || []).filter((cp: any) => cp.customerId === customerId);
+    const ci = cps.find((cp: any) => cp.checkpointType === 'check_in');
+    const co = cps.find((cp: any) => cp.checkpointType === 'check_out');
+    const ords = (customerId && customerInfo?.orders?.[customerId]) || [];
+    return {
+      checkIn: ci?.checkpointTime ? formatInTimeZone(ci.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
+      checkOut: co?.checkpointTime ? formatInTimeZone(co.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
+      orderCount: ords.length,
+      orderValue: ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0),
+    };
+  };
+
+  // Abrir o ATENDIMENTO COMPLETO como Adm: NÃO marca o card ao abrir; apenas fotografa o estado e abre a tela.
+  // O card só ficará roxo se o adm efetivamente alterar algo (detectado por diff no useEffect abaixo).
   const openFullAttendanceAsAdmin = async () => {
     if (!adminEditVisit || !route?.id) return;
     const visit = adminEditVisit.visit;
+    const cid = visit.customerId || visit.entityId;
     try {
       setAdminSaving(true);
-      await apiRequest('POST', `/api/daily-routes/${route.id}/checkpoints/admin-mark`, { customerId: visit.customerId, action: 'atendimento' });
+      adminSnapshotRef.current = buildVisitSnapshot(cid);
+      setAdminActingCustomerId(cid);
       setAdminEditVisit(null);
-      invalidateRoute();
       // Abre a mesma tela de atendimento do vendedor (check-in, check-out, registrar pedido, não venda)
-      await handleVisitClick(visit.customerId || visit.entityId, false);
+      await handleVisitClick(cid, false);
     } catch (e: any) {
       toast({ title: 'Erro ao abrir atendimento', description: e?.message || 'Falha ao assumir o atendimento.', variant: 'destructive' });
     } finally {
@@ -613,31 +632,61 @@ export default function RotaDoDia() {
     }
   };
 
+  // Detecta ALTERAÇÕES EFETIVAS durante a sessão de atendimento do adm e registra cada uma como histórico (de -> para).
+  useEffect(() => {
+    const cid = adminActingCustomerId;
+    if (!cid || !route?.id || !adminSnapshotRef.current) return;
+    const before = adminSnapshotRef.current;
+    const after = buildVisitSnapshot(cid);
+    const diffs: Array<{ field: string; from: any; to: any }> = [];
+    if (before.checkIn !== after.checkIn) diffs.push({ field: 'Check-in', from: before.checkIn, to: after.checkIn });
+    if (before.checkOut !== after.checkOut) diffs.push({ field: 'Check-out', from: before.checkOut, to: after.checkOut });
+    if (before.orderCount !== after.orderCount || before.orderValue !== after.orderValue) {
+      const fmt = (s: any) => `${s.orderCount} pedido(s) / R$ ${Number(s.orderValue || 0).toFixed(2)}`;
+      diffs.push({ field: 'Pedido', from: fmt(before), to: fmt(after) });
+    }
+    if (diffs.length === 0) return;
+    adminSnapshotRef.current = after; // evita re-registrar a mesma alteração
+    (async () => {
+      try {
+        for (const d of diffs) {
+          await apiRequest('POST', `/api/daily-routes/${route.id}/checkpoints/admin-record`, { customerId: cid, field: d.field, from: d.from, to: d.to });
+        }
+        invalidateRoute();
+      } catch (e) {
+        // silencioso: não impedir o atendimento por falha ao registrar histórico
+      }
+    })();
+  }, [route?.checkpoints, customerInfo, adminActingCustomerId]);
+
   const virtualVisitsCount = useMemo(() => {
     if (!route?.visits) return 0;
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
   }, [route?.visits]);
 
-  // Métricas de PEDIDOS por visita (visitas físicas, exclui virtuais): com pedido, valor e sem pedido
+  // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (check-out) + atendimentos virtuais realizados.
+  // Visitas com Pedidos  = concluídas que tiveram pedido implantado
+  // Valor Visitas c/ Ped = soma dos pedidos das concluídas
+  // Visitas Sem Pedido   = concluídas SEM registro de pedido
   const orderStats = useMemo(() => {
-    const visits = (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual');
-    // Visitas concluídas = com check-out realizado
+    // Universo de concluídas por customerId
     const concluidas = new Set<string>();
-    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out') concluidas.add(cp.customerId); });
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_out' && cp.customerId) concluidas.add(cp.customerId); });
+    attendedCustomerIds.forEach((id: any) => { if (id) concluidas.add(String(id)); });
     let comPedidos = 0;
     let valor = 0;
-    let semPedido = 0; // visitas CONCLUÍDAS (check-out) que NÃO tiveram pedido implantado
-    for (const v of visits) {
-      const ords = (v.customerId && customerInfo?.orders?.[v.customerId]) || [];
+    let semPedido = 0;
+    concluidas.forEach((cid: string) => {
+      const ords = (customerInfo?.orders?.[cid]) || [];
       if (ords.length > 0) {
         comPedidos++;
         valor += ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0);
-      } else if (v.customerId && concluidas.has(v.customerId)) {
+      } else {
         semPedido++;
       }
-    }
-    return { comPedidos, semPedido, valor };
-  }, [route?.visits, route?.checkpoints, customerInfo]);
+    });
+    return { comPedidos, semPedido, valor, totalConcluidas: concluidas.size };
+  }, [route?.checkpoints, customerInfo, attendedCustomerIds]);
 
   // Visitas presenciais (exclui virtuais)
   const presentialVisits = useMemo(
@@ -785,6 +834,9 @@ export default function RotaDoDia() {
     setLeadCheckInPhotoUrl(null);
     setCheckInCoords(null);
     setLeadCheckInNotes('');
+    // Encerra a sessão de atendimento assumida pelo adm (para de monitorar diffs)
+    setAdminActingCustomerId(null);
+    adminSnapshotRef.current = null;
   };
 
   return (
@@ -978,90 +1030,143 @@ export default function RotaDoDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                    <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Total de Visitas</p>
-                    <p className="text-2xl font-bold">{route.totalVisits}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
-                    <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Concluídas</p>
-                    <p className="text-2xl font-bold">{route.completedVisits}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
-                    <Clock className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
-                    <p className="text-2xl font-bold">{route.totalVisits - route.completedVisits}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
-                    <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
-                    <p className="text-2xl font-bold" data-testid="attendance-percentage">
-                      {route.totalVisits > 0 
-                        ? Math.round((route.completedVisits / route.totalVisits) * 100) 
-                        : 0}%
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
-                    <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Atend. Virtuais</p>
-                    <p className="text-2xl font-bold" data-testid="virtual-service-count">
-                      <span className="text-green-600">{virtualServiceCount}</span>
-                      <span className="text-gray-400 mx-1">/</span>
-                      <span>{virtualVisitsCount}</span>
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
-                    <ShoppingCart className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Visitas com Pedidos</p>
-                    <p className="text-2xl font-bold" data-testid="visits-with-orders">{orderStats.comPedidos}</p>
+              {(() => {
+                // Presenciais
+                const presTotal = route.totalVisits || 0;
+                const presConcl = route.completedVisits || 0;
+                const presPend = Math.max(0, presTotal - presConcl);
+                const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
+                // Virtuais
+                const virtTotal = virtualVisitsCount || 0;
+                const virtConcl = virtualServiceCount || 0;
+                const virtPend = Math.max(0, virtTotal - virtConcl);
+                const virtPct = virtTotal > 0 ? Math.round((virtConcl / virtTotal) * 100) : 0;
+                return (
+              <div className="space-y-5">
+                {/* Linha 1 — Visitas Presenciais */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Visitas Presenciais</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                        <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Total de Visitas</p>
+                        <p className="text-2xl font-bold" data-testid="pres-total">{presTotal}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Concluídas</p>
+                        <p className="text-2xl font-bold" data-testid="pres-concluidas">{presConcl}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                        <Clock className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
+                        <p className="text-2xl font-bold" data-testid="pres-pendentes">{presPend}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
+                        <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
+                        <p className="text-2xl font-bold" data-testid="attendance-percentage">{presPct}%</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
-                    <DollarSign className="h-6 w-6 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Valor Visitas com Pedidos</p>
-                    <p className="text-xl font-bold" data-testid="orders-value">
-                      R$ {orderStats.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </p>
+
+                {/* Linha 2 — Atendimentos Virtuais */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Atendimentos Virtuais</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
+                        <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Total de Atendimentos</p>
+                        <p className="text-2xl font-bold" data-testid="virt-total">{virtTotal}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Concluídas</p>
+                        <p className="text-2xl font-bold" data-testid="virt-concluidas">{virtConcl}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                        <Clock className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
+                        <p className="text-2xl font-bold" data-testid="virt-pendentes">{virtPend}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
+                        <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
+                        <p className="text-2xl font-bold" data-testid="virt-percentage">{virtPct}%</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
-                    <MapPin className="h-6 w-6 text-orange-600 dark:text-orange-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Visitas Sem Pedido</p>
-                    <p className="text-2xl font-bold" data-testid="visits-without-orders">{orderStats.semPedido}</p>
+
+                {/* Linha 3 — Pedidos (sobre as Concluídas: presenciais realizadas + atend. virtuais realizados) */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Pedidos das Concluídas (Presenciais + Virtuais)</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
+                        <ShoppingCart className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Visitas com Pedidos</p>
+                        <p className="text-2xl font-bold" data-testid="visits-with-orders">{orderStats.comPedidos}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <DollarSign className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Valor Visitas com Pedidos</p>
+                        <p className="text-xl font-bold" data-testid="orders-value">
+                          R$ {orderStats.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                        <MapPin className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Visitas Sem Pedido</p>
+                        <p className="text-2xl font-bold" data-testid="visits-without-orders">{orderStats.semPedido}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+                );
+              })()}
             </CardContent>
           </Card>
 
@@ -1252,9 +1357,11 @@ export default function RotaDoDia() {
                     borderColor = 'border-blue-200 dark:border-blue-800';
                   }
 
-                  // 🟣 Ajuste feito por administrador tem prioridade visual: card ROXO + tag "Adm - email"
+                  // 🟣 Ajuste feito por administrador tem prioridade visual — SÓ quando houve alteração EFETIVA (histórico não vazio).
                   const adminMark = adminAdjustments[visit.customerId];
-                  if (adminMark) {
+                  const adminChanges: any[] = (adminMark && Array.isArray(adminMark.changes)) ? adminMark.changes : [];
+                  const hasAdminChange = adminChanges.length > 0;
+                  if (hasAdminChange) {
                     statusColor = 'text-purple-900 dark:text-purple-200';
                     borderColor = 'border-2 border-purple-800 dark:border-purple-400 bg-purple-200 dark:bg-purple-900 ring-1 ring-purple-800 dark:ring-purple-500';
                   }
@@ -1288,8 +1395,8 @@ export default function RotaDoDia() {
                                   Lead
                                 </Badge>
                               )}
-                              {/* 🟣 Tag de ajuste administrativo */}
-                              {adminMark && (
+                              {/* 🟣 Tag de ajuste administrativo (só quando houve alteração efetiva) */}
+                              {hasAdminChange && (
                                 <Badge variant="outline" className="text-xs border-purple-700 text-purple-900 bg-purple-100 dark:text-purple-200 dark:bg-purple-900 dark:border-purple-400" data-testid={`adm-tag-${visit.customerId}`}>
                                   Adm - {adminMark.by}
                                 </Badge>
@@ -1341,6 +1448,26 @@ export default function RotaDoDia() {
                               <MapPin className="h-3 w-3" />
                               {visit.customerAddress || 'Endereço não informado'}
                             </p>
+
+                            {/* 🟣 Histórico de alterações do administrador (de → para) */}
+                            {hasAdminChange && (
+                              <div className="mb-2 rounded-md border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/40 p-2" data-testid={`adm-history-${visit.customerId}`}>
+                                <p className="text-[11px] font-semibold text-purple-800 dark:text-purple-300 mb-1 flex items-center gap-1">
+                                  <Clock className="h-3 w-3" /> Histórico de alterações (Adm)
+                                </p>
+                                <ul className="space-y-0.5">
+                                  {adminChanges.map((ch: any, ci: number) => (
+                                    <li key={ci} className="text-[11px] text-purple-900 dark:text-purple-200">
+                                      <span className="font-medium">{ch.field}:</span>{' '}
+                                      <span className="line-through opacity-70">{ch.from ?? '—'}</span>
+                                      {' → '}
+                                      <span className="font-semibold">{ch.to ?? '—'}</span>
+                                      <span className="text-purple-500 dark:text-purple-400"> · {ch.by}{ch.at ? ` · ${formatInTimeZone(ch.at, 'America/Sao_Paulo', 'dd/MM HH:mm')}` : ''}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
 
                             {!isLead && ((visit as any).weekdays || (visit as any).visitPeriodicity) && (
                               <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-2 font-medium">
