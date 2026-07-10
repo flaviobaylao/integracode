@@ -6204,24 +6204,42 @@ export class DatabaseStorage implements IStorage {
     const conversations = await db.select().from(chatConversations);
     const messages = await db.select().from(chatMessages);
 
+    // 🕒 Início do dia vigente no fuso America/Sao_Paulo (BRT, UTC-3) — "Respondidas" zera na virada do dia
+    const brtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const startOfTodayBRT = new Date(`${brtDate}T00:00:00-03:00`);
+
+    // 📌 Última mensagem de cada conversa (para detectar conversas aguardando resposta do atendente)
+    const latestMsgByConv = new Map<string, any>();
+    for (const m of messages) {
+      const prev = latestMsgByConv.get(m.conversationId);
+      if (!prev || (m.createdAt && prev.createdAt && new Date(m.createdAt as any) > new Date(prev.createdAt))) {
+        latestMsgByConv.set(m.conversationId, m);
+      }
+    }
+
     return agents.map((agent, index) => {
-      // 🔍 Buscar conversas atribuídas ao agente
-      const agentConversations = conversations.filter(c => c.agentId === agent.id);
-      const agentConvIds = agentConversations.map(c => c.id);
-      
-      // 💬 Mensagens respondidas pelo agente (apenas suas conversas)
-      const agentMessages = messages.filter(m => 
-        m.senderId === agent.id && 
+      // 🔗 IDs que representam este atendente: o envio grava senderId = user.id; a distribuição usa chat_agents.id
+      const ownIds = new Set([agent.id, agent.userId].filter(Boolean) as string[]);
+
+      // 🔍 Conversas do agente — a atribuição usa assignedAgentId (agentId como fallback legado)
+      const agentConversations = conversations.filter(c =>
+        (c.assignedAgentId && ownIds.has(c.assignedAgentId)) ||
+        (c.agentId && ownIds.has(c.agentId))
+      );
+
+      // ✅ RESPONDIDAS (dia vigente / BRT): mensagens de resposta enviadas pelo atendente HOJE — zera à meia-noite
+      const answeredToday = messages.filter(m =>
         m.senderType === 'agent' &&
-        agentConvIds.includes(m.conversationId)
+        ownIds.has(m.senderId) &&
+        m.createdAt && new Date(m.createdAt as any) >= startOfTodayBRT
       );
-      
-      // 📥 Mensagens não lidas de clientes APENAS nas conversas do agente
-      const unreadMessages = messages.filter(m => 
-        m.senderType === 'customer' && 
-        !m.isRead &&
-        agentConvIds.includes(m.conversationId)
-      );
+
+      // 📥 A RESPONDER: conversas em andamento (não resolvidas) do atendente cuja ÚLTIMA mensagem é do cliente — independe do dia
+      const awaitingReply = agentConversations.filter(c => {
+        if (c.status === 'resolved') return false;
+        const last = latestMsgByConv.get(c.id);
+        return !!last && last.senderType === 'customer';
+      });
 
       // 🎨 Cor do atendente baseada no índice (consistente com chat-distribution-service)
       const agentColor = AGENT_COLORS[index % AGENT_COLORS.length];
@@ -6233,8 +6251,8 @@ export class DatabaseStorage implements IStorage {
         status: agent.status === 'online' ? 'online' : 'offline',
         color: agentColor,
         lastActivity: agent.lastSeenAt,
-        messagesAnswered: agentMessages.length,
-        messagesToRespond: unreadMessages.length
+        messagesAnswered: answeredToday.length,
+        messagesToRespond: awaitingReply.length
       };
     });
   }
