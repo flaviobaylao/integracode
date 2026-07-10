@@ -1696,6 +1696,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // customers_cpf_unique/cnpj quando o cliente nao tem CPF/CNPJ).
           const digits = String(value ?? '').replace(/\D/g, '');
           cleanedData[key] = digits.length ? value : null;
+        } else if (key === 'serviceStartDate') {
+          // Coluna timestamp: o drizzle espera Date. Converte a string 'YYYY-MM-DD' (ou vazio -> null).
+          const d = value ? new Date(value) : null;
+          cleanedData[key] = (d && !isNaN(d.getTime())) ? d : null;
         } else {
           cleanedData[key] = value;
         }
