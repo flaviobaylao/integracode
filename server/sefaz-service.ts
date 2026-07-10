@@ -102,6 +102,32 @@ export function bsbStSaleOverride(
   return { cfop: isInterstate ? '6404' : '5405', csosn: '500' };
 }
 
+// Recalcula a DIREÇÃO do CFOP (interno x interestadual) preservando a natureza
+// da operação: troca só o 1º dígito (5↔6 saídas, 1↔2 entradas/devolução), com o
+// par de ST 5405↔6404 como exceção (não é troca simples de dígito). Retorna
+// null quando o CFOP já está coerente com a operação (ou é exterior 3xxx/7xxx,
+// ou não é um CFOP de 4 dígitos). Caso "Casa de Marias" (NF 104152, 10/jul/2026):
+// NF nasceu 6102 porque o cliente estava sem UF; corrigida a UF (DF=DF), o
+// retentar mantinha o 6102 gravado → SEFAZ 772.
+export function cfopForOperation(
+  cfop: string | null | undefined,
+  isInterstate: boolean,
+): string | null {
+  const cur = String(cfop || '').trim();
+  if (!/^\d{4}$/.test(cur)) return null;
+  if (cur === '5405' && isInterstate) return '6404';
+  if (cur === '6404' && !isInterstate) return '5405';
+  const d = cur.charAt(0);
+  if (isInterstate) {
+    if (d === '5') return '6' + cur.slice(1);
+    if (d === '1') return '2' + cur.slice(1);
+  } else {
+    if (d === '6') return '5' + cur.slice(1);
+    if (d === '2') return '1' + cur.slice(1);
+  }
+  return null;
+}
+
 function sanitizeStr(s: string, maxLen = 60): string {
   return (s || '')
     .normalize('NFD')
@@ -705,10 +731,13 @@ function buildDocumento(
   const primaryCfopCandidates = [items[0]?.cfop, invoice.cfop, scenario?.cfop, _defaultCfop];
   const primaryCfop = primaryCfopCandidates.find(c => c && /^\d{4}$/.test(c)) || _defaultCfop;
   const cfopFirstDigit = primaryCfop.charAt(0);
+  // idDest pela COMPARAÇÃO REAL de UFs (emitente x destinatário), não pelo 1º
+  // dígito do CFOP gravado: um CFOP desatualizado na NF/itens não pode mais
+  // contradizer a UF do destinatário (rejeição 772 — "Operação interestadual e
+  // UF destinatário igual a UF de origem"). Exterior (3xxx/7xxx) segue o CFOP.
   const derivedIdDest =
-    (cfopFirstDigit === '2' || cfopFirstDigit === '6') ? '2' :
     (cfopFirstDigit === '3' || cfopFirstDigit === '7') ? '3' :
-    '1';
+    isInterstateOp ? '2' : '1';
   console.log(`📋 [NFE-XML] CFOP resolução: invoice.cfop=${invoice.cfop}, scenario.cfop=${scenario?.cfop}, primaryCfop=${primaryCfop}, idDest=${derivedIdDest}, scenario.stateScope=${scenario?.stateScope}, issuerCnpj=${_issuerCnpjDigits}, isBsb=${_isBsbIssuer}, defaultCfop=${_defaultCfop}, defaultCsosn=${_defaultCsosn}`);
 
   // NF-e interestadual (idDest=2) de emitente Regime Normal (CRT 3) para um
@@ -757,6 +786,14 @@ function buildDocumento(
   const detList = items.map((item, idx) => {
     const cfopCandidates = [item.cfop, invoice.cfop, scenario?.cfop, _defaultCfop];
     let cfop = cfopCandidates.find(c => c && /^\d{4}$/.test(c)) || _defaultCfop;
+    // Direção do CFOP sempre coerente com a operação REAL (UF emitente x UF
+    // destinatário) — proteção final contra CFOP desatualizado gravado na
+    // NF/itens/cenário (o recálculo persistente acontece no _doEmitNfe).
+    const _dirFix = cfopForOperation(cfop, isInterstateOp);
+    if (_dirFix) {
+      console.log(`🔧 [NFE-XML] CFOP ${cfop} → ${_dirFix} (operação ${isInterstateOp ? 'interestadual' : 'interna'} ${_issuerUfNorm}→${_customerUfNorm})`);
+      cfop = _dirFix;
+    }
     const qty = parseFloat(item.quantity?.toString() || '1').toFixed(4);
     const unitPrc = parseFloat(item.unitPrice?.toString() || '0').toFixed(10);
     const totPrc = parseFloat(item.totalPrice?.toString() || '0').toFixed(2);
@@ -1607,6 +1644,71 @@ export class SefazService {
             errorMessage: `Cliente "${invoice.customerName}" não possui CNPJ/CPF válido cadastrado (verifique os dígitos). Corrija o cadastro do cliente antes de emitir a NF-e.`,
           };
         }
+      }
+
+      // ── REVISITA o cadastro do cliente e RECALCULA o CFOP (toda tentativa) ──
+      // Caso "Casa de Marias" (NF 104152, 10/jul/2026): a NF nasceu com CFOP
+      // 6102 porque o cliente estava SEM UF no cadastro; corrigida a UF (DF),
+      // o Retentar continuava emitindo com o CFOP interestadual GRAVADO na
+      // NF/itens → SEFAZ cStat 772 (idDest=2 com UF destino == UF origem).
+      // Regra do negócio: a CADA emissão/retentativa o CADASTRO do cliente é a
+      // fonte de verdade — refresca a UF do destinatário e ajusta a DIREÇÃO do
+      // CFOP (5xxx interno / 6xxx interestadual; par ST 5405↔6404), persistindo
+      // na NF e nos itens. Nunca muda a natureza (venda/bonif/troca/amostra).
+      // NFC-e (modelo 65) é sempre operação interna — não precisa.
+      try {
+        if (invoiceModel === '55') {
+          let freshCust: any = null;
+          if (invoice.customerId) {
+            try { freshCust = await storage.getCustomer(invoice.customerId); } catch { /* segue com dados da NF */ }
+          }
+          const custUfCad = normalizeUf(freshCust?.state) || ufFromCep(onlyDigits(String(freshCust?.zipCode || freshCust?.zip_code || '')));
+          const destUfNow = custUfCad || normalizeUf(invoice.customerUf) || ufFromCep(invoice.customerCep);
+          if (destUfNow) {
+            const issuerUfNow = (invoice.issuerUf || 'GO').toUpperCase();
+            const isInterNow = destUfNow !== issuerUfNow;
+            const invUpd: Record<string, any> = {};
+            if (custUfCad && normalizeUf(invoice.customerUf) !== custUfCad) invUpd.customerUf = custUfCad;
+            const oldInvCfop = invoice.cfop || null;
+            const newInvCfop = cfopForOperation(invoice.cfop, isInterNow);
+            if (newInvCfop) invUpd.cfop = newInvCfop;
+            const itemFixes: Array<{ id: string; from: string; to: string }> = [];
+            for (const it of items) {
+              const to = cfopForOperation((it as any).cfop, isInterNow);
+              if (to) itemFixes.push({ id: (it as any).id, from: String((it as any).cfop || ''), to });
+            }
+            if (Object.keys(invUpd).length > 0 || itemFixes.length > 0) {
+              if (Object.keys(invUpd).length > 0) {
+                await storage.updateFiscalInvoice(invoiceId, invUpd as any);
+              }
+              for (const f of itemFixes) {
+                await storage.updateFiscalInvoiceItem(f.id, { cfop: f.to } as any);
+              }
+              const cfopMsg = newInvCfop
+                ? `CFOP ${oldInvCfop || 'N/D'} → ${newInvCfop}`
+                : (itemFixes.length > 0 ? `CFOP itens ${itemFixes[0].from} → ${itemFixes[0].to}` : `UF destinatário → ${destUfNow}`);
+              console.log(`[SEFAZ] 🔁 Cadastro do cliente revisitado p/ NF-e #${invoice.invoiceNumber}: UF destino=${destUfNow} (emitente ${issuerUfNow}, operação ${isInterNow ? 'INTERESTADUAL' : 'INTERNA'}) — ${cfopMsg}; ${itemFixes.length} item(ns) ajustado(s)`);
+              try {
+                await storage.createFiscalInvoiceEvent({
+                  invoiceId,
+                  eventType: 'correcao',
+                  status: 'success',
+                  description: `CFOP recalculado a partir do cadastro do cliente (UF ${destUfNow}; operação ${isInterNow ? 'interestadual' : 'interna'}): ${cfopMsg}${itemFixes.length ? ` | ${itemFixes.length} item(ns) ajustado(s)` : ''}`,
+                  createdBy: invoice.createdBy || undefined,
+                });
+              } catch { /* evento é cosmético */ }
+              // Recarrega NF e itens já corrigidos p/ montar o XML
+              invoice = (await storage.getFiscalInvoice(invoiceId)) || invoice;
+              const reloadedItems = await storage.getFiscalInvoiceItems(invoiceId);
+              if (reloadedItems && reloadedItems.length > 0) {
+                items.length = 0;
+                items.push(...reloadedItems);
+              }
+            }
+          }
+        }
+      } catch (cfopErr: any) {
+        console.warn(`[SEFAZ] ⚠️ Falha ao recalcular CFOP a partir do cadastro (segue com os dados da NF): ${cfopErr.message}`);
       }
 
       // ── Monta documento ───────────────────────────────────────────────────
