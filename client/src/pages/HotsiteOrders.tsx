@@ -151,7 +151,7 @@ export default function HotsiteOrders() {
   const finalizeMutation = useMutation({
     mutationFn: async (orderId: string) => {
       const response = await apiRequest('POST', `/api/hotsite-orders/${orderId}/finalize`);
-      return response.json();
+      return response;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
