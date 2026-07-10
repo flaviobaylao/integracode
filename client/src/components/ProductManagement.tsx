@@ -83,7 +83,7 @@ export default function ProductManagement() {
   const updateNcmMutation = useMutation({
     mutationFn: async ({ productId, ncm }: { productId: string; ncm: string }) => {
       const response = await apiRequest('PUT', `/api/products/${productId}`, { ncm });
-      return response.json();
+      return response;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/products'] });
