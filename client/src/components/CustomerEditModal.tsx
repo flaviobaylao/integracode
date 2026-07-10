@@ -121,6 +121,7 @@ export default function CustomerEditModal({
     boletoDays: "" as any,
     collectionDiscount: "" as any,
     paymentInstallments: "" as any,
+    serviceStartDate: "", // Data de início do fornecimento (só admins alteram)
   });
 
   const createLeadMutation = useMutation({
@@ -342,6 +343,7 @@ export default function CustomerEditModal({
         boletoDays: (customer as any).boletoDays ?? "",
         collectionDiscount: (customer as any).collectionDiscount ?? "",
         paymentInstallments: (customer as any).paymentInstallments ?? "",
+        serviceStartDate: (customer as any).serviceStartDate ? new Date((customer as any).serviceStartDate).toISOString().split('T')[0] : "",
       });
     }
   }, [customer]);
@@ -614,6 +616,23 @@ export default function CustomerEditModal({
                 <SelectItem value="bimestral">Bimestral</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Data de Início do Fornecimento */}
+          <div>
+            <Label htmlFor="serviceStartDate">Data de Início do Fornecimento</Label>
+            {!canAlterVisitFields && (
+              <p className="text-xs text-muted-foreground mb-2">Apenas Cinthia e Flávio podem alterar esta data.</p>
+            )}
+            <Input
+              id="serviceStartDate"
+              type="date"
+              value={formData.serviceStartDate}
+              onChange={(e) => setFormData(prev => ({ ...prev, serviceStartDate: e.target.value }))}
+              disabled={!canAlterVisitFields}
+              data-testid="input-service-start-date"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Data a partir da qual as visitas/fornecimento serão iniciados.</p>
           </div>
 
           {/* Cliente Consumidor */}
