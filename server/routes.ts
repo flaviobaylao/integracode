@@ -20208,6 +20208,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 📷 Upload de FOTO do check-in pelo administrador (grava em sales_cards.check_in_photo_url do card do cliente)
+  app.post('/api/daily-routes/:routeId/checkpoints/admin-photo', authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      if (!isCheckinAdmin(req)) return res.status(403).json({ message: 'Apenas os administradores autorizados podem anexar foto do check-in.' });
+      const email = (req.currentUser.email || '').toLowerCase().trim();
+      const { routeId } = req.params;
+      const { customerId } = req.body || {};
+      if (!req.file) return res.status(400).json({ message: 'Foto obrigatória.' });
+      if (!customerId) return res.status(400).json({ message: 'customerId obrigatório.' });
+      const url = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, 'route-checkins');
+      if (!url) return res.status(500).json({ message: 'Falha ao fazer upload da foto.' });
+      // Localiza o sales_card do check-in: via checkpoint (visit_id) ou pelo cliente mais recente
+      const cp: any = await db.execute(sql`SELECT visit_id FROM route_checkpoints WHERE daily_route_id = ${routeId} AND customer_id = ${customerId} AND checkpoint_type = 'check_in' ORDER BY checkpoint_time DESC LIMIT 1`);
+      let scId = cp?.rows?.[0]?.visit_id || null;
+      if (!scId) {
+        const sc: any = await db.execute(sql`SELECT id FROM sales_cards WHERE customer_id = ${customerId} ORDER BY created_at DESC LIMIT 1`);
+        scId = sc?.rows?.[0]?.id || null;
+      }
+      if (!scId) return res.status(404).json({ message: 'Card de venda do cliente não encontrado para anexar a foto.' });
+      await db.execute(sql`UPDATE sales_cards SET check_in_photo_url = ${url} WHERE id = ${scId}`);
+      await appendAdminChange(routeId, customerId, email, 'Foto do check-in', null, 'anexada');
+      console.log(`🟣 [ADMIN-CHECKIN] ${email} anexou foto de check-in ao cliente ${customerId}`);
+      res.json({ success: true, photoUrl: url });
+    } catch (error: any) {
+      console.error('Erro no admin-photo:', error);
+      res.status(500).json({ message: 'Erro ao anexar foto do check-in', error: error.message });
+    }
+  });
+
   // Deletar rota inteira (limpar)
   app.delete('/api/daily-routes/:routeId', authenticateUser, async (req: any, res) => {
     try {
