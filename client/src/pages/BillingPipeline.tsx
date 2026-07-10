@@ -627,8 +627,8 @@ export default function BillingPipeline() {
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="p-4">
+    <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
+      <div className="p-4 flex flex-col flex-1 min-h-0">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <BackToDashboardButton />
@@ -826,7 +826,7 @@ export default function BillingPipeline() {
         )}
 
         {/* Kanban Board */}
-        <div className="flex gap-3 overflow-auto pb-4" style={{ maxHeight: 'calc(100vh - 170px)' }}>
+        <div className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
