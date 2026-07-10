@@ -75,6 +75,9 @@ export default function RotaDoDia() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
+  // Administradores autorizados a EDITAR/ADICIONAR/REMOVER check-in e check-out (ajuste do sistema).
+  const CHECKIN_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const isCheckinAdmin = CHECKIN_ADMINS.includes((user?.email || '').toLowerCase().trim());
   
   // Bloquear motoristas de acessar Rota do Dia
   if (user && (user.role as string) === 'motorista') {
@@ -113,6 +116,11 @@ export default function RotaDoDia() {
   
   // Estado para modal de atendimento virtual
   const [virtualServiceCustomer, setVirtualServiceCustomer] = useState<{ id: string; name: string } | null>(null);
+  // Ajuste admin de check-in/out
+  const [adminEditVisit, setAdminEditVisit] = useState<any>(null);
+  const [adminCheckInTime, setAdminCheckInTime] = useState('');
+  const [adminCheckOutTime, setAdminCheckOutTime] = useState('');
+  const [adminSaving, setAdminSaving] = useState(false);
   
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
@@ -542,6 +550,46 @@ export default function RotaDoDia() {
   }, [customers, customerSearchQuery]);
 
   const route = response?.route;
+  const adminAdjustments: Record<string, any> = (route as any)?.adminAdjustments || {};
+
+  // Abrir o diálogo de ajuste admin de check-in/out para uma visita
+  const openAdminEdit = (visit: any, checkInCp: any, checkOutCp: any) => {
+    setAdminEditVisit({ visit, checkInCp, checkOutCp });
+    setAdminCheckInTime(checkInCp ? formatInTimeZone(checkInCp.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : '');
+    setAdminCheckOutTime(checkOutCp ? formatInTimeZone(checkOutCp.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : '');
+  };
+
+  const invalidateRoute = () => queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+
+  // Salvar ajustes: compara o que existia com o que o admin digitou e chama editar/adicionar/remover
+  const saveAdminCheckpoints = async () => {
+    if (!adminEditVisit || !route?.id) return;
+    const { visit, checkInCp, checkOutCp } = adminEditVisit;
+    const rid = route.id;
+    const applyField = async (cp: any, newTime: string, type: 'check_in' | 'check_out') => {
+      const t = (newTime || '').trim();
+      if (cp && !t) {
+        await apiRequest('DELETE', `/api/daily-routes/checkpoints/${cp.id}/admin`);
+      } else if (cp && t) {
+        const cur = formatInTimeZone(cp.checkpointTime, 'America/Sao_Paulo', 'HH:mm');
+        if (cur !== t) await apiRequest('PATCH', `/api/daily-routes/checkpoints/${cp.id}/admin-edit`, { time: t });
+      } else if (!cp && t) {
+        await apiRequest('POST', `/api/daily-routes/${rid}/checkpoints/admin-add`, { customerId: visit.customerId, checkpointType: type, time: t });
+      }
+    };
+    try {
+      setAdminSaving(true);
+      await applyField(checkInCp, adminCheckInTime, 'check_in');
+      await applyField(checkOutCp, adminCheckOutTime, 'check_out');
+      toast({ title: 'Check-in/out ajustado', description: 'As alterações foram salvas (card marcado como ajuste Adm).' });
+      setAdminEditVisit(null);
+      invalidateRoute();
+    } catch (e: any) {
+      toast({ title: 'Erro ao ajustar', description: e?.message || 'Falha ao salvar o ajuste.', variant: 'destructive' });
+    } finally {
+      setAdminSaving(false);
+    }
+  };
 
   const virtualVisitsCount = useMemo(() => {
     if (!route?.visits) return 0;
@@ -698,6 +746,18 @@ export default function RotaDoDia() {
             {isFetching ? 'Atualizando...' : 'Atualizar'}
           </Button>
         )}
+      </div>
+
+      {/* 🎨 Legenda das cores dos cards */}
+      <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
+        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Legenda das cores</p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-700 dark:text-gray-300">
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-gray-300 bg-gray-100 dark:bg-gray-700"></span>Aguardando (sem check-in)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-blue-300 bg-blue-100 dark:bg-blue-900"></span>Check-in realizado (em atendimento)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-out)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in/out fora do local (&gt;100m)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-purple-400 bg-purple-100 dark:bg-purple-900"></span>Roxo — Ajuste Adm / Lead</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -1196,6 +1256,13 @@ export default function RotaDoDia() {
                     borderColor = 'border-blue-200 dark:border-blue-800';
                   }
 
+                  // 🟣 Ajuste feito por administrador tem prioridade visual: card ROXO + tag "Adm - email"
+                  const adminMark = adminAdjustments[visit.customerId];
+                  if (adminMark) {
+                    statusColor = 'text-purple-700 dark:text-purple-300';
+                    borderColor = 'border-purple-500 dark:border-purple-600 bg-purple-50 dark:bg-purple-950 ring-1 ring-purple-400';
+                  }
+
                   return (
                     <div
                       key={visit.id || visit.customerId || index}
@@ -1224,6 +1291,23 @@ export default function RotaDoDia() {
                                 <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 dark:text-purple-400">
                                   Lead
                                 </Badge>
+                              )}
+                              {/* 🟣 Tag de ajuste administrativo */}
+                              {adminMark && (
+                                <Badge variant="outline" className="text-xs border-purple-500 text-purple-700 bg-purple-50 dark:text-purple-300 dark:bg-purple-950" data-testid={`adm-tag-${visit.customerId}`}>
+                                  Adm - {adminMark.by}
+                                </Badge>
+                              )}
+                              {/* ✏️ Botão de ajuste admin de check-in/out (só admins autorizados) */}
+                              {isCheckinAdmin && !isLead && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openAdminEdit(visit, checkInCheckpoint, checkOutCheckpoint); }}
+                                  className="inline-flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 rounded px-1.5 py-0.5 hover:bg-purple-50 dark:hover:bg-purple-950"
+                                  data-testid={`admin-edit-checkin-${visit.customerId}`}
+                                  title="Ajustar check-in/check-out (Adm)"
+                                >
+                                  <Clock className="h-3 w-3" /> Ajustar
+                                </button>
                               )}
                               {/* Mostrar pedidos do dia */}
                               {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
@@ -1679,13 +1763,48 @@ export default function RotaDoDia() {
           </DialogHeader>
           <div className="relative">
             {selectedPhoto && (
-              <img 
-                src={selectedPhoto} 
-                alt="Foto do check-in" 
+              <img
+                src={selectedPhoto}
+                alt="Foto do check-in"
                 className="w-full h-auto rounded-lg"
                 data-testid="checkin-photo"
               />
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 🟣 Ajuste ADMIN de check-in/check-out */}
+      <Dialog open={!!adminEditVisit} onOpenChange={(open) => { if (!open) setAdminEditVisit(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
+              <Clock className="h-5 w-5" /> Ajustar check-in/check-out (Adm)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {adminEditVisit?.visit?.customerName}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Informe o horário (HH:mm). Deixe em branco para <strong>remover</strong> o check-in/out. Qualquer ajuste marca o card em roxo com a tag "Adm - {(user?.email || '').toLowerCase()}".
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Check-in</label>
+                <Input type="time" value={adminCheckInTime} onChange={(e) => setAdminCheckInTime(e.target.value)} data-testid="admin-input-checkin" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Check-out</label>
+                <Input type="time" value={adminCheckOutTime} onChange={(e) => setAdminCheckOutTime(e.target.value)} data-testid="admin-input-checkout" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setAdminEditVisit(null)} disabled={adminSaving}>Cancelar</Button>
+              <Button className="bg-purple-600 hover:bg-purple-700 text-white" onClick={saveAdminCheckpoints} disabled={adminSaving} data-testid="admin-save-checkpoints">
+                {adminSaving ? 'Salvando...' : 'Salvar ajuste'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
