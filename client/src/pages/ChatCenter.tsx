@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect, useRef, Component } from "react";
+import { useState, useEffect, useRef, useMemo, Component } from "react";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -639,6 +639,47 @@ function ChatCenterInner() {
     }
   });
   const messages = (messagesData as ChatMessage[]) || [];
+
+  // 🩹 Corrige a DUPLICIDADE: mensagem enviada aparece como 'agent' (verde) e também como eco 'system' (cinza "Sistema").
+  // Regra final: enviadas (agent/system) = verde à direita; cliente = cinza à esquerda; sem duplicatas.
+  const displayMessages = useMemo(() => {
+    const arr = [...(messages as any[])].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const norm = (s: string) => (s || '').trim().toLowerCase();
+    const ts = (m: any) => new Date(m.createdAt).getTime();
+    const WINDOW = 10 * 60 * 1000; // 10 min
+    // conteúdos já enviados por 'agent' (para detectar o eco 'system')
+    const agentTimes = new Map<string, number[]>();
+    for (const m of arr) {
+      if (m.senderType === 'agent') {
+        const k = norm(m.content);
+        if (!k) continue;
+        if (!agentTimes.has(k)) agentTimes.set(k, []);
+        agentTimes.get(k)!.push(ts(m));
+      }
+    }
+    const seenOutgoing = new Map<string, number[]>();
+    const out: any[] = [];
+    for (const m of arr) {
+      if (m.senderType === 'customer') { out.push(m); continue; }
+      // enviada (agent ou system)
+      const k = norm(m.content);
+      if (m.senderType === 'system' && k) {
+        const at = agentTimes.get(k);
+        if (at && at.some((t) => Math.abs(t - ts(m)) < WINDOW)) continue; // eco duplicado de uma 'agent' -> descarta
+      }
+      if (k) {
+        const prev = seenOutgoing.get(k);
+        if (prev && prev.some((t) => Math.abs(t - ts(m)) < WINDOW)) continue; // enviada idêntica próxima -> descarta duplicata
+        if (!seenOutgoing.has(k)) seenOutgoing.set(k, []);
+        seenOutgoing.get(k)!.push(ts(m));
+      }
+      // 'system' vira 'agent' para renderizar à direita em verde (nunca mais como "Sistema" à esquerda)
+      out.push(m.senderType === 'system' ? { ...m, senderType: 'agent' } : m);
+    }
+    return out;
+  }, [messages]);
 
   // Query para buscar histórico de atribuições
   const { data: assignmentHistory } = useQuery({
@@ -1833,20 +1874,20 @@ function ChatCenterInner() {
                         ) : messages.length === 0 ? (
                           <div className="text-center py-8 text-gray-500">Nenhuma mensagem ainda</div>
                         ) : (
-                          messages.map((msg: any) => (
+                          displayMessages.map((msg: any) => (
                             <div
                               key={msg.id}
-                              className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"} ${!msg.isRead ? "mb-3 p-2 bg-blue-50 rounded border-l-4 border-blue-500" : ""}`}
+                              className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"} ${(!msg.isRead && msg.senderType === "customer") ? "mb-3 p-2 bg-blue-50 rounded border-l-4 border-blue-500" : ""}`}
                               data-testid={`message-${msg.id}`}
                             >
                               <div className="flex gap-2 items-flex-end">
                                 <div
                                   className={`max-w-xs px-4 py-2 rounded-lg ${
                                     msg.senderType === "agent"
-                                      ? "bg-green-600 text-white"
-                                      : !msg.isRead
-                                      ? "bg-blue-200 text-gray-900 font-semibold border-2 border-blue-400"
-                                      : "bg-gray-200 text-gray-900"
+                                      ? "bg-green-100 text-gray-900 border border-green-200"
+                                      : (!msg.isRead)
+                                      ? "bg-blue-100 text-gray-900 font-semibold border-2 border-blue-300"
+                                      : "bg-gray-100 text-gray-900 border border-gray-200"
                                   }`}
                                 >
                                 <div className="text-xs font-semibold mb-1 opacity-80">
