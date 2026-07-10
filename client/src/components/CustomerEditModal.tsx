@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
 import { Loader2, Plus } from "lucide-react";
@@ -38,7 +39,26 @@ export default function CustomerEditModal({
   isLead = false,
 }: CustomerEditModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [isInActiveList, setIsInActiveList] = useState(false);
+
+  // 🔒 Dias/Periodicidade de visita: QUALQUER usuário pode INCLUIR (campo vazio);
+  // ALTERAR um valor já preenchido só estes administradores (Cinthia e Flávio).
+  const VISIT_ALTER_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const canAlterVisitFields = VISIT_ALTER_ADMINS.includes(((user as any)?.email || '').toLowerCase().trim());
+  const parseWeekdaysVal = (wd: any): string[] => {
+    if (!wd) return [];
+    if (Array.isArray(wd)) return wd.filter(Boolean);
+    if (typeof wd === 'string') {
+      try { const a = JSON.parse(wd); return Array.isArray(a) ? a.filter(Boolean) : []; }
+      catch { return wd.split(/[,;\/]/).map((d: string) => d.trim()).filter(Boolean); }
+    }
+    return [];
+  };
+  const originalWeekdaysEmpty = !customer || parseWeekdaysVal((customer as any)?.weekdays).length === 0;
+  const originalPeriodicityEmpty = !customer || !((customer as any)?.visitPeriodicity);
+  const canManageWeekdays = canAlterVisitFields || originalWeekdaysEmpty;
+  const canManagePeriodicity = canAlterVisitFields || originalPeriodicityEmpty;
   
   // Buscar usuários (vendedores)
   const { data: users = [] } = useQuery({
@@ -503,6 +523,9 @@ export default function CustomerEditModal({
           {/* Dias da Semana de Visita */}
           <div>
             <Label className="mb-2 block">Dias da Semana de Visita *</Label>
+            {!canManageWeekdays && (
+              <p className="text-xs text-muted-foreground mb-2">Já definido. Apenas Cinthia e Flávio podem alterar os dias de visita.</p>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
                 { value: "Seg", label: "Segunda-feira" },
@@ -517,6 +540,7 @@ export default function CustomerEditModal({
                     id={`weekday-${day.value}`}
                     checked={formData.weekdays.includes(day.value)}
                     onCheckedChange={() => toggleWeekday(day.value)}
+                    disabled={!canManageWeekdays}
                     data-testid={`checkbox-weekday-${day.value}`}
                   />
                   <label
@@ -572,9 +596,13 @@ export default function CustomerEditModal({
           {/* Periodicidade de Visita */}
           <div>
             <Label htmlFor="visitPeriodicity">Periodicidade de Visita *</Label>
+            {!canManagePeriodicity && (
+              <p className="text-xs text-muted-foreground mb-2">Já definido. Apenas Cinthia e Flávio podem alterar a periodicidade.</p>
+            )}
             <Select
               value={formData.visitPeriodicity}
               onValueChange={handlePeriodicityChange}
+              disabled={!canManagePeriodicity}
             >
               <SelectTrigger data-testid="select-visit-periodicity">
                 <SelectValue placeholder="Selecione a periodicidade" />
