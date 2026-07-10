@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, MapPin, Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CheckInModalProps {
   isOpen: boolean;
@@ -22,6 +23,10 @@ export default function CheckInModal({
   onSuccess 
 }: CheckInModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  // Upload de foto do arquivo só para administradores; os demais seguem a câmera (regra atual).
+  const CHECKIN_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const isCheckinAdmin = CHECKIN_ADMINS.includes(((user as any)?.email || '').toLowerCase().trim());
   const [step, setStep] = useState<'location' | 'photo' | 'submitting'>('location');
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
@@ -257,6 +262,33 @@ export default function CheckInModal({
                 <Camera className="mr-2 h-4 w-4" />
                 Tirar Foto
               </Button>
+
+              {/* 📤 Upload de foto do arquivo — SOMENTE administradores */}
+              {isCheckinAdmin && (
+                <label
+                  className="w-full inline-flex items-center justify-center gap-2 text-sm border border-purple-300 text-purple-700 rounded-md px-3 py-2 cursor-pointer hover:bg-purple-50"
+                  data-testid="admin-upload-checkin-photo"
+                >
+                  📤 Enviar foto do arquivo (Adm)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          setPhotoData(ev.target?.result as string);
+                          if (stream) { stream.getTracks().forEach((t) => t.stop()); setStream(null); }
+                        };
+                        reader.readAsDataURL(f);
+                      }
+                      (e.target as HTMLInputElement).value = '';
+                    }}
+                  />
+                </label>
+              )}
             </div>
           )}
 
