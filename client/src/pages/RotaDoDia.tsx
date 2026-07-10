@@ -591,6 +591,24 @@ export default function RotaDoDia() {
     }
   };
 
+  // Abrir o ATENDIMENTO COMPLETO como Adm: marca o card (roxo escuro + email do adm) e abre a tela de atendimento
+  const openFullAttendanceAsAdmin = async () => {
+    if (!adminEditVisit || !route?.id) return;
+    const visit = adminEditVisit.visit;
+    try {
+      setAdminSaving(true);
+      await apiRequest('POST', `/api/daily-routes/${route.id}/checkpoints/admin-mark`, { customerId: visit.customerId, action: 'atendimento' });
+      setAdminEditVisit(null);
+      invalidateRoute();
+      // Abre a mesma tela de atendimento do vendedor (check-in, check-out, registrar pedido, não venda)
+      await handleVisitClick(visit.customerId || visit.entityId, false);
+    } catch (e: any) {
+      toast({ title: 'Erro ao abrir atendimento', description: e?.message || 'Falha ao assumir o atendimento.', variant: 'destructive' });
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
   const virtualVisitsCount = useMemo(() => {
     if (!route?.visits) return 0;
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
@@ -771,7 +789,8 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-blue-300 bg-blue-100 dark:bg-blue-900"></span>Check-in realizado (em atendimento)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-out)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in/out fora do local (&gt;100m)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-purple-400 bg-purple-100 dark:bg-purple-900"></span>Roxo — Ajuste Adm / Lead</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Roxo escuro — Ação do Adm</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Amarelo ouro — Lead</span>
         </div>
       </div>
 
@@ -1153,19 +1172,19 @@ export default function RotaDoDia() {
                   let borderColor = 'border-gray-200 dark:border-gray-700';
                   
                   if (isLead) {
-                    // LEADs sempre aparecem em roxo, com variações baseadas no status
+                    // LEADs aparecem em AMARELO OURO, com variações baseadas no status
                     if (hasOffsite) {
                       statusColor = 'text-red-600 dark:text-red-400';
                       borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
                     } else if (isCompleted) {
-                      statusColor = 'text-purple-700 dark:text-purple-300';
-                      borderColor = 'border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950';
+                      statusColor = 'text-amber-700 dark:text-amber-300';
+                      borderColor = 'border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950';
                     } else if (isInProgress) {
-                      statusColor = 'text-purple-600 dark:text-purple-400';
-                      borderColor = 'border-purple-400 dark:border-purple-600 bg-purple-50 dark:bg-purple-950';
+                      statusColor = 'text-amber-600 dark:text-amber-400';
+                      borderColor = 'border-amber-500 dark:border-amber-600 bg-amber-50 dark:bg-amber-950';
                     } else {
-                      statusColor = 'text-purple-600 dark:text-purple-400';
-                      borderColor = 'border-purple-500 dark:border-purple-700';
+                      statusColor = 'text-amber-600 dark:text-amber-400';
+                      borderColor = 'border-amber-500 dark:border-amber-700';
                     }
                   } else if (hasOffsite) {
                     statusColor = 'text-red-600 dark:text-red-400';
@@ -1181,8 +1200,8 @@ export default function RotaDoDia() {
                   // 🟣 Ajuste feito por administrador tem prioridade visual: card ROXO + tag "Adm - email"
                   const adminMark = adminAdjustments[visit.customerId];
                   if (adminMark) {
-                    statusColor = 'text-purple-700 dark:text-purple-300';
-                    borderColor = 'border-purple-500 dark:border-purple-600 bg-purple-50 dark:bg-purple-950 ring-1 ring-purple-400';
+                    statusColor = 'text-purple-900 dark:text-purple-200';
+                    borderColor = 'border-2 border-purple-800 dark:border-purple-400 bg-purple-200 dark:bg-purple-900 ring-1 ring-purple-800 dark:ring-purple-500';
                   }
 
                   return (
@@ -1205,18 +1224,18 @@ export default function RotaDoDia() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
-                                {isLead && <Target className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
+                                {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
                               </p>
                               <OmieInstanceBadge instanceId={(visit as any).omieInstanceId} />
                               {isLead && (
-                                <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 dark:text-purple-400">
+                                <Badge variant="outline" className="text-xs border-amber-500 text-amber-700 dark:text-amber-400">
                                   Lead
                                 </Badge>
                               )}
                               {/* 🟣 Tag de ajuste administrativo */}
                               {adminMark && (
-                                <Badge variant="outline" className="text-xs border-purple-500 text-purple-700 bg-purple-50 dark:text-purple-300 dark:bg-purple-950" data-testid={`adm-tag-${visit.customerId}`}>
+                                <Badge variant="outline" className="text-xs border-purple-700 text-purple-900 bg-purple-100 dark:text-purple-200 dark:bg-purple-900 dark:border-purple-400" data-testid={`adm-tag-${visit.customerId}`}>
                                   Adm - {adminMark.by}
                                 </Badge>
                               )}
@@ -1226,7 +1245,7 @@ export default function RotaDoDia() {
                                   onClick={(e) => { e.stopPropagation(); openAdminEdit(visit, checkInCheckpoint, checkOutCheckpoint); }}
                                   className="inline-flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 rounded px-1.5 py-0.5 hover:bg-purple-50 dark:hover:bg-purple-950"
                                   data-testid={`admin-edit-checkin-${visit.customerId}`}
-                                  title="Ajustar check-in/check-out (Adm)"
+                                  title="Ajustar / assumir atendimento (Adm)"
                                 >
                                   <Clock className="h-3 w-3" /> Ajustar
                                 </button>
@@ -1329,8 +1348,8 @@ export default function RotaDoDia() {
 
                               {/* Observação/Comentário do Lead */}
                               {isLead && (visit as any).observation && (
-                                <div className="border-l-2 border-purple-400 pl-2 py-1 text-xs text-gray-600 dark:text-gray-400 bg-purple-50 dark:bg-purple-950/20 rounded px-2">
-                                  <span className="font-semibold text-purple-700 dark:text-purple-300">Comentário: </span>
+                                <div className="border-l-2 border-amber-400 pl-2 py-1 text-xs text-gray-600 dark:text-gray-400 bg-amber-50 dark:bg-amber-950/20 rounded px-2">
+                                  <span className="font-semibold text-amber-700 dark:text-amber-300">Comentário: </span>
                                   {(visit as any).observation}
                                 </div>
                               )}
@@ -1700,18 +1719,29 @@ export default function RotaDoDia() {
       <Dialog open={!!adminEditVisit} onOpenChange={(open) => { if (!open) setAdminEditVisit(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
-              <Clock className="h-5 w-5" /> Ajustar check-in/check-out (Adm)
+            <DialogTitle className="flex items-center gap-2 text-purple-800 dark:text-purple-300">
+              <Clock className="h-5 w-5" /> Atendimento / Ajuste (Adm)
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
               {adminEditVisit?.visit?.customerName}
             </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Informe o horário (HH:mm). Deixe em branco para <strong>remover</strong> o check-in/out. Qualquer ajuste marca o card em roxo com a tag "Adm - {(user?.email || '').toLowerCase()}".
-            </p>
-            <div className="grid grid-cols-2 gap-3">
+
+            <div className="rounded-lg border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/40 p-3 space-y-2">
+              <p className="text-xs text-gray-600 dark:text-gray-300">
+                Assumir o atendimento como administrador — abre a tela completa (check-in, check-out, registrar pedido, não venda). O card fica <strong>roxo escuro</strong> com a tag "Adm - {(user?.email || '').toLowerCase()}".
+              </p>
+              <Button className="w-full bg-purple-800 hover:bg-purple-900 text-white" onClick={openFullAttendanceAsAdmin} disabled={adminSaving} data-testid="admin-open-full-attendance">
+                <FileText className="h-4 w-4 mr-2" /> Abrir atendimento completo
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Ou apenas ajuste os horários (HH:mm). Deixe em branco para <strong>remover</strong> o check-in/out. Também marca o card como ação do Adm.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Check-in</label>
                 <Input type="time" value={adminCheckInTime} onChange={(e) => setAdminCheckInTime(e.target.value)} data-testid="admin-input-checkin" />
@@ -1721,10 +1751,11 @@ export default function RotaDoDia() {
                 <Input type="time" value={adminCheckOutTime} onChange={(e) => setAdminCheckOutTime(e.target.value)} data-testid="admin-input-checkout" />
               </div>
             </div>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setAdminEditVisit(null)} disabled={adminSaving}>Cancelar</Button>
-              <Button className="bg-purple-600 hover:bg-purple-700 text-white" onClick={saveAdminCheckpoints} disabled={adminSaving} data-testid="admin-save-checkpoints">
-                {adminSaving ? 'Salvando...' : 'Salvar ajuste'}
+              <Button className="bg-purple-700 hover:bg-purple-800 text-white" onClick={saveAdminCheckpoints} disabled={adminSaving} data-testid="admin-save-checkpoints">
+                {adminSaving ? 'Salvando...' : 'Salvar ajuste de horário'}
               </Button>
             </div>
           </div>
