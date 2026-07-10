@@ -1082,11 +1082,14 @@ function KanbanCard({
   isRetrying: boolean;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
-  const isCancelled = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'].includes(fs) || stage.key === 'bloqueado';
-  const isBilledOk = !isCancelled && (fs === 'authorized' || fs === 'autorizada' || (!!item.invoiceNumber && stage.key !== 'bloqueado'));
+  const isBlocked = stage.key === 'bloqueado';
+  // "Cancelado" é só status fiscal real — NÃO estar na coluna Bloqueados. Assim o card bloqueado
+  // mostra a tag de Tipo de Operação (Venda/Amostra) registrada no pedido, não "Cancelado".
+  const isCancelled = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'].includes(fs);
+  const isBilledOk = !isCancelled && !isBlocked && (fs === 'authorized' || fs === 'autorizada' || !!item.invoiceNumber);
   const statusBg = selected
     ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20'
-    : isCancelled
+    : (isCancelled || isBlocked)
       ? 'bg-red-50 dark:bg-red-900/20 border border-red-300'
       : isBilledOk
         ? 'bg-green-50 dark:bg-green-900/20 border border-green-300'
