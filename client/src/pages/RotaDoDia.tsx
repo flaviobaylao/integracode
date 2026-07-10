@@ -477,6 +477,27 @@ export default function RotaDoDia() {
     },
   });
 
+  // 📷 Upload de foto do check-in pelo ADMINISTRADOR (só admins veem/usam)
+  const adminCheckInPhotoMutation = useMutation({
+    mutationFn: async ({ customerId, photo }: { customerId: string; photo: File }) => {
+      const fd = new FormData();
+      fd.append('customerId', customerId);
+      fd.append('photo', photo);
+      return await apiRequestMultipart('POST', `/api/daily-routes/${route?.id}/checkpoints/admin-photo`, fd);
+    },
+    onSuccess: () => {
+      toast({ title: '✓ Foto enviada', description: 'Foto do check-in anexada.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({ variant: 'destructive', title: 'Erro ao enviar foto', description: error?.message || 'Falha ao enviar a foto do check-in.' });
+    },
+  });
+  const adminUploadCheckInPhoto = (visit: any, photo: File) => {
+    if (!route?.id || !visit?.customerId) return;
+    adminCheckInPhotoMutation.mutate({ customerId: visit.customerId, photo });
+  };
+
   const validateVisitMutation = useMutation({
     mutationFn: async (checkpointId: string) => {
       return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/validate`, {});
@@ -1412,6 +1433,24 @@ export default function RotaDoDia() {
                                 >
                                   <Clock className="h-3 w-3" /> Ajustar
                                 </button>
+                              )}
+                              {/* 📷 Upload de foto do check-in — SÓ administradores */}
+                              {isCheckinAdmin && !isLead && (
+                                <label
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 rounded px-1.5 py-0.5 hover:bg-purple-50 dark:hover:bg-purple-950 cursor-pointer"
+                                  title="Enviar foto do check-in (Adm)"
+                                  data-testid={`admin-checkin-photo-${visit.customerId}`}
+                                >
+                                  <Camera className="h-3 w-3" /> Foto
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) adminUploadCheckInPhoto(visit, f); (e.target as HTMLInputElement).value = ''; }}
+                                  />
+                                </label>
                               )}
                               {/* Mostrar pedidos do dia */}
                               {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
