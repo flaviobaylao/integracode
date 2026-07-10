@@ -9,6 +9,7 @@ import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
 import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { enviarAlertaPositivacaoVendedores } from './positivacao-alert';
+import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerReconciliation } from "./reconciliation-routes";
 import { registerPaymentTerms } from "./payment-terms-routes";
@@ -2792,6 +2793,37 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       };
       if (req.body && typeof req.body.ativo !== 'undefined') await setKV('positivacao_alerta_ativo', req.body.ativo ? 'on' : 'off');
       if (req.body && typeof req.body.fixos === 'string') await setKV('positivacao_fixos', String(req.body.fixos));
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ── Alerta diário de DÉBITOS VENCIDOS por vendedor (WhatsApp) ─────────────
+  // dias úteis 08:00 BRT. dryRun por padrão; ?apply=1 envia.
+  app.get('/api/admin/debitos/alerta-vendedores', async (req: Request, res: Response) => {
+    try {
+      const apply = String(req.query.apply || '') === '1' || String(req.query.apply || '') === 'true';
+      const toOverride = req.query.to ? String(req.query.to) : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : undefined;
+      const out = await enviarAlertaDebitosVencidos(apply, { toOverride, limit });
+      res.json(out);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  // Liga/desliga o disparo automático de débitos vencidos e configura números fixos.
+  app.get('/api/admin/debitos/alerta-config', async (_req: Request, res: Response) => {
+    try {
+      const rd = async (k: string) => { const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key='" + k + "' LIMIT 1")); const rows = r && r.rows ? r.rows : []; return rows[0] ? String(rows[0].value) : null; };
+      res.json({ ativo: (await rd('debitos_alerta_ativo')) === 'on', fixos: (await rd('debitos_fixos')) || '5562995782812', ultimoEnvio: await rd('debitos_alerta_last') });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.post('/api/admin/debitos/alerta-config', async (req: Request, res: Response) => {
+    try {
+      const setKV = async (k: string, v: string) => {
+        const upd: any = await db.execute(sql.raw("UPDATE system_settings SET value='" + v.replace(/'/g, "") + "', updated_by='admin', updated_at=now() WHERE key='" + k + "'"));
+        const n = (upd && (upd.rowCount ?? (upd.rows ? upd.rows.length : 0))) || 0;
+        if (!n) await db.execute(sql.raw("INSERT INTO system_settings (key,value,updated_by) VALUES ('" + k + "','" + v.replace(/'/g, "") + "','admin')"));
+      };
+      if (req.body && typeof req.body.ativo !== 'undefined') await setKV('debitos_alerta_ativo', req.body.ativo ? 'on' : 'off');
+      if (req.body && typeof req.body.fixos === 'string') await setKV('debitos_fixos', String(req.body.fixos));
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
