@@ -16,8 +16,9 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle, Copy
+  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown
 } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface BillingPipelineItem {
   id: string;
@@ -76,6 +77,90 @@ const OPERATION_LABELS: Record<string, string> = {
   reposicao: 'Reposição',
 };
 
+// Categoria de "Tipo de Operação" exibida no card (cancelado = status fiscal; senão o operationType do pedido)
+const CANCELLED_FISCAL = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'];
+function isItemCancelled(item: any): boolean {
+  return CANCELLED_FISCAL.includes((item?.fiscalStatus || '').toLowerCase());
+}
+function operationCategory(item: any): string | null {
+  if (isItemCancelled(item)) return 'cancelado';
+  return item?.operationType || null;
+}
+const CATEGORY_LABELS: Record<string, string> = {
+  venda: 'Venda',
+  cancelado: 'Cancelado',
+  amostra: 'Amostra',
+  bonificacao: 'Bonificação',
+  troca: 'Troca',
+  reposicao: 'Reposição',
+};
+const CATEGORY_ORDER = ['venda', 'cancelado', 'amostra', 'bonificacao', 'troca', 'reposicao'];
+// Cores das tags: Venda=verde, Cancelado=vermelho, Amostra=amarelo (demais = neutro)
+function operationBadgeClass(cat: string | null): string {
+  if (cat === 'venda') return 'border-green-300 text-green-700 bg-green-50';
+  if (cat === 'cancelado') return 'border-red-300 text-red-700 bg-red-50';
+  if (cat === 'amostra') return 'border-yellow-300 text-yellow-700 bg-yellow-50';
+  return 'border-slate-300 text-slate-700';
+}
+
+// Normaliza um nome para comparação (minúsculas, sem acentos, sem pontuação, espaços colapsados)
+function normName(s: string): string {
+  return (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+// Dois nomes são a mesma pessoa se: iguais normalizados; OU mesmo primeiro nome e (um só tem 1 token,
+// ou o 2º token de um é prefixo do 2º token do outro — ex.: "Natalia B" ~ "Natalia Barbosa", "Ezequiel" ~ "Ezequiel DF")
+function sellerMatches(aTokens: string[], bTokens: string[]): boolean {
+  if (!aTokens.length || !bTokens.length) return false;
+  if (aTokens.join(' ') === bTokens.join(' ')) return true;
+  if (aTokens[0] !== bTokens[0]) return false;
+  if (aTokens.length === 1 || bTokens.length === 1) return true;
+  const a2 = aTokens[1], b2 = bTokens[1];
+  return a2.startsWith(b2) || b2.startsWith(a2);
+}
+
+// Dropdown de seleção múltipla com checkboxes
+function MultiSelectFilter({ label, options, selected, onToggle, onClear, testid }: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: Set<string>;
+  onToggle: (v: string) => void;
+  onClear: () => void;
+  testid?: string;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          className="h-9 border rounded-md px-3 text-sm bg-white dark:bg-gray-800 dark:border-gray-600 flex items-center gap-1.5 whitespace-nowrap"
+          data-testid={testid}
+        >
+          <span>{label}{selected.size > 0 ? ` (${selected.size})` : ''}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-2 max-h-72 overflow-auto" align="start">
+        <div className="flex items-center justify-between mb-1 px-1">
+          <span className="text-xs font-semibold text-gray-500">{label}</span>
+          {selected.size > 0 && (
+            <button onClick={onClear} className="text-xs text-blue-600 hover:underline">Limpar</button>
+          )}
+        </div>
+        {options.length === 0 && <p className="text-xs text-gray-400 py-2 px-1">Nenhuma opção</p>}
+        {options.map((o) => (
+          <label key={o.value} className="flex items-center gap-2 py-1 px-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer text-sm">
+            <Checkbox checked={selected.has(o.value)} onCheckedChange={() => onToggle(o.value)} className="h-4 w-4" />
+            <span className="truncate">{o.label}</span>
+          </label>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function formatCurrency(value: string | number | null) {
   if (!value) return 'R$ 0,00';
   const num = typeof value === 'string' ? parseFloat(value) : value;
@@ -89,7 +174,8 @@ function formatDate(dateStr: string) {
 
 export default function BillingPipeline() {
   const [search, setSearch] = useState('');
-  const [sellerFilter, setSellerFilter] = useState('');
+  const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
+  const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
@@ -479,7 +565,47 @@ export default function BillingPipeline() {
     );
   }
 
-  const sellerNamesInPipeline = Array.from(new Set((items || []).map((i: any) => i.sellerName).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b)));
+  // Registro de Vendedores (ativos ou inativos) — nome oficial tem prioridade na unificação
+  const registrySellers = (usersList as any[])
+    .map((u) => {
+      const name = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+      const tokens = normName(name).split(' ').filter(Boolean);
+      return { id: u.id, name, tokens };
+    })
+    .filter((r) => r.name && r.tokens.length);
+
+  // Resolve o nome CANÔNICO do vendedor de um card (unifica variações: "Natalia B" = "Natália B."; "Ezequiel DF" = "Ezequiel")
+  const _sellerCache = new Map<string, string>();
+  const canonicalSeller = (item: any): string => {
+    const key = `${item.sellerId || ''}|${item.sellerName || ''}`;
+    if (_sellerCache.has(key)) return _sellerCache.get(key) as string;
+    let result: string | null = null;
+    // 1) por sellerId direto no registro
+    if (item.sellerId) {
+      const byId = registrySellers.find((r) => r.id === item.sellerId);
+      if (byId) result = byId.name;
+    }
+    // 2) por nome (heurística de unificação)
+    if (!result && item.sellerName) {
+      const pt = normName(item.sellerName).split(' ').filter(Boolean);
+      const m = registrySellers.find((r) => sellerMatches(r.tokens, pt));
+      if (m) result = m.name;
+    }
+    if (!result) result = (item.sellerName || '').trim() || 'Sem vendedor';
+    _sellerCache.set(key, result);
+    return result;
+  };
+
+  // Opções dos filtros (apenas o que existe no pipeline)
+  const sellerOptions = Array.from(new Set((items || []).map((i: any) => canonicalSeller(i))))
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
+  const opOptions = Array.from(new Set((items || []).map((i: any) => operationCategory(i)).filter(Boolean) as string[]))
+    .sort((a, b) => (CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)))
+    .map((v) => ({ value: v, label: CATEGORY_LABELS[v] || v }));
+
+  const toggleInSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (v: string) =>
+    setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -534,14 +660,14 @@ export default function BillingPipeline() {
           </div>
         </div>
 
-        {/* Busca por cliente, NF ou vendedor + filtro de Vendedor */}
+        {/* Filtros: (1) Cliente/NF  (2) Vendedor  (3) Tipo de Operação */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar por cliente, NF ou vendedor..."
+              placeholder="Buscar por cliente ou NF..."
               className="pl-8 h-9"
               data-testid="input-search-pipeline"
             />
@@ -549,17 +675,28 @@ export default function BillingPipeline() {
               <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">×</button>
             )}
           </div>
-          <select
-            value={sellerFilter}
-            onChange={(e) => setSellerFilter(e.target.value)}
-            className="h-9 border rounded-md px-2 text-sm bg-white dark:bg-gray-800 dark:border-gray-600"
-            data-testid="select-seller-pipeline"
-          >
-            <option value="">Todos os vendedores</option>
-            {sellerNamesInPipeline.map((s: any) => (<option key={s} value={s}>{s}</option>))}
-          </select>
-          {sellerFilter && (
-            <button onClick={() => setSellerFilter('')} className="text-gray-400 hover:text-gray-600 text-sm">Limpar vendedor ×</button>
+          <MultiSelectFilter
+            label="Vendedor"
+            options={sellerOptions}
+            selected={sellerFilter}
+            onToggle={toggleInSet(setSellerFilter)}
+            onClear={() => setSellerFilter(new Set())}
+            testid="select-seller-pipeline"
+          />
+          <MultiSelectFilter
+            label="Tipo de Operação"
+            options={opOptions}
+            selected={opFilter}
+            onToggle={toggleInSet(setOpFilter)}
+            onClear={() => setOpFilter(new Set())}
+            testid="select-operation-pipeline"
+          />
+          {(sellerFilter.size > 0 || opFilter.size > 0 || search) && (
+            <button
+              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); }}
+              className="text-gray-400 hover:text-gray-600 text-sm"
+              data-testid="clear-all-filters-pipeline"
+            >Limpar filtros ×</button>
           )}
         </div>
 
@@ -666,12 +803,16 @@ export default function BillingPipeline() {
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
+              // (1) Busca por cliente ou NF
               const matchesText = !_q
                 || (i.customerName || '').toLowerCase().includes(_q)
-                || (i.invoiceNumber || '').toLowerCase().includes(_q)
-                || (i.sellerName || '').toLowerCase().includes(_q);
-              const matchesSeller = !sellerFilter || i.sellerName === sellerFilter;
-              return matchesText && matchesSeller;
+                || (i.invoiceNumber || '').toLowerCase().includes(_q);
+              // (2) Vendedor (nome canônico) — múltipla seleção
+              const matchesSeller = sellerFilter.size === 0 || sellerFilter.has(canonicalSeller(i));
+              // (3) Tipo de Operação — múltipla seleção
+              const cat = operationCategory(i);
+              const matchesOp = opFilter.size === 0 || (cat != null && opFilter.has(cat));
+              return matchesText && matchesSeller && matchesOp;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             const StageIcon = stage.icon;
@@ -1135,13 +1276,15 @@ function KanbanCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
-          {isCancelled ? (
-            <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">Cancelado</Badge>
-          ) : item.operationType ? (
-            <Badge variant="outline" className="text-[10px] border-slate-300 text-slate-700">
-              {OPERATION_LABELS[item.operationType] || item.operationType}
-            </Badge>
-          ) : null}
+          {(() => {
+            const cat = operationCategory(item);
+            if (!cat) return null;
+            return (
+              <Badge variant="outline" className={`text-[10px] ${operationBadgeClass(cat)}`}>
+                {CATEGORY_LABELS[cat] || OPERATION_LABELS[cat] || cat}
+              </Badge>
+            );
+          })()}
           {item.omieInstanceName && (
             <Badge variant="secondary" className="text-[10px]">
               <MapPin className="h-2.5 w-2.5 mr-0.5" />
@@ -1149,7 +1292,7 @@ function KanbanCard({
             </Badge>
           )}
           {item.invoiceNumber && (
-            <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50">
+            <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700 bg-blue-50">
               NF {item.invoiceNumber}
             </Badge>
           )}
