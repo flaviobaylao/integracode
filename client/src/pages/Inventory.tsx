@@ -125,7 +125,7 @@ export default function Inventory() {
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       const res = await apiRequest('POST', '/api/inventory/lots', data);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/inventory/lots'] });
@@ -143,7 +143,7 @@ export default function Inventory() {
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
       const res = await apiRequest('PUT', `/api/inventory/lots/${id}`, data);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/inventory/lots'] });
@@ -161,7 +161,7 @@ export default function Inventory() {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiRequest('DELETE', `/api/inventory/lots/${id}`);
-      return res.json();
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/inventory/lots'] });
