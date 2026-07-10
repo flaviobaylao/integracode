@@ -1406,22 +1406,42 @@ function ChatCenterInner() {
                     {agentStats.length === 0 ? (
                       <div className="text-center py-8 text-gray-500 text-xs">Carregando...</div>
                     ) : (
-                      agentStats.map((agent: any) => (
-                        <div 
-                          key={agent.id} 
-                          className="border rounded-lg p-2 mb-2 bg-gray-50 hover:bg-gray-100 transition relative"
-                          style={{ borderLeftWidth: '4px', borderLeftColor: agent.color || '#9ca3af' }}
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`inline-block w-3 h-3 rounded-full ring-2 ring-white shadow-sm ${agent.status === 'online' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></span>
-                            <p className="text-xs font-semibold truncate flex-1">{agent.name}</p>
+                      (() => {
+                        const renderAgent = (agent: any) => (
+                          <div
+                            key={agent.id}
+                            className="border rounded-lg p-2 mb-2 bg-white hover:bg-gray-100 transition relative"
+                            style={{ borderLeftWidth: '4px', borderLeftColor: agent.color || '#9ca3af' }}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`inline-block w-3 h-3 rounded-full ring-2 ring-white shadow-sm ${agent.status === 'online' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></span>
+                              <p className="text-xs font-semibold truncate flex-1">{agent.name}</p>
+                            </div>
+                            <div className="text-xs text-gray-600 space-y-0.5 ml-3">
+                              <p>✅ Respondidas: <span className="font-semibold">{agent.messagesAnswered}</span></p>
+                              <p>📥 A responder: <span className="font-semibold text-red-600">{agent.messagesToRespond}</span></p>
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-600 space-y-0.5 ml-3">
-                            <p>✅ Respondidas: <span className="font-semibold">{agent.messagesAnswered}</span></p>
-                            <p>📥 A responder: <span className="font-semibold text-red-600">{agent.messagesToRespond}</span></p>
+                        );
+                        const online = agentStats.filter((a: any) => a.status === 'online');
+                        const offline = agentStats.filter((a: any) => a.status !== 'online');
+                        return (
+                          <div className="space-y-3">
+                            <div className="border border-green-200 rounded-lg p-2 bg-green-50/50">
+                              <p className="text-[11px] font-bold text-green-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                                <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span> Online ({online.length})
+                              </p>
+                              {online.length === 0 ? <p className="text-[11px] text-gray-400 px-1 pb-1">Ninguém online</p> : online.map(renderAgent)}
+                            </div>
+                            <div className="border border-gray-200 rounded-lg p-2 bg-gray-50/70">
+                              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+                                <span className="inline-block w-2 h-2 rounded-full bg-gray-400"></span> Offline ({offline.length})
+                              </p>
+                              {offline.length === 0 ? <p className="text-[11px] text-gray-400 px-1 pb-1">Ninguém offline</p> : offline.map(renderAgent)}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })()
                     )}
                   </ScrollArea>
                 </CardContent>
@@ -1500,52 +1520,58 @@ function ChatCenterInner() {
                         ) : filteredConversations.length === 0 ? (
                           <div className="text-center py-4 text-gray-500">Nenhuma conversa encontrada</div>
                         ) : (
-                          <div className="space-y-6">
-                            {/* Seção de Não Respondidas */}
-                            {filteredConversations.some(c => c.hasUnread) && (
-                              <div className="space-y-3">
-                                <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
-                                  <AlertCircle className="w-3 h-3" />
-                                  Mensagens Não Respondidas
-                                </h3>
-                                <div className="space-y-2">
-                                  {filteredConversations.filter(c => c.hasUnread).map((conv) => (
-                                    <ConversationItem 
-                                      key={conv.id} 
-                                      conv={conv} 
-                                      selectedConversation={selectedConversation}
-                                      setSelectedConversation={setSelectedConversation}
-                                      getStatusColor={getStatusColor}
-                                      formatLastMessageTime={formatLastMessageTime}
-                                      onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
-                                      setPhonebookData={setPhonebookData}
-                                      isAdmin={isAdmin} labelObjsFor={labelsForConv}
-                                    />
-                                  ))}
-                                </div>
-                                <div className="my-6 border-b border-gray-100" />
-                              </div>
-                            )}
+                          <div className="space-y-4">
+                            {(() => {
+                              const renderConv = (conv: any) => (
+                                <ConversationItem
+                                  key={conv.id}
+                                  conv={conv}
+                                  selectedConversation={selectedConversation}
+                                  setSelectedConversation={setSelectedConversation}
+                                  getStatusColor={getStatusColor}
+                                  formatLastMessageTime={formatLastMessageTime}
+                                  onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
+                                  setPhonebookData={setPhonebookData}
+                                  isAdmin={isAdmin} labelObjsFor={labelsForConv}
+                                />
+                              );
+                              const unread = filteredConversations.filter((c: any) => c.hasUnread);
+                              const emAndamento = filteredConversations.filter((c: any) => !c.hasUnread && c.status === 'in-progress');
+                              const historico = filteredConversations.filter((c: any) => !c.hasUnread && c.status !== 'in-progress');
+                              return (
+                                <>
+                                  {/* Sub-box: Não Respondidas */}
+                                  {unread.length > 0 && (
+                                    <div className="border border-red-200 rounded-lg p-2 bg-red-50/40">
+                                      <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
+                                        <AlertCircle className="w-3 h-3" />
+                                        Mensagens Não Respondidas ({unread.length})
+                                      </h3>
+                                      <div className="space-y-2">{unread.map(renderConv)}</div>
+                                    </div>
+                                  )}
 
-                            {/* Seção de Todas as Conversas */}
-                            <div className="space-y-3 pb-8">
-                              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Histórico de Conversas</h3>
-                              <div className="space-y-2">
-                                {filteredConversations.filter(c => !c.hasUnread).map((conv) => (
-                                  <ConversationItem 
-                                    key={conv.id} 
-                                    conv={conv} 
-                                    selectedConversation={selectedConversation}
-                                    setSelectedConversation={setSelectedConversation}
-                                    getStatusColor={getStatusColor}
-                                    formatLastMessageTime={formatLastMessageTime}
-                                    onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
-                                    setPhonebookData={setPhonebookData}
-                                    isAdmin={isAdmin} labelObjsFor={labelsForConv}
-                                  />
-                                ))}
-                              </div>
-                            </div>
+                                  {/* Sub-box: Em Andamento */}
+                                  {emAndamento.length > 0 && (
+                                    <div className="border border-yellow-200 rounded-lg p-2 bg-yellow-50/40">
+                                      <h3 className="text-xs font-bold text-yellow-600 uppercase tracking-wider mb-2 flex items-center gap-2 px-1">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
+                                        Em Andamento ({emAndamento.length})
+                                      </h3>
+                                      <div className="space-y-2">{emAndamento.map(renderConv)}</div>
+                                    </div>
+                                  )}
+
+                                  {/* Sub-box: Histórico / Resolvidas */}
+                                  <div className="border border-gray-200 rounded-lg p-2 bg-gray-50/60 pb-4">
+                                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                                      Histórico de Conversas ({historico.length})
+                                    </h3>
+                                    <div className="space-y-2">{historico.map(renderConv)}</div>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>
