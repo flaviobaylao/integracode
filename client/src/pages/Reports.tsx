@@ -20,6 +20,7 @@ import {
   Database, Columns, BarChart3, Filter, SortAsc, SortDesc, ChevronRight,
   Loader2, BookOpen, ArrowUpDown, Settings2, Eye, Copy, CalendarDays
 } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend } from 'recharts';
 import type { SavedReport } from '@shared/schema';
 
 interface FieldDef {
@@ -75,6 +76,62 @@ const DS_ICONS: Record<string, string> = {
   overdue_debts: '⚠️', sales_goals: '🎯', delivery_routes: '🚚', users: '👤'
 };
 
+const CHART_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#0d9488'];
+
+function ReportChart({ mode, result, chartX, chartY, setChartX, setChartY, labelOf, typeOf }: any) {
+  const cols: string[] = result.columns;
+  const numericCols = cols.filter((c: string) => { const t = typeOf(c); return t === 'currency' || t === 'number'; });
+  const xKey = chartX && cols.includes(chartX) ? chartX : (cols.find((c: string) => !numericCols.includes(c)) || cols[0]);
+  const yKey = chartY && cols.includes(chartY) ? chartY : (numericCols[0] || cols[cols.length - 1]);
+  const data = result.rows.slice(0, 50).map((r: any) => ({ name: String(r[xKey] ?? '—'), value: Number(r[yKey]) || 0 }));
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">Eixo X:</span>
+        <Select value={xKey} onValueChange={setChartX}>
+          <SelectTrigger className="h-7 text-xs w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>{cols.map((c: string) => (<SelectItem key={c} value={c}>{labelOf(c)}</SelectItem>))}</SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">Valor:</span>
+        <Select value={yKey} onValueChange={setChartY}>
+          <SelectTrigger className="h-7 text-xs w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>{cols.map((c: string) => (<SelectItem key={c} value={c}>{labelOf(c)}</SelectItem>))}</SelectContent>
+        </Select>
+        {result.rows.length > 50 && (<span className="text-xs text-muted-foreground">(primeiros 50 de {result.rows.length.toLocaleString('pt-BR')})</span>)}
+      </div>
+      <div style={{ width: '100%', height: 400 }}>
+        <ResponsiveContainer>
+          {mode === 'barras' ? (
+            <BarChart data={data} margin={{ top: 8, right: 16, bottom: 60, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" angle={-40} textAnchor="end" interval={0} height={80} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <RTooltip />
+              <Bar dataKey="value" fill="#2563eb" />
+            </BarChart>
+          ) : mode === 'linha' ? (
+            <LineChart data={data} margin={{ top: 8, right: 16, bottom: 60, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" angle={-40} textAnchor="end" interval={0} height={80} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <RTooltip />
+              <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={false} />
+            </LineChart>
+          ) : (
+            <PieChart>
+              <RTooltip />
+              <Legend />
+              <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={140}>
+                {data.map((_: any, i: number) => (<Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />))}
+              </Pie>
+            </PieChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function formatCellValue(value: any, type: string): string {
   if (value === null || value === undefined) return '—';
   if (type === 'currency') {
@@ -123,6 +180,9 @@ export default function Reports() {
   const [periodField, setPeriodField] = useState('');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
+  const [viewMode, setViewMode] = useState<'tabela' | 'barras' | 'pizza' | 'linha'>('tabela');
+  const [chartX, setChartX] = useState('');
+  const [chartY, setChartY] = useState('');
   const [result, setResult] = useState<ReportResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -766,17 +826,25 @@ export default function Reports() {
                   {result && (
                     <Card>
                       <CardHeader className="pb-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <CardTitle className="text-sm">
                             Resultado: {result.totalRows.toLocaleString('pt-BR')} registros
                             {result.rows.length < result.totalRows && ` (exibindo ${result.rows.length.toLocaleString('pt-BR')})`}
                           </CardTitle>
-                          <Badge variant="outline" className="text-xs">
-                            {result.columns.length} colunas
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <div className="flex gap-1">
+                              {([['tabela', 'Tabela'], ['barras', 'Barras'], ['pizza', 'Pizza'], ['linha', 'Linha']] as [any, string][]).map(([vm, vl]) => (
+                                <Button key={vm} size="sm" variant={viewMode === vm ? 'default' : 'outline'} className="h-7 text-xs px-2" onClick={() => setViewMode(vm)}>{vl}</Button>
+                              ))}
+                            </div>
+                            <Badge variant="outline" className="text-xs">{result.columns.length} colunas</Badge>
+                          </div>
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
+                        {viewMode !== 'tabela' ? (
+                          <ReportChart mode={viewMode} result={result} chartX={chartX} chartY={chartY} setChartX={setChartX} setChartY={setChartY} labelOf={getColumnLabel} typeOf={getColumnType} />
+                        ) : (
                         <div className="overflow-x-auto">
                           <Table>
                             <TableHeader>
@@ -819,6 +887,7 @@ export default function Reports() {
                             </TableBody>
                           </Table>
                         </div>
+                        )}
                       </CardContent>
                     </Card>
                   )}
