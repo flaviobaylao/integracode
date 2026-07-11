@@ -76,6 +76,7 @@ import RelatoriosIA from "@/pages/RelatoriosIA";
 import RelatoriosGraficos from "@/pages/RelatoriosGraficos";
 import PagamentoClientes from "@/pages/PagamentoClientes";
 import DashboardFinanceiro from "@/pages/DashboardFinanceiro";
+import AuditoriaFinanceira from "@/pages/AuditoriaFinanceira";
 import Repescagem from "@/pages/Repescagem";
 import MinhaAgenda from "@/pages/MinhaAgenda";
 import PixCharges from "@/pages/PixCharges";
@@ -292,6 +293,7 @@ function Router() {
           <Route path="/relatorios-graficos" component={RelatoriosGraficos} />
           <Route path="/pagamento-clientes" component={PagamentoClientes} />
       <Route path="/dashboard-financeiro" component={DashboardFinanceiro} />
+          <Route path="/auditoria-financeira" component={AuditoriaFinanceira} />
           <Route path="/repescagem" component={Repescagem} />
           <Route path="/minha-agenda" component={MinhaAgenda} />
           <Route path="/pix-charges" component={PixCharges} />
