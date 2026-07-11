@@ -3,6 +3,8 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { settleBoletoCharge } from "./bb-boleto-service";
+import { authenticateUser, requireRole } from "./authMiddleware";
+const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
 // Conciliação Bancária — FASE 1 (read-only): reconstrói a tela do 1.0.
@@ -36,7 +38,7 @@ const money = (v: any): string => {
 
 export function registerReconciliation(app: Express) {
   // ---- Filtros (contas + instâncias) --------------------------------------
-  app.get("/api/reconciliation/filters", async (_req, res) => {
+  app.get("/api/reconciliation/filters", authenticateUser, requireRole(FIN_ROLES), async (_req, res) => {
     try {
       const r = await db.execute(sql`
         SELECT id, name, omie_instance_id
@@ -52,7 +54,7 @@ export function registerReconciliation(app: Express) {
   });
 
   // ---- Lista de extratos importados ---------------------------------------
-  app.get("/api/reconciliation/statements", async (req, res) => {
+  app.get("/api/reconciliation/statements", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const instanceId = (req.query.instanceId as string) || null;
       const accountId = (req.query.accountId as string) || null;
@@ -75,7 +77,7 @@ export function registerReconciliation(app: Express) {
   });
 
   // ---- Itens de um extrato + matches + sugestões --------------------------
-  app.get("/api/reconciliation/statements/:id/items", async (req, res) => {
+  app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const itemsR = await db.execute(sql`
@@ -266,7 +268,7 @@ export function registerReconciliation(app: Express) {
   }
 
   // Buscar títulos em aberto (aba "Buscar Título" do modal) — C=receber, D=pagar
-  app.get("/api/reconciliation/titles/search", async (req, res) => {
+  app.get("/api/reconciliation/titles/search", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const type = String(req.query.type || "C").toUpperCase() === "D" ? "D" : "C";
       const q = String(req.query.q || "").trim();
@@ -305,7 +307,7 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
-  app.post("/api/reconciliation/items/:id/ignore", async (req, res) => {
+  app.post("/api/reconciliation/items/:id/ignore", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const by = (req.body?.by || "conciliacao-2.0").toString();
@@ -322,7 +324,7 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
-  app.post("/api/reconciliation/items/:id/reconcile", async (req, res) => {
+  app.post("/api/reconciliation/items/:id/reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const by = (req.body?.by || "conciliacao-2.0").toString();
@@ -385,7 +387,7 @@ export function registerReconciliation(app: Express) {
 
   // Criar Novo (aba do modal, igual ao 1.0): cria um titulo (conta a pagar/receber) na hora
   // com os dados do lancamento do banco e JA concilia (da baixa) contra o item do extrato.
-  app.post("/api/reconciliation/items/:id/create-and-reconcile", async (req, res) => {
+  app.post("/api/reconciliation/items/:id/create-and-reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const b = req.body || {};
@@ -433,7 +435,7 @@ export function registerReconciliation(app: Express) {
   });
 
   // ---- Desfazer conciliação (reverte a baixa) ------------------------------
-  app.post("/api/reconciliation/items/:id/undo", async (req, res) => {
+  app.post("/api/reconciliation/items/:id/undo", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const by = (req.body?.by || "conciliacao-2.0").toString();
@@ -570,7 +572,7 @@ export function registerReconciliation(app: Express) {
     return { acct, bankId, dtStart, dtEnd, transactions: txns };
   }
 
-  app.post("/api/reconciliation/import-ofx", async (req, res) => {
+  app.post("/api/reconciliation/import-ofx", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const ofxText = String(req.body?.ofxText || "");
       const accountId = (req.body?.accountId || "").toString();
@@ -676,7 +678,7 @@ export function registerReconciliation(app: Express) {
 
 
   // ---- Remover extrato importado (trava: recusa se houver item conciliado) -
-  app.post("/api/reconciliation/statements/:id/delete", async (req, res) => {
+  app.post("/api/reconciliation/statements/:id/delete", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
       const by = (req.body?.by || "conciliacao-2.0").toString();
