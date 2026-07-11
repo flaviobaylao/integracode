@@ -10,6 +10,7 @@ import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { enviarAlertaPositivacaoVendedores } from './positivacao-alert';
 import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
+import { ensureFinancialAuditSchema } from './financial-audit';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { registerReconciliation } from "./reconciliation-routes";
@@ -2073,6 +2074,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
   db.execute(sql`ALTER TABLE digital_certificates ADD COLUMN IF NOT EXISTS pfx_data varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar`).catch(() => {});
+  // FASE 1a — trilha de auditoria financeira: cria financial_audit_log + colunas updated_by/deleted_by/deleted_at (aditivo, idempotente).
+  ensureFinancialAuditSchema().catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
   // Ajuste admin de check-in/out na Rota do Dia (marca card roxo + tag "Adm - email"). Mapa por customerId.
   db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS admin_adjustments jsonb DEFAULT '{}'::jsonb`).catch(() => {});
