@@ -11,6 +11,7 @@ import { db } from "./db";
 import { enviarAlertaPositivacaoVendedores } from './positivacao-alert';
 import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
 import { ensureFinancialAuditSchema } from './financial-audit';
+import { webhookTokenGuard } from './webhook-security';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { registerReconciliation } from "./reconciliation-routes";
@@ -19,7 +20,7 @@ import { registerChargeGuarantee } from "./charge-guarantee-routes";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { authenticateUser, requireRole } from './authMiddleware';
-import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto } from "./bb-boleto-service";
+import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
 
@@ -1484,7 +1485,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
 
   // DASHBOARD FINANCEIRO (02/jul/2026): agregados de contas a receber/pagar p/ a tela /dashboard-financeiro
   // [Blindagem Financeira - Fase 1] AUDITORIA DE INTEGRIDADE (read-only, risco zero): detecta vazamentos.
-  app.get('/api/admin/financial/auditoria-integridade', async (_req: Request, res: Response) => {
+  app.get('/api/admin/financial/auditoria-integridade', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: Request, res: Response) => {
     try {
       const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
       // 1) Faturado SEM cobranca: recebivel de VENDA (billing_pipeline_id), em aberto, sem boleto E sem pix vinculado
@@ -1821,7 +1822,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
-    app.post("/api/admin/financial/reconcile", async (req, res) => {
+    app.post("/api/admin/financial/reconcile", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
       const result: any = { cancelled: 0, backfilled: { receivables: 0, payables: 0 }, errors: [] };
@@ -1860,7 +1861,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e?.message }); }
   });
 
-  app.post("/api/admin/financial/totals", async (req, res) => {
+  app.post("/api/admin/financial/totals", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const pgMod: any = await import("pg");
       const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -2095,7 +2096,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // ===== BOLETO BB (Cobranca v2) — emissao/diagnostico. Default HOMOLOGACAO. =====
   // Para producao: env BB_BOLETO_SANDBOX=false. Conta financeira precisa de
   // bbBoletoEnabled + bbConvenio + bbClientId/bbClientSecret/bbDevAppKey.
-  app.get("/api/admin/boleto/status", async (_req, res) => {
+  app.get("/api/admin/boleto/status", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req, res) => {
     try {
       const accs = await db.execute(sql`
         SELECT id, name, omie_instance_id, bb_boleto_enabled,
@@ -2113,7 +2114,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  app.post("/api/admin/boleto/test-connection", async (req, res) => {
+  app.post("/api/admin/boleto/test-connection", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const accountId = (req.body || {}).accountId;
       if (!accountId) return res.status(400).json({ error: "accountId obrigatorio" });
@@ -2147,7 +2148,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   }
 
   // Registra boleto por receivableId (puxa dados) OU por params crus.
-  app.post("/api/admin/boleto/registrar", async (req, res) => {
+  app.post("/api/admin/boleto/registrar", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const b = req.body || {};
       if (!b.accountId) return res.status(400).json({ error: "accountId obrigatorio" });
@@ -2177,7 +2178,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Botao do pipeline: gera boleto p/ um item faturado (resolve recebivel + conta BB da instancia).
 // ===== BOLETO BB — webhook de liquidacao (BAIXA OPERACIONAL) + conciliacao =====
   // BB faz POST aqui quando um boleto e liquidado. Sempre responder 200.
-  app.post("/api/webhooks/bb-boleto", async (req, res) => {
+  app.post("/api/webhooks/bb-boleto", webhookTokenGuard, async (req, res) => {
     try {
       const payload = req.body || {};
       try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch {}
@@ -2188,28 +2189,18 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
 
   // Verifica pagamento de um boleto via consulta BB e da baixa (fallback/teste/cron).
   // Batch (cron-friendly, GET): dispara em 2o plano a varredura de boletos em aberto e baixa os pagos.
-  app.get("/api/admin/boleto/check-open", async (req, res) => {
+  app.get("/api/admin/boleto/check-open", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 2000);
       const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
-      const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables r ON r.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND r.status IN ('a_vencer','vencida') AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
-      const ids = (r.rows || []).map((x: any) => x.id);
-      // fire-and-forget: nao bloqueia a resposta (evita timeout do gateway)
-      (async () => {
-        let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
-        for (const id of ids) {
-          try { const o: any = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
-          catch (e: any) { errors.push({ id, error: e?.message }); }
-        }
-        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
-        console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} paid=${paid} settled=${settled}`);
-      })();
-      res.json({ ok: true, started: true, candidates: ids.length });
+      // FASE 1c - a varredura roda no agendador interno; aqui apenas dispara sob demanda.
+      void sweepOpenBoletos(limit, days);
+      res.json({ ok: true, started: true });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   // Le o resumo da ultima varredura check-open (gravado em system_settings).
-  app.get("/api/admin/boleto/check-open/last", async (_req, res) => {
+  app.get("/api/admin/boleto/check-open/last", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req, res) => {
     try {
       const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'boleto_check_open_last' LIMIT 1`);
       const v = r.rows?.[0]?.value;
@@ -2217,7 +2208,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  app.post("/api/admin/boleto/check-payment", async (req, res) => {
+  app.post("/api/admin/boleto/check-payment", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const id = (req.body || {}).boletoChargeId;
       if (!id) return res.status(400).json({ error: "boletoChargeId obrigatorio" });
@@ -2226,7 +2217,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // Cria e vincula um recebivel a um boleto avulso (para aparecer/baixar no Contas a Receber).
-  app.post("/api/admin/boleto/ensure-receivable", async (req, res) => {
+  app.post("/api/admin/boleto/ensure-receivable", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const { boletoChargeId, customerId } = req.body || {};
       if (!boletoChargeId) return res.status(400).json({ error: "boletoChargeId obrigatorio" });
@@ -2259,7 +2250,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
 // DIAG: testa variacoes de OAuth do BB para PIX e reporta qual o BB aceita (nao expoe segredos).
 // DIAG/TESTE: reporta presenca do certificado mTLS de PIX e tenta criar 1 cobranca PIX (mostra erro real do BB).
 // Upload do certificado mTLS de PIX (.p12/.pfx) — pagina + endpoint. Guarda no banco (system_settings).
-  app.post("/api/admin/pix/cert", async (req, res) => {
+  app.post("/api/admin/pix/cert", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       const b = req.body || {};
       const clean = String(b.pfxBase64 || "").replace(/\s+/g, "");
@@ -2272,7 +2263,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
 // AUDITORIA FISCAL (read-only): ultima NF por instancia/CNPJ/serie e cenarios fiscais — 1.0 (Neon) vs 2.0.
-  app.get("/api/admin/fiscal/audit", async (_req, res) => {
+  app.get("/api/admin/fiscal/audit", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req, res) => {
     const invSql = `
       SELECT omie_instance_id, issuer_cnpj, series, environment,
              COUNT(*)::int AS n,
@@ -2340,7 +2331,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     res.json(out);
   });
 
-  app.get("/api/admin/pix/cert-upload", async (_req, res) => {
+  app.get("/api/admin/pix/cert-upload", authenticateUser, requireRole(['admin']), async (_req, res) => {
     res.set("Content-Type", "text/html; charset=utf-8");
     res.send(`<!doctype html><html lang=pt-br><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Upload Certificado PIX (.p12)</title><style>body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111}.card{max-width:520px;margin:24px auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:18px;margin:0 0 6px}.muted{color:#666;font-size:13px;margin-bottom:14px}label{display:block;font-size:13px;font-weight:600;margin:14px 0 4px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px}button{margin-top:16px;background:#059669;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer}button:disabled{opacity:.6}#out{margin-top:14px;white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:12px;background:#f3f4f6;border-radius:8px;padding:10px;display:none}.ok{color:#065f46}.err{color:#991b1b}</style></head><body><div class=card><h1>Certificado mTLS do PIX (Banco do Brasil)</h1><div class=muted>Selecione o arquivo <b>.p12 / .pfx</b> e informe a senha. O certificado é convertido em base64 no navegador e salvo de forma segura no servidor (usado para autenticar a API de PIX). Nada é exibido aqui.</div><label>Arquivo do certificado (.p12 / .pfx)</label><input type=file id=file accept=".p12,.pfx,application/x-pkcs12"><label>Senha do certificado</label><input type=password id=pass placeholder="senha do .p12 (deixe vazio se nao tiver)"><button id=btn onclick="up()">Enviar certificado</button><div id=out></div></div><script>
 function show(msg,ok){var o=document.getElementById('out');o.style.display='block';o.className=ok?'ok':'err';o.textContent=msg;}
@@ -2348,7 +2339,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 </script></body></html>`);
   });
 
-  app.get("/api/financial/receivables/:id/cobranca", async (req, res) => {
+  app.get("/api/financial/receivables/:id/cobranca", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req, res) => {
     try {
       const id = req.params.id;
       const ymd = (d: any) => { try { return new Date(d).toISOString().slice(0, 10); } catch { return ''; } };
@@ -2366,7 +2357,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
   // Gera NOVA cobranca (boleto hibrido) com o vencimento ATUAL do recebivel, CANCELANDO a anterior no BB.
   // Uso: apos alterar a data de vencimento de um recebivel que ja tem cobranca.
-  app.post("/api/financial/receivables/:id/regenerate-charge", async (req, res) => {
+  app.post("/api/financial/receivables/:id/regenerate-charge", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const recId = req.params.id;
       const resolved = await boletoParamsFromReceivable(recId);
@@ -2398,7 +2389,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
   // Emite um boleto (hibrido boleto+PIX) para um recebivel e devolve a viewUrl.
-  app.post("/api/financial/receivables/:id/emit-boleto", async (req, res) => {
+  app.post("/api/financial/receivables/:id/emit-boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const recId = req.params.id;
       const ex: any = await db.execute(sql`SELECT id FROM boleto_charges WHERE receivable_id = ${recId} ORDER BY created_at DESC LIMIT 1`);
@@ -2473,11 +2464,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     await db.execute(sql`CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS agentes_config (id text PRIMARY KEY, nome text NOT NULL, modelo text NOT NULL, system_prompt text NOT NULL, ferramentas jsonb NOT NULL DEFAULT '[]'::jsonb, limites jsonb NOT NULL DEFAULT '{}'::jsonb, ativo boolean NOT NULL DEFAULT true, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())`);
   }
-  app.post("/api/admin/agentes/setup", async (_req: any, res: any) => {
+  app.post("/api/admin/agentes/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { await ensureAgentesTables(); res.json({ ok: true }); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
-  app.get("/api/admin/agentes", async (_req: any, res: any) => {
+  app.get("/api/admin/agentes", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
       await ensureAgentesTables();
       const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
@@ -2485,7 +2476,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json({ baseComum: (base.rows[0] && (base.rows[0] as any).valor) || null, agentes: ags.rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
-  app.get("/api/admin/agentes/:id", async (req: any, res: any) => {
+  app.get("/api/admin/agentes/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       await ensureAgentesTables();
       const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
@@ -2496,7 +2487,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json(Object.assign({}, row, { system_prompt_efetivo: baseComum + "\n\n" + row.system_prompt }));
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
-  app.post("/api/admin/agentes/upsert", async (req: any, res: any) => {
+  app.post("/api/admin/agentes/upsert", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       await ensureAgentesTables();
       const b = req.body || {};
@@ -2505,7 +2496,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json({ ok: true, id: b.id });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
-  app.put("/api/admin/config/base-comum", async (req: any, res: any) => {
+  app.put("/api/admin/config/base-comum", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       await ensureAgentesTables();
       const valor = (req.body || {}).valor;
