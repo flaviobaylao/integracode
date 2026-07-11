@@ -61,6 +61,21 @@ cron.schedule('17 * * * *', async () => {
   }
 });
 
+// Pedidos AGENDADOS -> PEDIDO: promove os agendados cuja data já chegou.
+// Na virada do dia (00:05 BRT) e de hora em hora (rede de segurança), além de uma execução no boot.
+async function _promoteAgendados(origem: string) {
+  try {
+    const { promoteDueScheduledOrders } = await import('./billing-pipeline-routes');
+    const n = await promoteDueScheduledOrders();
+    if (n) console.log(`📅 [SCHEDULER:${origem}] ${n} pedido(s) agendado(s) promovido(s) para 'Pedido'.`);
+  } catch (error: any) {
+    console.error(`❌ [SCHEDULER:${origem}] erro ao promover pedidos agendados:`, error?.message || error);
+  }
+}
+cron.schedule('5 0 * * *', () => { void _promoteAgendados('diario'); }, { timezone: 'America/Sao_Paulo' });
+cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timezone: 'America/Sao_Paulo' });
+(async () => { await _promoteAgendados('boot'); })();
+
 // Sincronizar usuários como agentes e clientes para agenda na inicialização
 (async () => {
   await storage.syncUsersAsAgents();
