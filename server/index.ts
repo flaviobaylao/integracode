@@ -2076,6 +2076,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
   // Ajuste admin de check-in/out na Rota do Dia (marca card roxo + tag "Adm - email"). Mapa por customerId.
   db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS admin_adjustments jsonb DEFAULT '{}'::jsonb`).catch(() => {});
+  // Agendamento de pedidos: data para a qual o pedido foi agendado (etapa 'agendado' do pipeline) + valor de enum. Idempotente.
+  db.execute(sql`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS scheduled_billing_date timestamp`).catch(() => {});
+  db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'agendado'`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
