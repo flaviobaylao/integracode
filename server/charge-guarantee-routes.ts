@@ -3,6 +3,8 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { generateBoletoForReceivable, generatePixForReceivable } from "./billing-pipeline-routes";
+import { authenticateUser, requireRole } from "./authMiddleware";
+const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
 // GARANTIR COBRANCA - corrige "faturado sem cobranca" DAQUI PRA FRENTE.
@@ -36,7 +38,7 @@ async function setSetting(key: string, value: string) {
 
 export function registerChargeGuarantee(app: Express) {
   // ---- Puxar CEP/endereco faltantes do 1.0 (fill-only, por documento) -----
-  app.post("/api/admin/customers/pull-cep-from-1-0", async (req: Request, res: Response) => {
+  app.post("/api/admin/customers/pull-cep-from-1-0", authenticateUser, requireRole(FIN_ROLES), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     let src: any = null;
     try {
@@ -85,7 +87,7 @@ export function registerChargeGuarantee(app: Express) {
   });
 
   // ---- Garantir cobranca nos recebiveis de venda em aberto (a partir do cutoff) ----
-  app.post("/api/admin/financial/garantir-cobranca", async (req: Request, res: Response) => {
+  app.post("/api/admin/financial/garantir-cobranca", authenticateUser, requireRole(FIN_ROLES), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     try {
       let cutoff = await getSetting("charge_guarantee_cutoff");
@@ -141,7 +143,7 @@ export function registerChargeGuarantee(app: Express) {
     }
   });
 
-  app.get("/api/admin/financial/garantir-cobranca/last", async (_req: Request, res: Response) => {
+  app.get("/api/admin/financial/garantir-cobranca/last", authenticateUser, requireRole(FIN_ROLES), async (_req: Request, res: Response) => {
     const v = await getSetting("charge_guarantee_last");
     res.json(v ? JSON.parse(v) : { none: true });
   });
