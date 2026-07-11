@@ -92,6 +92,7 @@ export default function CustomerEditModal({
 
   const { data: instances = [] } = useQuery<any[]>({ queryKey: ["/api/omie/instances/public"] });
 
+  const [ieLoading, setIeLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     fantasyName: "",
@@ -408,18 +409,57 @@ export default function CustomerEditModal({
             </div>
           </div>
 
-          {/* Inscrição Estadual */}
+          {/* Inscrição Estadual — busca gratuita pelo CNPJ (SEFAZ/CNPJ.ws, igual ao 1.0) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="stateRegistration">Inscrição Estadual</Label>
-              <Input
-                id="stateRegistration"
-                name="stateRegistration"
-                value={(formData as any).stateRegistration}
-                onChange={handleChange}
-                placeholder="IE (ou ISENTO)"
-                data-testid="input-customer-ie"
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="stateRegistration"
+                  name="stateRegistration"
+                  value={(formData as any).stateRegistration}
+                  onChange={handleChange}
+                  placeholder="IE (ou ISENTO)"
+                  data-testid="input-customer-ie"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled={ieLoading}
+                  title="Buscar a Inscrição Estadual pelo CNPJ (verificação gratuita SEFAZ/CNPJ.ws)"
+                  data-testid="button-buscar-ie"
+                  onClick={async () => {
+                    const cnpjDigits = String(formData.cnpj || '').replace(/\D/g, '');
+                    if (cnpjDigits.length !== 14) {
+                      toast({ title: 'CNPJ necessário', description: 'Preencha o CNPJ (14 dígitos) para buscar a IE.', variant: 'destructive' });
+                      return;
+                    }
+                    setIeLoading(true);
+                    try {
+                      const resp = await fetch('/api/sintegra/lookup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cnpj: cnpjDigits }),
+                        credentials: 'same-origin',
+                      });
+                      const j = await resp.json();
+                      if (resp.ok && j.success && j.ie) {
+                        setFormData((prev: any) => ({ ...prev, stateRegistration: j.ie }));
+                        toast({ title: 'IE encontrada', description: `Inscrição Estadual ${j.ie} (SEFAZ/CNPJ.ws).` });
+                      } else {
+                        toast({ title: 'IE não encontrada', description: j.message || 'CNPJ sem IE ativa — preencha manualmente ou ISENTO.', variant: 'destructive' });
+                      }
+                    } catch (e: any) {
+                      toast({ title: 'Erro na consulta de IE', description: e?.message || 'Falha ao consultar', variant: 'destructive' });
+                    } finally {
+                      setIeLoading(false);
+                    }
+                  }}
+                >
+                  {ieLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Buscar IE'}
+                </Button>
+              </div>
             </div>
           </div>
 
