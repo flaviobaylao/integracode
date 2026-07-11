@@ -44,6 +44,11 @@ function normalizeFinancialBody(body: any): any {
   for (const k of numFields) {
     if (typeof out[k] === 'string' && out[k].includes(',')) out[k] = out[k].replace(/\./g, '').replace(',', '.');
   }
+  // "" vindo do form (ex.: "Selecione") vira null — evita "invalid input value for enum" e FKs vazias
+  const emptyToNullFields = ['paymentMethod', 'chartAccountId', 'financialAccountId', 'omieInstanceId'];
+  for (const k of emptyToNullFields) {
+    if (out[k] === '') out[k] = null;
+  }
   // nunca sobrescrever PK / timestamps de auditoria a partir do payload do cliente
   delete out.id;
   delete out.createdAt;
