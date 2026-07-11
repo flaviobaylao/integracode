@@ -10994,7 +10994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (order.status !== 'blocked') { errors.push(`Pedido ja processado (status: ${order.status})`); continue; }
           salesCard = await storage.getSalesCard(order.salesCardId);
           if (!salesCard) { errors.push(`Sales card ${order.salesCardId} nao encontrado`); continue; }
-          try { await autoSendToBillingPipeline(salesCard, req.currentUser.email || 'system'); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro (ignorado):', e?.message); }
+          try { await autoSendToBillingPipeline(salesCard, req.currentUser.email || 'system', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro (ignorado):', e?.message); }
           await db.update(blockedOrders).set({ status: 'released', releasedAt: nowBrazil(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
           try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` }); } catch {}
           released++;
