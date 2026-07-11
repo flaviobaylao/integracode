@@ -144,14 +144,14 @@ export function registerReconciliation(app: Express) {
         const orR = await db.execute(sql`
           SELECT id, title_number, customer_name, customer_document, amount, due_date, omie_instance_id
           FROM receivables
-          WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
+          WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
             AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
           LIMIT 400`);
         for (const r of rowsOf(orR)) (recvByAmt[money(r.amount)] ||= []).push(r);
         const opR = await db.execute(sql`
           SELECT id, title_number, supplier_name, supplier_document, amount, due_date, omie_instance_id
           FROM payables
-          WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
+          WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
             AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
           LIMIT 400`);
         for (const p of rowsOf(opR)) (payByAmt[money(p.amount)] ||= []).push(p);
@@ -276,7 +276,7 @@ export function registerReconciliation(app: Express) {
       const qNumRaw = q.replace(/[^0-9.,]/g, "").replace(/\./g, "").replace(",", ".");
       const qNum = qNumRaw ? parseFloat(qNumRaw) : NaN;
       if (type === "C") {
-        const conds: any[] = [sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`customer_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(customer_document,'') ILIKE ${'%' + qDigits + '%'}`);
@@ -289,7 +289,7 @@ export function registerReconciliation(app: Express) {
           ORDER BY due_date NULLS LAST LIMIT ${limit}`);
         return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id })) });
       } else {
-        const conds: any[] = [sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`supplier_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(supplier_document,'') ILIKE ${'%' + qDigits + '%'}`);
