@@ -177,6 +177,25 @@ async function runSync(startedBy: string | null) {
 }
 
 export function registerCadastroReceitaSync(app: Express) {
+  // AUTO-RETOMADA: se o servidor reiniciou no meio de uma execução (ex.:
+  // deploy do Railway), o snapshot fica 'running' sem job vivo. 60s após o
+  // boot, retoma automaticamente — o job re-consulta quem ainda tem dados
+  // faltantes, então continua exatamente de onde parou (progresso é durável).
+  setTimeout(async () => {
+    try {
+      if (state.status !== "idle") return;
+      const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'cadastro_receita_sync_last'`);
+      const v = (r?.rows ?? r ?? [])[0]?.value;
+      if (v) {
+        const snap = JSON.parse(String(v));
+        if (snap?.status === "running") {
+          console.log("[CADASTRO-SYNC] 🔁 retomando execução interrompida por restart do servidor");
+          runSync(snap.startedBy || "auto-resume");
+        }
+      }
+    } catch { /* sem retomada */ }
+  }, 60000);
+
   // Inicia a atualização em background (fire-and-forget; 409 se já rodando)
   app.post("/api/admin/cadastro-receita-sync/start", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
     if (state.status === "running") {
