@@ -3,6 +3,7 @@ import { storage } from './storage';
 import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
+import { logFinancialAudit, actorOf } from './financial-audit';
 
 function isFinancialAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -360,7 +361,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/pix-charges/immediate', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const { accountId, amount, debtorName, debtorDocument, description, expirationSeconds, receivableId, customerId } = req.body;
       
       if (!accountId || !amount) {
@@ -387,7 +388,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/pix-charges/due-date', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const { accountId, amount, dueDate, validityAfterDue, debtorName, debtorDocument, description, receivableId, customerId } = req.body;
       
       if (!accountId || !amount || !dueDate || !debtorName || !debtorDocument) {
@@ -479,10 +480,11 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/receivables', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const data: any = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       if (!data.issueDate) data.issueDate = new Date();
       const receivable = await storage.createReceivable(data);
+      await logFinancialAudit({ req, action: 'create', entity: 'receivable', entityId: receivable.id, after: receivable, amount: Number(receivable.amount) });
       res.status(201).json(receivable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -491,7 +493,9 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/receivables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      const before = await storage.getReceivable(req.params.id);
       const receivable = await storage.updateReceivable(req.params.id, normalizeFinancialBody(req.body));
+      await logFinancialAudit({ req, action: 'update', entity: 'receivable', entityId: req.params.id, before, after: receivable });
       res.json(receivable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -500,7 +504,9 @@ export function registerFinancialRoutes(app: Express) {
 
   app.delete('/api/financial/receivables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      const before = await storage.getReceivable(req.params.id);
       await storage.deleteReceivable(req.params.id);
+      await logFinancialAudit({ req, action: 'delete', entity: 'receivable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a receber removida' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -519,7 +525,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/receivables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const exists = await storage.getReceivable(req.params.id);
       if (!exists) return res.status(404).json({ message: 'Recebível não encontrado' });
       const b = req.body || {};
@@ -535,7 +541,8 @@ export function registerFinancialRoutes(app: Express) {
         createdBy: user?.email || null,
       };
       const payment = await storage.createReceivablePayment(data);
-      
+      await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
+
       const receivable = await storage.getReceivable(req.params.id);
       if (receivable) {
         const totalPaid = parseFloat(receivable.amountPaid || '0') + parseFloat(data.amount);
@@ -589,7 +596,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/payables', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const data: any = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       if (!data.issueDate) data.issueDate = new Date();
       const rec = req.body.recurrence;
@@ -598,9 +605,11 @@ export function registerFinancialRoutes(app: Express) {
         const dates = buildRecurrenceDates(base, rec);
         const items: any[] = [];
         for (const d of dates) { items.push(await storage.createPayable({ ...data, dueDate: d })); }
+        await logFinancialAudit({ req, action: 'create', entity: 'payable', entityId: items[0]?.id, amount: Number(data.amount), note: 'recorrência ' + items.length + 'x' });
         return res.status(201).json({ recurring: true, count: items.length, items });
       }
       const payable = await storage.createPayable(data);
+      await logFinancialAudit({ req, action: 'create', entity: 'payable', entityId: payable.id, after: payable, amount: Number(payable.amount) });
       res.status(201).json(payable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -609,7 +618,9 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/payables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      const before = await storage.getPayable(req.params.id);
       const payable = await storage.updatePayable(req.params.id, normalizeFinancialBody(req.body));
+      await logFinancialAudit({ req, action: 'update', entity: 'payable', entityId: req.params.id, before, after: payable });
       res.json(payable);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -618,7 +629,9 @@ export function registerFinancialRoutes(app: Express) {
 
   app.delete('/api/financial/payables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      const before = await storage.getPayable(req.params.id);
       await storage.deletePayable(req.params.id);
+      await logFinancialAudit({ req, action: 'delete', entity: 'payable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a pagar removida' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -637,7 +650,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const exists = await storage.getPayable(req.params.id);
       if (!exists) return res.status(404).json({ message: 'Conta a pagar não encontrada' });
       const b = req.body || {};
@@ -653,6 +666,7 @@ export function registerFinancialRoutes(app: Express) {
         createdBy: user?.email || null,
       };
       const payment = await storage.createPayablePayment(data);
+      await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
 
       const payable = await storage.getPayable(req.params.id);
       if (payable) {
@@ -982,7 +996,7 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/sped-exports/generate', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const user = (req as any).user;
+      const user = actorOf(req);
       const { type, periodStart, periodEnd, omieInstanceId } = req.body;
 
       if (!type || !periodStart || !periodEnd) {
