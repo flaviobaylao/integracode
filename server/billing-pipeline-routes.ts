@@ -156,7 +156,42 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
 
 import { fireAutomation } from './automation-engine';
 
-export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean }) {
+// Throttle para a promoção oportunista no GET /api/billing-pipeline (evita rodar o UPDATE a cada request).
+let _lastScheduledPromoteAt = 0;
+
+// Promove pedidos AGENDADOS cuja data de agendamento já chegou (etapa 'agendado' -> 'pedido').
+// Comparação por dia-calendário no fuso de São Paulo. Idempotente e seguro para rodar em cron/boot/GET.
+export async function promoteDueScheduledOrders(): Promise<number> {
+  try {
+    const res: any = await db.execute(sql`
+      UPDATE billing_pipeline
+      SET stage = 'pedido',
+          updated_at = now(),
+          stage_history = COALESCE(stage_history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+            'stage', 'pedido',
+            'changedAt', to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS'),
+            'changedBy', 'auto-agendado'
+          ))
+      WHERE stage = 'agendado'
+        AND scheduled_billing_date IS NOT NULL
+        AND scheduled_billing_date::date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      RETURNING id
+    `);
+    const n = res?.rowCount ?? (res?.rows?.length ?? 0);
+    if (n) console.log(`📅 [AGENDADO→PEDIDO] ${n} pedido(s) agendado(s) promovido(s) para 'Pedido'.`);
+    return n;
+  } catch (e: any) {
+    console.error('❌ [AGENDADO→PEDIDO] erro ao promover pedidos agendados:', e?.message || e);
+    return 0;
+  }
+}
+
+// Retorna a data (YYYY-MM-DD) de HOJE no fuso de São Paulo.
+function todayBrazilISO(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null }) {
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
   if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) { await logOrderAudit(salesCard.id, 'skipped_no_sale'); return null; }
@@ -215,6 +250,18 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       omieInstanceName = instance?.displayName || '';
     }
 
+    // AGENDAMENTO: se veio uma data de agendamento no FUTURO (dia-calendário BRT), o item entra na
+    // etapa 'agendado' e migra automaticamente para 'pedido' na data (via promoteDueScheduledOrders).
+    let stage: 'pedido' | 'agendado' = 'pedido';
+    let schedDate: Date | null = null;
+    if (opts?.scheduledBillingDate) {
+      const s = String(opts.scheduledBillingDate).slice(0, 10); // 'YYYY-MM-DD'
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s) && s > todayBrazilISO()) {
+        stage = 'agendado';
+        schedDate = new Date(`${s}T12:00:00-03:00`); // meio-dia BRT evita virada de dia
+      }
+    }
+
     const item = await storage.createBillingPipelineItem({
       salesCardId: salesCard.id,
       customerId: salesCard.customerId,
@@ -222,7 +269,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       customerDocument: customer?.cnpj || customer?.cpf || null,
       sellerId: effectiveSellerId,
       sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null,
-      stage: 'pedido',
+      stage: stage,
+      scheduledBillingDate: schedDate,
       orderNumber: `INT-${salesCard.id.substring(0, 8)}`,
       saleValue: salesCard.saleValue || null,
       paymentMethod: salesCard.paymentMethod || null,
@@ -232,7 +280,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       omieInstanceId: customer?.omieInstanceId || null,
       omieInstanceName: omieInstanceName || null,
       stageHistory: [{
-        stage: 'pedido',
+        stage: stage,
         changedAt: (salesCard.createdAt ? new Date(salesCard.createdAt) : nowBrazil()).toISOString(),
         changedBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`
       }],
@@ -241,15 +289,19 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       ...(salesCard.createdAt ? { createdAt: new Date(salesCard.createdAt) } : {}),
     });
 
-    await logOrderAudit(salesCard.id, 'created');
-    console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCard.id} auto-enviado para faturamento interno (modo ativo)`);
-    // Automacao: pedido.criado (fire-and-forget)
-    void fireAutomation('pedido.criado', {
-      customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
-      order: { id: item.orderNumber, value: (Number(salesCard.saleValue) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) },
-      seller: { name: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : '' },
-      sellerPhone: (seller as any)?.phone || null,
-    });
+    await logOrderAudit(salesCard.id, stage === 'agendado' ? 'created_scheduled' : 'created');
+    if (stage === 'agendado') {
+      console.log(`📅 [BILLING-PIPELINE] Pedido ${salesCard.id} AGENDADO para ${schedDate ? schedDate.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '?'} (etapa 'agendado')`);
+    } else {
+      console.log(`✅ [BILLING-PIPELINE] Pedido ${salesCard.id} auto-enviado para faturamento interno (modo ativo)`);
+      // Automacao: pedido.criado (fire-and-forget) — apenas para pedidos NÃO agendados (dispara na promoção depois)
+      void fireAutomation('pedido.criado', {
+        customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
+        order: { id: item.orderNumber, value: (Number(salesCard.saleValue) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) },
+        seller: { name: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : '' },
+        sellerPhone: (seller as any)?.phone || null,
+      });
+    }
     return item;
   } catch (error) {
     await logOrderAudit(salesCard.id, 'failed', String((error as any)?.message || error));
@@ -397,6 +449,11 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Get all billing pipeline items (optionally filter by stage)
   app.get('/api/billing-pipeline', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
+      // Promove pedidos agendados vencidos antes de listar (throttle 60s para não custar a cada request).
+      if (Date.now() - _lastScheduledPromoteAt > 60_000) {
+        _lastScheduledPromoteAt = Date.now();
+        await promoteDueScheduledOrders();
+      }
       const stage = req.query.stage as string | undefined;
       const items = await storage.getBillingPipelineItems(stage ? { stage } : undefined);
       res.json(items);
