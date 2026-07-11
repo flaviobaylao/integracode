@@ -1034,7 +1034,7 @@ export default function ActiveCustomers() {
               className="border-blue-600 text-blue-600 hover:bg-blue-50"
               onClick={() => startReceitaSyncMutation.mutate()}
               disabled={receitaSync?.status === 'running' || startReceitaSyncMutation.isPending}
-              title="Atualiza cadastro (razão social, endereço, cidade, UF, CEP) dos clientes ativos com dados faltantes, usando os dados oficiais do CNPJ. Contatos não são alterados."
+              title="Atualiza cadastro (razão social, endereço, cidade, UF, CEP e inscrição estadual) dos clientes ativos com dados faltantes, usando os dados oficiais do CNPJ (Receita/SEFAZ/CNPJ.ws). Contatos não são alterados."
               data-testid="button-receita-sync"
             >
               {receitaSync?.status === 'running' ? (
