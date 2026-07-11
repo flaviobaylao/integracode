@@ -12,6 +12,7 @@ import { nowBrazil } from './brazilTimezone';
 import { runRadarScan } from './purchase-routes';
 import { runPositivacaoAlertaCron } from './positivacao-alert';
 import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
+import { sweepOpenBoletos } from './bb-boleto-service';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -74,6 +75,13 @@ async function _promoteAgendados(origem: string) {
 }
 cron.schedule('5 0 * * *', () => { void _promoteAgendados('diario'); }, { timezone: 'America/Sao_Paulo' });
 cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timezone: 'America/Sao_Paulo' });
+
+// FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
+// Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
+cron.schedule('35 7-20 * * 1-5', async () => {
+  try { await sweepOpenBoletos(300, 120); }
+  catch (e: any) { console.error('[BB-BOLETO] sweep erro:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
 (async () => { await _promoteAgendados('boot'); })();
 
 // Sincronizar usuários como agentes e clientes para agenda na inicialização
