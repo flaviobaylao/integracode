@@ -3322,6 +3322,9 @@ export const receivables = pgTable("receivables", {
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: varchar("updated_by"),
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by"),
 }, (table) => [
   index("idx_receivables_customer").on(table.customerId),
   index("idx_receivables_status").on(table.status),
@@ -3440,6 +3443,9 @@ export const payables = pgTable("payables", {
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: varchar("updated_by"),
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by"),
 }, (table) => [
   index("idx_payables_supplier").on(table.supplierDocument),
   index("idx_payables_status").on(table.status),
