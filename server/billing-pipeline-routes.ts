@@ -4,7 +4,7 @@ import { storage } from './storage';
 import { nowBrazil } from './brazilTimezone';
 import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
-import { registrarBoleto } from './bb-boleto-service';
+import { registrarBoleto, cancelarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
 import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
@@ -333,6 +333,52 @@ export function registerBillingPipelineRoutes(app: Express) {
     try {
       const r: any = await db.execute(sql`DELETE FROM billing_pipeline WHERE created_by ILIKE '%reconcile%'`);
       res.json({ ok: true, removed: r?.rowCount ?? null });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // FASE 2 - Limpeza: cancela contas a receber criadas indevidamente por operacoes que
+  // NAO sao venda (amostra, troca, bonificacao, transferencia, remessa, devolucao).
+  // So atinge titulos SEM pagamento e ainda nao cancelados. Cancela tambem a cobranca:
+  // boleto e baixado no BB via API; PIX e marcado cancelado (a cob expira no BB).
+  // Padrao: dryRun=true (so lista). Enviar {"dryRun":false} para executar.
+  app.post('/api/admin/pipeline/cleanup-non-venda', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = req.currentUser?.email || 'cleanup-non-venda';
+      const q: any = await db.execute(sql`
+        SELECT r.id, r.title_number, r.customer_name, r.amount, r.status, bp.operation_type AS op
+        FROM receivables r JOIN billing_pipeline bp ON bp.id = r.billing_pipeline_id
+        WHERE COALESCE(bp.operation_type, 'venda') <> 'venda'
+          AND r.deleted_at IS NULL AND r.status <> 'cancelada'
+          AND COALESCE(r.amount_paid, '0')::numeric = 0
+        ORDER BY bp.operation_type, r.issue_date`);
+      const titles: any[] = (q as any).rows || [];
+      if (dryRun) return res.json({ ok: true, dryRun: true, count: titles.length, titles });
+      const results: any[] = [];
+      for (const t of titles) {
+        const r: any = { id: t.id, title: t.title_number, op: t.op, boletosCancelados: 0, pixCancelados: 0, erros: [] as string[] };
+        try {
+          const bq: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${t.id} AND status NOT IN ('cancelado','cancelada','liquidado','pago','recebido') ORDER BY created_at DESC`);
+          for (const boleto of ((bq as any).rows || [])) {
+            const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL LIMIT 1`);
+            const accId = (accq as any).rows?.[0]?.id;
+            if (accId) {
+              const cancel = await cancelarBoleto(accId, boleto);
+              if (!cancel.ok && !cancel.alreadyBaixado) { r.erros.push('boleto ' + (boleto.nosso_numero || boleto.id) + ': ' + (cancel.error || 'falha')); continue; }
+            }
+            await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+            r.boletosCancelados++;
+          }
+          const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'cancelado' WHERE receivable_id = ${t.id} AND status NOT IN ('cancelado','cancelada','CONCLUIDA','LIQUIDADO')`);
+          r.pixCancelados = ((pu as any)?.rowCount ?? 0) as number;
+          if (!r.erros.length) {
+            await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
+            r.cancelada = true;
+          }
+        } catch (e: any) { r.erros.push(String(e?.message || e)); }
+        results.push(r);
+      }
+      res.json({ ok: true, dryRun: false, count: titles.length, results });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
@@ -1301,6 +1347,13 @@ export async function generatePixForReceivable(receivable: any, item: any): Prom
 }
 
 export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
+  // FASE 2 - Somente VENDA gera conta a receber. Amostra, troca, bonificacao,
+  // transferencia, remessa e devolucao nao geram titulo nem cobranca (boleto/PIX).
+  const opTypeReceivable = String(item.operationType || 'venda').toLowerCase().trim();
+  if (opTypeReceivable !== 'venda') {
+    console.log(`\u{1F6AB} [BILLING-PIPELINE] operationType='${opTypeReceivable}' nao gera conta a receber (item ${item.id || '-'})`);
+    return null;
+  }
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
 
