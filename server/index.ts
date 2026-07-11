@@ -1488,7 +1488,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     try {
       const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
       // 1) Faturado SEM cobranca: recebivel de VENDA (billing_pipeline_id), em aberto, sem boleto E sem pix vinculado
-      const semCobBase = "FROM receivables r WHERE r.billing_pipeline_id IS NOT NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)";
+      const semCobBase = "FROM receivables r WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)";
       const semCobTot = (await many("SELECT COUNT(*)::int AS n, COALESCE(SUM(r.amount - COALESCE(r.amount_paid,0)),0)::float AS v " + semCobBase))[0] || {};
       const semCobItens = await many("SELECT r.id, r.title_number AS titulo, r.customer_name AS cliente, (r.amount - COALESCE(r.amount_paid,0))::float AS saldo, r.due_date AS vencimento, r.payment_method AS forma, r.omie_instance_id AS instancia " + semCobBase + " ORDER BY saldo DESC LIMIT 200");
       // 2) Baixa SEM lastro bancario: pagamento de recebivel registrado sem conta financeira (nao lastreado em banco)
@@ -1508,8 +1508,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   app.get('/api/admin/financial/dashboard', async (_req: Request, res: Response) => {
     try {
       const HOJE = "(now() at time zone 'America/Sao_Paulo')::date";
-      const openRec = "FROM receivables WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
-      const openPay = "FROM payables WHERE status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
+      const openRec = "FROM receivables WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
+      const openPay = "FROM payables WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0";
       const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
       const one = async (q: string) => (await many(q))[0] || {};
       const kq = (base: string) => "SELECT COUNT(*)::int AS n, COALESCE(SUM(amount - COALESCE(amount_paid,0)),0)::float AS v, COUNT(*) FILTER (WHERE due_date::date < " + HOJE + ")::int AS n_venc, COALESCE(SUM(amount - COALESCE(amount_paid,0)) FILTER (WHERE due_date::date < " + HOJE + "),0)::float AS v_venc, COUNT(*) FILTER (WHERE due_date::date = " + HOJE + ")::int AS n_hoje, COALESCE(SUM(amount - COALESCE(amount_paid,0)) FILTER (WHERE due_date::date = " + HOJE + "),0)::float AS v_hoje " + base;
@@ -2128,7 +2128,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
              r.fiscal_invoice_id, r.billing_pipeline_id, r.omie_instance_id,
              c.address, c.city, c.neighborhood, c.state, c.zip_code, c.cpf, c.cnpj, c.name AS c_name
       FROM receivables r LEFT JOIN customers c ON c.id = r.customer_id
-      WHERE r.id = ${receivableId} LIMIT 1`);
+      WHERE r.id = ${receivableId} AND r.deleted_at IS NULL LIMIT 1`);
     const row = rec.rows?.[0];
     if (!row) return null;
     return {
@@ -2352,7 +2352,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try {
       const id = req.params.id;
       const ymd = (d: any) => { try { return new Date(d).toISOString().slice(0, 10); } catch { return ''; } };
-      const rq: any = await db.execute(sql`SELECT due_date, customer_name, amount FROM receivables WHERE id = ${id} LIMIT 1`);
+      const rq: any = await db.execute(sql`SELECT due_date, customer_name, amount FROM receivables WHERE id = ${id} AND deleted_at IS NULL LIMIT 1`);
       const recDue = rq.rows?.[0]?.due_date || null;
       const customerName = rq.rows?.[0]?.customer_name || null;
       const amount = rq.rows?.[0]?.amount || null;
@@ -2449,7 +2449,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (!itemId) return res.status(400).json({ error: "itemId obrigatorio" });
       const recq: any = await db.execute(sql`
         SELECT r.id AS receivable_id, r.omie_instance_id
-        FROM receivables r WHERE r.billing_pipeline_id = ${itemId}
+        FROM receivables r WHERE r.deleted_at IS NULL AND r.billing_pipeline_id = ${itemId}
         ORDER BY r.created_at DESC LIMIT 1`);
       const rrow = recq.rows?.[0];
       if (!rrow) return res.status(404).json({ error: "recebivel do item nao encontrado (item faturado?)" });
@@ -2683,7 +2683,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         FROM receivables
         WHERE issue_date >= date_trunc('month', (now() at time zone 'America/Sao_Paulo'))
           AND issue_date < date_trunc('month', (now() at time zone 'America/Sao_Paulo')) + interval '1 month'
-          AND COALESCE(amount,0) > 0 AND status <> 'cancelada'
+          AND COALESCE(amount,0) > 0 AND status <> 'cancelada' AND deleted_at IS NULL
         GROUP BY customer_id, customer_document`));
 
       const firstById = new Map<string, Date>();
