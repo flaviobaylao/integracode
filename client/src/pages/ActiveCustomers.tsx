@@ -1,5 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -52,7 +53,8 @@ import {
   Loader2,
   MessageCircle,
   Copy,
-  Send
+  Send,
+  RefreshCw
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -552,6 +554,35 @@ export default function ActiveCustomers() {
     staleTime: 0, // Dados sempre considerados antigos
   });
 
+  // ── Atualização de cadastro via Receita/SEFAZ (job em background) ──
+  // O botão dispara o job no servidor; a barra acompanha por polling (2s).
+  const { data: receitaSync } = useQuery<any>({
+    queryKey: ['/api/admin/cadastro-receita-sync/status'],
+    queryFn: () => fetch('/api/admin/cadastro-receita-sync/status', { credentials: 'include' }).then(r => r.json()),
+    refetchInterval: (query: any) => (query?.state?.data?.status === 'running' ? 2000 : false),
+  });
+  const startReceitaSyncMutation = useMutation({
+    mutationFn: async () => apiRequest('POST', '/api/admin/cadastro-receita-sync/start'),
+    onSuccess: () => {
+      toast({ title: 'Atualização iniciada', description: 'Buscando dados oficiais (Receita/SEFAZ) em segundo plano. Contatos não serão alterados.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/cadastro-receita-sync/status'] });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Não foi possível iniciar', description: error?.message || 'Erro ao iniciar atualização', variant: 'destructive' });
+    },
+  });
+  const cancelReceitaSyncMutation = useMutation({
+    mutationFn: async () => apiRequest('POST', '/api/admin/cadastro-receita-sync/cancel'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/admin/cadastro-receita-sync/status'] }),
+  });
+  // Ao concluir, recarrega a lista p/ refletir os cadastros atualizados
+  const receitaSyncStatus = receitaSync?.status;
+  useEffect(() => {
+    if (receitaSyncStatus === 'done' && !receitaSync?.fromSnapshot) {
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+    }
+  }, [receitaSyncStatus]);
+
   const { 
     data: uploads = [], 
     isLoading: isLoadingUploads,
@@ -997,6 +1028,23 @@ export default function ActiveCustomers() {
               Pendentes Omie
             </Button>
           )}
+          {isAdmin && (
+            <Button
+              variant="outline"
+              className="border-blue-600 text-blue-600 hover:bg-blue-50"
+              onClick={() => startReceitaSyncMutation.mutate()}
+              disabled={receitaSync?.status === 'running' || startReceitaSyncMutation.isPending}
+              title="Atualiza cadastro (razão social, endereço, cidade, UF, CEP) dos clientes ativos com dados faltantes, usando os dados oficiais do CNPJ. Contatos não são alterados."
+              data-testid="button-receita-sync"
+            >
+              {receitaSync?.status === 'running' ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2" />
+              )}
+              Atualizar Cadastros (SEFAZ)
+            </Button>
+          )}
           <Button 
             variant="outline" 
             className="border-purple-600 text-purple-600 hover:bg-purple-50"
@@ -1050,6 +1098,36 @@ export default function ActiveCustomers() {
           </Button>
         </div>
       </div>
+
+      {receitaSync && receitaSync.status && receitaSync.status !== 'idle' && (
+        <Card className="border-blue-300 bg-blue-50/60 dark:bg-blue-900/10" data-testid="card-receita-sync-progress">
+          <CardContent className="p-4 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {receitaSync.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
+                <span>
+                  Atualização de cadastro (Receita/SEFAZ)
+                  {receitaSync.status === 'running' && receitaSync.current ? ` — consultando: ${receitaSync.current}` : ''}
+                  {receitaSync.status === 'done' ? ' — concluída' : ''}
+                  {receitaSync.status === 'cancelled' ? ' — cancelada' : ''}
+                  {receitaSync.status === 'error' ? ' — erro' : ''}
+                  {receitaSync.fromSnapshot ? ' (última execução)' : ''}
+                </span>
+              </div>
+              {receitaSync.status === 'running' && (
+                <Button size="sm" variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={() => cancelReceitaSyncMutation.mutate()} data-testid="button-receita-sync-cancel">
+                  <X className="h-4 w-4 mr-1" /> Cancelar
+                </Button>
+              )}
+            </div>
+            <Progress value={receitaSync.total > 0 ? Math.round((receitaSync.done / receitaSync.total) * 100) : 0} className="h-3" />
+            <p className="text-xs text-muted-foreground">
+              {receitaSync.done} de {receitaSync.total} clientes — {receitaSync.updated} atualizados · {receitaSync.skipped} sem mudança · {receitaSync.failed} falhas
+              {receitaSync.lastErrors && receitaSync.lastErrors.length > 0 ? ` · último erro: ${receitaSync.lastErrors[receitaSync.lastErrors.length - 1].name}` : ''}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card data-testid="card-stat-total">
