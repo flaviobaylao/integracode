@@ -510,7 +510,7 @@ export function registerFinancialRoutes(app: Express) {
   app.delete('/api/financial/receivables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const before = await storage.getReceivable(req.params.id);
-      await storage.deleteReceivable(req.params.id);
+      await storage.deleteReceivable(req.params.id, actorOf(req).email);
       await logFinancialAudit({ req, action: 'delete', entity: 'receivable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a receber removida' });
     } catch (error: any) {
@@ -635,9 +635,41 @@ export function registerFinancialRoutes(app: Express) {
   app.delete('/api/financial/payables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const before = await storage.getPayable(req.params.id);
-      await storage.deletePayable(req.params.id);
+      await storage.deletePayable(req.params.id, actorOf(req).email);
       await logFinancialAudit({ req, action: 'delete', entity: 'payable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a pagar removida' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // FASE 1b - restauracao de soft-delete + lixeira (somente perfis financeiros).
+  app.post('/api/financial/receivables/:id/restore', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const receivable = await storage.restoreReceivable(req.params.id);
+      if (!receivable) return res.status(404).json({ message: 'Conta não encontrada' });
+      await logFinancialAudit({ req, action: 'restore', entity: 'receivable', entityId: req.params.id, after: receivable });
+      res.json(receivable);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/financial/payables/:id/restore', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const payable = await storage.restorePayable(req.params.id);
+      if (!payable) return res.status(404).json({ message: 'Conta não encontrada' });
+      await logFinancialAudit({ req, action: 'restore', entity: 'payable', entityId: req.params.id, after: payable });
+      res.json(payable);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get('/api/financial/lixeira', authenticateUser, isFinancialAuthorized, async (_req, res) => {
+    try {
+      const [recs, pays] = await Promise.all([storage.getDeletedReceivables(), storage.getDeletedPayables()]);
+      res.json({ receivables: recs, payables: pays });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
