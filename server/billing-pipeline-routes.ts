@@ -8,7 +8,7 @@ import { registrarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
 import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
-import { fiscalInvoices, salesCards } from '@shared/schema';
+import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
@@ -156,7 +156,7 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
 
 import { fireAutomation } from './automation-engine';
 
-export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string) {
+export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean }) {
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
   if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) { await logOrderAudit(salesCard.id, 'skipped_no_sale'); return null; }
@@ -166,6 +166,42 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     if (existing.find(i => i.salesCardId === salesCard.id)) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
 
     const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
+
+    // BLOQUEIO POR DEBITO VENCIDO (funil unico): cliente com debito vencido nao entra no pipeline.
+    // O pedido vai para blocked_orders (coluna "Bloqueados" do Kanban). A liberacao manual (release)
+    // e a liberacao automatica (debito regularizado) chamam com opts.skipDebtCheck=true.
+    if (!opts?.skipDebtCheck) {
+      try {
+        const debtDoc = (customer as any)?.cnpj || (customer as any)?.cpf || '';
+        if (debtDoc) {
+          const overdueDebt = await storage.getOverdueDebtByDocument(debtDoc);
+          if (overdueDebt) {
+            const already = await db.select().from(blockedOrders)
+              .where(and(eq(blockedOrders.salesCardId, salesCard.id), eq(blockedOrders.status, 'blocked'))).limit(1);
+            if (already.length === 0) {
+              await db.insert(blockedOrders).values({
+                salesCardId: salesCard.id,
+                customerId: salesCard.customerId,
+                sellerId: salesCard.sellerId || 'system',
+                blockReason: 'overdue_debt',
+                blockDetails: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
+                operationType: salesCard.operationType || 'venda',
+                paymentMethod: salesCard.paymentMethod || 'a_vista',
+                boletoDays: salesCard.boletoDays || null,
+                totalAmount: String(parseFloat(String(salesCard.saleValue)) || 0),
+                products: (salesCard.products as any) || [],
+              } as any);
+            }
+            await logOrderAudit(salesCard.id, 'blocked_overdue_debt');
+            console.log(`🚫 [BILLING-PIPELINE] Pedido ${salesCard.id} BLOQUEADO por debito vencido (${(customer as any)?.fantasyName || (customer as any)?.name || salesCard.customerId}) - foi para a coluna Bloqueados`);
+            return null;
+          }
+        }
+      } catch (e: any) {
+        console.warn('⚠️ [BILLING-PIPELINE] Erro ao checar debito vencido (segue sem bloquear):', e?.message);
+      }
+    }
+
     // Vendedor do pedido = quem REGISTROU (createdByEmail); fallback = vendedor do cadastro do cliente (system/auto/reconcile)
     let registeringUser: any = null;
     const _cbe = String(createdByEmail || '').trim();
