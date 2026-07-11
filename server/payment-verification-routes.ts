@@ -3,6 +3,8 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { settleBoletoCharge } from "./bb-boleto-service";
+import { authenticateUser, requireRole } from "./authMiddleware";
+const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
 // Pagamento Clientes (customer-payments) — conciliação por importação de
@@ -51,7 +53,7 @@ function rowsOf(r: any): any[] {
 
 export function registerPaymentVerificationRoutes(app: Express) {
   // ---- ANALYZE (read-only) ----
-  app.post("/api/financial/payment-verification/analyze", async (req, res) => {
+  app.post("/api/financial/payment-verification/analyze", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (!rows.length) return res.json({ total: 0, summary: { nao_baixado: 0, ja_baixado: 0, nao_encontrado: 0 }, rows: [] });
@@ -170,7 +172,7 @@ export function registerPaymentVerificationRoutes(app: Express) {
   });
 
   // ---- SETTLE (baixa — ação financeira) ----
-  app.post("/api/financial/payment-verification/settle/:receivableId", async (req, res) => {
+  app.post("/api/financial/payment-verification/settle/:receivableId", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const receivableId = req.params.receivableId;
       const amount = Number(req.body?.amount || 0);
