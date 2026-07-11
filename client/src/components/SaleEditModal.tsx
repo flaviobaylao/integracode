@@ -79,6 +79,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [boletoDays, setBoletoDays] = useState(7);
+  // Agendamento de pedido: quando marcado, o pedido entra na etapa "Agendado" do faturamento e migra
+  // automaticamente para "Pedido" na data escolhida.
+  const [isScheduledOrder, setIsScheduledOrder] = useState(false);
+  const [scheduledOrderDate, setScheduledOrderDate] = useState('');
+  const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   
   // Verificar se usuário pode editar recorrência e dia da rota
   // Permitir edição se: está carregando OU é admin/coordinator/administrative
@@ -100,7 +105,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
       setBoletoDays((card as any).boletoDays || 7);
-      
+      setIsScheduledOrder(false);
+      setScheduledOrderDate('');
+
       // Se o card tem configurações de entrega, usa elas, senão usa os valores padrão
       const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
       const defaultTimeSlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
@@ -141,6 +148,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setRouteDay('');
       setRecurrenceType('');
       setBoletoDays(7);
+      setIsScheduledOrder(false);
+      setScheduledOrderDate('');
       setDeliveryWeekdays(['Seg', 'Ter', 'Qua', 'Qui', 'Sex']);
       setDeliveryTimeSlots(['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']);
       setCustomerLatitude('');
@@ -223,14 +232,24 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
+      const scheduledBillingDate = (isScheduledOrder && scheduledOrderDate) ? scheduledOrderDate : undefined;
+      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`, { scheduledBillingDate });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      toast({
-        title: "Sucesso",
-        description: "Pedido enviado para faturamento!",
-      });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      if (isScheduledOrder && scheduledOrderDate) {
+        const d = new Date(`${scheduledOrderDate}T12:00:00-03:00`);
+        toast({
+          title: "Pedido agendado",
+          description: `Ficará em "Agendado" e migra para "Pedido" em ${d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`,
+        });
+      } else {
+        toast({
+          title: "Sucesso",
+          description: "Pedido enviado para faturamento!",
+        });
+      }
     },
     onError: (error) => {
       toast({
@@ -381,7 +400,27 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   const handleSendToFaturamento = async () => {
     if (!card?.id) return;
-    
+
+    // Validação do agendamento: exige uma data (hoje ou futura) quando "Agendar pedido" está marcado.
+    if (isScheduledOrder) {
+      if (!scheduledOrderDate) {
+        toast({
+          title: "Selecione a data",
+          description: "Marque a data para a qual o pedido será agendado.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (scheduledOrderDate < todayISO) {
+        toast({
+          title: "Data inválida",
+          description: "A data de agendamento não pode ser no passado.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     try {
       // Primeiro finalizar a venda
       await handleFinalizeSale();
@@ -1258,6 +1297,41 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 <Input value={referralCode} onChange={(e) => setReferralCode(e.target.value)} placeholder="Cupom de indicação" data-testid="input-referral-code" />
               </div>
 
+              {/* Agendamento de Pedido */}
+              <div className="border border-cyan-200 bg-cyan-50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="agendar-pedido"
+                    checked={isScheduledOrder}
+                    onCheckedChange={(checked) => {
+                      const val = checked === true;
+                      setIsScheduledOrder(val);
+                      if (!val) setScheduledOrderDate('');
+                    }}
+                    data-testid="checkbox-schedule-order"
+                  />
+                  <Label htmlFor="agendar-pedido" className="flex items-center gap-1.5 cursor-pointer text-cyan-900 font-medium">
+                    <Calendar className="h-4 w-4" /> Agendar pedido
+                  </Label>
+                </div>
+                {isScheduledOrder && (
+                  <div>
+                    <Label className="text-sm text-cyan-800">Data do agendamento</Label>
+                    <Input
+                      type="date"
+                      value={scheduledOrderDate}
+                      min={todayISO}
+                      onChange={(e) => setScheduledOrderDate(e.target.value)}
+                      className="mt-1"
+                      data-testid="input-schedule-date"
+                    />
+                    <p className="text-xs text-cyan-700 mt-1">
+                      O pedido ficará na etapa <strong>Agendado</strong> do faturamento e migrará para <strong>Pedido</strong> automaticamente nesta data.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Previsão de Entrega */}
               {deliveryDate && (
                 <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -1371,23 +1445,29 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </Button>
             </div>
 
-            {/* Botão de Finalizar e Enviar para Faturamento */}
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-              <p className="text-sm text-orange-800 mb-2">
-                ✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.
+            {/* Botão de Finalizar e Enviar para Faturamento (ou Agendar) */}
+            <div className={`${isScheduledOrder ? 'bg-cyan-50 border-cyan-200' : 'bg-orange-50 border-orange-200'} border rounded-lg p-3`}>
+              <p className={`text-sm mb-2 ${isScheduledOrder ? 'text-cyan-800' : 'text-orange-800'}`}>
+                {isScheduledOrder ? (
+                  <>📅 <strong>Agendar Pedido:</strong> Marca como concluído e agenda o pedido no faturamento (etapa "Agendado").</>
+                ) : (
+                  <>✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.</>
+                )}
               </p>
-              <Button 
+              <Button
                 onClick={handleSendToFaturamento}
-                disabled={isSubmitting || products.length === 0}
-                className="w-full bg-orange-500 hover:bg-orange-600"
+                disabled={isSubmitting || products.length === 0 || (isScheduledOrder && !scheduledOrderDate)}
+                className={`w-full ${isScheduledOrder ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-orange-500 hover:bg-orange-600'}`}
                 data-testid="button-finalize-billing"
               >
                 {isSubmitting ? (
                   <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                ) : isScheduledOrder ? (
+                  <Calendar className="h-4 w-4 mr-2" />
                 ) : (
                   <DollarSign className="h-4 w-4 mr-2" />
                 )}
-                Finalizar e Enviar p/ Faturamento
+                {isScheduledOrder ? 'Agendar Pedido' : 'Finalizar e Enviar p/ Faturamento'}
               </Button>
             </div>
           </div>
