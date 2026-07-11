@@ -390,9 +390,30 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         form.setValue('email', data.email);
       }
 
+      // Inscrição Estadual — verificação gratuita na CNPJ.ws (igual ao 1.0):
+      // preenche automaticamente a IE ativa do CNPJ, se o campo estiver vazio.
+      let ieMsg = '';
+      try {
+        const ieResp = await fetch('/api/sintegra/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cnpj }),
+          credentials: 'same-origin',
+        });
+        if (ieResp.ok) {
+          const ieData = await ieResp.json();
+          if (ieData.success && ieData.ie && !String(form.getValues('stateRegistration' as any) || '').trim()) {
+            form.setValue('stateRegistration' as any, ieData.ie);
+            ieMsg = ` IE ${ieData.ie} preenchida (SEFAZ).`;
+          } else if (ieData.success && !ieData.ie) {
+            ieMsg = ' CNPJ sem IE ativa (não contribuinte).';
+          }
+        }
+      } catch { /* segue sem IE — o salvar ainda valida */ }
+
       toast({
         title: "Sucesso",
-        description: "Dados do CNPJ carregados com sucesso!",
+        description: `Dados do CNPJ carregados com sucesso!${ieMsg}`,
       });
     } catch (error) {
       toast({
@@ -472,7 +493,43 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
     inactivateCustomerMutation.mutate();
   };
 
-  const onSubmit = (data: InsertCustomer) => {
+  const onSubmit = async (data: InsertCustomer) => {
+    // IE obrigatória no cadastro de NOVO cliente PJ (igual ao 1.0): antes de
+    // salvar sem IE, tenta a verificação gratuita (CNPJ.ws/SEFAZ); se o CNPJ
+    // tem IE ativa, preenche e segue; se não achar, bloqueia e pede IE ou
+    // "ISENTO" explícito. Edição de cliente existente não é bloqueada.
+    const cnpjDigits = String((data as any).cnpj || '').replace(/\D/g, '');
+    const ieAtual = String((data as any).stateRegistration || '').trim();
+    if (!customer && cnpjDigits.length === 14 && !ieAtual) {
+      try {
+        const resp = await fetch('/api/sintegra/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cnpj: cnpjDigits }),
+          credentials: 'same-origin',
+        });
+        const j = resp.ok ? await resp.json() : null;
+        if (j && j.success && j.ie) {
+          form.setValue('stateRegistration' as any, j.ie);
+          (data as any).stateRegistration = j.ie;
+          toast({ title: 'Inscrição Estadual encontrada', description: `IE ${j.ie} preenchida automaticamente (SEFAZ/CNPJ.ws).` });
+        } else {
+          toast({
+            title: 'Inscrição Estadual obrigatória',
+            description: 'Não encontrei IE ativa para este CNPJ (SEFAZ/CNPJ.ws). Preencha a Inscrição Estadual ou digite ISENTO para salvar.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch {
+        toast({
+          title: 'Inscrição Estadual obrigatória',
+          description: 'Não foi possível verificar a IE agora. Preencha a Inscrição Estadual ou digite ISENTO para salvar.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     customerMutation.mutate(data);
   };
 
