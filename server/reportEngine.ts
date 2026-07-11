@@ -247,7 +247,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'payment_method', label: 'Forma Pgto', type: 'text', category: 'Título', dbColumn: 'r.payment_method' },
       { key: 'omie_instance_id', label: 'Instância', type: 'text', category: 'Integração', dbColumn: 'r.omie_instance_id' },
     ],
-    baseQuery: `SELECT r.* FROM receivables r`,
+    baseQuery: `SELECT r.* FROM (SELECT * FROM receivables WHERE deleted_at IS NULL) r`,
   },
   virtual_service_logs: {
     key: 'virtual_service_logs',
