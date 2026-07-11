@@ -434,6 +434,59 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   console.log('⚠️ [SCHEDULER] Sincronização Omie horária DESATIVADA (ambiente de desenvolvimento)');
 }
 
+// ===== LIBERACAO AUTOMATICA DE PEDIDOS BLOQUEADOS POR DEBITO VENCIDO =====
+// Re-verifica de hora em hora (15 min apos o sync de debitos) se os clientes dos pedidos
+// bloqueados por 'overdue_debt' ainda tem debito vencido. Sem debito -> libera o pedido e
+// envia ao pipeline na etapa "pedido". Bloqueios por outros motivos (amostra/troca, boleto
+// acima do prazo) seguem exigindo liberacao manual.
+async function autoReleaseRegularizedDebtOrders(horario: string) {
+  try {
+    const { db } = await import('./db');
+    const { blockedOrders } = await import('@shared/schema');
+    const { eq, and } = await import('drizzle-orm');
+    const blocked = await db.select().from(blockedOrders)
+      .where(and(eq(blockedOrders.status, 'blocked'), eq(blockedOrders.blockReason, 'overdue_debt')));
+    if (blocked.length === 0) { console.log(`✅ [AUTO-RELEASE] (${horario}) Nenhum pedido bloqueado por debito vencido.`); return; }
+    console.log(`🔎 [AUTO-RELEASE] (${horario}) ${blocked.length} pedido(s) bloqueado(s) por debito vencido - re-verificando debitos...`);
+    const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes');
+    let released = 0, kept = 0, failed = 0;
+    for (const order of blocked as any[]) {
+      try {
+        const customer = order.customerId ? await storage.getCustomer(order.customerId) : null;
+        const doc = (customer as any)?.cnpj || (customer as any)?.cpf || '';
+        if (!doc) { kept++; continue; }
+        const debt = await storage.getOverdueDebtByDocument(doc);
+        if (debt) { kept++; continue; }
+        // Debito regularizado -> libera: envia ao pipeline (etapa "pedido") e marca released
+        const salesCard = order.salesCardId ? await storage.getSalesCard(order.salesCardId) : null;
+        if (salesCard) {
+          try { await autoSendToBillingPipeline(salesCard, 'system-debito-regularizado', { skipDebtCheck: true }); }
+          catch (e: any) { console.warn(`⚠️ [AUTO-RELEASE] autoSend falhou p/ card ${order.salesCardId} (segue liberando):`, e?.message); }
+        }
+        await db.update(blockedOrders)
+          .set({ status: 'released', releasedAt: nowBrazil(), releasedBy: 'system-auto-debito-regularizado', updatedAt: nowBrazil() })
+          .where(eq(blockedOrders.id, order.id));
+        released++;
+        console.log(`🔓 [AUTO-RELEASE] Pedido ${order.id} (${(customer as any)?.fantasyName || (customer as any)?.name || order.customerId}) liberado - debito regularizado. Enviado a etapa "pedido".`);
+      } catch (e: any) { failed++; console.error(`❌ [AUTO-RELEASE] Erro no pedido ${order.id}:`, e?.message); }
+    }
+    console.log(`✅ [AUTO-RELEASE] (${horario}) Concluido: ${released} liberado(s), ${kept} mantido(s) bloqueado(s), ${failed} erro(s).`);
+  } catch (e: any) { console.error(`❌ [AUTO-RELEASE] Erro critico:`, e?.message); }
+}
+
+if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
+  cron.schedule('15 6-23 * * *', () => {
+    const now = nowBrazil();
+    const horario = `${now.getHours().toString().padStart(2, '0')}:15h`;
+    autoReleaseRegularizedDebtOrders(horario);
+  }, {
+    timezone: "America/Sao_Paulo"
+  });
+  console.log('✅ [SCHEDULER] Liberacao automatica de pedidos bloqueados (debito regularizado) ativada - hora em hora as hh:15');
+} else {
+  console.log('⚠️ [SCHEDULER] Liberacao automatica de bloqueados DESATIVADA (ambiente de desenvolvimento)');
+}
+
 // DESATIVADO: Sistema migrado para cards permanentes + order_history
 // Geração automática de agenda de visitas REMOVIDA após migração para cards permanentes
 // A geração de visitas agora usa visit_schedule_history em vez de sales_cards
