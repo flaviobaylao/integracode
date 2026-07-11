@@ -570,6 +570,12 @@ export default function BillingPipeline() {
   };
 
   const moveToStage = (item: BillingPipelineItem, stage: string) => {
+    // Card da coluna 'Bloqueados' nao e item do pipeline: alterar a etapa = LIBERAR (release).
+    // O pedido liberado entra na etapa "Pedido" e dali pode ser movido normalmente.
+    if (item.stage === 'bloqueado') {
+      if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento? Ele entrara na etapa "Pedido".`)) releaseBlockedMutation.mutate([item.id]);
+      return;
+    }
     moveStageMutation.mutate({ id: item.id, stage });
   };
 
