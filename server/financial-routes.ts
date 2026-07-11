@@ -4,6 +4,7 @@ import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
+import { webhookTokenGuard } from './webhook-security';
 
 function isFinancialAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -428,7 +429,7 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
-  app.post('/api/financial/pix-webhook', async (req, res) => {
+  app.post('/api/financial/pix-webhook', webhookTokenGuard, async (req, res) => {
     try {
       await bbPixService.handleWebhookNotification(req.body);
       res.status(200).json({ message: 'OK' });
