@@ -100,7 +100,7 @@ export async function enviarAlertaDebitosVencidos(apply: boolean, opts?: { toOve
     if (Array.isArray(rawD)) debts = rawD;
     else if (typeof rawD === 'string') { try { const p = JSON.parse(rawD); if (Array.isArray(p)) debts = p; } catch { } }
     const titulos = debts.map((d: any) => ({
-      doc: String(d.numero_documento || d.numeroDocumento || '').trim(),
+      doc: (rawDoc => (/^n\/?\s*a$/i.test(rawDoc) ? '' : rawDoc))(String(d.numero_documento || d.numeroDocumento || '').trim()),
       valor: Number(d.valor) || 0,
       venc: ddmm(d.data_vencimento || d.dataVencimento),
       dias: Number(d.dias_atraso ?? d.diasAtraso) || 0,
