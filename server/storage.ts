@@ -637,7 +637,9 @@ export interface IStorage {
   getReceivable(id: string): Promise<Receivable | undefined>;
   createReceivable(data: InsertReceivable): Promise<Receivable>;
   updateReceivable(id: string, data: Partial<InsertReceivable>): Promise<Receivable>;
-  deleteReceivable(id: string): Promise<void>;
+  deleteReceivable(id: string, deletedBy?: string | null): Promise<void>;
+  restoreReceivable(id: string): Promise<Receivable | undefined>;
+  getDeletedReceivables(): Promise<Receivable[]>;
   
   // Financial Module - Receivable Payments
   getReceivablePayments(receivableId: string): Promise<ReceivablePayment[]>;
@@ -648,7 +650,9 @@ export interface IStorage {
   getPayable(id: string): Promise<Payable | undefined>;
   createPayable(data: InsertPayable): Promise<Payable>;
   updatePayable(id: string, data: Partial<InsertPayable>): Promise<Payable>;
-  deletePayable(id: string): Promise<void>;
+  deletePayable(id: string, deletedBy?: string | null): Promise<void>;
+  restorePayable(id: string): Promise<Payable | undefined>;
+  getDeletedPayables(): Promise<Payable[]>;
 
   // Financial Module - Payable Payments
   getPayablePayments(payableId: string): Promise<PayablePayment[]>;
@@ -8451,7 +8455,7 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]> {
-    const conditions = [];
+    const conditions: any[] = [isNull(receivables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
     if (filters?.status === 'vencida') {
       conditions.push(or(eq(receivables.status, 'vencida' as any), and(eq(receivables.status, 'a_vencer' as any), lt(receivables.dueDate, new Date())))!);
@@ -8518,7 +8522,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getReceivable(id: string): Promise<Receivable | undefined> {
-    const [item] = await db.select().from(receivables).where(eq(receivables.id, id));
+    const [item] = await db.select().from(receivables).where(and(eq(receivables.id, id), isNull(receivables.deletedAt)));
     return item;
   }
 
@@ -8532,8 +8536,18 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
-  async deleteReceivable(id: string): Promise<void> {
-    await db.delete(receivables).where(eq(receivables.id, id));
+  async deleteReceivable(id: string, deletedBy?: string | null): Promise<void> {
+    // FASE 1b: soft-delete - nada e apagado fisicamente; marca deleted_at/deleted_by.
+    await db.update(receivables).set({ deletedAt: new Date(), deletedBy: deletedBy ?? null } as any).where(eq(receivables.id, id));
+  }
+
+  async restoreReceivable(id: string): Promise<Receivable | undefined> {
+    const [item] = await db.update(receivables).set({ deletedAt: null, deletedBy: null } as any).where(eq(receivables.id, id)).returning();
+    return item;
+  }
+
+  async getDeletedReceivables(): Promise<Receivable[]> {
+    return db.select().from(receivables).where(isNotNull(receivables.deletedAt)).orderBy(desc(receivables.deletedAt)).limit(300);
   }
 
   // ============================================================================
@@ -8554,7 +8568,7 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getPayables(filters?: { supplierDocument?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; source?: string; chartAccountId?: string }): Promise<Payable[]> {
-    const conditions = [];
+    const conditions: any[] = [isNull(payables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.supplierDocument) conditions.push(eq(payables.supplierDocument, filters.supplierDocument));
     if (filters?.status) conditions.push(eq(payables.status, filters.status as any));
     if (filters?.instanceId) conditions.push(eq(payables.omieInstanceId, filters.instanceId));
@@ -8572,7 +8586,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPayable(id: string): Promise<Payable | undefined> {
-    const [item] = await db.select().from(payables).where(eq(payables.id, id));
+    const [item] = await db.select().from(payables).where(and(eq(payables.id, id), isNull(payables.deletedAt)));
     return item;
   }
 
@@ -8586,8 +8600,18 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
-  async deletePayable(id: string): Promise<void> {
-    await db.delete(payables).where(eq(payables.id, id));
+  async deletePayable(id: string, deletedBy?: string | null): Promise<void> {
+    // FASE 1b: soft-delete - nada e apagado fisicamente; marca deleted_at/deleted_by.
+    await db.update(payables).set({ deletedAt: new Date(), deletedBy: deletedBy ?? null } as any).where(eq(payables.id, id));
+  }
+
+  async restorePayable(id: string): Promise<Payable | undefined> {
+    const [item] = await db.update(payables).set({ deletedAt: null, deletedBy: null } as any).where(eq(payables.id, id)).returning();
+    return item;
+  }
+
+  async getDeletedPayables(): Promise<Payable[]> {
+    return db.select().from(payables).where(isNotNull(payables.deletedAt)).orderBy(desc(payables.deletedAt)).limit(300);
   }
 
   // ============================================================================
