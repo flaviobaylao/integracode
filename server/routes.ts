@@ -15651,7 +15651,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (isInternalBillingModeActive()) {
           console.log(`🔄 [INTERNAL-BILLING] Modo interno ativo - redirecionando pedido ${cardId} para pipeline interno`);
           const user = (req as any).currentUser || (req as any).user;
-          const result = await autoSendToBillingPipeline(card, user?.email || 'system');
+          // Agendamento opcional: data (YYYY-MM-DD) enviada pelo popup de pedido -> item entra em 'agendado'.
+          const scheduledBillingDate = (req as any).body?.scheduledBillingDate || null;
+          const result = await autoSendToBillingPipeline(card, user?.email || 'system', { scheduledBillingDate });
           if (result) {
             return res.json({ 
               success: true, 
