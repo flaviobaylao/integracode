@@ -2979,6 +2979,7 @@ export type InsertInventoryMovement = z.infer<typeof insertInventoryMovementSche
 // ============================================================================
 
 export const billingPipelineStageEnum = pgEnum("billing_pipeline_stage", [
+  "agendado",
   "pedido",
   "a_faturar",
   "faturado",
@@ -2997,6 +2998,9 @@ export const billingPipeline = pgTable("billing_pipeline", {
   sellerId: varchar("seller_id"),
   sellerName: varchar("seller_name"),
   stage: billingPipelineStageEnum("stage").notNull().default("pedido"),
+  // Agendamento do pedido: data para a qual o pedido foi agendado. Quando preenchida e no futuro,
+  // o item entra na etapa 'agendado' e migra automaticamente para 'pedido' nessa data.
+  scheduledBillingDate: timestamp("scheduled_billing_date"),
   orderNumber: varchar("order_number"),
   invoiceNumber: varchar("invoice_number"),
   saleValue: decimal("sale_value", { precision: 10, scale: 2 }),
