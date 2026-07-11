@@ -537,3 +537,19 @@ export async function checkAndSettleBoleto(boletoChargeId: string): Promise<any>
   const res = await settleBoletoCharge(charge, valorPago || parseFloat(charge.valor_original || '0'), dt ? toISO(dt) : null, 'consulta');
   return { ok: true, paid: true, estado, ...res };
 }
+
+
+// FASE 1c - Varredura de boletos em aberto (consulta BB e da baixa nos pagos).
+// Movida do endpoint HTTP para o agendador interno; o endpoint agora so dispara.
+export async function sweepOpenBoletos(limit = 300, days = 120): Promise<{ candidates: number; checked: number; paid: number; settled: number }> {
+  const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables rr ON rr.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND rr.status IN ('a_vencer','vencida') AND rr.deleted_at IS NULL AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
+  const ids = (r.rows || []).map((x: any) => x.id);
+  let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
+  for (const id of ids) {
+    try { const o: any = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
+    catch (e: any) { errors.push({ id, error: e?.message }); }
+  }
+  try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+  console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} paid=${paid} settled=${settled}`);
+  return { candidates: ids.length, checked, paid, settled };
+}
