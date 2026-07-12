@@ -1435,15 +1435,29 @@ export class DatabaseStorage implements IStorage {
       processedSalesCard.routeDay = weekdayNames[dayOfWeek];
     }
     
-    // VALIDAÇÃO CRÍTICA 1: Garantir que seller_id do card corresponda ao seller_id do cliente
+    // ATRIBUIÇÃO DO VENDEDOR AO PEDIDO: o vendedor do card é quem REGISTROU o pedido
+    // (o vendedor logado que criou, ou o vendedor escolhido pelo admin no ato do
+    // registro), e NÃO o vendedor de cadastro do cliente. Antes, esta rotina
+    // SOBRESCREVIA sempre pelo vendedor do cadastro — o que atribuía o pedido ao
+    // vendedor errado quando outro vendedor registrava a venda para o cliente.
+    // Só caímos no vendedor do cadastro quando o sellerId informado está vazio,
+    // é um placeholder (system/auto/reconcile/unknown-vendor/chatgpt-ai) ou não
+    // corresponde a um usuário real (evita atribuir a um id inválido).
     if (processedSalesCard.customerId) {
       const customer = await this.getCustomer(processedSalesCard.customerId);
-      
+
       if (customer && customer.sellerId) {
-        // Se o seller_id fornecido é diferente do seller_id do cliente, usar o do cliente
-        if (processedSalesCard.sellerId !== customer.sellerId) {
-          console.warn(`⚠️ [createSalesCard] Seller_id fornecido (${processedSalesCard.sellerId}) diferente do seller_id do cliente (${customer.sellerId}). Usando seller_id do cliente.`);
+        const provided = String(processedSalesCard.sellerId || '').trim();
+        const PLACEHOLDER_SELLERS = new Set(['', 'system', 'auto', 'reconcile', 'unknown-vendor', 'chatgpt-ai']);
+        let keepRegistrador = false;
+        if (provided && !PLACEHOLDER_SELLERS.has(provided.toLowerCase())) {
+          try { keepRegistrador = !!(await this.getUser(provided)); } catch { keepRegistrador = false; }
+        }
+        if (!keepRegistrador && processedSalesCard.sellerId !== customer.sellerId) {
+          console.log(`[createSalesCard] sellerId "${processedSalesCard.sellerId}" ausente/placeholder/inválido — usando vendedor do cadastro (${customer.sellerId}).`);
           processedSalesCard.sellerId = customer.sellerId;
+        } else if (keepRegistrador && processedSalesCard.sellerId !== customer.sellerId) {
+          console.log(`[createSalesCard] Pedido atribuído ao vendedor que registrou (${processedSalesCard.sellerId}), diferente do cadastro do cliente (${customer.sellerId}).`);
         }
       }
     }
