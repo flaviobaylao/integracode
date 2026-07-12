@@ -575,10 +575,39 @@ export default function ConciliacaoBancaria() {
                         <div className="text-sky-600">{fmtMoney(sg.pix.valor)} · {fmtDate(sg.pix.horario)}{sg.pix.e2e ? ` · e2e ${String(sg.pix.e2e).slice(0, 20)}…` : ""}</div>
                       </div>
                     ) : null;
-                    if (!titles.length) return <>{pixBox}<div className="text-sm text-gray-400">Sem sugestão automática. Use “Buscar Título”.</div></>;
+                    const cp = sg?.counterparty;
+                    const usarPadrao = () => {
+                      if (!cp || !modalItem) return;
+                      const d = (() => { try { return new Date(modalItem.transaction_date).toISOString().slice(0, 10); } catch { return ""; } })();
+                      setNovo({
+                        tipo: modalItem.type === "C" ? "receber" : "pagar",
+                        name: cp.name || "",
+                        document: cp.document || "",
+                        amount: Math.abs(num(modalItem.amount)),
+                        issueDate: d, dueDate: d,
+                        description: modalItem.description || "",
+                        category: cp.category || "",
+                        chartAccountId: "",
+                        omieInstanceId: instance || "",
+                      });
+                      setSupSug([]); setSupNovo(false); setCatSug([]);
+                      setTab("novo");
+                      if (cp.category) buscarCategorias(cp.category);
+                    };
+                    const cpBox = cp ? (
+                      <div className="border border-indigo-200 bg-indigo-50 text-indigo-900 rounded px-3 py-2 text-xs flex items-center gap-2">
+                        <div className="flex-1">
+                          <b>Padrão aprendido:</b> {cp.name}{cp.category ? <span className="text-indigo-700"> · {cp.category}</span> : null}
+                          <span className="text-indigo-400"> · {cp.via === "cpf_cnpj" ? "por documento" : "por descrição"} ({cp.matchCount}×)</span>
+                        </div>
+                        <button onClick={usarPadrao} className="px-2 py-1 rounded bg-indigo-600 text-white text-xs whitespace-nowrap">➕ Usar no Criar Novo</button>
+                      </div>
+                    ) : null;
+                    if (!titles.length) return <>{pixBox}{cpBox}<div className="text-sm text-gray-400 mt-2">{cp ? "Nenhum título em aberto casa com este lançamento — use o padrão acima para criar a conta (com nome e categoria já preenchidos) e conciliar." : "Sem sugestão automática. Use “Buscar Título” ou “Criar Novo”."}</div></>;
                     return (
                       <>
                         {pixBox}
+                        {cpBox}
                         {titles.map((t, idx) => {
                           const chip = (t.score ?? 0) >= 80 ? "bg-emerald-100 text-emerald-700" : (t.score ?? 0) >= 60 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600";
                           return (
