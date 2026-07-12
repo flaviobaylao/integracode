@@ -18,6 +18,7 @@ type Item = {
   id: string; transaction_date: string; amount: string; type: string;
   description: string; document: string; origin_name?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
+  is_mirror?: boolean; mirror_from?: string | null;
 };
 type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any; chartAccountId?: string | null; chartLabel?: string | null };
 type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number; chartAccountId: string; chartLabel: string };
@@ -363,7 +364,7 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
 
-  const pend = viewItems.filter((i) => (i.reconciliation_status || "pending") === "pending").length;
+  const pend = viewItems.filter((i) => !i.is_mirror && (i.reconciliation_status || "pending") === "pending").length;
   const conc = viewItems.filter((i) => i.reconciliation_status === "reconciled").length;
 
   return (
@@ -505,16 +506,20 @@ export default function ConciliacaoBancaria() {
                             {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            {st === "pending" && (
-                              <div className="flex gap-1">
-                                <button disabled={isBusy} onClick={() => openModal(it)} className="px-2 py-0.5 rounded bg-green-600 text-white text-[11px] disabled:opacity-50">Conciliar</button>
-                                <button disabled={isBusy} onClick={() => doIgnore(it)} className="px-2 py-0.5 rounded border text-gray-600 text-[11px] disabled:opacity-50">Ignorar</button>
-                              </div>
-                            )}
-                            {(st === "reconciled" || st === "ignored") && (
-                              <button disabled={isBusy} onClick={() => doUndo(it)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 text-[11px] disabled:opacity-50">Desfazer</button>
-                            )}
-                            {isBusy && <span className="text-[11px] text-gray-400 ml-1">…</span>}
+                            {it.is_mirror ? (
+                              <span className="text-[11px] text-gray-400" title={it.mirror_from ? `Já importado em ${it.mirror_from}` : "Já importado em outro extrato"}>já importado{it.mirror_from ? ` · ${it.mirror_from}` : ""}</span>
+                            ) : (<>
+                              {st === "pending" && (
+                                <div className="flex gap-1">
+                                  <button disabled={isBusy} onClick={() => openModal(it)} className="px-2 py-0.5 rounded bg-green-600 text-white text-[11px] disabled:opacity-50">Conciliar</button>
+                                  <button disabled={isBusy} onClick={() => doIgnore(it)} className="px-2 py-0.5 rounded border text-gray-600 text-[11px] disabled:opacity-50">Ignorar</button>
+                                </div>
+                              )}
+                              {(st === "reconciled" || st === "ignored") && (
+                                <button disabled={isBusy} onClick={() => doUndo(it)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 text-[11px] disabled:opacity-50">Desfazer</button>
+                              )}
+                              {isBusy && <span className="text-[11px] text-gray-400 ml-1">…</span>}
+                            </>)}
                           </td>
                         </tr>
                       );
