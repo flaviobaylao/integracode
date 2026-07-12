@@ -1828,6 +1828,25 @@ export default function RotaDoDia() {
                                     <FileText className="h-4 w-4" />
                                   </Button>
                                 )}
+                                {/* Botão Excluir card (apenas Administradores) */}
+                                {visit.customerId && isAdmin && route.id && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm(`Deseja realmente excluir ${visit.customerName} desta rota?`)) {
+                                        deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId! });
+                                      }
+                                    }}
+                                    disabled={deleteVisitMutation.isPending}
+                                    title="Excluir card"
+                                    data-testid={`button-delete-virtual-${visit.customerId}`}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                )}
                               </div>
                             </div>
                           </div>
