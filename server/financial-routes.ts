@@ -664,8 +664,12 @@ export function registerFinancialRoutes(app: Express) {
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
       const receivables = await storage.getReceivables(filters);
-      try { attachBadges(receivables as any[], await badgeFlagsFor('receivable'), 'recebida'); } catch {}
-      res.json(receivables);
+      // FASE 3.2 - paginacao opcional (?limit=&offset=). Sem os parametros, retorna tudo.
+      const limitR = parseInt(String(req.query.limit || '')) || 0;
+      const offsetR = parseInt(String(req.query.offset || '')) || 0;
+      const pageR = limitR > 0 ? (receivables as any[]).slice(offsetR, offsetR + limitR) : (receivables as any[]);
+      try { attachBadges(pageR, await badgeFlagsFor('receivable'), 'recebida'); } catch {}
+      res.json(pageR);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -791,8 +795,12 @@ export function registerFinancialRoutes(app: Express) {
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
       const payables = await storage.getPayables(filters);
-      try { attachBadges(payables as any[], await badgeFlagsFor('payable'), 'paga'); } catch {}
-      res.json(payables);
+      // FASE 3.2 - paginacao opcional (?limit=&offset=). Sem os parametros, retorna tudo.
+      const limitP = parseInt(String(req.query.limit || '')) || 0;
+      const offsetP = parseInt(String(req.query.offset || '')) || 0;
+      const pageP = limitP > 0 ? (payables as any[]).slice(offsetP, offsetP + limitP) : (payables as any[]);
+      try { attachBadges(pageP, await badgeFlagsFor('payable'), 'paga'); } catch {}
+      res.json(pageP);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
