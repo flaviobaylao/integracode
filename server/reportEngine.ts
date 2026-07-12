@@ -189,7 +189,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     key: 'fiscal_invoices',
     label: 'Notas Fiscais (NF-e)',
     description: 'Todas as NF-e emitidas no Integra com dados fiscais completos',
-    baseQuery: `SELECT fi.* FROM fiscal_invoices fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN users u ON (u.id = sc.seller_id OR u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = REPLACE(COALESCE(sc.seller_id,''),'omie-vendor-',''))`,
+    baseQuery: `SELECT fi.* FROM fiscal_invoices fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN LATERAL (SELECT TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS seller_name FROM users u WHERE u.id = sc.seller_id OR u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = REPLACE(COALESCE(sc.seller_id,''),'omie-vendor-','') LIMIT 1) u ON true`,
     fields: [
       { key: 'nf_numero', label: 'Nº NF-e', type: 'text', category: 'Identificação', dbColumn: 'fi.invoice_number' },
       { key: 'nf_serie', label: 'Série', type: 'text', category: 'Identificação', dbColumn: 'fi.series' },
@@ -210,7 +210,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'nf_customer_bairro', label: 'Bairro Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_bairro' },
       { key: 'nf_issuer_name', label: 'Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_name' },
       { key: 'nf_issuer_cnpj', label: 'CNPJ Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_cnpj' },
-      { key: 'nf_seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
+      { key: 'nf_seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.seller_name' },
       { key: 'nf_total_products', label: 'Total Produtos', type: 'currency', category: 'Valores', dbColumn: 'fi.total_products' },
       { key: 'nf_total_discount', label: 'Total Desconto', type: 'currency', category: 'Valores', dbColumn: 'fi.total_discount' },
       { key: 'nf_total_freight', label: 'Total Frete', type: 'currency', category: 'Valores', dbColumn: 'fi.total_freight' },
