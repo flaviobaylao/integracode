@@ -1795,7 +1795,7 @@ export default function RotaDoDia() {
                                     <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                                       🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
                                       {' • '}
-                                      🧾 Último pedido: {customerInfo?.lastOrders?.[visit.customerId] ? new Date(customerInfo.lastOrders[visit.customerId]).toLocaleDateString('pt-BR') : 'Sem registro'}
+                                      🧾 Último pedido faturado: {customerInfo?.lastOrders?.[visit.customerId] ? new Date(customerInfo.lastOrders[visit.customerId]).toLocaleDateString('pt-BR') : 'Sem registro'}
                                     </p>
                                   )}
                                 </div>
