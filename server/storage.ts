@@ -571,6 +571,8 @@ export interface IStorage {
   getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
   getNextInvoiceNumber(series?: string, issuerCnpj?: string): Promise<number>;
   createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice>;
+  createFiscalInvoiceAtomic(data: InsertFiscalInvoice, series?: string, issuerCnpj?: string): Promise<FiscalInvoice>;
+  getFiscalInvoiceByAccessKey(accessKey: string): Promise<FiscalInvoice | undefined>;
   updateFiscalInvoice(id: string, data: Partial<InsertFiscalInvoice>): Promise<FiscalInvoice>;
   deleteFiscalInvoice(id: string): Promise<void>;
 
@@ -8098,6 +8100,48 @@ export class DatabaseStorage implements IStorage {
 
   async createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice> {
     const [invoice] = await db.insert(fiscalInvoices).values(data).returning();
+    return invoice;
+  }
+
+  // Cria a NF-e ALOCANDO o número de forma ATÔMICA por (CNPJ emitente, série).
+  // A alocação (MAX+1) e o INSERT ocorrem na MESMA transação sob pg_advisory_xact_lock,
+  // de modo que duas criações concorrentes NUNCA recebem o mesmo número (evita a
+  // rejeição 539 - Duplicidade que gerava notas com número/chave duplicados).
+  async createFiscalInvoiceAtomic(data: InsertFiscalInvoice, series: string = '1', issuerCnpj?: string): Promise<FiscalInvoice> {
+    const digits = String(issuerCnpj || '').replace(/\D/g, '');
+    return await db.transaction(async (tx) => {
+      // Trava por (CNPJ, série) — serializa alocações concorrentes até o COMMIT (que já inclui o INSERT).
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'nfe:' + digits + ':' + series}))`);
+      let nextNumber: number;
+      if (digits.length >= 11) {
+        const prod: any = await tx.execute(sql`
+          SELECT COALESCE(MAX(invoice_number), 0) AS max_num
+          FROM fiscal_invoices
+          WHERE series = ${series}
+            AND environment = 'producao'
+            AND regexp_replace(COALESCE(issuer_cnpj, ''), '[^0-9]', '', 'g') = ${digits}`);
+        let maxNum = Number(prod?.rows?.[0]?.max_num || 0);
+        if (!maxNum) {
+          const anyEnv: any = await tx.execute(sql`
+            SELECT COALESCE(MAX(invoice_number), 0) AS max_num
+            FROM fiscal_invoices
+            WHERE series = ${series}
+              AND regexp_replace(COALESCE(issuer_cnpj, ''), '[^0-9]', '', 'g') = ${digits}`);
+          maxNum = Number(anyEnv?.rows?.[0]?.max_num || 0);
+        }
+        nextNumber = maxNum + 1;
+      } else {
+        const r: any = await tx.execute(sql`SELECT COALESCE(MAX(invoice_number), 0) AS max_num FROM fiscal_invoices WHERE series = ${series}`);
+        nextNumber = Number(r?.rows?.[0]?.max_num || 0) + 1;
+      }
+      const [invoice] = await tx.insert(fiscalInvoices).values({ ...data, invoiceNumber: nextNumber }).returning();
+      return invoice;
+    });
+  }
+
+  async getFiscalInvoiceByAccessKey(accessKey: string): Promise<FiscalInvoice | undefined> {
+    if (!accessKey) return undefined;
+    const [invoice] = await db.select().from(fiscalInvoices).where(eq(fiscalInvoices.accessKey, accessKey)).limit(1);
     return invoice;
   }
 
