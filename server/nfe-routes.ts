@@ -863,7 +863,7 @@ export function registerNfeRoutes(app: Express) {
       const originalItems = await storage.getFiscalInvoiceItems(req.params.id);
       const user = req.currentUser || req.user;
 
-      const returnInvoice = await storage.createFiscalInvoice({
+      const returnInvoice = await storage.createFiscalInvoiceAtomic({
         series: originalInvoice.series || '1',
         operationType: 'entrada',
         fiscalScenarioId: originalInvoice.fiscalScenarioId,
@@ -907,7 +907,7 @@ export function registerNfeRoutes(app: Express) {
         finNFe: '4',
         createdBy: user?.email || null,
         status: 'draft',
-      });
+      }, originalInvoice.series || '1', originalInvoice.issuerCnpj || undefined);
 
       for (const item of originalItems) {
         await storage.createFiscalInvoiceItem({
