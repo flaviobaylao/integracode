@@ -47,6 +47,7 @@ interface VirtualServiceLogModalProps {
   defaultServiceType?: ServiceType;
   entityType?: EntityType;
   onSuccess?: () => void;
+  serviceDate?: string;
 }
 
 export default function VirtualServiceLogModal({ 
@@ -56,7 +57,8 @@ export default function VirtualServiceLogModal({
   customerName,
   defaultServiceType,
   entityType = 'customer',
-  onSuccess
+  onSuccess,
+  serviceDate
 }: VirtualServiceLogModalProps) {
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
@@ -83,7 +85,7 @@ export default function VirtualServiceLogModal({
   });
 
   const createLogMutation = useMutation({
-    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string; temperature?: string }) => {
+    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string; temperature?: string; attendanceDate?: string }) => {
       return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
@@ -243,7 +245,8 @@ export default function VirtualServiceLogModal({
       images, 
       serviceType,
       nextContactDate: nextContactDate || undefined,
-      temperature: temperature || undefined
+      temperature: temperature || undefined,
+      attendanceDate: serviceDate || undefined
     });
   };
 
