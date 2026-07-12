@@ -79,7 +79,8 @@ function monthLabel(d = new Date()): string {
 const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
 export default function Dashboard() {
-  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"] });
+  // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
+  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 15000, refetchOnWindowFocus: true, staleTime: 0 });
   const bounds = useMemo(() => monthBounds(), []);
   const [start, setStart] = useState<string>(bounds.today);
   const [end, setEnd] = useState<string>(bounds.today);
@@ -108,8 +109,9 @@ export default function Dashboard() {
         if (!v.isPast) continue;
         const k = visitColor(v);
         if (k === "green" || k === "yellow") { w.completedVisits++; w.completedNames.push(N.customerName || "-"); }
-        else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += expectedValue(v); w.missedNames.push(N.customerName || "-"); }
-        if (v.isScheduled && v.hasOrder) w.revenue += v.orderValue || 0;
+        else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += (Number(v.metaValue) || 0); w.missedNames.push(N.customerName || "-"); }
+        // Faturamento de Visitas Efetivas: só conta o pedido quando houve CHECK-IN (visita efetivada).
+        if (v.hasVisit && v.hasOrder) w.revenue += v.orderValue || 0;
       }
     }
     return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
