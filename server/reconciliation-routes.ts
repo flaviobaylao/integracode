@@ -960,6 +960,55 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // ---- FASE 3.4g: remove duplicatas de importacoes repetidas dos pendentes -
+  // Mesmo lancamento (conta+data+valor+tipo+descricao+documento) importado em
+  // mais de um extrato (arquivos cumulativos importados antes da deduplicacao
+  // por FITID). Mantem as ocorrencias de UM extrato (maior contagem; empate ->
+  // mais recente) e marca as copias dos demais como ignoradas (reversivel).
+  app.post("/api/reconciliation/dedup-pendentes", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const rows = rowsOf(await db.execute(sql`
+        SELECT i.id, i.statement_id, i.transaction_date::date::text AS d, round(i.amount::numeric, 2)::text AS v, i.type,
+               regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
+               COALESCE(i.document, '') AS doc, s.financial_account_id AS acc, s.created_at AS s_created
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')`));
+      const groups: Record<string, any[]> = {};
+      for (const r of rows) {
+        const k = [r.acc || '', r.d, r.v, r.type, r.nd, r.doc].join('|');
+        (groups[k] ||= []).push(r);
+      }
+      const ignorar: string[] = [];
+      for (const g of Object.values(groups)) {
+        const porExtrato: Record<string, any[]> = {};
+        for (const x of g) (porExtrato[x.statement_id] ||= []).push(x);
+        const stmts = Object.keys(porExtrato);
+        if (stmts.length < 2) continue; // duplicatas dentro do MESMO extrato podem ser legitimas
+        let melhor = stmts[0];
+        for (const sid of stmts) {
+          const a = porExtrato[sid], b = porExtrato[melhor];
+          if (a.length > b.length || (a.length === b.length && String(a[0].s_created) > String(b[0].s_created))) melhor = sid;
+        }
+        for (const sid of stmts) { if (sid !== melhor) { for (const x of porExtrato[sid]) ignorar.push(x.id); } }
+      }
+      let atualizados = 0;
+      if (!dryRun && ignorar.length) {
+        for (let i = 0; i < ignorar.length; i += 200) {
+          const lote = ignorar.slice(i, i + 200);
+          const u: any = await db.execute(sql`
+            UPDATE bank_statement_items
+            SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
+                notes = 'Duplicata de importacao repetida - mantida a ocorrencia de um unico extrato'
+            WHERE id IN (${inList(lote)}) AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')`);
+          atualizados += Number((u as any)?.rowCount ?? 0);
+        }
+      }
+      res.json({ dryRun, candidatos: ignorar.length, atualizados });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // FASE 3.4c - marca como ignorados os creditos "COBRANCA" pendentes (repasses
   // de boletos ja baixados via webhook). dryRun por padrao.
   app.post("/api/reconciliation/ignore-cobranca", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
