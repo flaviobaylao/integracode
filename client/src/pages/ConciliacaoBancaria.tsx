@@ -19,8 +19,8 @@ type Item = {
   description: string; document: string; origin_name?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
 };
-type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any };
-type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number };
+type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any; chartAccountId?: string | null; chartLabel?: string | null };
+type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number; chartAccountId: string; chartLabel: string };
 
 const fmtDate = (d: any): string => {
   if (!d) return "—";
@@ -83,6 +83,19 @@ export default function ConciliacaoBancaria() {
   const [catSug, setCatSug] = useState<any[]>([]);
   const supTimer = useRef<any>(null);
   const catTimer = useRef<any>(null);
+  // FASE 3.4h - categoria DRE por titulo no carrinho de conciliacao
+  const [cartCatSug, setCartCatSug] = useState<{ idx: number; list: any[] } | null>(null);
+  const cartCatTimer = useRef<any>(null);
+  const buscarCatCarrinho = (idx: number, v: string) => {
+    if (cartCatTimer.current) clearTimeout(cartCatTimer.current);
+    cartCatTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/reconciliation/dre-categories?q=" + encodeURIComponent(v.trim()), { credentials: "include" });
+        const j = await r.json();
+        setCartCatSug({ idx, list: j.categories || [] });
+      } catch { setCartCatSug(null); }
+    }, 250);
+  };
   const buscarFornecedores = (v: string) => {
     if (supTimer.current) clearTimeout(supTimer.current);
     const q = v.trim();
@@ -233,9 +246,9 @@ export default function ConciliacaoBancaria() {
 
   // ---- modal de conciliação (carrinho) ----
   const openModal = (it: Item) => {
-    setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]);
+    setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
   };
-  const closeModal = () => { setModalItem(null); setCart([]); };
+  const closeModal = () => { setModalItem(null); setCart([]); setCartCatSug(null); };
   const itemAmt = modalItem ? Math.abs(num(modalItem.amount)) : 0;
   const cartTotal = cart.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
   const delta = Math.round((itemAmt - cartTotal) * 100) / 100;
@@ -246,10 +259,10 @@ export default function ConciliacaoBancaria() {
       const cur = prev.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
       const remaining = Math.max(0, Math.round((itemAmt - cur) * 100) / 100);
       const defAmt = remaining > 0 ? remaining : Math.abs(num(t.amount));
-      return [...prev, { kind: t.kind, id: t.id, title: t.title, name: t.name, amount: defAmt, interest: 0, discount: 0 }];
+      return [...prev, { kind: t.kind, id: t.id, title: t.title, name: t.name, amount: defAmt, interest: 0, discount: 0, chartAccountId: (t.chartAccountId as string) || "", chartLabel: (t.chartLabel as string) || "" }];
     });
   };
-  const removeCart = (idx: number) => setCart((prev) => prev.filter((_, i) => i !== idx));
+  const removeCart = (idx: number) => { setCart((prev) => prev.filter((_, i) => i !== idx)); setCartCatSug(null); };
   const setCartField = (idx: number, field: "amount" | "interest" | "discount", val: string) =>
     setCart((prev) => prev.map((c, i) => (i === idx ? { ...c, [field]: num(val) } : c)));
 
@@ -268,12 +281,13 @@ export default function ConciliacaoBancaria() {
   const confirmReconcile = async () => {
     if (!modalItem || !cart.length) return;
     if (Math.abs(delta) >= 0.01) { alert(`O total do carrinho (${fmtMoney(cartTotal)}) precisa igualar o valor do extrato (${fmtMoney(itemAmt)}). Δ = ${fmtMoney(delta)}.`); return; }
+    if (cart.some((c) => c.kind === "payable" && !c.chartAccountId)) { alert("Selecione a categoria DRE de todos os títulos a pagar do carrinho. Nenhuma baixa sem categoria."); return; }
     if (!window.confirm(`Conciliar ${fmtMoney(itemAmt)} com ${cart.length} título(s)? Isso DÁ BAIXA (marca como pago).`)) return;
     setBusy(modalItem.id);
     try {
       await post(`/api/reconciliation/items/${modalItem.id}/reconcile`, {
         by: me,
-        titles: cart.map((c) => ({ kind: c.kind, id: c.id, amount: num(c.amount), interest: num(c.interest), discount: num(c.discount) })),
+        titles: cart.map((c) => ({ kind: c.kind, id: c.id, amount: num(c.amount), interest: num(c.interest), discount: num(c.discount), chartAccountId: c.chartAccountId || null })),
       });
       closeModal();
       await refresh();
@@ -546,12 +560,37 @@ export default function ConciliacaoBancaria() {
               </div>
               {cart.length === 0 && <div className="text-xs text-gray-400 italic">Adicione um ou mais títulos abaixo. Você pode informar juros e desconto; o total (principal + juros − desconto) deve igualar o valor do extrato.</div>}
               {cart.map((c, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs py-1 border-t first:border-t-0">
-                  <span className="flex-1 truncate"><b>{c.title || "—"}</b> · {c.name || ""} <span className="text-gray-400">({c.kind === "receivable" ? "Receber" : "Pagar"})</span></span>
-                  <label className="text-gray-400">R$<input type="number" step="0.01" value={c.amount} onChange={(e) => setCartField(idx, "amount", e.target.value)} className="w-20 border rounded px-1 py-0.5 ml-0.5" /></label>
-                  <label className="text-gray-400">juros<input type="number" step="0.01" value={c.interest} onChange={(e) => setCartField(idx, "interest", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
-                  <label className="text-gray-400">desc<input type="number" step="0.01" value={c.discount} onChange={(e) => setCartField(idx, "discount", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
-                  <button onClick={() => removeCart(idx)} className="text-red-500 hover:text-red-700">✕</button>
+                <div key={idx} className="py-1 border-t first:border-t-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="flex-1 truncate"><b>{c.title || "—"}</b> · {c.name || ""} <span className="text-gray-400">({c.kind === "receivable" ? "Receber" : "Pagar"})</span></span>
+                    <label className="text-gray-400">R$<input type="number" step="0.01" value={c.amount} onChange={(e) => setCartField(idx, "amount", e.target.value)} className="w-20 border rounded px-1 py-0.5 ml-0.5" /></label>
+                    <label className="text-gray-400">juros<input type="number" step="0.01" value={c.interest} onChange={(e) => setCartField(idx, "interest", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
+                    <label className="text-gray-400">desc<input type="number" step="0.01" value={c.discount} onChange={(e) => setCartField(idx, "discount", e.target.value)} className="w-16 border rounded px-1 py-0.5 ml-0.5" /></label>
+                    <button onClick={() => removeCart(idx)} className="text-red-500 hover:text-red-700">✕</button>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs mt-1">
+                    <span className="text-gray-400 whitespace-nowrap">Categoria (DRE):</span>
+                    <div className="relative flex-1">
+                      <input
+                        value={c.chartLabel}
+                        onChange={(e) => { const v = e.target.value; setCart((prev) => prev.map((x, i) => (i === idx ? { ...x, chartLabel: v, chartAccountId: "" } : x))); buscarCatCarrinho(idx, v); }}
+                        onFocus={() => buscarCatCarrinho(idx, c.chartLabel || "")}
+                        className={`w-full border rounded px-2 py-0.5 ${c.chartAccountId ? "border-gray-200" : "border-red-300 bg-red-50"}`}
+                        placeholder={c.kind === "payable" ? "Obrigatório — clique para listar / digite para buscar…" : "Opcional — padrão: Receita Bruta"}
+                        autoComplete="off"
+                      />
+                      {cartCatSug && cartCatSug.idx === idx && cartCatSug.list.length > 0 && (
+                        <div className="absolute z-30 left-0 right-0 top-full mt-0.5 bg-white border rounded shadow max-h-40 overflow-auto">
+                          {cartCatSug.list.map((cat: any) => (
+                            <button key={cat.id} onClick={() => { setCart((prev) => prev.map((x, i) => (i === idx ? { ...x, chartLabel: `${cat.code} ${cat.name}`, chartAccountId: cat.id } : x))); setCartCatSug(null); }} className="block w-full text-left px-2 py-1 hover:bg-green-50">
+                              <span className="font-mono text-gray-500">{cat.code}</span> {cat.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {c.chartAccountId ? <span className="text-green-600">✓</span> : c.kind === "payable" ? <span className="text-red-500 whitespace-nowrap">obrigatória p/ baixar</span> : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -726,7 +765,7 @@ export default function ConciliacaoBancaria() {
               <span className="text-xs text-gray-500">{modalItem.type === "C" ? "Recebimento (títulos a receber)" : "Pagamento (títulos a pagar)"}</span>
               <div className="flex gap-2">
                 <button onClick={closeModal} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
-                <button onClick={confirmReconcile} disabled={!cart.length || Math.abs(delta) >= 0.01 || busy === modalItem.id} className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-40">Conciliar {cart.length ? `(${fmtMoney(cartTotal)})` : ""}</button>
+                <button onClick={confirmReconcile} disabled={!cart.length || Math.abs(delta) >= 0.01 || cart.some((c) => c.kind === "payable" && !c.chartAccountId) || busy === modalItem.id} className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-40">Conciliar {cart.length ? `(${fmtMoney(cartTotal)})` : ""}</button>
               </div>
             </div>
           </div>
