@@ -1082,6 +1082,128 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
+  // REEMISSAO de NF-e de devolucao para casos em que a devolucao anterior ficou "fantasma"
+  // (sem numero, nNF=1, chave copiada por bug de numeracao / recuperacao 539). NAO mexe em
+  // estoque nem em contas a receber (ja tratados na 1a rodada) — apenas: (1) rejeita o registro
+  // fantasma, (2) cria a devolucao REAL com numero atomico e transmite a SEFAZ, (3) mantem a
+  // original como 'returned'. Idempotente-ish: se nao houver fantasma, apenas emite a real.
+  app.post('/api/admin/fiscal/reissue-devolution/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const justification = (req.body?.justification && String(req.body.justification).length >= 15)
+        ? String(req.body.justification)
+        : 'Reemissao de NF-e de devolucao (correcao de devolucao sem numero por falha de numeracao). Estoque e cobranca ja tratados na primeira rodada.';
+      const original = await storage.getFiscalInvoice(req.params.id);
+      if (!original) return res.status(404).json({ ok: false, message: 'NF-e original nao encontrada' });
+      const user = req.currentUser || req.user;
+
+      // 1) Rejeita devolucoes-fantasma (numero nulo) que referenciam esta original
+      let ghostsRejected = 0;
+      if (original.accessKey) {
+        try {
+          const g: any = await db.execute(sql`UPDATE fiscal_invoices SET status = 'rejected', notes = COALESCE(notes,'') || ' | Registro fantasma (sem numero) substituido por reemissao correta.' WHERE referenced_access_key = ${original.accessKey} AND invoice_number IS NULL AND status = 'authorized' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%DEVOL%'`);
+          ghostsRejected = (g?.rowCount ?? 0) as number;
+        } catch (e: any) { console.warn('[REISSUE-DEV] falha ao rejeitar fantasma:', e?.message); }
+      }
+
+      // 2) Cria a devolucao REAL (numero atomico por CNPJ+serie) e copia os itens da original
+      const originalItems = await storage.getFiscalInvoiceItems(original.id);
+      const returnInvoice = await storage.createFiscalInvoiceAtomic({
+        series: original.series || '1',
+        operationType: 'entrada',
+        fiscalScenarioId: original.fiscalScenarioId,
+        certificateId: original.certificateId,
+        issuerName: original.issuerName,
+        issuerCnpj: original.issuerCnpj,
+        issuerIe: original.issuerIe,
+        issuerAddress: original.issuerAddress,
+        issuerUf: original.issuerUf,
+        issuerCityCode: original.issuerCityCode,
+        issuerCity: original.issuerCity,
+        issuerPhone: original.issuerPhone,
+        customerId: original.customerId,
+        customerName: original.customerName,
+        customerCnpjCpf: original.customerCnpjCpf,
+        customerIe: original.customerIe,
+        customerAddress: original.customerAddress,
+        customerBairro: original.customerBairro,
+        customerCep: original.customerCep,
+        customerCity: original.customerCity,
+        customerUf: original.customerUf,
+        customerPhone: original.customerPhone,
+        natureOfOperation: 'DEVOLUCAO DE VENDA',
+        cfop: '1.202',
+        totalProducts: original.totalProducts,
+        totalDiscount: original.totalDiscount || '0',
+        totalFreight: original.totalFreight || '0',
+        totalInsurance: original.totalInsurance || '0',
+        totalOtherExpenses: original.totalOtherExpenses || '0',
+        totalIcms: original.totalIcms || '0',
+        totalPis: original.totalPis || '0',
+        totalCofins: original.totalCofins || '0',
+        totalIpi: original.totalIpi || '0',
+        totalInvoice: original.totalInvoice,
+        paymentMethod: 'sem_pagamento',
+        notes: `NF-e de DEVOLUCAO (reemissao) referente a NF-e no ${original.invoiceNumber || 'N/A'} (chave: ${original.accessKey || 'N/A'}). Motivo: ${justification}`,
+        environment: original.environment || 'producao',
+        omieInstanceId: original.omieInstanceId,
+        salesCardId: original.salesCardId,
+        referencedAccessKey: original.accessKey || null,
+        finNFe: '4',
+        createdBy: user?.email || null,
+        status: 'draft',
+      }, original.series || '1', original.issuerCnpj || undefined);
+
+      for (const item of originalItems) {
+        await storage.createFiscalInvoiceItem({
+          invoiceId: returnInvoice.id,
+          itemNumber: item.itemNumber,
+          productId: item.productId,
+          productCode: item.productCode,
+          productName: item.productName,
+          ncm: item.ncm,
+          cest: item.cest,
+          cfop: '1202',
+          unit: item.unit,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          discount: item.discount,
+          csosn: item.csosn,
+          cstIcms: item.cstIcms,
+          baseIcms: item.baseIcms,
+          aliqIcms: item.aliqIcms,
+          valorIcms: item.valorIcms,
+          cstPis: item.cstPis,
+          basePis: item.basePis,
+          aliqPis: item.aliqPis,
+          valorPis: item.valorPis,
+          cstCofins: item.cstCofins,
+          baseCofins: item.baseCofins,
+          aliqCofins: item.aliqCofins,
+          valorCofins: item.valorCofins,
+          cstIpi: item.cstIpi,
+          baseIpi: item.baseIpi,
+          aliqIpi: item.aliqIpi,
+          valorIpi: item.valorIpi,
+          lotNumber: item.lotNumber,
+          lotId: item.lotId,
+        });
+      }
+
+      const sefazResult = await sefazService.emitNfe(returnInvoice.id);
+      if (!sefazResult.success) {
+        return res.status(422).json({ ok: false, ghostsRejected, returnInvoiceId: returnInvoice.id, message: `Falha SEFAZ: ${sefazResult.errorMessage}` });
+      }
+
+      // 3) Mantem a original como devolvida (sem tocar estoque/cobranca)
+      await storage.updateFiscalInvoice(original.id, { status: 'returned' });
+      const updated = await storage.getFiscalInvoice(returnInvoice.id);
+      res.json({ ok: true, ghostsRejected, returnNumber: updated?.invoiceNumber || null, protocol: sefazResult.protocolNumber, accessKey: updated?.accessKey || null });
+    } catch (error: any) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   // ============================================================================
   // FISCAL INVOICE ITEMS
   // ============================================================================
