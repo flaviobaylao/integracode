@@ -483,6 +483,28 @@ export async function configureWebhook(accountId: string, webhookUrl: string): P
   console.log(`✅ [BB-PIX] Webhook configurado: ${webhookUrl}`);
 }
 
+// FASE 2 - PIX recebidos via webhook SEM cobranca correspondente (txid desconhecido)
+// sao registrados em pix_unmatched para investigacao. A baixa/conciliacao continua
+// sendo feita pela Conciliacao 2.0 (extrato OFX) - esta lista e apoio operacional.
+let __pixUnmatchedReady = false;
+export async function ensurePixUnmatchedTable(): Promise<void> {
+  if (__pixUnmatchedReady) return;
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS pix_unmatched (
+    id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    txid varchar,
+    end_to_end_id varchar UNIQUE,
+    valor numeric(12,2),
+    horario timestamp,
+    info_pagador text,
+    status varchar NOT NULL DEFAULT 'pendente',
+    resolved_by varchar,
+    resolved_at timestamp,
+    notes text,
+    created_at timestamp NOT NULL DEFAULT now()
+  )`);
+  __pixUnmatchedReady = true;
+}
+
 export async function handleWebhookNotification(payload: BBWebhookPayload): Promise<void> {
   if (!payload.pix || !Array.isArray(payload.pix)) return;
 
@@ -491,6 +513,14 @@ export async function handleWebhookNotification(payload: BBWebhookPayload): Prom
       const charge = await storage.getPixChargeByTxid(payment.txid);
       if (!charge) {
         console.warn(`⚠️ [BB-PIX] Webhook: txid não encontrado: ${payment.txid}`);
+        try {
+          await ensurePixUnmatchedTable();
+          const h = payment.horario ? new Date(payment.horario) : new Date();
+          const horarioOk = isNaN(h.getTime()) ? new Date() : h;
+          await db.execute(sql`INSERT INTO pix_unmatched (txid, end_to_end_id, valor, horario, info_pagador)
+            VALUES (${payment.txid || null}, ${payment.endToEndId || null}, ${payment.valor || null}, ${horarioOk}, ${(payment as any).infoPagador || null})
+            ON CONFLICT (end_to_end_id) DO NOTHING`);
+        } catch (e: any) { console.warn('[BB-PIX] falha ao registrar pix nao identificado:', e?.message || e); }
         continue;
       }
 
