@@ -339,6 +339,12 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
     } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
   };
 
+  // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
+  const { data: dreAccounts = [] } = useQuery<any[]>({
+    queryKey: ['/api/financial/chart-of-accounts', 'dre-recv'],
+    queryFn: async () => { const r = await fetch('/api/financial/chart-of-accounts', { credentials: 'include' }); if (!r.ok) return []; const d = await r.json(); return (Array.isArray(d) ? d : []).filter((a: any) => String(a.code).includes('.') && a.isActive !== false).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))); },
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/receivables', data),
     onSuccess: () => {
@@ -567,10 +573,21 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                 </Select>
               </div>
             </div>
+            <div>
+              <Label>Categoria (DRE) *</Label>
+              <Select value={form.chartAccountId || 'none'} onValueChange={v => setForm({ ...form, chartAccountId: v === 'none' ? '' : v })}>
+                <SelectTrigger data-testid="select-dre-categoria"><SelectValue placeholder="Selecione a categoria do plano de contas" /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="none">Selecione…</SelectItem>
+                  {dreAccounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {!form.chartAccountId && <div className="text-xs text-red-600 mt-1">Obrigatório — nenhuma conta é criada sem categoria DRE.</div>}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
+            <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending || !form.chartAccountId}>
               {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
             </Button>
           </DialogFooter>
@@ -764,6 +781,12 @@ function PayablesTab() {
   });
   if (sortAZ) filtered.sort((a: any, b: any) => String(a.supplierName || '').localeCompare(String(b.supplierName || '')));
 
+  // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
+  const { data: dreAccounts = [] } = useQuery<any[]>({
+    queryKey: ['/api/financial/chart-of-accounts', 'dre-pay'],
+    queryFn: async () => { const r = await fetch('/api/financial/chart-of-accounts', { credentials: 'include' }); if (!r.ok) return []; const d = await r.json(); return (Array.isArray(d) ? d : []).filter((a: any) => String(a.code).includes('.') && a.isActive !== false).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))); },
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', '/api/financial/payables', data),
     onSuccess: (res: any) => {
@@ -864,7 +887,7 @@ function PayablesTab() {
         <div><Label className="text-xs">Emissão até</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento de</Label><Input type="date" value={dueDateStart} onChange={e => setDueDateStart(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento até</Label><Input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)} className="w-[150px]" /></div>
-        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setShowCreate(true); }} className="ml-auto">
+        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Pagar
         </Button>
         {selectedIds.length > 0 && (
@@ -1000,6 +1023,17 @@ function PayablesTab() {
                 </Select>
               </div>
             </div>
+            <div>
+              <Label>Categoria (DRE) *</Label>
+              <Select value={form.chartAccountId || 'none'} onValueChange={v => setForm({ ...form, chartAccountId: v === 'none' ? '' : v })}>
+                <SelectTrigger data-testid="select-dre-categoria"><SelectValue placeholder="Selecione a categoria do plano de contas" /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="none">Selecione…</SelectItem>
+                  {dreAccounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {!form.chartAccountId && <div className="text-xs text-red-600 mt-1">Obrigatório — nenhuma conta é criada sem categoria DRE.</div>}
+            </div>
             <div className="rounded-md border p-3 space-y-3 bg-muted/30">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1053,7 +1087,7 @@ function PayablesTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button onClick={() => createMutation.mutate({ ...form, source: 'manual', recurrence: (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined })} disabled={createMutation.isPending}>
+            <Button onClick={() => createMutation.mutate({ ...form, source: 'manual', recurrence: (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined })} disabled={createMutation.isPending || !form.chartAccountId}>
               {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
             </Button>
           </DialogFooter>
