@@ -2388,6 +2388,31 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Cancela a cobranca ATIVA de um recebivel (baixa o boleto no BB / remove o PIX), SEM recriar.
+  // Uso: limpeza de cobrancas de NF-e devolvidas/rejeitadas (multiplicidade de faturamento).
+  // Nao toca em boleto ja liquidado/pago (protecao contra estorno indevido).
+  app.post("/api/financial/receivables/:id/cancel-charge", authenticateUser, requireRole(['admin']), async (req, res) => {
+    try {
+      const recId = req.params.id;
+      const out: any = { boletosCancelados: 0, pixCancelados: 0, erros: [] as string[] };
+      const bq: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${recId} AND status NOT IN ('cancelado','cancelada','liquidado','pago','recebido') ORDER BY created_at DESC`);
+      for (const boleto of ((bq as any).rows || [])) {
+        if (/(liquid|pag|receb)/i.test(String(boleto.status || ''))) { out.erros.push('boleto ' + (boleto.nosso_numero || boleto.id) + ' ja liquidado - nao cancelado'); continue; }
+        const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL LIMIT 1`);
+        const accId = (accq as any).rows?.[0]?.id;
+        if (accId) {
+          const cancel = await cancelarBoleto(accId, boleto);
+          if (!cancel.ok && !cancel.alreadyBaixado) { out.erros.push('boleto ' + (boleto.nosso_numero || boleto.id) + ': ' + (cancel.error || 'falha')); continue; }
+        }
+        await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+        out.boletosCancelados++;
+      }
+      const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${recId} AND status = 'ATIVA'`);
+      out.pixCancelados = ((pu as any)?.rowCount ?? 0) as number;
+      res.status(200).json({ ok: out.erros.length === 0, ...out });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Emite um boleto (hibrido boleto+PIX) para um recebivel e devolve a viewUrl.
   app.post("/api/financial/receivables/:id/emit-boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
