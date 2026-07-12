@@ -38,6 +38,9 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      // Não Venda também conta como registro de atendimento virtual (Rota do Dia)
+      queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
       toast({
         title: "Sucesso",
         description: "Card marcado como 'Venda Não Realizada' com sucesso!",
