@@ -1021,6 +1021,31 @@ export function registerFinancialRoutes(app: Express) {
         }
       }
 
+      // FASE 3.1 - Devolucoes no DRE: alimentadas pelas NF-es de devolucao emitidas
+      // (nature_of_operation com DEVOLU, ex: CFOP 1.202), pela data de emissao/criacao.
+      try {
+        const devAcc = chartAccounts.find(a => a.dreGroup === 'devolucoes' && a.code.includes('.'));
+        if (devAcc) {
+          const instCond = instanceId ? sql`AND omie_instance_id = ${instanceId}` : sql``;
+          const dq: any = await db.execute(sql`
+            SELECT extract(month FROM COALESCE(emission_date, created_at))::int AS m,
+                   COALESCE(sum(total_invoice::numeric), 0) AS v
+            FROM fiscal_invoices
+            WHERE upper(coalesce(nature_of_operation, '')) LIKE '%DEVOLU%'
+              AND COALESCE(emission_date, created_at) >= ${startDate}
+              AND COALESCE(emission_date, created_at) <= ${endDate}
+              AND status NOT IN ('draft', 'cancelled', 'cancelada', 'rejected', 'rejeitada')
+              ${instCond}
+            GROUP BY 1`);
+          const monthly = new Array(12).fill(0);
+          for (const r of ((dq as any).rows || [])) { const mi = Number(r.m) - 1; if (mi >= 0 && mi < 12) monthly[mi] = Number(r.v || 0); }
+          const total = monthly.reduce((s, v) => s + v, 0);
+          const idx = lines.findIndex(l => l.accountId === devAcc.id);
+          const line = { code: devAcc.code, name: devAcc.name, dreGroup: 'devolucoes', type: devAcc.type, isHeader: false, monthly, total, accountId: devAcc.id };
+          if (idx >= 0) lines[idx] = line; else lines.push(line);
+        }
+      } catch {}
+
       const unclassifiedRecMonthly = new Array(12).fill(0);
       for (const r of receivables) {
         if (!r.chartAccountId || !accountMap.has(r.chartAccountId)) {
