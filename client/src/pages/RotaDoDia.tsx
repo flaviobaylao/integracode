@@ -1090,8 +1090,10 @@ export default function RotaDoDia() {
             </CardHeader>
             <CardContent>
               {(() => {
-                // Presenciais
-                const presTotal = route.totalVisits || 0;
+                // Presenciais: conta as visitas presenciais REAIS do dia (exclui virtuais).
+                // Antes usava route.totalVisits, que contava também clientes virtuais que vazam
+                // para o optimizedOrder — inflando o total (ex.: telemarketing mostrava presenciais).
+                const presTotal = presentialVisits.length;
                 // Concluídas = clientes presenciais distintos com CHECK-IN feito (check-out desligado)
                 const presConcl = presentialVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
                 const presPend = Math.max(0, presTotal - presConcl);
