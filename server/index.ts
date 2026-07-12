@@ -2087,6 +2087,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE sales_goals ADD COLUMN IF NOT EXISTS challenge_goal numeric(12,2)`).catch(() => {});
   db.execute(sql`ALTER TABLE sales_goals ADD COLUMN IF NOT EXISTS challenge_bonus numeric(12,2)`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'agendado'`).catch(() => {});
+  // Etapas geográficas do funil (colunas BSB / Ag. Rota BSB / Outras Cidades). Idempotente.
+  db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'bsb'`).catch(() => {});
+  db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'aguardando_rota_bsb'`).catch(() => {});
+  db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'outras_cidades'`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
