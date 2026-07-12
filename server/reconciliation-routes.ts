@@ -76,36 +76,9 @@ export function registerReconciliation(app: Express) {
     }
   });
 
-  // ---- Itens de um extrato + matches + sugestões --------------------------
-  app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
-    try {
-      const id = req.params.id;
-      const itemsR = await db.execute(sql`
-        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
-               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
-               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes
-        FROM bank_statement_items i
-        WHERE i.statement_id = ${id}
-        ORDER BY i.transaction_date, i.id`);
-      const items = rowsOf(itemsR);
-      const ids = items.map((i: any) => i.id);
-
-      // Matches (conciliação composta) dos itens já conciliados
-      const matchesByItem: Record<string, any[]> = {};
-      if (ids.length) {
-        const mR = await db.execute(sql`
-          SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount,
-                 m.match_kind, m.title_amount_settled, m.interest, m.discount,
-                 r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due,
-                 p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due
-          FROM bank_statement_item_matches m
-          LEFT JOIN receivables r ON r.id = m.receivable_id
-          LEFT JOIN payables p ON p.id = m.payable_id
-          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
-        for (const m of rowsOf(mR)) (matchesByItem[m.bank_statement_item_id] ||= []).push(m);
-      }
-
+  // ---- FASE 3.4b: motor de sugestões compartilhado ------------------------
+  // Usado pelo extrato individual e pela visão consolidada de pendentes.
+  async function buildSuggestions(items: any[]): Promise<Record<string, any>> {
       // Sugestões p/ itens pendentes
       const pend = items.filter((i: any) => !i.reconciliation_status || i.reconciliation_status === "pending");
       const perKeys: Record<string, { nd: string; doc: string; amt: string }> = {};
@@ -237,6 +210,69 @@ export function registerReconciliation(app: Express) {
         }
       }
 
+      return suggestions;
+  }
+
+  // ---- FASE 3.4b: Pendentes de todos os extratos (visão consolidada) ------
+  // Read-only: lista lançamentos pendentes de todas as importações da conta,
+  // com as mesmas sugestões. A conciliação continua por item (manual).
+  app.get("/api/reconciliation/pending-items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const accountId = (req.query.accountId as string) || null;
+      const instanceId = (req.query.instanceId as string) || null;
+      const r = await db.execute(sql`
+        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
+               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
+               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
+               i.match_confidence, i.notes, s.file_name, fa.name AS account_name
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+          AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
+        ORDER BY i.transaction_date, i.id
+        LIMIT 1000`);
+      const items = rowsOf(r);
+      const suggestions = await buildSuggestions(items);
+      res.json({ items, matchesByItem: {}, suggestions });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // ---- Itens de um extrato + matches + sugestões --------------------------
+  app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const itemsR = await db.execute(sql`
+        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
+               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
+               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
+               i.match_confidence, i.notes
+        FROM bank_statement_items i
+        WHERE i.statement_id = ${id}
+        ORDER BY i.transaction_date, i.id`);
+      const items = rowsOf(itemsR);
+      const ids = items.map((i: any) => i.id);
+
+      // Matches (conciliação composta) dos itens já conciliados
+      const matchesByItem: Record<string, any[]> = {};
+      if (ids.length) {
+        const mR = await db.execute(sql`
+          SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount,
+                 m.match_kind, m.title_amount_settled, m.interest, m.discount,
+                 r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due,
+                 p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due
+          FROM bank_statement_item_matches m
+          LEFT JOIN receivables r ON r.id = m.receivable_id
+          LEFT JOIN payables p ON p.id = m.payable_id
+          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
+        for (const m of rowsOf(mR)) (matchesByItem[m.bank_statement_item_id] ||= []).push(m);
+      }
+
+      const suggestions = await buildSuggestions(items);
+
       res.json({ items, matchesByItem, suggestions });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e) });
@@ -259,10 +295,16 @@ export function registerReconciliation(app: Express) {
     if (!rec) throw new Error("recebivel nao encontrado: " + recId);
     const prevPaid = Number(rec.amountPaid || 0);
     const amt = Number(rec.amount || 0);
+    // FIX 3.4b: titulo ja quitado (ex.: conciliacao anterior interrompida no meio) ->
+    // nao duplica a baixa; o chamador ainda vincula o item do extrato ao titulo.
+    if (amt > 0 && prevPaid >= amt - 0.005) return { via: "ja_baixado", status: rec.status };
     const newPaid = prevPaid + amount;
     const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : rec.status;
+    // FIX 3.4b: paid_at precisa ser Date (string quebrava o drizzle com
+    // "value.toISOString is not a function"); pagamento criado ANTES da baixa,
+    // para nao deixar titulo baixado sem pagamento se algo falhar.
+    await storage.createReceivablePayment({ receivableId: recId, paidAt: new Date(paidAtISO) as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || rec.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
     await storage.updateReceivable(recId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || rec.financialAccountId || null } as any);
-    await storage.createReceivablePayment({ receivableId: recId, paidAt: paidAtISO as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || rec.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
     return { via: "receivable", status };
   }
 
@@ -271,10 +313,13 @@ export function registerReconciliation(app: Express) {
     if (!pay) throw new Error("pagavel nao encontrado: " + payId);
     const prevPaid = Number(pay.amountPaid || 0);
     const amt = Number(pay.amount || 0);
+    // FIX 3.4b: titulo ja quitado -> nao duplica a baixa (so vincula o extrato).
+    if (amt > 0 && prevPaid >= amt - 0.005) return { via: "ja_baixado", status: pay.status };
     const newPaid = prevPaid + amount;
     const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : pay.status;
+    // FIX 3.4b: paid_at como Date + pagamento antes da baixa (ver settleReceivable).
+    await storage.createPayablePayment({ payableId: payId, paidAt: new Date(paidAtISO) as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || pay.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
     await storage.updatePayable(payId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || pay.financialAccountId || null } as any);
-    await storage.createPayablePayment({ payableId: payId, paidAt: paidAtISO as any, amount: amount.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || pay.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
     return { via: "payable", status };
   }
 
