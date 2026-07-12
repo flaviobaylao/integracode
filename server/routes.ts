@@ -2789,6 +2789,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "sellerId e date são obrigatórios" });
       }
       
+      // Clientes da rota passados pelo frontend (inclui virtuais). Usados para casar o
+      // atendimento pelo customer_id direto, mesmo que o seller_id do cadastro divirja
+      // do vendedor selecionado (conflito de identidade / atendimento por admin).
+      const routeIdsCsv = String(req.query.customerIds || '')
+        .split(',').map((s) => s.trim()).filter(Boolean).join(',');
+
       // Query to get count and distinct customer IDs that were attended
       const result = await db.execute(sql`
         SELECT 
@@ -2797,7 +2803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ARRAY_AGG(DISTINCT vsl.customer_id) FILTER (WHERE vsl.service_type = 'nao_venda') as no_sale_customer_ids
         FROM virtual_service_logs vsl
         INNER JOIN customers c ON vsl.customer_id = c.id
-        WHERE c.seller_id = ${sellerId}
+        WHERE (c.seller_id = ${sellerId} OR vsl.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
         AND vsl.entity_type = 'customer'
         AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
       `);
@@ -2813,7 +2819,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT DISTINCT sc.customer_id
           FROM sales_cards sc
           INNER JOIN customers c ON sc.customer_id = c.id
-          WHERE c.seller_id = ${sellerId}
+          WHERE (c.seller_id = ${sellerId} OR sc.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
             AND sc.status = 'no_sale'
             AND (
               DATE(sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
