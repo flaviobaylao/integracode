@@ -100,7 +100,6 @@ export default function ConciliacaoBancaria() {
   const buscarCategorias = (v: string) => {
     if (catTimer.current) clearTimeout(catTimer.current);
     const q = v.trim();
-    if (!q) { setCatSug([]); return; }
     catTimer.current = setTimeout(async () => {
       try {
         const r = await fetch("/api/reconciliation/dre-categories?q=" + encodeURIComponent(q), { credentials: "include" });
@@ -303,6 +302,7 @@ export default function ConciliacaoBancaria() {
     const amt = num(novo.amount);
     if (!(amt > 0)) { alert("Informe um valor válido."); return; }
     if (!String(novo.name || "").trim()) { alert("Informe o nome do " + (novo.tipo === "receber" ? "cliente" : "fornecedor") + "."); return; }
+    if (!novo.chartAccountId) { alert("Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria."); return; }
     if (!window.confirm(`Criar ${novo.tipo === "receber" ? "conta a receber" : "conta a pagar"} de ${fmtMoney(amt)} e CONCILIAR (dar baixa) com este lançamento?`)) return;
     setBusy(modalItem.id);
     try {
@@ -671,7 +671,7 @@ export default function ConciliacaoBancaria() {
                     </div>
                     <div className="relative">
                       <label className="block text-xs text-gray-600 mb-1">Categoria (DRE)</label>
-                      <input value={novo.category || ""} onChange={(e) => { setNovo({ ...novo, category: e.target.value, chartAccountId: "" }); buscarCategorias(e.target.value); }} className="w-full border rounded px-3 py-1.5" placeholder="Busque no plano de contas…" autoComplete="off" />
+                      <input value={novo.category || ""} onChange={(e) => { setNovo({ ...novo, category: e.target.value, chartAccountId: "" }); buscarCategorias(e.target.value); }} onFocus={() => buscarCategorias(novo.category || "")} className="w-full border rounded px-3 py-1.5" placeholder="Clique para listar / digite para buscar…" autoComplete="off" />
                       {catSug.length > 0 && (
                         <div className="absolute z-30 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">
                           {catSug.map((c: any) => (
@@ -681,14 +681,14 @@ export default function ConciliacaoBancaria() {
                           ))}
                         </div>
                       )}
-                      {novo.chartAccountId ? <div className="text-[11px] text-emerald-700 mt-0.5">Título será classificado nesta categoria da DRE.</div> : null}
+                      {novo.chartAccountId ? <div className="text-[11px] text-emerald-700 mt-0.5">Título será classificado nesta categoria da DRE.</div> : <div className="text-[11px] text-red-600 mt-0.5">Obrigatório: selecione uma categoria da lista.</div>}
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Descrição</label>
                     <input value={novo.description || ""} onChange={(e) => setNovo({ ...novo, description: e.target.value })} className="w-full border rounded px-3 py-1.5" />
                   </div>
-                  <button onClick={createAndReconcile} disabled={busy === modalItem.id} className="w-full mt-1 px-4 py-2 rounded bg-green-600 text-white font-medium disabled:opacity-40">Criar e Conciliar {fmtMoney(num(novo.amount))}</button>
+                  <button onClick={createAndReconcile} disabled={busy === modalItem.id || !novo.chartAccountId} title={!novo.chartAccountId ? "Selecione a categoria DRE para habilitar" : ""} className="w-full mt-1 px-4 py-2 rounded bg-green-600 text-white font-medium disabled:opacity-40">Criar e Conciliar {fmtMoney(num(novo.amount))}</button>
                 </div>
               )}
             </div>
