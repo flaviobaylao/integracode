@@ -2462,7 +2462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           attendant_name,
           attendance_date,
           CASE 
-            WHEN service_type IN ('debito_vencido', 'venda', 'prospecao') THEN service_type
+            WHEN service_type IN ('debito_vencido', 'venda', 'nao_venda', 'prospecao') THEN service_type
             ELSE 'prospecao'
           END as service_type,
           notes,
@@ -2519,7 +2519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
       }
 
-      const validServiceTypes = ['debito_vencido', 'venda', 'prospecao'];
+      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao'];
       const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
 
       const result = await db.execute(sql`
@@ -2713,7 +2713,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
       }
 
-      const validServiceTypes = ['debito_vencido', 'venda', 'prospecao'];
+      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao'];
       const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
 
       const result = await db.execute(sql`
