@@ -2482,15 +2482,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // List service logs for a customer or lead (with entity type)
-  app.get('/api/service-logs/:entityType/:entityId', authenticateUser, async (req: any, res) => {
+  app.get('/api/service-logs/:entityType/:entityId', authenticateUser, async (req: any, res, next) => {
     try {
       const { entityType, entityId } = req.params;
-      
+
+      // 'count/customer' é uma rota específica registrada mais adiante — não deixar
+      // este handler genérico (:entityType/:entityId) capturá-la.
+      if (entityType === 'count') { return next(); }
+
       const validEntityTypes = ['customer', 'lead'];
       if (!validEntityTypes.includes(entityType)) {
         return res.status(400).json({ message: "Tipo de entidade inválido" });
       }
-      
+
       const logs = await db.execute(sql`
         SELECT * FROM virtual_service_logs 
         WHERE customer_id = ${entityId} AND entity_type = ${entityType}
