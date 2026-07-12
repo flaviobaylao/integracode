@@ -1081,6 +1081,20 @@ export function registerFinancialRoutes(app: Express) {
         steps.push({ step: label, candidatos, atualizados });
       };
 
+      // A0 - normaliza conta vazia ('') para NULL (heranca de importacoes antigas)
+      await run('A0a recebiveis: conta vazia -> NULL',
+        sql`SELECT count(*)::int AS n FROM receivables WHERE financial_account_id = ''`,
+        sql`UPDATE receivables SET financial_account_id = NULL WHERE financial_account_id = ''`);
+      await run('A0b pagaveis: conta vazia -> NULL',
+        sql`SELECT count(*)::int AS n FROM payables WHERE financial_account_id = ''`,
+        sql`UPDATE payables SET financial_account_id = NULL WHERE financial_account_id = ''`);
+      await run('A0c pagamentos de recebiveis: conta vazia -> NULL',
+        sql`SELECT count(*)::int AS n FROM receivable_payments WHERE financial_account_id = ''`,
+        sql`UPDATE receivable_payments SET financial_account_id = NULL WHERE financial_account_id = ''`);
+      await run('A0d pagamentos de pagaveis: conta vazia -> NULL',
+        sql`SELECT count(*)::int AS n FROM payable_payments WHERE financial_account_id = ''`,
+        sql`UPDATE payable_payments SET financial_account_id = NULL WHERE financial_account_id = ''`);
+
       // A1/A2 - conta do pagamento mais recente -> titulo sem conta
       await run('A1 recebiveis <- conta dos pagamentos',
         sql`SELECT count(*)::int AS n FROM receivables r
