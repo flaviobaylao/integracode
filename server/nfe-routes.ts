@@ -799,10 +799,22 @@ export function registerNfeRoutes(app: Express) {
         }
 
         // Cancel associated receivables
+        // FASE 2 - Titulo com pagamento recebido NAO e cancelado automaticamente:
+        // mantem o titulo com nota de alerta para analise de estorno e avisa na resposta.
+        const receivablesComPagamento: any[] = [];
         try {
           const allReceivables = await storage.getReceivables({});
           const linkedReceivables = allReceivables.filter(r => r.fiscalInvoiceId === req.params.id);
           for (const rec of linkedReceivables) {
+            const pagoRec = parseFloat((rec as any).amountPaid || '0');
+            if (pagoRec > 0 && String((rec as any).status) !== 'cancelada') {
+              await storage.updateReceivable(rec.id, {
+                notes: `${rec.notes ? rec.notes + ' | ' : ''}ATENCAO: NF-e cancelada com pagamento recebido (R$ ${pagoRec.toFixed(2)}) - analisar estorno. Motivo: ${justification}`,
+              });
+              receivablesComPagamento.push({ id: rec.id, titleNumber: (rec as any).titleNumber || null, amountPaid: pagoRec.toFixed(2) });
+              console.log(`⚠️ [NF-e CANCEL] Conta a receber ${rec.id} tem pagamento (R$ ${pagoRec.toFixed(2)}) - mantida para analise de estorno`);
+              continue;
+            }
             await storage.updateReceivable(rec.id, {
               status: 'cancelada',
               notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Cancelamento NF-e: ${justification}`,
@@ -814,7 +826,7 @@ export function registerNfeRoutes(app: Express) {
         }
 
         const updatedInvoice = await storage.getFiscalInvoice(req.params.id);
-        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true });
+        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true, receivablesComPagamento });
       } else {
         res.status(400).json(result);
       }
@@ -969,10 +981,22 @@ export function registerNfeRoutes(app: Express) {
 
       // Only proceed with cancellations and reversals after SEFAZ authorization
       // Cancel associated receivables from original invoice
+      // FASE 2 - Titulo com pagamento recebido NAO e cancelado automaticamente:
+      // mantem o titulo com nota de alerta para analise de estorno e avisa na resposta.
+      const receivablesComPagamento: any[] = [];
       try {
         const allReceivables = await storage.getReceivables({});
         const linkedReceivables = allReceivables.filter(r => r.fiscalInvoiceId === req.params.id);
         for (const rec of linkedReceivables) {
+          const pagoRec = parseFloat((rec as any).amountPaid || '0');
+          if (pagoRec > 0 && String((rec as any).status) !== 'cancelada') {
+            await storage.updateReceivable(rec.id, {
+              notes: `${rec.notes ? rec.notes + ' | ' : ''}ATENCAO: NF-e devolvida com pagamento recebido (R$ ${pagoRec.toFixed(2)}) - analisar estorno. Motivo: ${justification}`,
+            });
+            receivablesComPagamento.push({ id: rec.id, titleNumber: (rec as any).titleNumber || null, amountPaid: pagoRec.toFixed(2) });
+            console.log(`⚠️ [NF-e RETURN] Conta a receber ${rec.id} tem pagamento (R$ ${pagoRec.toFixed(2)}) - mantida para analise de estorno`);
+            continue;
+          }
           await storage.updateReceivable(rec.id, {
             status: 'cancelada',
             notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Devolução de venda: ${justification}`,
@@ -1027,6 +1051,7 @@ export function registerNfeRoutes(app: Express) {
         sefazProtocol: sefazResult.protocolNumber,
         message: `NF-e de devolução emitida e autorizada pela SEFAZ com sucesso. Protocolo: ${sefazResult.protocolNumber}`,
         receivablesCancelled: true,
+        receivablesComPagamento,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, errorMessage: error.message });
