@@ -99,7 +99,7 @@ export default function ConciliacaoBancaria() {
       .catch(() => setStatements([]))
       .finally(() => setLoadingList(false));
   };
-  useEffect(() => { loadStatements(); }, [instance, account]);
+  useEffect(() => { loadStatements(); if (selected?.id === "__pendentes__") loadDetail(selected); }, [instance, account]);
 
   const accountOptions = useMemo(
     () => accounts.filter((a) => !instance || a.omie_instance_id === instance),
@@ -108,13 +108,18 @@ export default function ConciliacaoBancaria() {
 
   const loadDetail = (s: Statement) => {
     setLoadingDetail(true);
-    return fetch(`/api/reconciliation/statements/${s.id}/items`, { credentials: "include" })
+    const url = s.id === "__pendentes__"
+      ? "/api/reconciliation/pending-items?" + new URLSearchParams({ ...(instance ? { instanceId: instance } : {}), ...(account ? { accountId: account } : {}) }).toString()
+      : `/api/reconciliation/statements/${s.id}/items`;
+    return fetch(url, { credentials: "include" })
       .then((r) => r.json())
       .then((d) => setDetail(d))
       .catch(() => setDetail({ items: [], matchesByItem: {}, suggestions: {} }))
       .finally(() => setLoadingDetail(false));
   };
   const openStatement = (s: Statement) => { setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
+  // FASE 3.4b - visao consolidada: pendentes de todos os extratos da conta
+  const openPendentes = () => openStatement({ id: "__pendentes__", file_name: "Pendentes — todos os extratos" } as any);
   const refresh = async () => { if (selected) await loadDetail(selected); await loadStatements(); };
 
   const post = async (url: string, body: any) => {
@@ -340,6 +345,12 @@ export default function ConciliacaoBancaria() {
           <div className="max-h-[74vh] overflow-auto divide-y">
             {loadingList && <div className="p-4 text-sm text-gray-400">Carregando…</div>}
             {!loadingList && statements.length === 0 && <div className="p-4 text-sm text-gray-400">Nenhum extrato.</div>}
+            {!loadingList && statements.length > 0 && (
+              <button onClick={openPendentes} className={`w-full text-left px-4 py-3 hover:bg-amber-100 ${selected?.id === "__pendentes__" ? "bg-amber-100" : "bg-amber-50"}`}>
+                <div className="text-sm font-medium">⏳ Pendentes — todos os extratos</div>
+                <div className="text-xs text-gray-500 mt-0.5">Tudo que ainda não foi conciliado, de todas as importações{account ? " da conta selecionada" : ""}</div>
+              </button>
+            )}
             {statements.map((s) => (
               <div key={s.id} className={`relative group ${selected?.id === s.id ? "bg-green-50" : ""}`}>
                 <button onClick={() => openStatement(s)} className="w-full text-left px-4 py-3 hover:bg-green-50">
