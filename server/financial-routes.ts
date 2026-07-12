@@ -489,6 +489,30 @@ export function registerFinancialRoutes(app: Express) {
   // RECEIVABLES (Contas a Receber)
   // ============================================================================
 
+  // FASE 2 - PIX recebidos sem cobranca correspondente (capturados pelo webhook).
+  // Lista de apoio: a baixa continua sendo feita pela Conciliacao 2.0 (extrato OFX).
+  app.get('/api/financial/pix-nao-identificados', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      await bbPixService.ensurePixUnmatchedTable();
+      const status = String(req.query.status || 'pendente');
+      const q: any = status === 'todos'
+        ? await db.execute(sql`SELECT * FROM pix_unmatched ORDER BY created_at DESC LIMIT 300`)
+        : await db.execute(sql`SELECT * FROM pix_unmatched WHERE status = ${status} ORDER BY created_at DESC LIMIT 300`);
+      res.json((q as any).rows || []);
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  app.post('/api/financial/pix-nao-identificados/:id/status', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      await bbPixService.ensurePixUnmatchedTable();
+      const novo = String(req.body?.status || '');
+      if (!['pendente', 'resolvido', 'ignorado'].includes(novo)) return res.status(400).json({ message: 'status invalido' });
+      const user = actorOf(req);
+      const u: any = await db.execute(sql`UPDATE pix_unmatched SET status = ${novo}, resolved_by = ${user?.email || null}, resolved_at = now(), notes = ${req.body?.notes || null} WHERE id = ${req.params.id}`);
+      res.json({ ok: true, updated: ((u as any)?.rowCount ?? 0) as number });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
   app.get('/api/financial/receivables', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
     try {
       const filters: any = {};
