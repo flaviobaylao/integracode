@@ -1,3 +1,4 @@
+// redeploy: NF-e dedup por chave de acesso
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { savedReports } from '@shared/schema';
