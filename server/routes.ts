@@ -20720,7 +20720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT
             sc.customer_id,
             sc.id as sales_card_id,
-            sc.card_number,
+            NULL::text as card_number,
             oh.order_date,
             sc.omie_order_id,
             sc.sale_value
@@ -20734,7 +20734,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT
             customer_id,
             id as sales_card_id,
-            card_number,
+            NULL::text as card_number,
             omie_order_id,
             sale_value
           FROM sales_cards
