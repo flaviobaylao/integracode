@@ -32,7 +32,10 @@ export async function webhookTokenGuard(req: any, res: any, next: any) {
       return next();
     }
     const got = String((req.query && req.query.token) || req.headers['x-webhook-token'] || '');
-    if (got && got === expected) return next();
+    // FASE 3.2 - rotacao de token sem janela: aceita lista separada por virgula
+    // (mantenha o token antigo + novo durante a troca das URLs no portal do BB).
+    const validos = expected.split(',').map((t) => t.trim()).filter(Boolean);
+    if (got && validos.includes(got)) return next();
     console.warn('[webhook-security] webhook REJEITADO (token invalido) de', req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '?');
     return res.status(401).json({ message: 'unauthorized' });
   } catch (e: any) {
