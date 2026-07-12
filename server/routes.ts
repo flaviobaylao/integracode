@@ -20728,40 +20728,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
       
-      // Buscar clientes para obter o documento (CPF ou CNPJ) e a periodicidade de compra
+      // Buscar clientes para obter o documento (CPF ou CNPJ)
       const customersResult = await db.execute(sql`
-        SELECT id, cpf, cnpj, visit_periodicity FROM customers WHERE id = ANY(${customerIds}::text[])
+        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(${customerIds}::text[])
       `);
 
       const customerDocuments: Record<string, string> = {};
-      const periodicityMap: Record<string, string> = {};
       (customersResult.rows as any[]).forEach(row => {
         // Priorizar CNPJ, senão CPF
         const doc = row.cnpj || row.cpf;
         if (doc) {
           customerDocuments[row.id] = doc.replace(/\D/g, '');
         }
-        if (row.visit_periodicity) {
-          periodicityMap[row.id] = String(row.visit_periodicity);
-        }
       });
+      const documentsForLookup = Object.values(customerDocuments).filter(d => d);
 
-      // Data do último pedido efetivo (billing_pipeline = pedidos registrados) por cliente
+      // Periodicidade de compra vinda de CLIENTES ATIVOS (active_customers -> customer.visit_periodicity)
+      // Casa por customer_id direto e, como ponte p/ conflito de identidade, por documento normalizado.
+      const periodicityMap: Record<string, string> = {};
+      try {
+        const periResult = await db.execute(sql`
+          SELECT ac.customer_id as ac_cid,
+                 REGEXP_REPLACE(COALESCE(ac.document,''), '[^0-9]', '', 'g') as ndoc,
+                 c.visit_periodicity
+          FROM active_customers ac
+          JOIN customers c ON c.id = ac.customer_id
+          WHERE ac.is_active = true
+            AND (ac.customer_id = ANY(${customerIds}::text[])
+                 OR REGEXP_REPLACE(COALESCE(ac.document,''), '[^0-9]', '', 'g') = ANY(${documentsForLookup}::text[]))
+        `);
+        const periByCid: Record<string, string> = {};
+        const periByDoc: Record<string, string> = {};
+        (periResult.rows as any[]).forEach(row => {
+          if (row.visit_periodicity) {
+            if (row.ac_cid) periByCid[row.ac_cid] = String(row.visit_periodicity);
+            if (row.ndoc) periByDoc[row.ndoc] = String(row.visit_periodicity);
+          }
+        });
+        customerIds.forEach(cid => {
+          const p = periByCid[cid] || periByDoc[customerDocuments[cid]];
+          if (p) periodicityMap[cid] = p;
+        });
+      } catch (e) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar periodicidade (clientes ativos):', (e as any)?.message);
+      }
+
+      // Data do último pedido FATURADO (todo o histórico do pipeline) por cliente.
+      // "Faturado" = item do pipeline com nota fiscal atribuída (invoice_number), cobre faturado→entregue.
       const lastOrdersMap: Record<string, string> = {};
       try {
         const lastOrdersResult = await db.execute(sql`
-          SELECT customer_id, MAX(created_at) as last_order
+          SELECT customer_id,
+                 REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') as ndoc,
+                 MAX(created_at) as last_order
           FROM billing_pipeline
-          WHERE customer_id = ANY(${customerIds}::text[])
-          GROUP BY customer_id
+          WHERE invoice_number IS NOT NULL AND invoice_number <> ''
+            AND (customer_id = ANY(${customerIds}::text[])
+                 OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(${documentsForLookup}::text[]))
+          GROUP BY customer_id, REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g')
         `);
+        const loByCid: Record<string, number> = {};
+        const loByDoc: Record<string, number> = {};
         (lastOrdersResult.rows as any[]).forEach(row => {
-          if (row.last_order) lastOrdersMap[row.customer_id] = new Date(row.last_order).toISOString();
+          if (!row.last_order) return;
+          const t = new Date(row.last_order).getTime();
+          if (row.customer_id) loByCid[row.customer_id] = Math.max(loByCid[row.customer_id] || 0, t);
+          if (row.ndoc) loByDoc[row.ndoc] = Math.max(loByDoc[row.ndoc] || 0, t);
+        });
+        customerIds.forEach(cid => {
+          const t = Math.max(loByCid[cid] || 0, loByDoc[customerDocuments[cid]] || 0);
+          if (t > 0) lastOrdersMap[cid] = new Date(t).toISOString();
         });
       } catch (e) {
-        console.warn('[CUSTOMER-INFO] falha ao buscar último pedido:', (e as any)?.message);
+        console.warn('[CUSTOMER-INFO] falha ao buscar último pedido faturado:', (e as any)?.message);
       }
-      
+
+
       // Buscar débitos vencidos por documento do cliente
       const documents = Object.values(customerDocuments).filter(d => d);
       let debtsMap: Record<string, number> = {};
