@@ -2082,6 +2082,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS admin_adjustments jsonb DEFAULT '{}'::jsonb`).catch(() => {});
   // Agendamento de pedidos: data para a qual o pedido foi agendado (etapa 'agendado' do pipeline) + valor de enum. Idempotente.
   db.execute(sql`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS scheduled_billing_date timestamp`).catch(() => {});
+
+  // Meta Desafio (igual ao Integra 1.0): faturamento alvo + bônus por bater.
+  db.execute(sql`ALTER TABLE sales_goals ADD COLUMN IF NOT EXISTS challenge_goal numeric(12,2)`).catch(() => {});
+  db.execute(sql`ALTER TABLE sales_goals ADD COLUMN IF NOT EXISTS challenge_bonus numeric(12,2)`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'agendado'`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
