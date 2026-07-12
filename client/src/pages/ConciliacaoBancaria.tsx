@@ -77,6 +77,39 @@ export default function ConciliacaoBancaria() {
   const [searchResults, setSearchResults] = useState<Title[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
+  // FASE 3.4c - autocomplete de fornecedor (cadastro) e categoria (DRE) no Criar Novo
+  const [supSug, setSupSug] = useState<any[]>([]);
+  const [supNovo, setSupNovo] = useState(false);
+  const [catSug, setCatSug] = useState<any[]>([]);
+  const supTimer = useRef<any>(null);
+  const catTimer = useRef<any>(null);
+  const buscarFornecedores = (v: string) => {
+    if (supTimer.current) clearTimeout(supTimer.current);
+    const q = v.trim();
+    if (q.length < 2) { setSupSug([]); setSupNovo(false); return; }
+    supTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/reconciliation/suppliers/search?q=" + encodeURIComponent(q), { credentials: "include" });
+        const j = await r.json();
+        const list = j.suppliers || [];
+        setSupSug(list);
+        setSupNovo(list.length === 0 && q.length >= 3);
+      } catch { setSupSug([]); }
+    }, 250);
+  };
+  const buscarCategorias = (v: string) => {
+    if (catTimer.current) clearTimeout(catTimer.current);
+    const q = v.trim();
+    if (!q) { setCatSug([]); return; }
+    catTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/reconciliation/dre-categories?q=" + encodeURIComponent(q), { credentials: "include" });
+        const j = await r.json();
+        setCatSug(j.categories || []);
+      } catch { setCatSug([]); }
+    }, 250);
+  };
+
   useEffect(() => {
     fetch("/api/reconciliation/filters", { credentials: "include" })
       .then((r) => r.json())
@@ -260,8 +293,10 @@ export default function ConciliacaoBancaria() {
       issueDate: d, dueDate: d,
       description: modalItem.description || "",
       category: "",
+      chartAccountId: "",
       omieInstanceId: instance || "",
     });
+    setSupSug([]); setSupNovo(false); setCatSug([]);
   };
   const createAndReconcile = async () => {
     if (!modalItem) return;
@@ -274,7 +309,7 @@ export default function ConciliacaoBancaria() {
       await post(`/api/reconciliation/items/${modalItem.id}/create-and-reconcile`, {
         by: me, tipo: novo.tipo, name: novo.name, document: novo.document,
         amount: amt, issueDate: novo.issueDate || null, dueDate: novo.dueDate || null,
-        description: novo.description, category: novo.category || null, omieInstanceId: novo.omieInstanceId || null,
+        description: novo.description, category: novo.category || null, chartAccountId: novo.chartAccountId || null, omieInstanceId: novo.omieInstanceId || null,
       });
       closeModal(); await refresh();
     } catch (e: any) { alert("Erro ao criar/conciliar: " + e.message); }
@@ -592,9 +627,19 @@ export default function ConciliacaoBancaria() {
                     <span className="text-gray-500">Tipo:</span>
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${novo.tipo === "receber" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{novo.tipo === "receber" ? "Conta a Receber" : "Conta a Pagar"}</span>
                   </div>
-                  <div>
+                  <div className="relative">
                     <label className="block text-xs text-gray-600 mb-1">{novo.tipo === "receber" ? "Cliente" : "Fornecedor"}</label>
-                    <input value={novo.name || ""} onChange={(e) => setNovo({ ...novo, name: e.target.value })} className="w-full border rounded px-3 py-1.5" placeholder="Nome do cliente/fornecedor" />
+                    <input value={novo.name || ""} onChange={(e) => { const v = e.target.value; setNovo({ ...novo, name: v }); if (novo.tipo === "pagar") buscarFornecedores(v); }} className="w-full border rounded px-3 py-1.5" placeholder={novo.tipo === "pagar" ? "Busque no cadastro de fornecedores…" : "Nome do cliente"} autoComplete="off" />
+                    {novo.tipo === "pagar" && supSug.length > 0 && (
+                      <div className="absolute z-30 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">
+                        {supSug.map((s: any) => (
+                          <button key={s.id} onClick={() => { setNovo({ ...novo, name: s.name || "", document: s.cnpj || s.cpf || novo.document || "", chartAccountId: s.default_chart_account_id || novo.chartAccountId || "", category: s.default_category || novo.category || "" }); setSupSug([]); setSupNovo(false); }} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">
+                            {s.name}{(s.cnpj || s.cpf) ? <span className="text-gray-400 text-xs"> · {s.cnpj || s.cpf}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {novo.tipo === "pagar" && supNovo && <div className="text-[11px] text-amber-600 mt-0.5">Fornecedor novo — será cadastrado automaticamente no cadastro de Fornecedores.</div>}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -624,9 +669,19 @@ export default function ConciliacaoBancaria() {
                         {instances.map((i) => <option key={i} value={i}>{i}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">Categoria</label>
-                      <input value={novo.category || ""} onChange={(e) => setNovo({ ...novo, category: e.target.value })} className="w-full border rounded px-3 py-1.5" placeholder="Ex.: Salários, Marketing…" />
+                    <div className="relative">
+                      <label className="block text-xs text-gray-600 mb-1">Categoria (DRE)</label>
+                      <input value={novo.category || ""} onChange={(e) => { setNovo({ ...novo, category: e.target.value, chartAccountId: "" }); buscarCategorias(e.target.value); }} className="w-full border rounded px-3 py-1.5" placeholder="Busque no plano de contas…" autoComplete="off" />
+                      {catSug.length > 0 && (
+                        <div className="absolute z-30 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">
+                          {catSug.map((c: any) => (
+                            <button key={c.id} onClick={() => { setNovo({ ...novo, category: `${c.code} ${c.name}`, chartAccountId: c.id }); setCatSug([]); }} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">
+                              <b>{c.code}</b> {c.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {novo.chartAccountId ? <div className="text-[11px] text-emerald-700 mt-0.5">Título será classificado nesta categoria da DRE.</div> : null}
                     </div>
                   </div>
                   <div>
