@@ -3397,9 +3397,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verificar se já existe meta para este vendedor neste mês/ano
       const existingGoal = await storage.getSalesGoalBySeller(data.sellerId, data.month, data.year);
       if (existingGoal && existingGoal.isActive) {
-        // Auto-update existing goal instead of rejecting
+        // Auto-update existing goal instead of rejecting (inclui Meta Desafio + Bônus)
         const updatedGoal = await storage.updateSalesGoal(existingGoal.id, {
           revenueGoal: data.revenueGoal,
+          challengeGoal: (data as any).challengeGoal ?? null,
+          challengeBonus: (data as any).challengeBonus ?? null,
         });
         return res.json(updatedGoal);
       }
