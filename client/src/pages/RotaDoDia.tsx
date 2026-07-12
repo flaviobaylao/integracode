@@ -185,10 +185,15 @@ export default function RotaDoDia() {
   }
   
   const routeId = response?.route?.id;
+  const routeCustomerIds = useMemo(() => {
+    const vs = (response?.route?.visits || []) as any[];
+    return Array.from(new Set(vs.map(v => v.customerId || v.entityId).filter(Boolean)));
+  }, [response?.route?.visits]);
   const { data: customerInfo, refetch: refetchCustomerInfo, isFetching: isFetchingCustomerInfo } = useQuery<CustomerInfoResponse>({
-    queryKey: ['/api/daily-routes', routeId, 'customer-info', selectedDate],
+    queryKey: ['/api/daily-routes', routeId, 'customer-info', selectedDate, routeCustomerIds.length],
     queryFn: async () => {
-      const res = await fetch(`/api/daily-routes/${routeId}/customer-info?date=${selectedDate}`, {
+      const idsParam = routeCustomerIds.length ? `&customerIds=${encodeURIComponent(routeCustomerIds.join(','))}` : '';
+      const res = await fetch(`/api/daily-routes/${routeId}/customer-info?date=${selectedDate}${idsParam}`, {
         credentials: 'include',
       });
       if (!res.ok) throw new Error('Failed to fetch customer info');
