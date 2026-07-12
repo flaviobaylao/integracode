@@ -130,11 +130,26 @@ export function registerFinancialRoutes(app: Express) {
   // CHART OF ACCOUNTS
   // ============================================================================
 
+  // FASE 3.4l - coluna aditiva: include_in_dre (default true). Contas com valor
+  // false ficam de fora da DRE, mas seguem classificaveis e entram no fluxo de caixa.
+  let __incDreReady = false;
+  async function ensureIncludeInDreColumn() {
+    if (__incDreReady) return;
+    try { await db.execute(sql`ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS include_in_dre boolean NOT NULL DEFAULT true`); } catch {}
+    __incDreReady = true;
+  }
+  async function incDreMap(): Promise<Map<string, boolean>> {
+    await ensureIncludeInDreColumn();
+    const q: any = await db.execute(sql`SELECT id, include_in_dre FROM chart_of_accounts`);
+    return new Map((((q as any).rows) || []).map((x: any) => [String(x.id), x.include_in_dre !== false]));
+  }
+
   app.get('/api/financial/chart-of-accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const instanceId = req.query.instanceId as string | undefined;
       const accounts = await storage.getChartOfAccounts(instanceId);
-      res.json(accounts);
+      const fmap = await incDreMap();
+      res.json(accounts.map((a: any) => ({ ...a, includeInDre: fmap.get(String(a.id)) !== false })));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -144,7 +159,10 @@ export function registerFinancialRoutes(app: Express) {
     try {
       const account = await storage.getChartOfAccount(req.params.id);
       if (!account) return res.status(404).json({ message: 'Conta não encontrada' });
-      res.json(account);
+      await ensureIncludeInDreColumn();
+      const fq: any = await db.execute(sql`SELECT include_in_dre FROM chart_of_accounts WHERE id = ${req.params.id}`);
+      const inc = ((((fq as any).rows) || [])[0]?.include_in_dre) !== false;
+      res.json({ ...account, includeInDre: inc });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -152,8 +170,11 @@ export function registerFinancialRoutes(app: Express) {
 
   app.post('/api/financial/chart-of-accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const account = await storage.createChartOfAccount(req.body);
-      res.status(201).json(account);
+      await ensureIncludeInDreColumn();
+      const { includeInDre, ...rest } = (req.body || {}) as any;
+      const account: any = await storage.createChartOfAccount(rest);
+      if (includeInDre === false) { try { await db.execute(sql`UPDATE chart_of_accounts SET include_in_dre = false WHERE id = ${account.id}`); } catch {} }
+      res.status(201).json({ ...account, includeInDre: includeInDre !== false });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -161,8 +182,13 @@ export function registerFinancialRoutes(app: Express) {
 
   app.patch('/api/financial/chart-of-accounts/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const account = await storage.updateChartOfAccount(req.params.id, req.body);
-      res.json(account);
+      await ensureIncludeInDreColumn();
+      const { includeInDre, ...rest } = (req.body || {}) as any;
+      const account: any = await storage.updateChartOfAccount(req.params.id, rest);
+      if (typeof includeInDre === 'boolean') { try { await db.execute(sql`UPDATE chart_of_accounts SET include_in_dre = ${includeInDre} WHERE id = ${req.params.id}`); } catch {} }
+      const fq: any = await db.execute(sql`SELECT include_in_dre FROM chart_of_accounts WHERE id = ${req.params.id}`);
+      const inc = ((((fq as any).rows) || [])[0]?.include_in_dre) !== false;
+      res.json({ ...account, includeInDre: inc });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1194,6 +1220,12 @@ export function registerFinancialRoutes(app: Express) {
       const payables = (await storage.getPayables({ instanceId, startDate, endDate })).filter((p: any) => String(p.status) !== 'cancelada');
       const chartAccounts = await storage.getChartOfAccounts(instanceId);
 
+      // FASE 3.4l - contas marcadas como fora da DRE (include_in_dre=false) nao geram
+      // linhas na DRE. Continuam no accountMap (para nao caírem em "sem categoria") e
+      // seguem no fluxo de caixa (regime caixa, por conta bancaria).
+      const incFmap = await incDreMap();
+      const inDre = (a: any) => incFmap.get(String(a.id)) !== false;
+
       const accountMap = new Map(chartAccounts.map(a => [a.id, a]));
 
       const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -1228,7 +1260,7 @@ export function registerFinancialRoutes(app: Express) {
       const lines: any[] = [];
 
       for (const group of dreGroups) {
-        const groupAccounts = chartAccounts.filter(a => a.dreGroup === group).sort((a, b) => a.code.localeCompare(b.code));
+        const groupAccounts = chartAccounts.filter(a => a.dreGroup === group && inDre(a)).sort((a, b) => a.code.localeCompare(b.code));
         if (groupAccounts.length === 0) continue;
 
         const isGroupHeader = groupAccounts.find(a => !a.code.includes('.'));
@@ -1258,7 +1290,7 @@ export function registerFinancialRoutes(app: Express) {
       // FASE 3.1 - Devolucoes no DRE: alimentadas pelas NF-es de devolucao emitidas
       // (nature_of_operation com DEVOLU, ex: CFOP 1.202), pela data de emissao/criacao.
       try {
-        const devAcc = chartAccounts.find(a => a.dreGroup === 'devolucoes' && a.code.includes('.'));
+        const devAcc = chartAccounts.find(a => a.dreGroup === 'devolucoes' && a.code.includes('.') && inDre(a));
         if (devAcc) {
           const instCond = instanceId ? sql`AND omie_instance_id = ${instanceId}` : sql``;
           const dq: any = await db.execute(sql`
