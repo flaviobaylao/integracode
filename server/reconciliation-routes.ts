@@ -38,6 +38,15 @@ const money = (v: any): string => {
 
 export function registerReconciliation(app: Express) {
   // ---- Filtros (contas + instâncias) --------------------------------------
+  // FASE 3.4j - coluna aditiva para linhas "espelho" (lancamento ja importado em
+  // outro extrato). Idempotente; garantida antes de qualquer leitura/escrita que a use.
+  let __mirrorColReady = false;
+  async function ensureMirrorColumn() {
+    if (__mirrorColReady) return;
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS mirror_of uuid`); } catch {}
+    __mirrorColReady = true;
+  }
+
   app.get("/api/reconciliation/filters", authenticateUser, requireRole(FIN_ROLES), async (_req, res) => {
     try {
       const r = await db.execute(sql`
@@ -56,6 +65,7 @@ export function registerReconciliation(app: Express) {
   // ---- Lista de extratos importados ---------------------------------------
   app.get("/api/reconciliation/statements", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
+      await ensureMirrorColumn();
       const instanceId = (req.query.instanceId as string) || null;
       const accountId = (req.query.accountId as string) || null;
       const r = await db.execute(sql`
@@ -63,8 +73,10 @@ export function registerReconciliation(app: Express) {
                s.total_credits, s.total_debits, s.financial_account_id,
                s.omie_instance_id, fa.name AS account_name, s.created_at,
                (SELECT count(*) FROM bank_statement_items i WHERE i.statement_id = s.id)::int AS items,
-               (SELECT count(*) FROM bank_statement_items i WHERE i.statement_id = s.id AND i.reconciliation_status = 'reconciled')::int AS reconciled,
-               (SELECT count(*) FROM bank_statement_items i WHERE i.statement_id = s.id AND i.reconciliation_status = 'ignored')::int AS ignored
+               (SELECT count(*) FROM bank_statement_items i LEFT JOIN bank_statement_items c ON c.id = i.mirror_of
+                  WHERE i.statement_id = s.id AND COALESCE(c.reconciliation_status, i.reconciliation_status) = 'reconciled')::int AS reconciled,
+               (SELECT count(*) FROM bank_statement_items i LEFT JOIN bank_statement_items c ON c.id = i.mirror_of
+                  WHERE i.statement_id = s.id AND COALESCE(c.reconciliation_status, i.reconciliation_status) = 'ignored')::int AS ignored
         FROM bank_statements s
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
         WHERE (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
@@ -222,6 +234,7 @@ export function registerReconciliation(app: Express) {
   // com as mesmas sugestões. A conciliação continua por item (manual).
   app.get("/api/reconciliation/pending-items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
+      await ensureMirrorColumn();
       const accountId = (req.query.accountId as string) || null;
       const instanceId = (req.query.instanceId as string) || null;
       const r = await db.execute(sql`
@@ -233,6 +246,7 @@ export function registerReconciliation(app: Express) {
         JOIN bank_statements s ON s.id = i.statement_id
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
         WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+          AND i.mirror_of IS NULL
           AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
           AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
         ORDER BY i.transaction_date, i.id
@@ -248,21 +262,35 @@ export function registerReconciliation(app: Express) {
   // ---- Itens de um extrato + matches + sugestões --------------------------
   app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
+      await ensureMirrorColumn();
       const id = req.params.id;
+      // Resolve linhas "espelho" (mirror_of) ao vivo pelo item canonico: status,
+      // conciliacao e origem vem do canonico. Assim o extrato mostra TODOS os
+      // lancamentos do arquivo, ja identificando o que foi conciliado/ignorado.
       const itemsR = await db.execute(sql`
         SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
-               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
-               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes
+               i.balance_after, i.origin_name, i.origin_document,
+               COALESCE(c.reconciliation_status, i.reconciliation_status) AS reconciliation_status,
+               COALESCE(c.matched_receivable_id, i.matched_receivable_id) AS matched_receivable_id,
+               COALESCE(c.matched_payable_id, i.matched_payable_id) AS matched_payable_id,
+               COALESCE(c.matched_at, i.matched_at) AS matched_at,
+               COALESCE(c.matched_by, i.matched_by) AS matched_by,
+               COALESCE(c.match_confidence, i.match_confidence) AS match_confidence,
+               i.notes,
+               (i.mirror_of IS NOT NULL) AS is_mirror,
+               cs.file_name AS mirror_from,
+               COALESCE(i.mirror_of, i.id) AS canonical_id
         FROM bank_statement_items i
+        LEFT JOIN bank_statement_items c ON c.id = i.mirror_of
+        LEFT JOIN bank_statements cs ON cs.id = c.statement_id
         WHERE i.statement_id = ${id}
         ORDER BY i.transaction_date, i.id`);
       const items = rowsOf(itemsR);
-      const ids = items.map((i: any) => i.id);
+      const canonIds = Array.from(new Set(items.map((i: any) => i.canonical_id).filter(Boolean)));
 
-      // Matches (conciliação composta) dos itens já conciliados
+      // Matches (conciliação composta) buscados pelo id canonico e mapeados p/ a linha exibida
       const matchesByItem: Record<string, any[]> = {};
-      if (ids.length) {
+      if (canonIds.length) {
         const mR = await db.execute(sql`
           SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount,
                  m.match_kind, m.title_amount_settled, m.interest, m.discount,
@@ -271,11 +299,14 @@ export function registerReconciliation(app: Express) {
           FROM bank_statement_item_matches m
           LEFT JOIN receivables r ON r.id = m.receivable_id
           LEFT JOIN payables p ON p.id = m.payable_id
-          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
-        for (const m of rowsOf(mR)) (matchesByItem[m.bank_statement_item_id] ||= []).push(m);
+          WHERE m.bank_statement_item_id IN (${inList(canonIds)})`);
+        const byCanon: Record<string, any[]> = {};
+        for (const m of rowsOf(mR)) (byCanon[m.bank_statement_item_id] ||= []).push(m);
+        for (const it of items) { const mm = byCanon[(it as any).canonical_id]; if (mm) matchesByItem[(it as any).id] = mm; }
       }
 
-      const suggestions = await buildSuggestions(items);
+      // Sugestoes apenas para itens reais pendentes (espelhos nao sao conciliaveis aqui)
+      const suggestions = await buildSuggestions(items.filter((i: any) => !i.is_mirror));
 
       res.json({ items, matchesByItem, suggestions });
     } catch (e: any) {
@@ -434,6 +465,7 @@ export function registerReconciliation(app: Express) {
         FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
         WHERE i.id = ${id}`))[0];
       if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (item.mirror_of) return res.status(409).json({ error: "lancamento espelho (ja importado em outro extrato); concilie no extrato de origem ou na aba Pendentes" });
       if (item.reconciliation_status === "reconciled") return res.status(409).json({ error: "item ja conciliado" });
       const method = (req.body?.paymentMethod || pickMethod(item.description)).toString();
       const paidAtISO = (req.body?.paidAt ? new Date(req.body.paidAt) : new Date(item.transaction_date || Date.now())).toISOString();
@@ -802,6 +834,7 @@ export function registerReconciliation(app: Express) {
       const acc = rowsOf(await db.execute(sql`SELECT id, name, omie_instance_id FROM financial_accounts WHERE id = ${accountId} LIMIT 1`))[0];
       if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
       const instanceId = acc.omie_instance_id || null;
+      await ensureMirrorColumn();
 
       const parsed = parseOfx(ofxText);
       if (!parsed.transactions.length) return res.status(400).json({ error: "nenhuma transacao (STMTTRN) encontrada no arquivo" });
@@ -810,47 +843,62 @@ export function registerReconciliation(app: Express) {
       const itCols = await tableColInfo("bank_statement_items");
       const fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
 
-      // Dedup contra itens já existentes na MESMA conta
-      let skipped = 0;
-      let toInsert = parsed.transactions;
+      // Dedup / espelho contra itens já existentes na MESMA conta.
+      // Lancamento ja importado em OUTRO extrato NAO e descartado: entra como
+      // "espelho" (mirrorOf -> id canonico), preservando a visao completa do arquivo.
+      let skipped = 0;                 // duplicata dentro do MESMO arquivo (descartada)
+      let toInsert: any[] = [];        // lancamentos novos (pending)
+      let toMirror: Array<{ t: any; canonical: string }> = []; // ja existentes (espelho)
       if (fitCol) {
         const fitsIn = Array.from(new Set(parsed.transactions.map((t) => t.fitid).filter(Boolean)));
-        const existing = new Set<string>();
+        const canonByFit: Record<string, string> = {};
         if (fitsIn.length) {
           const er = await db.execute(sql`
-            SELECT DISTINCT ${sql.raw('i."' + fitCol + '"')} AS fit
+            SELECT ${sql.raw('i."' + fitCol + '"')} AS fit, i.id, i.mirror_of
             FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
             WHERE s.financial_account_id = ${accountId} AND ${sql.raw('i."' + fitCol + '"')} IN (${inList(fitsIn)})`);
-          for (const x of rowsOf(er)) existing.add(String(x.fit));
+          for (const x of rowsOf(er)) {
+            const f = String(x.fit);
+            // prefere o item canonico (mirror_of NULL); guarda fallback se so houver espelho
+            if (!x.mirror_of) canonByFit[f] = String(x.id);
+            else if (!canonByFit[f]) canonByFit[f] = String(x.mirror_of || x.id);
+          }
         }
         const seen = new Set<string>();
-        toInsert = parsed.transactions.filter((t) => {
+        for (const t of parsed.transactions) {
           const k = t.fitid || `${t.date}|${t.amount}|${t.type}|${t.description}`;
-          if (t.fitid && existing.has(t.fitid)) { skipped++; return false; }
-          if (seen.has(k)) { skipped++; return false; }
-          seen.add(k); return true;
-        });
+          if (seen.has(k)) { skipped++; continue; }   // duplicata literal no mesmo arquivo
+          seen.add(k);
+          if (t.fitid && canonByFit[t.fitid]) toMirror.push({ t, canonical: canonByFit[t.fitid] });
+          else toInsert.push(t);
+        }
       } else {
-        // Sem coluna de FITID: dedup por (data|valor|tipo|descrição) contra o período
-        const existing = new Set<string>();
+        // Sem coluna de FITID: chave (data|valor|tipo|descrição) contra o período
+        const canonByKey: Record<string, string> = {};
         if (parsed.dtStart || parsed.dtEnd) {
           const er = await db.execute(sql`
-            SELECT i.transaction_date, i.amount, i.type, i.description
+            SELECT i.id, i.mirror_of, i.transaction_date, i.amount, i.type, i.description
             FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
             WHERE s.financial_account_id = ${accountId}
               AND (${parsed.dtStart}::date IS NULL OR i.transaction_date >= ${parsed.dtStart}::date)
               AND (${parsed.dtEnd}::date IS NULL OR i.transaction_date <= ${parsed.dtEnd}::date)`);
-          for (const x of rowsOf(er)) existing.add(`${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`);
+          for (const x of rowsOf(er)) {
+            const kk = `${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`;
+            if (!x.mirror_of) canonByKey[kk] = String(x.id);
+            else if (!canonByKey[kk]) canonByKey[kk] = String(x.mirror_of || x.id);
+          }
         }
         const seen = new Set<string>();
-        toInsert = parsed.transactions.filter((t) => {
+        for (const t of parsed.transactions) {
           const k = `${t.date}|${money(t.amount)}|${t.type}|${normDesc(t.description)}`;
-          if (existing.has(k) || seen.has(k)) { skipped++; return false; }
-          seen.add(k); return true;
-        });
+          if (seen.has(k)) { skipped++; continue; }
+          seen.add(k);
+          if (canonByKey[k]) toMirror.push({ t, canonical: canonByKey[k] });
+          else toInsert.push(t);
+        }
       }
 
-      if (!toInsert.length) return res.json({ ok: true, statementId: null, inserted: 0, skipped, message: "Todos os lançamentos já existiam (nada novo a importar)." });
+      if (!toInsert.length && !toMirror.length) return res.json({ ok: true, statementId: null, inserted: 0, skipped, espelhados: 0, message: "Nenhum lançamento no arquivo." });
 
       const totalC = toInsert.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0);
       const totalD = toInsert.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0);
@@ -864,7 +912,7 @@ export function registerReconciliation(app: Express) {
         omie_instance_id: instanceId,
         total_credits: totalC.toFixed(2),
         total_debits: totalD.toFixed(2),
-        item_count: toInsert.length,
+        item_count: toInsert.length + toMirror.length,
         reconciled_count: 0,
         bank_account: parsed.acct || null,
         created_by: by,
@@ -897,6 +945,29 @@ export function registerReconciliation(app: Express) {
         inserted++;
       }
 
+      // FASE 3.4j - linhas ESPELHO: lancamentos ja importados em outro extrato.
+      // Status/conciliacao sao resolvidos ao vivo pelo canonico (mirror_of). Nao
+      // disparam baixa nem entram na visao consolidada de pendentes.
+      let espelhados = 0;
+      for (const { t, canonical } of toMirror) {
+        const vm: Record<string, any> = {
+          statement_id: stmtId,
+          transaction_date: t.date,
+          amount: t.amount.toFixed(2),
+          type: t.type,
+          description: t.description,
+          document: t.document,
+          origin_name: t.name || null,
+          reconciliation_status: "mirror",
+          mirror_of: canonical,
+          notes: "Espelho: lançamento já importado em outro extrato (mesma conta)",
+          created_by: by,
+        };
+        if (fitCol) vm[fitCol] = t.fitid || null;
+        await insertDynamic("bank_statement_items", itCols, vm);
+        espelhados++;
+      }
+
       // FASE 3.4d - varredura pos-importacao: ignora tambem pendentes ANTIGOS com
       // descricao COBRANCA (credito) ou SALDO DO DIA / SALDO ANTERIOR.
       let varreduraIgnorados = 0;
@@ -915,7 +986,7 @@ export function registerReconciliation(app: Express) {
       let tarifas: any = { candidatos: 0, conciliados: 0, erros: [] };
       try { tarifas = await conciliarTarifasBB(by, false); } catch {}
 
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, varreduraIgnorados, tarifas, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, autoIgnorados, varreduraIgnorados, tarifas, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -1019,12 +1090,13 @@ export function registerReconciliation(app: Express) {
     try {
       const dryRun = req.body?.dryRun !== false;
       const by = (req.body?.by || "conciliacao-2.0").toString();
+      await ensureMirrorColumn();
       const rows = rowsOf(await db.execute(sql`
         SELECT i.id, i.statement_id, i.transaction_date::date::text AS d, round(i.amount::numeric, 2)::text AS v, i.type,
                regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
                COALESCE(i.document, '') AS doc, s.financial_account_id AS acc, s.created_at AS s_created
         FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
-        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')`));
+        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending') AND i.mirror_of IS NULL`));
       const groups: Record<string, any[]> = {};
       for (const r of rows) {
         const k = [r.acc || '', r.d, r.v, r.type, r.nd, r.doc].join('|');
