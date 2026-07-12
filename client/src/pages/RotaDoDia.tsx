@@ -2464,6 +2464,7 @@ export default function RotaDoDia() {
           customerName={virtualServiceCustomer.name}
           entityType="customer"
           defaultServiceType="venda"
+          serviceDate={selectedDate || getBrazilDateISO()}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate] });
           }}
