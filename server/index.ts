@@ -3800,6 +3800,26 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
+  // Digital Asset Links — verifica o APK (TWA "br.com.bebahonest.integra") p/
+  // abrir em TELA CHEIA, sem a barra de URL do Chrome. Servido por rota
+  // EXPLÍCITA porque o express.static ignora dotfolders (.well-known) por padrão
+  // — sem isto o arquivo cairia no fallback do SPA (index.html) e a verificação
+  // do TWA falharia. O fingerprint é o SHA-256 do keystore de release do app.
+  app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
+    res.type('application/json').send(JSON.stringify([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: {
+          namespace: 'android_app',
+          package_name: 'br.com.bebahonest.integra',
+          sha256_cert_fingerprints: [
+            'B8:E7:9B:96:F2:67:77:EA:55:8D:71:44:62:EA:A6:6F:DF:2C:BE:B1:E0:F1:9F:9B:04:93:0E:17:F9:84:AF:CC'
+          ]
+        }
+      }
+    ]));
+  });
+
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
