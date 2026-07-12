@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -215,6 +215,54 @@ export default function RotaDoDia() {
   });
   const virtualServiceCount = virtualServiceData?.count || 0;
   const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
+
+  // "Atendimento em andamento" (WhatsApp aberto) — marcação local por dia (localStorage).
+  // Some automaticamente quando o cliente vira atendido (Registrar Atendimento) ou tem pedido do dia (Registrar Pedido).
+  const emAndamentoKey = `honest_atend_andamento_${selectedDate || getBrazilDateISO()}`;
+  const [emAndamentoIds, setEmAndamentoIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(emAndamentoKey);
+      setEmAndamentoIds(new Set(raw ? JSON.parse(raw) : []));
+    } catch { setEmAndamentoIds(new Set()); }
+  }, [emAndamentoKey]);
+  const markEmAndamento = (customerId: string) => {
+    setEmAndamentoIds(prev => {
+      if (prev.has(customerId)) return prev;
+      const next = new Set(prev); next.add(customerId);
+      try { localStorage.setItem(emAndamentoKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+  const openWhatsappCentral = async (customerId?: string, phoneHint?: string) => {
+    let phone = phoneHint;
+    if (!phone && customerId) {
+      try {
+        const c = await fetch(`/api/customers/${customerId}`, { credentials: 'include' }).then(r => r.json());
+        phone = c?.phone || c?.customerPhone;
+      } catch {}
+    }
+    const digits = String(phone || '').replace(/\D/g, '');
+    window.open(digits ? `/telemarketing/atendimento?phone=${digits}` : `/telemarketing/atendimento`, 'honest-central-atendimento');
+    if (customerId) markEmAndamento(customerId);
+    if (!digits) {
+      toast({ title: 'Cliente sem telefone cadastrado', description: 'Abri a Central de Atendimento; localize o cliente pela busca.' });
+    }
+  };
+  // Finaliza o "em andamento" quando o cliente foi atendido ou tem pedido do dia.
+  useEffect(() => {
+    setEmAndamentoIds(prev => {
+      if (prev.size === 0) return prev;
+      const orders = customerInfo?.orders || {};
+      let changed = false; const next = new Set(prev);
+      prev.forEach(id => {
+        if (attendedCustomerIds.has(id) || (orders[id] && orders[id].length > 0)) { next.delete(id); changed = true; }
+      });
+      if (!changed) return prev;
+      try { localStorage.setItem(emAndamentoKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, [attendedCustomerIds, customerInfo, emAndamentoKey]);
 
   // Clientes com visita no dia SEM coordenada (ficam fora da rota otimizada)
   interface MissingCoordsData { count: number; customers: { id: string; name: string; city: string | null }[] }
@@ -1629,12 +1677,16 @@ export default function RotaDoDia() {
                       <div className="space-y-2">
                         {virtualVisits.map((visit, index) => {
                           const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
+                          const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
+                          const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
                           return (
                           <div
                             key={visit.id || visit.customerId}
                             className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${
-                              isAttended 
-                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950' 
+                              isAttended
+                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                                : isEmAndamento
+                                ? 'border-yellow-400 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-950'
                                 : 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-950'
                             }`}
                             data-testid={`virtual-visit-${visit.customerId}`}
@@ -1650,7 +1702,7 @@ export default function RotaDoDia() {
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1">
-                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isAttended ? 'bg-green-500' : 'bg-blue-500'}`}>
+                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isAttended ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
                                   {index + 1}
                                 </div>
                                 <div className="flex-1">
@@ -1682,6 +1734,16 @@ export default function RotaDoDia() {
                                         R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                       </Badge>
                                     )}
+                                    {isEmAndamento && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-yellow-500 text-yellow-700 bg-yellow-100 dark:text-yellow-300 dark:bg-yellow-900"
+                                        data-testid={`virtual-inprogress-badge-${visit.customerId}`}
+                                      >
+                                        <Clock className="h-3 w-3 mr-1" />
+                                        Atendimento em andamento
+                                      </Badge>
+                                    )}
                                   </div>
                                   {(visit as any).phone && (
                                     <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
@@ -1697,6 +1759,22 @@ export default function RotaDoDia() {
                               </div>
                               {/* Botões de ação para visitas virtuais */}
                               <div className="flex items-center gap-1 flex-shrink-0">
+                                {/* Botão WhatsApp → Central de Atendimento (apenas Admin e Telemarketing ativo) */}
+                                {visit.customerId && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openWhatsappCentral(visit.customerId!, (visit as any).phone);
+                                    }}
+                                    title="Abrir WhatsApp na Central de Atendimento"
+                                    data-testid={`button-whatsapp-virtual-${visit.customerId}`}
+                                  >
+                                    <MessageCircle className="h-4 w-4" />
+                                  </Button>
+                                )}
                                 {/* Botão de Registro de Atendimento Virtual */}
                                 {visit.customerId && (
                                   <Button
