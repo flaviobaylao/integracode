@@ -823,9 +823,11 @@ export function registerReconciliation(app: Express) {
       let inserted = 0;
       let autoIgnorados = 0;
       for (const t of toInsert) {
-        // FASE 3.4c - credito "COBRANCA" = repasse da baixa de boletos (ja tratados
-        // pelo webhook); entra como ignorado para nao poluir os pendentes.
-        const ehCobranca = t.type === "C" && ["cobranca", "cobrana", "cobranaa"].includes(normDesc(t.description));
+        // FASE 3.4c/d - credito "COBRANCA" (repasse da baixa de boletos, ja tratados
+        // pelo webhook) e marcadores "SALDO DO DIA"/"SALDO ANTERIOR" entram ignorados.
+        const ndT = normDesc(t.description);
+        const ehSaldo = ["saldododia", "saldoanterior"].includes(ndT);
+        const ehCobranca = (t.type === "C" && ["cobranca", "cobrana", "cobranaa"].includes(ndT)) || ehSaldo;
         const vm: Record<string, any> = {
           statement_id: stmtId,
           transaction_date: t.date,
@@ -837,13 +839,27 @@ export function registerReconciliation(app: Express) {
           reconciliation_status: ehCobranca ? "ignored" : "pending",
           created_by: by,
         };
-        if (ehCobranca) { vm.notes = "Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)"; vm.matched_by = by; vm.matched_at = new Date().toISOString(); autoIgnorados++; }
+        if (ehCobranca) { vm.notes = ehSaldo ? "Ignorado automaticamente: marcador de saldo do extrato" : "Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)"; vm.matched_by = by; vm.matched_at = new Date().toISOString(); autoIgnorados++; }
         if (fitCol) vm[fitCol] = t.fitid || null;
         await insertDynamic("bank_statement_items", itCols, vm);
         inserted++;
       }
 
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // FASE 3.4d - varredura pos-importacao: ignora tambem pendentes ANTIGOS com
+      // descricao COBRANCA (credito) ou SALDO DO DIA / SALDO ANTERIOR.
+      let varreduraIgnorados = 0;
+      try {
+        const uv: any = await db.execute(sql`
+          UPDATE bank_statement_items
+          SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
+              notes = 'Ignorado automaticamente na importacao (COBRANCA / SALDO DO DIA / SALDO ANTERIOR)'
+          WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending')
+            AND ((type = 'C' AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa'))
+                 OR regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('saldododia', 'saldoanterior'))`);
+        varreduraIgnorados = Number((uv as any)?.rowCount ?? 0);
+      } catch {}
+
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, varreduraIgnorados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -856,17 +872,19 @@ export function registerReconciliation(app: Express) {
       const by = (req.body?.by || "conciliacao-2.0").toString();
       const c = rowsOf(await db.execute(sql`
         SELECT count(*)::int AS n FROM bank_statement_items
-        WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending') AND type = 'C'
-          AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa')`))[0];
+        WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending')
+          AND ((type = 'C' AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa'))
+               OR regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('saldododia', 'saldoanterior'))`))[0];
       const candidatos = Number(c?.n || 0);
       let atualizados = 0;
       if (!dryRun && candidatos > 0) {
         const u: any = await db.execute(sql`
           UPDATE bank_statement_items
           SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
-              notes = 'Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)'
-          WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending') AND type = 'C'
-            AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa')`);
+              notes = 'Ignorado automaticamente (COBRANCA / SALDO DO DIA / SALDO ANTERIOR)'
+          WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending')
+            AND ((type = 'C' AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa'))
+                 OR regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('saldododia', 'saldoanterior'))`);
         atualizados = Number((u as any)?.rowCount ?? 0);
       }
       res.json({ dryRun, candidatos, atualizados });
