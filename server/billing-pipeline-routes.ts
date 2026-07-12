@@ -382,6 +382,27 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // FASE 2 - Classificacao DRE: aplica a conta de Receita Bruta (filha) nas contas a
+  // receber de VENDA do pipeline ainda sem classificacao. dryRun=true (padrao) so conta.
+  app.post('/api/admin/pipeline/classify-dre', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const accId = await resolveRevenueChartAccountId();
+      if (!accId) return res.status(422).json({ error: 'nenhuma conta-filha de receita_bruta (code com ponto) ativa no plano de contas' });
+      const cq: any = await db.execute(sql`
+        SELECT count(*)::int AS n FROM receivables r
+        WHERE r.chart_account_id IS NULL AND r.deleted_at IS NULL
+          AND r.status <> 'cancelada' AND r.billing_pipeline_id IS NOT NULL`);
+      const n = (cq as any).rows?.[0]?.n ?? 0;
+      if (dryRun) return res.json({ ok: true, dryRun: true, chartAccountId: accId, candidatos: n });
+      const u: any = await db.execute(sql`
+        UPDATE receivables SET chart_account_id = ${accId}, updated_at = now(), updated_by = ${req.currentUser?.email || 'classify-dre'}
+        WHERE chart_account_id IS NULL AND deleted_at IS NULL
+          AND status <> 'cancelada' AND billing_pipeline_id IS NOT NULL`);
+      res.json({ ok: true, dryRun: false, chartAccountId: accId, atualizados: ((u as any)?.rowCount ?? 0) as number });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Corrige a DATA DE CRIACAO dos itens ja reconciliados: usar a data de registro do pedido (sales_card.created_at)
   app.post('/api/admin/pipeline/fix-registration-dates', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
@@ -1346,6 +1367,20 @@ export async function generatePixForReceivable(receivable: any, item: any): Prom
   }
 }
 
+// FASE 2 - Classificacao DRE automatica: vendas do pipeline entram na conta-filha de
+// Receita Bruta (dre_group='receita_bruta', code com ponto, ex: 1.1). Cache de 60s.
+let __revAccCache: { id: string | null; at: number } = { id: null, at: 0 };
+export async function resolveRevenueChartAccountId(): Promise<string | null> {
+  const now = Date.now();
+  if (now - __revAccCache.at < 60000 && __revAccCache.id) return __revAccCache.id;
+  try {
+    const q: any = await db.execute(sql`SELECT id FROM chart_of_accounts WHERE dre_group = 'receita_bruta' AND code LIKE '%.%' AND is_active = true ORDER BY code LIMIT 1`);
+    const id = (q as any).rows?.[0]?.id || null;
+    __revAccCache = { id, at: now };
+    return id;
+  } catch { return __revAccCache.id; }
+}
+
 export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   // FASE 2 - Somente VENDA gera conta a receber. Amostra, troca, bonificacao,
   // transferencia, remessa e devolucao nao geram titulo nem cobranca (boleto/PIX).
@@ -1385,6 +1420,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     amount: totalValue.toFixed(2),
     amountPaid: '0',
     status: 'a_vencer',
+    chartAccountId: await resolveRevenueChartAccountId(),
     paymentMethod: paymentMethod as any,
     fiscalInvoiceId: fiscalInvoiceId,
     billingPipelineId: item.id,
