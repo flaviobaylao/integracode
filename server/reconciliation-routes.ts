@@ -43,7 +43,10 @@ export function registerReconciliation(app: Express) {
   let __mirrorColReady = false;
   async function ensureMirrorColumn() {
     if (__mirrorColReady) return;
-    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS mirror_of uuid`); } catch {}
+    // mirror_of deve ter o MESMO tipo de bank_statement_items.id (character varying),
+    // senao os JOIN/COALESCE (c.id = i.mirror_of) quebram com "varchar = uuid".
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS mirror_of text`); } catch {}
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ALTER COLUMN mirror_of TYPE text USING mirror_of::text`); } catch {}
     __mirrorColReady = true;
   }
 
