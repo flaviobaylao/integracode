@@ -210,9 +210,10 @@ export default function RotaDoDia() {
     noSaleCustomerIds: string[];
   }
   const { data: virtualServiceData } = useQuery<VirtualServiceData>({
-    queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate],
+    queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate, routeCustomerIds.length],
     queryFn: async () => {
-      const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}`, {
+      const idsParam = routeCustomerIds.length ? `&customerIds=${encodeURIComponent(routeCustomerIds.join(','))}` : '';
+      const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}${idsParam}`, {
         credentials: 'include',
       });
       if (!res.ok) return { count: 0, attendedCustomerIds: [], noSaleCustomerIds: [] };
