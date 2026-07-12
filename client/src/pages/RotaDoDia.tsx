@@ -180,6 +180,8 @@ export default function RotaDoDia() {
   interface CustomerInfoResponse {
     orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
     debts: Record<string, number>;
+    periodicity?: Record<string, string>;
+    lastOrders?: Record<string, string>;
   }
   
   const routeId = response?.route?.id;
@@ -1787,6 +1789,13 @@ export default function RotaDoDia() {
                                   {visit.customerAddress && (
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                       📍 {visit.customerAddress}
+                                    </p>
+                                  )}
+                                  {visit.customerId && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                      🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
+                                      {' • '}
+                                      🧾 Último pedido: {customerInfo?.lastOrders?.[visit.customerId] ? new Date(customerInfo.lastOrders[visit.customerId]).toLocaleDateString('pt-BR') : 'Sem registro'}
                                     </p>
                                   )}
                                 </div>
