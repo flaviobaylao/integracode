@@ -2798,10 +2798,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
       `);
       
-      const count = parseInt(result.rows[0]?.count || '0');
-      const attendedCustomerIds = result.rows[0]?.attended_customer_ids || [];
-      const noSaleCustomerIds = result.rows[0]?.no_sale_customer_ids || [];
-      res.json({ count, attendedCustomerIds: attendedCustomerIds.filter(Boolean), noSaleCustomerIds: (noSaleCustomerIds || []).filter(Boolean) });
+      let count = parseInt(result.rows[0]?.count || '0');
+      const attendedSet = new Set<string>((result.rows[0]?.attended_customer_ids || []).filter(Boolean));
+      const noSaleSet = new Set<string>((result.rows[0]?.no_sale_customer_ids || []).filter(Boolean));
+
+      // "Não Venda" registrado pelo fluxo do card de venda (sales_cards.status='no_sale')
+      // também conta como REGISTRO DE ATENDIMENTO virtual (segue as mesmas regras).
+      try {
+        const noSaleCards = await db.execute(sql`
+          SELECT DISTINCT sc.customer_id
+          FROM sales_cards sc
+          INNER JOIN customers c ON sc.customer_id = c.id
+          WHERE c.seller_id = ${sellerId}
+            AND sc.status = 'no_sale'
+            AND (
+              DATE(sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+              OR DATE(sc.scheduled_date) = ${date}::date
+              OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+            )
+        `);
+        (noSaleCards.rows as any[]).forEach(row => {
+          if (row.customer_id) {
+            const cid = String(row.customer_id);
+            if (!attendedSet.has(cid)) count += 1; // conta como atendimento se ainda não contado
+            attendedSet.add(cid);
+            noSaleSet.add(cid);
+          }
+        });
+      } catch (e) {
+        console.warn('[SERVICE-LOGS-COUNT] falha ao incluir não-venda (sales_cards):', (e as any)?.message);
+      }
+
+      res.json({ count, attendedCustomerIds: Array.from(attendedSet), noSaleCustomerIds: Array.from(noSaleSet) });
+
     } catch (error) {
       console.error("Error counting service logs:", error);
       res.status(500).json({ message: "Falha ao contar atendimentos" });
