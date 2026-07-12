@@ -5,6 +5,41 @@ import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
+
+// FASE 2 - Flags para badges nas listas (DRE / Fluxo / Conciliada + origem da baixa).
+// Consultas agregadas unicas (sem N+1): ids conciliados via extrato bancario e ids
+// com baixa automatica do BB (webhook de boleto/PIX ou varredura de consulta).
+async function badgeFlagsFor(kind: 'receivable' | 'payable'): Promise<{ ofx: Set<string>; autoBB: Set<string> }> {
+  const ofx = new Set<string>(); const autoBB = new Set<string>();
+  const col = kind === 'receivable' ? 'receivable_id' : 'payable_id';
+  try {
+    const m: any = await db.execute(sql.raw(`SELECT DISTINCT ${col} AS id FROM bank_statement_item_matches WHERE ${col} IS NOT NULL`));
+    for (const r of (m.rows || [])) ofx.add(String(r.id));
+  } catch {}
+  if (kind === 'receivable') {
+    try {
+      const w: any = await db.execute(sql.raw(`SELECT DISTINCT receivable_id AS id FROM receivable_payments WHERE notes ILIKE 'Baixa automatica boleto BB%' OR notes ILIKE 'Pagamento PIX BB autom%'`));
+      for (const r of (w.rows || [])) autoBB.add(String(r.id));
+    } catch {}
+  }
+  return { ofx, autoBB };
+}
+
+function attachBadges(items: any[], flags: { ofx: Set<string>; autoBB: Set<string> }, paidStatus: string) {
+  for (const it of items) {
+    const amt = parseFloat(it.amount || '0');
+    const paid = parseFloat(it.amountPaid || '0');
+    const quitada = String(it.status) === paidStatus || (amt > 0 && paid >= amt - 0.005);
+    it.badges = {
+      dre: !!it.chartAccountId,
+      fluxo: !!it.financialAccountId,
+      conciliada: quitada,
+      origem: quitada ? (flags.autoBB.has(String(it.id)) ? 'webhook' : (flags.ofx.has(String(it.id)) ? 'extrato' : 'manual')) : null,
+    };
+  }
+}
 
 function isFinancialAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -468,6 +503,7 @@ export function registerFinancialRoutes(app: Express) {
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
       const receivables = await storage.getReceivables(filters);
+      try { attachBadges(receivables as any[], await badgeFlagsFor('receivable'), 'recebida'); } catch {}
       res.json(receivables);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -594,6 +630,7 @@ export function registerFinancialRoutes(app: Express) {
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
       const payables = await storage.getPayables(filters);
+      try { attachBadges(payables as any[], await badgeFlagsFor('payable'), 'paga'); } catch {}
       res.json(payables);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
