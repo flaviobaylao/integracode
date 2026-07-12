@@ -652,7 +652,21 @@ export function registerReconciliation(app: Express) {
       let name = (b.name || item.description || "Sem nome").toString().slice(0, 120);
       let doc = (b.document || "").toString();
       const category = b.category ? String(b.category) : null;
-      const chartAccountId = b.chartAccountId ? String(b.chartAccountId) : null;
+      let chartAccountId = b.chartAccountId ? String(b.chartAccountId) : null;
+      // FASE 3.4m - se veio so o TEXTO da categoria (pre-marcada) e sem id, resolve o
+      // chartAccountId casando com o plano de contas (code+name / name / code).
+      if (!chartAccountId && category) {
+        const cat = String(category).trim();
+        const codeTok = cat.split(/\s+/)[0];
+        try {
+          const q = rowsOf(await db.execute(sql`
+            SELECT id FROM chart_of_accounts
+            WHERE is_active = true AND code LIKE '%.%'
+              AND (lower(code || ' ' || name) = lower(${cat}) OR lower(name) = lower(${cat}) OR code = ${codeTok})
+            ORDER BY code LIMIT 1`));
+          if (q[0]?.id) chartAccountId = String(q[0].id);
+        } catch {}
+      }
       // FASE 3.4e - categoria DRE obrigatoria: nenhuma conta e criada sem categoria.
       if (!chartAccountId) return res.status(400).json({ error: "Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria." });
       // FASE 3.4c - fornecedor vem do cadastro: procura por documento/nome e
