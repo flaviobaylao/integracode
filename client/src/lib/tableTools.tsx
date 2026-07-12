@@ -32,7 +32,7 @@ export function useActiveSellers() {
   return useMemo(() => {
     const nameOf = (u: any) => (`${u.firstName || ""} ${u.lastName || ""}`.trim()) || u.email || String(u.id);
     const externos = users.filter((u: any) => u.role === "vendedor" && u.isActive);
-    const internos = users.filter((u: any) => u.role === "telemarketing" && u.isActive && u.omieVendorCode);
+    const internos = users.filter((u: any) => u.role === "telemarketing" && u.isActive);
     const keyToName = new Map<string, string>();
     const activeNames = new Set<string>();
     const externosNames: string[] = [];
