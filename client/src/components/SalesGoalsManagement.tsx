@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFoo
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Plus, Pencil, Trash2, DollarSign, Users, TrendingUp, Calendar } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, DollarSign, Users, TrendingUp, Calendar, Trophy } from "lucide-react";
 import SalesGoalsDashboard from './SalesGoalsDashboard';
 import type { SalesGoal, User } from "@shared/schema";
 
@@ -92,6 +92,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   const [editingGoal, setEditingGoal] = useState<SalesGoal | null>(null);
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
   const [revenueGoalValue, setRevenueGoalValue] = useState('');
+  const [challengeGoalValue, setChallengeGoalValue] = useState('');
+  const [challengeBonusValue, setChallengeBonusValue] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i);
@@ -218,6 +220,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
       month: selectedMonth,
       year: selectedYear,
       revenueGoal: parseFloat(revenueGoalValue),
+      challengeGoal: challengeGoalValue ? parseFloat(challengeGoalValue) : null,
+      challengeBonus: challengeBonusValue ? parseFloat(challengeBonusValue) : null,
     });
   };
 
@@ -225,6 +229,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     setEditingGoal(null);
     setSelectedSellerId('');
     setRevenueGoalValue('');
+    setChallengeGoalValue('');
+    setChallengeBonusValue('');
     setIsDialogOpen(true);
   };
 
@@ -232,6 +238,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     setEditingGoal(goal);
     setSelectedSellerId(goal.sellerId);
     setRevenueGoalValue(goal.revenueGoal?.toString() || '');
+    setChallengeGoalValue((goal as any).challengeGoal?.toString() || '');
+    setChallengeBonusValue((goal as any).challengeBonus?.toString() || '');
     setIsDialogOpen(true);
   };
 
@@ -348,6 +356,21 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {goalValue > 0 ? formatCurrency(goalValue) : '—'}
+                          {(() => {
+                            const challenge = parseFloat((goal as any).challengeGoal?.toString() || '0');
+                            if (challenge <= 0) return null;
+                            const bonus = parseFloat((goal as any).challengeBonus?.toString() || '0');
+                            const pct = challenge > 0 ? (actual / challenge) * 100 : 0;
+                            const hit = actual >= challenge;
+                            return (
+                              <div className={`text-[10px] mt-0.5 flex items-center justify-end gap-1 ${hit ? 'text-green-600 font-semibold' : 'text-amber-600'}`} title="Meta Desafio">
+                                <Trophy className="h-3 w-3" />
+                                <span>{formatCurrency(challenge)}</span>
+                                <span>· {pct.toFixed(0)}%</span>
+                                {bonus > 0 && <span>· bônus {formatCurrency(bonus)}</span>}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           <div>
@@ -609,6 +632,42 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                 onChange={(e) => setRevenueGoalValue(e.target.value)}
                 required
               />
+            </div>
+            {/* Meta Desafio (opcional) — igual ao Integra 1.0 */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-900/10 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-semibold">Meta Desafio (opcional)</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Defina um faturamento alvo (maior que a meta) para o vendedor ganhar um bônus extra ao bater.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="challengeGoal">Meta Desafio (R$)</Label>
+                  <Input
+                    id="challengeGoal"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="60000.00"
+                    value={challengeGoalValue}
+                    onChange={(e) => setChallengeGoalValue(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="challengeBonus">Bônus (R$)</Label>
+                  <Input
+                    id="challengeBonus"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="500.00"
+                    value={challengeBonusValue}
+                    onChange={(e) => setChallengeBonusValue(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancelar</Button>
