@@ -20901,18 +20901,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Data do último pedido FATURADO (todo o histórico do pipeline) por cliente.
       // "Faturado" = item do pipeline com nota fiscal atribuída (invoice_number), cobre faturado→entregue.
-      const lastOrdersMap: Record<string, string> = {};
+      // Agora retorna { date, value } do ÚLTIMO faturamento (não só a data).
+      const lastOrdersMap: Record<string, { date: string; value: number }> = {};
       try {
         const lastOrdersResult = await db.execute(sql`
           SELECT customer_id,
                  REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') as ndoc,
-                 MAX(created_at) as last_order
+                 created_at, sale_value
           FROM billing_pipeline
           WHERE invoice_number IS NOT NULL AND invoice_number <> ''
             AND (customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
                  OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documentsForLookup.join(',')}, ',')))
-          GROUP BY customer_id, REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g')
         `);
+        const loByCid: Record<string, { t: number; value: number }> = {};
+        const loByDoc: Record<string, { t: number; value: number }> = {};
+        (lastOrdersResult.rows as any[]).forEach(row => {
+          if (!row.created_at) return;
+          const t = new Date(row.created_at).getTime();
+          const value = row.sale_value != null ? parseFloat(String(row.sale_value)) : 0;
+          if (row.customer_id && (!loByCid[row.customer_id] || t > loByCid[row.customer_id].t)) loByCid[row.customer_id] = { t, value };
+          if (row.ndoc && (!loByDoc[row.ndoc] || t > loByDoc[row.ndoc].t)) loByDoc[row.ndoc] = { t, value };
+        });
+        customerIds.forEach(cid => {
+          const a = loByCid[cid];
+          const b = loByDoc[customerDocuments[cid]];
+          let best: { t: number; value: number } | null = null;
+          if (a && (!best || a.t > best.t)) best = a;
+          if (b && (!best || b.t > best.t)) best = b;
+          if (best) lastOrdersMap[cid] = { date: new Date(best.t).toISOString(), value: best.value };
+        });
+      } catch (e) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar último faturamento:', (e as any)?.message);
+      }
         const loByCid: Record<string, number> = {};
         const loByDoc: Record<string, number> = {};
         (lastOrdersResult.rows as any[]).forEach(row => {
