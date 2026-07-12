@@ -392,6 +392,21 @@ function isThreeAdmins(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
+  // Corrige o NUMERO DO TITULO das contas a receber que ficaram com "TIT-<pedido>"
+  // (prefixo do salesCardId) em vez do numero da NF-e. Usa a NF-e vinculada
+  // (fiscal_invoice_id). Idempotente: so mexe em titulos 'TIT-%' cuja NF-e tem numero.
+  // Padrao: executa. Enviar {"dryRun":true} para apenas contar os elegiveis.
+  app.post('/api/admin/pipeline/backfill-receivable-nf-titles', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const countQ: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM receivables r JOIN fiscal_invoices fi ON fi.id = r.fiscal_invoice_id WHERE r.title_number LIKE 'TIT-%' AND fi.invoice_number IS NOT NULL`);
+      const eligible = (countQ?.rows?.[0]?.n ?? 0) as number;
+      if (dryRun) return res.json({ ok: true, dryRun: true, eligible });
+      const upd: any = await db.execute(sql`UPDATE receivables r SET title_number = 'NF-' || fi.invoice_number, updated_at = now() FROM fiscal_invoices fi WHERE fi.id = r.fiscal_invoice_id AND r.title_number LIKE 'TIT-%' AND fi.invoice_number IS NOT NULL`);
+      res.json({ ok: true, eligible, updated: upd?.rowCount ?? upd?.rowsAffected ?? null });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
   // BLOQUEIO MANUAL de um pedido do pipeline (somente os 3 admins). Move o item para
   // blocked_orders (motivo 'manual') e o remove do funil. So sai de la por liberacao manual.
   app.post('/api/billing-pipeline/:id/block', authenticateUser, isThreeAdmins, async (req: any, res) => {
@@ -1511,8 +1526,20 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix' };
   const paymentMethod: string | null = methodMap[effForma] || 'outros';
 
+  // O numero do TITULO deve ser o numero da NF-e (nao o id do pedido). Busca o
+  // numero real na NF-e vinculada (fiscalInvoiceId); so cai para NF do item ou
+  // TIT-<pedido> quando nao ha NF-e emitida.
+  let titleNumber: string;
+  let nfNum: any = null;
+  if (fiscalInvoiceId) {
+    try { const nf = await storage.getFiscalInvoice(fiscalInvoiceId); if (nf && nf.invoiceNumber != null) nfNum = nf.invoiceNumber; } catch {}
+  }
+  if (nfNum != null) titleNumber = `NF-${nfNum}`;
+  else if (item.invoiceNumber) titleNumber = String(item.invoiceNumber);
+  else titleNumber = `TIT-${item.salesCardId?.substring(0, 8)}`;
+
   const receivable = await storage.createReceivable({
-    titleNumber: item.invoiceNumber || `TIT-${item.salesCardId?.substring(0, 8)}`,
+    titleNumber: titleNumber,
     customerId: item.customerId || null,
     customerName: item.customerName || 'Cliente',
     customerDocument: item.customerDocument || null,
