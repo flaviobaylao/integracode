@@ -225,9 +225,9 @@ export default function CustomerManagement() {
       }
     }
     
-    const matchesStatus = statusFilter === 'all' || 
-                         (statusFilter === 'active' && customer.omieStatus === 'ativo') ||
-                         (statusFilter === 'inactive' && customer.omieStatus === 'inativo');
+    const matchesStatus = statusFilter === 'all' ||
+                         (statusFilter === 'active' && customer.isActive !== false) ||
+                         (statusFilter === 'inactive' && customer.isActive === false);
     const matchesSeller = sellerFilter === 'all' || customer.sellerId === sellerFilter;
     
     // Filtro por data da rota (verifica se a data está nos dias da semana selecionados)
@@ -624,18 +624,10 @@ export default function CustomerManagement() {
                           <Badge className="bg-red-100 text-red-800" data-testid={`badge-inativo-${customer.id}`}>
                             Inativo
                           </Badge>
-                        ) : (customer as any).situacao ? (
-                          <Badge
-                            className={
-                              (customer as any).situacao === 'ativo'
-                                ? "bg-green-100 text-green-800"
-                                : "bg-red-100 text-red-800"
-                            }
-                          >
-                            {(customer as any).situacao}
-                          </Badge>
                         ) : (
-                          <Badge className="bg-green-100 text-green-800">Ativo</Badge>
+                          <Badge className="bg-green-100 text-green-800" data-testid={`badge-ativo-${customer.id}`}>
+                            Ativo
+                          </Badge>
                         )}
                       </td>
                       <td className="px-6 py-4">
