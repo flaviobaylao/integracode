@@ -13,6 +13,8 @@ import { runRadarScan } from './purchase-routes';
 import { runPositivacaoAlertaCron } from './positivacao-alert';
 import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
 import { sweepOpenBoletos } from './bb-boleto-service';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
 
 console.log('Inicializando agendador de tarefas...');
 
@@ -81,6 +83,41 @@ cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timez
 cron.schedule('35 7-20 * * 1-5', async () => {
   try { await sweepOpenBoletos(300, 120); }
   catch (e: any) { console.error('[BB-BOLETO] sweep erro:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// FASE 3.2 - Alerta por WhatsApp se a varredura de boletos falhar ou parar (checa 15min
+// apos cada varredura; anti-spam de 3h; numeros em system_settings 'debitos_fixos').
+cron.schedule('50 7-20 * * 1-5', async () => {
+  try {
+    const q: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'boleto_check_open_last' LIMIT 1`);
+    const raw = (q as any).rows?.[0]?.value || null;
+    let problema: string | null = null;
+    if (!raw) problema = 'a varredura de boletos nunca rodou';
+    else {
+      try {
+        const j = JSON.parse(String(raw));
+        const at = j.at ? new Date(j.at).getTime() : 0;
+        const ageMin = (Date.now() - at) / 60000;
+        if (ageMin > 90) problema = `ultima varredura ha ${Math.round(ageMin)} min (esperado: a cada 60)`;
+        else if (Array.isArray(j.errors) && j.errors.length > 0) problema = `varredura com ${j.errors.length} erro(s): ${JSON.stringify(j.errors).slice(0, 180)}`;
+      } catch { problema = 'registro da varredura ilegivel'; }
+    }
+    if (!problema) return;
+    const lastQ: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'boleto_sweep_alerta_last' LIMIT 1`);
+    const lastRaw = String((lastQ as any).rows?.[0]?.value || '');
+    const lastAt = lastRaw ? new Date(lastRaw.slice(0, 24)).getTime() : 0;
+    if (lastAt && Date.now() - lastAt < 3 * 60 * 60 * 1000) return;
+    const fq: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'debitos_fixos' LIMIT 1`);
+    const fixos = String((fq as any).rows?.[0]?.value || '5562995782812').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const msg = `⚠️ INTEGRA 2.0 - ALERTA FINANCEIRO\nA baixa automatica de boletos pode estar com problema.\nDetalhe: ${problema}\nAs baixas por webhook continuam; verifique os logs do Railway.`;
+    let enviados = 0;
+    for (const numero of fixos) {
+      try { const r = await whatsappService.sendMessage(numero, msg); if (r.success) enviados++; } catch {}
+    }
+    const reg = new Date().toISOString() + ' problema=' + problema.slice(0, 120) + ' enviados=' + enviados;
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_sweep_alerta_last', ${reg}, 'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+    console.log(`⚠️ [BB-BOLETO] alerta de varredura: ${problema} (WhatsApp enviados=${enviados})`);
+  } catch (e: any) { console.error('[BB-BOLETO] alerta erro:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 (async () => { await _promoteAgendados('boot'); })();
 
