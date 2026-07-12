@@ -620,18 +620,22 @@ export default function CustomerManagement() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        {(customer as any).situacao ? (
-                          <Badge 
+                        {customer.isActive === false ? (
+                          <Badge className="bg-red-100 text-red-800" data-testid={`badge-inativo-${customer.id}`}>
+                            Inativo
+                          </Badge>
+                        ) : (customer as any).situacao ? (
+                          <Badge
                             className={
-                              (customer as any).situacao === 'ativo' 
-                                ? "bg-green-100 text-green-800" 
+                              (customer as any).situacao === 'ativo'
+                                ? "bg-green-100 text-green-800"
                                 : "bg-red-100 text-red-800"
                             }
                           >
                             {(customer as any).situacao}
                           </Badge>
                         ) : (
-                          <span className="text-gray-400 text-xs">N/A</span>
+                          <Badge className="bg-green-100 text-green-800">Ativo</Badge>
                         )}
                       </td>
                       <td className="px-6 py-4">
