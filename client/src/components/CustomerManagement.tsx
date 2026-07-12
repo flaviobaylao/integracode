@@ -92,7 +92,13 @@ export default function CustomerManagement() {
   const [sortAZ, setSortAZ] = useState(false);
   const [routeDateFilter, setRouteDateFilter] = useState('');
   const [positivationFilter, setPositivationFilter] = useState('all');
-  const [segmentFilter, setSegmentFilter] = useState('all');
+  const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
+  const [selectedVirtualType, setSelectedVirtualType] = useState('');
+  const [selectedPeriodicity, setSelectedPeriodicity] = useState('');
+  const [selectedPersonType, setSelectedPersonType] = useState('');
+  const [selectedCity, setSelectedCity] = useState('');
+  const [selectedNeighborhood, setSelectedNeighborhood] = useState('');
+  const [phoneFilter, setPhoneFilter] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
@@ -249,12 +255,24 @@ export default function CustomerManagement() {
                                (positivationFilter === 'no' && !customer.isPositivatedThisMonth);
     
     const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller((customer as any).sellerName || customer.sellerId));
-    const matchesSegment = segmentFilter === 'all' ||
-                          (segmentFilter === '__none__' ? !customer.segmentoPrincipal : customer.segmentoPrincipal === segmentFilter);
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment;
+    const matchesSegment = multiMatch(segmentMulti, customer.segmentoPrincipal || '(Sem segmento)');
+    const matchesVirtualType = !selectedVirtualType || (selectedVirtualType === 'virtual' ? !!customer.virtualService : !customer.virtualService);
+    const matchesPeriodicity = !selectedPeriodicity || customer.visitPeriodicity === selectedPeriodicity;
+    const ptDigits = String(customer.cnpj || customer.cpf || '').replace(/\D/g, '');
+    const personType = (customer as any).customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
+    const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
+    const matchesCity = !selectedCity || String(customer.city || '').trim() === selectedCity;
+    const matchesNeighborhood = !selectedNeighborhood || String(customer.neighborhood || '').trim() === selectedNeighborhood;
+    const matchesPhone = !phoneFilter || String(customer.phone || '').replace(/\D/g, '').includes(phoneFilter.replace(/\D/g, ''));
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone;
   }) || [];
   if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
-  const segmentOptions = Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b)));
+  const segmentFilterOptions = [
+    ...(Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b))) as string[]),
+    ...((customers || []).some((c: any) => !c.segmentoPrincipal) ? ['(Sem segmento)'] : []),
+  ];
+  const cities = Array.from(new Set((customers || []).map((c: any) => String(c.city || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
+  const neighborhoods = Array.from(new Set((customers || []).filter((c: any) => !selectedCity || String(c.city || '').trim() === selectedCity).map((c: any) => String(c.neighborhood || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -380,6 +398,7 @@ export default function CustomerManagement() {
               {bulkUpdateTimeSlotsMutation.isPending ? 'Configurando...' : 'Configurar Horários em Massa'}
             </Button>
           )}
+          <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: c.omieStatus, Periodicidade: c.visitPeriodicity, Segmento: c.segmentoPrincipal })), "clientes")} />
           <Button
             className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-600"
             onClick={() => setShowModal(true)}
@@ -394,16 +413,24 @@ export default function CustomerManagement() {
       {/* Filters and Search */}
       <Card>
         <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-            <Input
-              placeholder="Buscar por nome, CPF/CNPJ ou telefone..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              data-testid="input-search-customer"
-            />
+          <div className="flex flex-row items-center gap-1 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 h-9"
+                data-testid="input-search-customer"
+              />
+            </div>
+
+            <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
+            <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-customers">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
+
             <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
-              <SelectTrigger data-testid="select-weekday-filter">
-                <SelectValue placeholder="Todos os dias" />
+              <SelectTrigger className="w-[100px] h-9" data-testid="select-weekday-filter">
+                <SelectValue placeholder="Dia" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os dias</SelectItem>
@@ -416,8 +443,82 @@ export default function CustomerManagement() {
                 <SelectItem value="Dom">Domingo</SelectItem>
               </SelectContent>
             </Select>
+
+            <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
+              <SelectTrigger className="w-[100px] h-9" data-testid="select-virtual-filter">
+                <SelectValue placeholder="Tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="presencial">Presencial</SelectItem>
+                <SelectItem value="virtual">Virtual</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
+              <SelectTrigger className="w-[110px] h-9" data-testid="select-periodicity-filter">
+                <SelectValue placeholder="Período" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semanal">Semanal</SelectItem>
+                <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                <SelectItem value="mensal">Mensal</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedPersonType} onValueChange={setSelectedPersonType}>
+              <SelectTrigger className="w-[120px] h-9" data-testid="select-persontype-filter">
+                <SelectValue placeholder="PJ / PF" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pessoa_juridica">Pessoa Jurídica</SelectItem>
+                <SelectItem value="pessoa_fisica">Pessoa Física</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <MultiSelect label="Segmento" options={segmentFilterOptions} selected={segmentMulti} onChange={setSegmentMulti} testId="filter-segment-customers" />
+
+            <Select value={positivationFilter} onValueChange={setPositivationFilter}>
+              <SelectTrigger className="w-[120px] h-9" data-testid="select-positivation-filter">
+                <SelectValue placeholder="Positivação" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="yes">Positivado</SelectItem>
+                <SelectItem value="no">Não Positivado</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedCity} onValueChange={(val) => { setSelectedCity(val); setSelectedNeighborhood(''); }}>
+              <SelectTrigger className="w-[130px] h-9" data-testid="select-city-filter">
+                <SelectValue placeholder="Cidade" />
+              </SelectTrigger>
+              <SelectContent>
+                {cities.map((city: any) => (<SelectItem key={city} value={city}>{city}</SelectItem>))}
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
+              <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
+                <SelectValue placeholder="Bairro" />
+              </SelectTrigger>
+              <SelectContent>
+                {neighborhoods.map((nb: any) => (<SelectItem key={nb} value={nb}>{nb}</SelectItem>))}
+              </SelectContent>
+            </Select>
+
+            <div className="relative">
+              <Phone className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Telefone"
+                value={phoneFilter}
+                onChange={(e) => setPhoneFilter(e.target.value)}
+                className="w-[130px] h-9 pl-8"
+                data-testid="input-phone-filter"
+              />
+            </div>
+
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger data-testid="select-status-filter">
+              <SelectTrigger className="w-[110px] h-9" data-testid="select-status-filter">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -426,40 +527,17 @@ export default function CustomerManagement() {
                 <SelectItem value="inactive">Inativo</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={positivationFilter} onValueChange={setPositivationFilter}>
-              <SelectTrigger data-testid="select-positivation-filter">
-                <SelectValue placeholder="Positivação" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="yes">SIM</SelectItem>
-                <SelectItem value="no">NÃO</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={segmentFilter} onValueChange={setSegmentFilter}>
-              <SelectTrigger data-testid="select-segment-filter">
-                <SelectValue placeholder="Segmento" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os segmentos</SelectItem>
-                {segmentOptions.map((seg: any) => (
-                  <SelectItem key={seg} value={seg}>{seg}</SelectItem>
-                ))}
-                <SelectItem value="__none__">Sem segmento</SelectItem>
-              </SelectContent>
-            </Select>
-            <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
-            <Button variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-customers">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
-            <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: c.omieStatus, Periodicidade: c.visitPeriodicity })), "clientes")} />
+
             <Input
               type="date"
-              placeholder="Data da rota"
               value={routeDateFilter}
               onChange={(e) => setRouteDateFilter(e.target.value)}
+              className="w-[140px] h-9"
               data-testid="input-route-date-filter"
             />
-            <div className="text-sm text-gray-600 flex items-center">
-              {filteredCustomers.length} cliente(s) encontrado(s)
+
+            <div className="text-sm text-gray-600 flex items-center ml-1">
+              {filteredCustomers.length} cliente(s)
             </div>
           </div>
         </CardContent>
