@@ -105,6 +105,22 @@ function useInstanceNames(): Record<string, string> {
   return map;
 }
 
+// FASE 2 - Badges de lancamento: DRE (conta gerencial), Fluxo (conta financeira) e
+// Conciliada (origem: webhook/baixa automatica BB em esmeralda; extrato/manual em verde).
+function LancamentoBadges({ item }: { item: any }) {
+  const b = item?.badges;
+  if (!b) return null;
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {b.dre && <Badge variant="outline" className="border-purple-400 text-purple-700 px-1.5 py-0" title="Classificada no plano de contas — entra na DRE">DRE</Badge>}
+      {b.fluxo && <Badge variant="outline" className="border-blue-400 text-blue-700 px-1.5 py-0" title="Vinculada a conta financeira — entra no fluxo de caixa">Fluxo</Badge>}
+      {b.conciliada && (b.origem === 'webhook'
+        ? <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white px-1.5 py-0" title="Conciliada automaticamente pelo BB (webhook/consulta)">Conciliada</Badge>
+        : <Badge className="bg-green-500 hover:bg-green-500 text-white px-1.5 py-0" title={b.origem === 'extrato' ? 'Conciliada via extrato bancario (OFX)' : 'Baixa manual'}>Conciliada</Badge>)}
+    </div>
+  );
+}
+
 function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -331,6 +347,7 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead className="text-right">Valor Pago</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Lançamento</TableHead>
                 <TableHead>Vencimento</TableHead>
                 <TableHead>Forma Pgto</TableHead>
                 <TableHead>Instância</TableHead>
@@ -339,7 +356,7 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
+                <TableRow><TableCell colSpan={13} className="text-center py-8 text-muted-foreground">Nenhuma conta a receber encontrada</TableCell></TableRow>
               ) : filtered.slice(0, 300).map((r: any) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.titleNumber || '-'}</TableCell>
@@ -350,6 +367,7 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(r.amountPaid)}</TableCell>
                   <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}</TableCell>
+                  <TableCell><LancamentoBadges item={r} /></TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
                   <TableCell><Badge variant="outline">{instanceNames[r.omieInstanceId] || r.omieInstanceId || '-'}</Badge></TableCell>
@@ -364,13 +382,13 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 300 && (<TableRow><TableCell colSpan={12} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, vendedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
+              {filtered.length > 300 && (<TableRow><TableCell colSpan={13} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, vendedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
                   {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
                   <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0))}</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amountPaid) || 0), 0))}</TableCell>
-                  <TableCell colSpan={5} className="text-muted-foreground">Saldo a receber: {formatCurrency(filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0))}</TableCell>
+                  <TableCell colSpan={6} className="text-muted-foreground">Saldo a receber: {formatCurrency(filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0))}</TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -743,6 +761,7 @@ function PayablesTab() {
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead className="text-right">Valor Pago</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Lançamento</TableHead>
                 <TableHead>Vencimento</TableHead>
                 <TableHead>Origem</TableHead>
                 <TableHead>Instância</TableHead>
@@ -751,7 +770,7 @@ function PayablesTab() {
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
+                <TableRow><TableCell colSpan={13} className="text-center py-8 text-muted-foreground">Nenhuma conta a pagar encontrada</TableCell></TableRow>
               ) : filtered.slice(0, 300).map((p: any) => (
                 <TableRow key={p.id}>
                   <TableCell className="w-8"><input type="checkbox" className="h-4 w-4 cursor-pointer" aria-label="Selecionar" checked={selectedIds.includes(p.id)} onChange={e => setSelectedIds(e.target.checked ? [...selectedIds, p.id] : selectedIds.filter(id => id !== p.id))} /></TableCell>
@@ -762,6 +781,7 @@ function PayablesTab() {
                   <TableCell className="text-right font-medium">{formatCurrency(p.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(p.amountPaid)}</TableCell>
                   <TableCell>{getPayableStatusBadge(p.status, p.dueDate)}</TableCell>
+                  <TableCell><LancamentoBadges item={p} /></TableCell>
                   <TableCell>{formatDate(p.dueDate)}</TableCell>
                   <TableCell><Badge variant="outline">{sourceLabels[p.source] || p.source || '-'}</Badge></TableCell>
                   <TableCell><Badge variant="outline">{instanceNames[p.omieInstanceId] || p.omieInstanceId || '-'}</Badge></TableCell>
@@ -775,13 +795,13 @@ function PayablesTab() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 300 && (<TableRow><TableCell colSpan={12} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, fornecedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
+              {filtered.length > 300 && (<TableRow><TableCell colSpan={13} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, fornecedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
                   {filtered.length > 0 && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
                   <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}</TableCell>
                   <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amountPaid) || 0), 0))}</TableCell>
-                  <TableCell colSpan={5} className="text-muted-foreground">Saldo a pagar: {formatCurrency(filtered.reduce((s: number, p: any) => s + ((Number(p.amount) || 0) - (Number(p.amountPaid) || 0)), 0))}</TableCell>
+                  <TableCell colSpan={6} className="text-muted-foreground">Saldo a pagar: {formatCurrency(filtered.reduce((s: number, p: any) => s + ((Number(p.amount) || 0) - (Number(p.amountPaid) || 0)), 0))}</TableCell>
                 </TableRow>
               )}
             </TableBody>
