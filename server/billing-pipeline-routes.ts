@@ -121,6 +121,19 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
       scanned++;
       try {
         const customer = sc.customerId ? await storage.getCustomer(sc.customerId) : null;
+        // NAO RESSUSCITAR bloqueados: se ja existe bloqueio ativo p/ este card, pula
+        // (antes a rede de seguranca recriava o pedido como "Pedido", furando o bloqueio).
+        const existingBlock = await db.select().from(blockedOrders)
+          .where(and(eq(blockedOrders.salesCardId, sc.id), eq(blockedOrders.status, 'blocked'))).limit(1);
+        if (existingBlock.length > 0) { continue; }
+        // Aplica a MESMA regra de bloqueio dos demais caminhos (debito / amostra / troca /
+        // bonificacao): se se enquadra, bloqueia em vez de criar como "Pedido".
+        const blk = await evaluateOrderBlock(sc, customer);
+        if (blk) {
+          try { await insertBlockedOrderIdempotent(sc, blk); await logOrderAudit(sc.id, blk.reason === 'overdue_debt' ? 'blocked_overdue_debt' : 'blocked_operation_type'); } catch {}
+          console.log(`🚫 [reconcile] Card ${sc.id} bloqueado (${blk.reason}) em vez de virar "Pedido".`);
+          continue;
+        }
         const seller = sc.sellerId ? await storage.getUser(sc.sellerId) : null;
         let omieInstanceName = '';
         if ((customer as any)?.omieInstanceId) { const inst = await storage.getOmieInstance((customer as any).omieInstanceId); omieInstanceName = (inst as any)?.displayName || ''; }
@@ -191,6 +204,68 @@ function todayBrazilISO(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
+// Tipos de operação que NÃO são venda e devem entrar BLOQUEADOS (aprovação manual
+// do admin): amostra, troca e bonificação. Devolução/transferência/remessa NÃO
+// entram nesta regra (decisão do Flavio — só estes três).
+const NON_SALE_BLOCK_OPS = new Set(['amostra', 'troca', 'bonificacao']);
+
+// Decisão CENTRAL de bloqueio: usada em TODOS os caminhos de entrada no pipeline
+// (auto-envio, rede de segurança/reconcile). Retorna o motivo do bloqueio ou null.
+// Ordem: (1) tipo de operação (amostra/troca/bonificação) → sempre manual;
+//        (2) débito vencido → libera automático quando regularizado.
+export async function evaluateOrderBlock(
+  salesCard: any,
+  customer: any,
+): Promise<{ reason: 'operation_type' | 'overdue_debt'; details: string } | null> {
+  const op = String(salesCard?.operationType || 'venda').toLowerCase().trim();
+  if (NON_SALE_BLOCK_OPS.has(op)) {
+    const label = op === 'troca' ? 'troca' : op === 'bonificacao' ? 'bonificação' : 'amostra';
+    return {
+      reason: 'operation_type',
+      details: `Pedido de ${label} requer aprovação manual de um administrador antes do faturamento.`,
+    };
+  }
+  try {
+    const doc = (customer as any)?.cnpj || (customer as any)?.cpf || '';
+    if (doc) {
+      const overdueDebt = await storage.getOverdueDebtByDocument(doc);
+      if (overdueDebt) {
+        return {
+          reason: 'overdue_debt',
+          details: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
+        };
+      }
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [BILLING-PIPELINE] evaluateOrderBlock: erro ao checar debito (segue sem bloquear por debito):', e?.message);
+  }
+  return null;
+}
+
+// Insere o pedido em blocked_orders de forma IDEMPOTENTE (não duplica um bloqueio
+// ativo do mesmo card). Fonte única para todos os caminhos de bloqueio.
+export async function insertBlockedOrderIdempotent(
+  salesCard: any,
+  blk: { reason: string; details: string },
+): Promise<void> {
+  if (!salesCard?.id) return;
+  const already = await db.select().from(blockedOrders)
+    .where(and(eq(blockedOrders.salesCardId, salesCard.id), eq(blockedOrders.status, 'blocked'))).limit(1);
+  if (already.length > 0) return;
+  await db.insert(blockedOrders).values({
+    salesCardId: salesCard.id,
+    customerId: salesCard.customerId,
+    sellerId: salesCard.sellerId || 'system',
+    blockReason: blk.reason,
+    blockDetails: blk.details,
+    operationType: salesCard.operationType || 'venda',
+    paymentMethod: salesCard.paymentMethod || 'a_vista',
+    boletoDays: salesCard.boletoDays || null,
+    totalAmount: String(parseFloat(String(salesCard.saleValue)) || 0),
+    products: (salesCard.products as any) || [],
+  } as any);
+}
+
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null }) {
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
@@ -202,38 +277,18 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 
     const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
 
-    // BLOQUEIO POR DEBITO VENCIDO (funil unico): cliente com debito vencido nao entra no pipeline.
-    // O pedido vai para blocked_orders (coluna "Bloqueados" do Kanban). A liberacao manual (release)
-    // e a liberacao automatica (debito regularizado) chamam com opts.skipDebtCheck=true.
+    // BLOQUEIO (funil unico): cliente com DEBITO VENCIDO ou pedido de AMOSTRA/TROCA/
+    // BONIFICACAO nao entra no pipeline — vai para blocked_orders (coluna "Bloqueados").
+    // A liberacao manual (release) e a liberacao automatica (debito regularizado)
+    // chamam com opts.skipDebtCheck=true, pulando esta checagem.
     if (!opts?.skipDebtCheck) {
-      try {
-        const debtDoc = (customer as any)?.cnpj || (customer as any)?.cpf || '';
-        if (debtDoc) {
-          const overdueDebt = await storage.getOverdueDebtByDocument(debtDoc);
-          if (overdueDebt) {
-            const already = await db.select().from(blockedOrders)
-              .where(and(eq(blockedOrders.salesCardId, salesCard.id), eq(blockedOrders.status, 'blocked'))).limit(1);
-            if (already.length === 0) {
-              await db.insert(blockedOrders).values({
-                salesCardId: salesCard.id,
-                customerId: salesCard.customerId,
-                sellerId: salesCard.sellerId || 'system',
-                blockReason: 'overdue_debt',
-                blockDetails: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
-                operationType: salesCard.operationType || 'venda',
-                paymentMethod: salesCard.paymentMethod || 'a_vista',
-                boletoDays: salesCard.boletoDays || null,
-                totalAmount: String(parseFloat(String(salesCard.saleValue)) || 0),
-                products: (salesCard.products as any) || [],
-              } as any);
-            }
-            await logOrderAudit(salesCard.id, 'blocked_overdue_debt');
-            console.log(`🚫 [BILLING-PIPELINE] Pedido ${salesCard.id} BLOQUEADO por debito vencido (${(customer as any)?.fantasyName || (customer as any)?.name || salesCard.customerId}) - foi para a coluna Bloqueados`);
-            return null;
-          }
-        }
-      } catch (e: any) {
-        console.warn('⚠️ [BILLING-PIPELINE] Erro ao checar debito vencido (segue sem bloquear):', e?.message);
+      const blk = await evaluateOrderBlock(salesCard, customer);
+      if (blk) {
+        try { await insertBlockedOrderIdempotent(salesCard, blk); }
+        catch (e: any) { console.warn('⚠️ [BILLING-PIPELINE] Erro ao registrar bloqueio (segue):', e?.message); }
+        await logOrderAudit(salesCard.id, blk.reason === 'overdue_debt' ? 'blocked_overdue_debt' : 'blocked_operation_type');
+        console.log(`🚫 [BILLING-PIPELINE] Pedido ${salesCard.id} BLOQUEADO (${blk.reason}: ${(customer as any)?.fantasyName || (customer as any)?.name || salesCard.customerId}) - coluna Bloqueados`);
+        return null;
       }
     }
 
@@ -326,7 +381,53 @@ function isFlavioOnly(req: any, res: any, next: any) {
   next();
 }
 
+// Bloqueio manual de pedido: apenas os 3 admins (mesma lista da Rota do Dia).
+const THREE_ADMINS = ['cinthiamarque90@gmail.com', 'flaviobaylao@gmail.com', 'flavio@bebahonest.com.br'];
+function isThreeAdmins(req: any, res: any, next: any) {
+  const user = req.currentUser || req.user;
+  if (!user || !THREE_ADMINS.includes(String(user.email || '').toLowerCase())) {
+    return res.status(403).json({ message: 'Apenas administradores podem bloquear pedidos.' });
+  }
+  next();
+}
+
 export function registerBillingPipelineRoutes(app: Express) {
+  // BLOQUEIO MANUAL de um pedido do pipeline (somente os 3 admins). Move o item para
+  // blocked_orders (motivo 'manual') e o remove do funil. So sai de la por liberacao manual.
+  app.post('/api/billing-pipeline/:id/block', authenticateUser, isThreeAdmins, async (req: any, res) => {
+    try {
+      const id = req.params.id;
+      const reason = String(req.body?.reason || '').trim();
+      const items = await storage.getBillingPipelineItems();
+      const item = items.find((i: any) => i.id === id);
+      if (!item) return res.status(404).json({ message: 'Pedido nao encontrado no pipeline.' });
+      if (!item.salesCardId) return res.status(400).json({ message: 'Este pedido nao tem card de venda vinculado e nao pode ser bloqueado por aqui.' });
+      const details = `${reason || 'Bloqueio manual pelo administrador.'} (bloqueado por ${req.currentUser.email})`;
+      const already = await db.select().from(blockedOrders)
+        .where(and(eq(blockedOrders.salesCardId, item.salesCardId), eq(blockedOrders.status, 'blocked'))).limit(1);
+      if (already.length === 0) {
+        await db.insert(blockedOrders).values({
+          salesCardId: item.salesCardId,
+          customerId: item.customerId,
+          sellerId: item.sellerId || 'system',
+          blockReason: 'manual',
+          blockDetails: details,
+          operationType: item.operationType || 'venda',
+          paymentMethod: item.paymentMethod || 'a_vista',
+          totalAmount: String(parseFloat(String(item.saleValue)) || 0),
+          products: (item.products as any) || [],
+        } as any);
+      }
+      await storage.deleteBillingPipelineItem(id);
+      try { await logOrderAudit(item.salesCardId, 'blocked_manual', details); } catch {}
+      console.log(`🚫 [BILLING-PIPELINE] Pedido ${id} BLOQUEADO MANUALMENTE por ${req.currentUser.email}`);
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error('❌ [BILLING-PIPELINE] Erro no bloqueio manual:', e?.message);
+      res.status(500).json({ message: e?.message || 'Erro ao bloquear pedido' });
+    }
+  });
+
 
   // Remove os itens criados pela reconciliacao (pedidos fantasmas: ja faturados/entregues no 1.0)
   app.post('/api/admin/pipeline/remove-reconciled', authenticateUser, isAdminOnly, async (req: any, res) => {
