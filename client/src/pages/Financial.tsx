@@ -121,6 +121,71 @@ function LancamentoBadges({ item }: { item: any }) {
   );
 }
 
+// FASE 2 - PIX recebidos pelo webhook do BB sem cobranca correspondente no sistema.
+function PixNaoIdentificadosTab() {
+  const [statusFilter, setStatusFilter] = useState('pendente');
+  const { data: items = [], isLoading, refetch } = useQuery<any[]>({
+    queryKey: ['/api/financial/pix-nao-identificados', statusFilter],
+    queryFn: async () => {
+      const res = await fetch(`/api/financial/pix-nao-identificados?status=${statusFilter}`, { credentials: 'include' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+  });
+  const mudarStatus = useMutation({
+    mutationFn: ({ id, status }: any) => apiRequest('POST', `/api/financial/pix-nao-identificados/${id}/status`, { status }),
+    onSuccess: () => refetch(),
+  });
+  const fmtBRL = (v: any) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v || 0));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>PIX recebidos sem identificação</CardTitle>
+        <p className="text-sm text-muted-foreground">PIX notificados pelo BB que não casaram com nenhuma cobrança do sistema. A baixa continua sendo feita na Conciliação (extrato OFX) — use esta lista para investigar e marcar como tratado.</p>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-2 mb-3">
+          {['pendente', 'resolvido', 'ignorado', 'todos'].map(s => (
+            <Button key={s} size="sm" variant={statusFilter === s ? 'default' : 'outline'} onClick={() => setStatusFilter(s)}>{s}</Button>
+          ))}
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Recebido em</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Pagador</TableHead>
+              <TableHead>txid / e2e</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Ações</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (<TableRow><TableCell colSpan={6} className="text-center py-8">Carregando...</TableCell></TableRow>) : items.length === 0 ? (
+              <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhum PIX não identificado</TableCell></TableRow>
+            ) : items.map((p: any) => (
+              <TableRow key={p.id}>
+                <TableCell>{p.horario ? new Date(p.horario).toLocaleString('pt-BR') : (p.created_at ? new Date(p.created_at).toLocaleString('pt-BR') : '-')}</TableCell>
+                <TableCell className="text-right font-medium">{fmtBRL(p.valor)}</TableCell>
+                <TableCell className="max-w-[220px] truncate">{p.info_pagador || '-'}</TableCell>
+                <TableCell className="text-xs max-w-[260px] truncate">{p.txid || '-'}{p.end_to_end_id ? ' / ' + p.end_to_end_id : ''}</TableCell>
+                <TableCell><Badge variant={p.status === 'pendente' ? 'destructive' : 'outline'}>{p.status}</Badge></TableCell>
+                <TableCell>
+                  {p.status === 'pendente' && (<div className="flex gap-1">
+                    <Button size="sm" variant="outline" onClick={() => mudarStatus.mutate({ id: p.id, status: 'resolvido' })}>Resolvido</Button>
+                    <Button size="sm" variant="ghost" onClick={() => mudarStatus.mutate({ id: p.id, status: 'ignorado' })}>Ignorar</Button>
+                  </div>)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -2670,6 +2735,7 @@ export default function Financial() {
         <TabsList className="flex-wrap h-auto">
           {isFullAccess && <TabsTrigger value="receivables" className="gap-1"><CreditCard className="h-4 w-4" />Contas a Receber</TabsTrigger>}
           {isFullAccess && <TabsTrigger value="payables" className="gap-1"><Banknote className="h-4 w-4" />Contas a Pagar</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="pix-nao-identificados" className="gap-1"><QrCode className="h-4 w-4" />PIX s/ Identificação</TabsTrigger>}
           <TabsTrigger value="overdue" className="gap-1"><AlertTriangle className="h-4 w-4" />Débitos Vencidos</TabsTrigger>
           <TabsTrigger value="blocked" className="gap-1"><Ban className="h-4 w-4" />Pedidos Bloqueados</TabsTrigger>
           {isFullAccess && <TabsTrigger value="chart" className="gap-1"><BarChart3 className="h-4 w-4" />Plano de Contas</TabsTrigger>}
@@ -2681,6 +2747,7 @@ export default function Financial() {
 
         {isFullAccess && <TabsContent value="receivables"><ReceivablesTab /></TabsContent>}
         {isFullAccess && <TabsContent value="payables"><PayablesTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="pix-nao-identificados"><PixNaoIdentificadosTab /></TabsContent>}
         <TabsContent value="overdue"><OverdueDebtsManagement /></TabsContent>
         <TabsContent value="blocked"><BlockedOrdersManagement user={user as any} /></TabsContent>
         {isFullAccess && <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>}
