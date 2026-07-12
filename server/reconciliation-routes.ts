@@ -568,6 +568,8 @@ export function registerReconciliation(app: Express) {
       let doc = (b.document || "").toString();
       const category = b.category ? String(b.category) : null;
       const chartAccountId = b.chartAccountId ? String(b.chartAccountId) : null;
+      // FASE 3.4e - categoria DRE obrigatoria: nenhuma conta e criada sem categoria.
+      if (!chartAccountId) return res.status(400).json({ error: "Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria." });
       // FASE 3.4c - fornecedor vem do cadastro: procura por documento/nome e
       // cadastra automaticamente quando o nome e novo.
       let supplierInfo: any = null;
