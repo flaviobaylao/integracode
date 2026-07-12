@@ -473,6 +473,75 @@ export function registerReconciliation(app: Express) {
   });
 
 
+  // ---- FASE 3.4c: cadastros no "Criar Novo" -------------------------------
+  // Busca fornecedores no cadastro (autocomplete do modal).
+  app.get("/api/reconciliation/suppliers/search", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const like = `%${q}%`;
+      const digits = onlyDigits(q);
+      const digitsLike = digits ? "%" + digits + "%" : "__none__";
+      const r = await db.execute(sql`
+        SELECT id, name, company_name, cnpj, cpf, default_category, default_chart_account_id
+        FROM suppliers
+        WHERE (is_active IS NOT FALSE)
+          AND (${q} = '' OR name ILIKE ${like} OR company_name ILIKE ${like}
+               OR regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') LIKE ${digitsLike}
+               OR regexp_replace(COALESCE(cpf, ''), '[^0-9]', '', 'g') LIKE ${digitsLike})
+        ORDER BY name LIMIT 10`);
+      res.json({ suppliers: rowsOf(r) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // Busca categorias analiticas do DRE (plano de contas) p/ o campo Categoria.
+  app.get("/api/reconciliation/dre-categories", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const like = `%${q}%`;
+      const r = await db.execute(sql`
+        SELECT id, code, name, type, dre_group
+        FROM chart_of_accounts
+        WHERE (is_active IS NOT FALSE) AND code LIKE '%.%'
+          AND (${q} = '' OR name ILIKE ${like} OR code ILIKE ${like})
+        ORDER BY code LIMIT 20`);
+      res.json({ categories: rowsOf(r) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // Garante o fornecedor no cadastro: procura por documento/nome; cadastra se novo.
+  async function ensureSupplier(name: string, document: string | null, instanceId: string | null, chartAccountId: string | null, category: string | null, by: string): Promise<{ id: string | null; created: boolean; name: string; document: string | null }> {
+    const nm = String(name || "").trim();
+    if (!nm) return { id: null, created: false, name: nm, document };
+    const digits = onlyDigits(document);
+    try {
+      let found: any = null;
+      if (digits) {
+        found = rowsOf(await db.execute(sql`
+          SELECT id, name, cnpj, cpf FROM suppliers
+          WHERE regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') = ${digits}
+             OR regexp_replace(COALESCE(cpf, ''), '[^0-9]', '', 'g') = ${digits} LIMIT 1`))[0];
+      }
+      if (!found) {
+        found = rowsOf(await db.execute(sql`
+          SELECT id, name, cnpj, cpf FROM suppliers
+          WHERE lower(trim(name)) = ${nm.toLowerCase()} OR lower(trim(COALESCE(company_name, ''))) = ${nm.toLowerCase()} LIMIT 1`))[0];
+      }
+      if (found) return { id: found.id, created: false, name: found.name || nm, document: document || found.cnpj || found.cpf || null };
+      const cols = await tableColInfo("suppliers");
+      const row = await insertDynamic("suppliers", cols, {
+        name: nm,
+        cnpj: digits.length === 14 ? document : null,
+        cpf: digits.length === 11 ? document : null,
+        omie_instance_id: instanceId,
+        default_chart_account_id: chartAccountId,
+        default_category: category,
+        is_active: true,
+        notes: "Cadastrado automaticamente pela Conciliacao 2.0 (" + by + ")",
+      }, "id");
+      return { id: row?.id || null, created: true, name: nm, document };
+    } catch (_e) { return { id: null, created: false, name: nm, document }; }
+  }
+
   // Criar Novo (aba do modal, igual ao 1.0): cria um titulo (conta a pagar/receber) na hora
   // com os dados do lancamento do banco e JA concilia (da baixa) contra o item do extrato.
   app.post("/api/reconciliation/items/:id/create-and-reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
@@ -495,17 +564,26 @@ export function registerReconciliation(app: Express) {
       const issue = b.issueDate ? new Date(b.issueDate) : new Date(item.transaction_date || Date.now());
       const due = b.dueDate ? new Date(b.dueDate) : issue;
       const desc = (b.description || item.description || "").toString().slice(0, 300);
-      const name = (b.name || item.description || "Sem nome").toString().slice(0, 120);
-      const doc = (b.document || "").toString();
+      let name = (b.name || item.description || "Sem nome").toString().slice(0, 120);
+      let doc = (b.document || "").toString();
       const category = b.category ? String(b.category) : null;
+      const chartAccountId = b.chartAccountId ? String(b.chartAccountId) : null;
+      // FASE 3.4c - fornecedor vem do cadastro: procura por documento/nome e
+      // cadastra automaticamente quando o nome e novo.
+      let supplierInfo: any = null;
+      if (tipo === "pagar") {
+        supplierInfo = await ensureSupplier(name, doc || null, instanceId, chartAccountId, category, by);
+        name = String(supplierInfo.name || name).slice(0, 120);
+        if (!doc && supplierInfo.document) doc = String(supplierInfo.document);
+      }
 
       let titleId: string; let kind: "receivable" | "payable";
       if (tipo === "receber") {
-        const rec: any = await storage.createReceivable({ customerName: name, customerDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, category, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", createdBy: by } as any);
+        const rec: any = await storage.createReceivable({ customerName: name, customerDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, category, chartAccountId: chartAccountId, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", createdBy: by } as any);
         titleId = rec.id; kind = "receivable";
         await settleReceivable(titleId, amount, method, accountId, paidAtISO, by);
       } else {
-        const pay: any = await storage.createPayable({ supplierName: name, supplierDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", source: "manual", createdBy: by, notes: category ? ("Categoria: " + category) : null } as any);
+        const pay: any = await storage.createPayable({ supplierName: name, supplierDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, chartAccountId: chartAccountId, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", source: "manual", createdBy: by, notes: category ? ("Categoria: " + category) : null } as any);
         titleId = pay.id; kind = "payable";
         await settlePayable(titleId, amount, method, accountId, paidAtISO, by);
       }
@@ -518,7 +596,7 @@ export function registerReconciliation(app: Express) {
           matched_receivable_id = ${kind === "receivable" ? titleId : null}, matched_payable_id = ${kind === "payable" ? titleId : null},
           matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note} WHERE id = ${id}`);
       try { await evolvePattern(item, { type: kind === "receivable" ? "customer" : "supplier", id: null, name, document: doc || null, category }, instanceId, by); } catch {}
-      res.json({ ok: true, status: "reconciled", created: { kind, id: titleId } });
+      res.json({ ok: true, status: "reconciled", created: { kind, id: titleId }, supplier: supplierInfo });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -743,7 +821,11 @@ export function registerReconciliation(app: Express) {
       if (!stmtId) return res.status(500).json({ error: "falha ao criar o extrato (sem id)" });
 
       let inserted = 0;
+      let autoIgnorados = 0;
       for (const t of toInsert) {
+        // FASE 3.4c - credito "COBRANCA" = repasse da baixa de boletos (ja tratados
+        // pelo webhook); entra como ignorado para nao poluir os pendentes.
+        const ehCobranca = t.type === "C" && ["cobranca", "cobrana", "cobranaa"].includes(normDesc(t.description));
         const vm: Record<string, any> = {
           statement_id: stmtId,
           transaction_date: t.date,
@@ -752,18 +834,44 @@ export function registerReconciliation(app: Express) {
           description: t.description,
           document: t.document,
           origin_name: t.name || null,
-          reconciliation_status: "pending",
+          reconciliation_status: ehCobranca ? "ignored" : "pending",
           created_by: by,
         };
+        if (ehCobranca) { vm.notes = "Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)"; vm.matched_by = by; vm.matched_at = new Date().toISOString(); autoIgnorados++; }
         if (fitCol) vm[fitCol] = t.fitid || null;
         await insertDynamic("bank_statement_items", itCols, vm);
         inserted++;
       }
 
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // FASE 3.4c - marca como ignorados os creditos "COBRANCA" pendentes (repasses
+  // de boletos ja baixados via webhook). dryRun por padrao.
+  app.post("/api/reconciliation/ignore-cobranca", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const c = rowsOf(await db.execute(sql`
+        SELECT count(*)::int AS n FROM bank_statement_items
+        WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending') AND type = 'C'
+          AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa')`))[0];
+      const candidatos = Number(c?.n || 0);
+      let atualizados = 0;
+      if (!dryRun && candidatos > 0) {
+        const u: any = await db.execute(sql`
+          UPDATE bank_statement_items
+          SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
+              notes = 'Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)'
+          WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending') AND type = 'C'
+            AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa')`);
+        atualizados = Number((u as any)?.rowCount ?? 0);
+      }
+      res.json({ dryRun, candidatos, atualizados });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
 
   // ---- Remover extrato importado (trava: recusa se houver item conciliado) -
   app.post("/api/reconciliation/statements/:id/delete", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
