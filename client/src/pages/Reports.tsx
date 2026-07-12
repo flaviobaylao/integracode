@@ -47,6 +47,7 @@ interface FilterConfig {
   field: string;
   operator: string;
   value: string;
+  values?: string[];
 }
 
 interface OrderConfig {
@@ -67,7 +68,7 @@ const AGG_LABELS: Record<string, string> = {
 
 const OPERATOR_LABELS: Record<string, string> = {
   eq: 'Igual a', neq: 'Diferente de', gt: 'Maior que', gte: 'Maior ou igual',
-  lt: 'Menor que', lte: 'Menor ou igual', like: 'Contém',
+  lt: 'Menor que', lte: 'Menor ou igual', like: 'Contém', in: 'Está em (lista)',
   is_null: 'É vazio', is_not_null: 'Não é vazio'
 };
 
@@ -249,6 +250,7 @@ export default function Reports() {
   const [chartX, setChartX] = useState('');
   const [chartY, setChartY] = useState('');
   const [pivotCol, setPivotCol] = useState('');
+  const [pivotDateGrouping, setPivotDateGrouping] = useState<'day' | 'month' | 'year'>('day');
   const [result, setResult] = useState<ReportResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -368,19 +370,29 @@ export default function Reports() {
     }
     setIsExecuting(true);
     try {
-      const effFilters = filters.filter(f => f.operator === 'is_null' || f.operator === 'is_not_null' || f.value);
+      const effFilters: any[] = [];
+      for (const f of filters) {
+        const fv = (f as any).values;
+        if (Array.isArray(fv) && fv.length > 0) effFilters.push({ field: f.field, operator: f.operator || 'in', value: fv });
+        else if (f.operator === 'is_null' || f.operator === 'is_not_null') effFilters.push({ field: f.field, operator: f.operator });
+        else if (f.value !== undefined && f.value !== '') effFilters.push({ field: f.field, operator: f.operator, value: f.value });
+      }
       if (periodEnabled && periodField) {
         if (periodStart) effFilters.push({ field: periodField, operator: 'gte', value: periodStart });
         if (periodEnd) effFilters.push({ field: periodField, operator: 'lte', value: periodEnd });
       }
+      const isPivot = viewMode === 'pivo' && !!pivotCol;
+      const effGroupBy = isPivot && !groupBy.includes(pivotCol) ? [...groupBy, pivotCol] : groupBy;
+      const dateBuckets = (isPivot && getColumnType(pivotCol) === 'date') ? { [pivotCol]: pivotDateGrouping } : undefined;
       const config = {
         dataSource,
         columns: selectedColumns,
-        groupBy: groupBy.length > 0 ? groupBy : undefined,
+        groupBy: effGroupBy.length > 0 ? effGroupBy : undefined,
         aggregations: aggregations.length > 0 ? aggregations : undefined,
         filters: effFilters.length > 0 ? effFilters : undefined,
         orderBy: orderBy.length > 0 ? orderBy : undefined,
         limit,
+        dateBuckets,
       };
       const res = await apiRequest('POST', '/api/reports/execute', config);
       const data = res;
@@ -423,10 +435,13 @@ export default function Reports() {
     setOrderBy(config.orderBy || []);
     setLimit(config.limit || 5000);
     const pp = config.period || {};
-    setPeriodEnabled(!!pp.enabled);
-    setPeriodField(pp.field || '');
-    setPeriodStart(pp.start || '');
-    setPeriodEnd(pp.end || '');
+    setPeriodEnabled(pp.enabled ?? !!config.useDateFilter);
+    setPeriodField(pp.field || config.dateField || '');
+    setPeriodStart(pp.start || config.periodStart || '');
+    setPeriodEnd(pp.end || config.periodEnd || '');
+    setViewMode(config.mode === 'pivot' ? 'pivo' : (config.viewMode || 'tabela'));
+    setPivotCol(config.pivotColumn || config.pivotCol || '');
+    setPivotDateGrouping(config.pivotDateGrouping || 'day');
     setResult(null);
     setActiveTab('builder');
     toast({ title: `Relatório "${report.name}" carregado` });
