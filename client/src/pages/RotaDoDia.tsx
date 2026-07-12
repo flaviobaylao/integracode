@@ -200,6 +200,7 @@ export default function RotaDoDia() {
   interface VirtualServiceData {
     count: number;
     attendedCustomerIds: string[];
+    noSaleCustomerIds: string[];
   }
   const { data: virtualServiceData } = useQuery<VirtualServiceData>({
     queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate],
@@ -207,14 +208,15 @@ export default function RotaDoDia() {
       const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}`, {
         credentials: 'include',
       });
-      if (!res.ok) return { count: 0, attendedCustomerIds: [] };
+      if (!res.ok) return { count: 0, attendedCustomerIds: [], noSaleCustomerIds: [] };
       const data = await res.json();
-      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [] };
+      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [], noSaleCustomerIds: data.noSaleCustomerIds || [] };
     },
     enabled: !!selectedSellerId && !!selectedDate,
   });
   const virtualServiceCount = virtualServiceData?.count || 0;
   const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
+  const noSaleCustomerIds = useMemo(() => new Set(virtualServiceData?.noSaleCustomerIds || []), [virtualServiceData?.noSaleCustomerIds]);
 
   // "Atendimento em andamento" (WhatsApp aberto) — marcação local por dia (localStorage).
   // Some automaticamente quando o cliente vira atendido (Registrar Atendimento) ou tem pedido do dia (Registrar Pedido).
@@ -1680,6 +1682,7 @@ export default function RotaDoDia() {
                           const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
                           const isFinalized = !!(isAttended || hasOrderToday);
+                          const isNaoVenda = !!(visit.customerId && noSaleCustomerIds.has(visit.customerId));
                           return (
                           <div
                             key={visit.id || visit.customerId}
@@ -1753,6 +1756,26 @@ export default function RotaDoDia() {
                                       >
                                         <CheckCircle className="h-3 w-3 mr-1" />
                                         Atendimento Finalizado
+                                      </Badge>
+                                    )}
+                                    {isNaoVenda && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-red-500 text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900"
+                                        data-testid={`virtual-naovenda-badge-${visit.customerId}`}
+                                      >
+                                        <X className="h-3 w-3 mr-1" />
+                                        Não Venda
+                                      </Badge>
+                                    )}
+                                    {hasOrderToday && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-blue-500 text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-900"
+                                        data-testid={`virtual-pedido-badge-${visit.customerId}`}
+                                      >
+                                        <ShoppingCart className="h-3 w-3 mr-1" />
+                                        Pedido Registrado
                                       </Badge>
                                     )}
                                   </div>
