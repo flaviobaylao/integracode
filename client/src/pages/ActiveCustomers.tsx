@@ -239,7 +239,7 @@ export default function ActiveCustomers() {
   const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
   const [selectedPersonType, setSelectedPersonType] = useState<string>("");
-  const [selectedSegment, setSelectedSegment] = useState<string>("");
+  const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkSeller, setBulkSeller] = useState("");
@@ -827,6 +827,12 @@ export default function ActiveCustomers() {
     )
   ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
+  const SEM_SEGMENTO = "(Sem segmento)";
+  const segmentFilterOptions = [
+    ...segmentOptions,
+    ...(activeCustomers.some(ac => !ac.customer?.segmentoPrincipal) ? [SEM_SEGMENTO] : []),
+  ];
+
   // Função para calcular variação percentual
   const calcVariation = (prev: number, curr: number): number => {
     if (prev === 0 && curr === 0) return -Infinity; // Sem atividade = último na ordenação
@@ -890,7 +896,7 @@ export default function ActiveCustomers() {
       const ptDigits = (ac.document || '').replace(/\D/g, '');
       const personType = (ac.customer as any)?.customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
       const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
-      const matchesSegment = !selectedSegment || (selectedSegment === '__none__' ? !ac.customer?.segmentoPrincipal : ac.customer?.segmentoPrincipal === selectedSegment);
+      const matchesSegment = multiMatch(segmentMulti, ac.customer?.segmentoPrincipal || SEM_SEGMENTO);
       return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment;
     })
     .sort((a, b) => {
@@ -1246,18 +1252,7 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
-              <Select value={selectedSegment || '__all__'} onValueChange={(v) => setSelectedSegment(v === '__all__' ? '' : v)}>
-                <SelectTrigger className="w-[160px] h-9" data-testid="select-segment-filter">
-                  <SelectValue placeholder="Segmento" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todos os segmentos</SelectItem>
-                  {segmentOptions.map((seg) => (
-                    <SelectItem key={seg} value={seg}>{seg}</SelectItem>
-                  ))}
-                  <SelectItem value="__none__">Sem segmento</SelectItem>
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Segmento" options={segmentFilterOptions} selected={segmentMulti} onChange={setSegmentMulti} testId="filter-segment-active" />
 
               <Select value={selectedPositivation} onValueChange={setSelectedPositivation}>
                 <SelectTrigger className="w-[120px] h-9" data-testid="select-positivation-filter">
