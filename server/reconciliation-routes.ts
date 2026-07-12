@@ -378,12 +378,13 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount, r.due_date, r.omie_instance_id,
+          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount,
+                 (r.amount - COALESCE(r.amount_paid,0)) AS restante, r.due_date, r.omie_instance_id,
                  r.chart_account_id, (c.code || ' ' || c.name) AS chart_label
           FROM receivables r LEFT JOIN chart_of_accounts c ON c.id = r.chart_account_id
           WHERE ${sql.join(conds, sql` AND `)}
           ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
       } else {
         const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
         if (q) {
@@ -393,12 +394,13 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount, p.due_date, p.omie_instance_id,
+          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount,
+                 (p.amount - COALESCE(p.amount_paid,0)) AS restante, p.due_date, p.omie_instance_id,
                  p.chart_account_id, (c.code || ' ' || c.name) AS chart_label
           FROM payables p LEFT JOIN chart_of_accounts c ON c.id = p.chart_account_id
           WHERE ${sql.join(conds, sql` AND `)}
           ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
       }
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
