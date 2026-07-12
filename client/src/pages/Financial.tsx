@@ -47,6 +47,11 @@ function formatDate(date: string | null | undefined) {
   return new Date(date).toLocaleDateString('pt-BR');
 }
 
+function formatDateTime(date: string | null | undefined) {
+  if (!date) return '-';
+  return new Date(date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 function getReceivableStatusBadge(status: string, dueDate?: string) {
   if (status === 'a_vencer' && dueDate && new Date(dueDate) < new Date()) {
     return <Badge className="bg-orange-100 text-orange-800 border-orange-300">Atrasada</Badge>;
@@ -385,6 +390,17 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
+  // Histórico completo da conta (cobrança, documento, recebimentos, baixas, conciliações) — carregado ao abrir o detalhe.
+  const { data: history, isLoading: historyLoading } = useQuery<any>({
+    queryKey: ['/api/financial/receivables', selectedItem?.id, 'history'],
+    enabled: showDetail && !!selectedItem?.id,
+    queryFn: async () => {
+      const res = await fetch(`/api/financial/receivables/${selectedItem?.id}/history`, { credentials: 'include' });
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
   return (
     <div className="space-y-4">
       {!readOnly && <ReconcileButton table="receivables" />}
@@ -692,24 +708,110 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
       </Dialog>
 
       <Dialog open={showDetail} onOpenChange={setShowDetail}>
-        <DialogContent>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Detalhes - Conta a Receber</DialogTitle>
             <DialogDescription>Informações completas da conta</DialogDescription>
           </DialogHeader>
           {selectedItem && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label className="text-xs text-muted-foreground">Título</Label><p className="font-medium">{selectedItem.title || '-'}</p></div>
+            <div className="space-y-4">
+              {/* Resumo da cobrança */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div><Label className="text-xs text-muted-foreground">Título</Label><p className="font-medium">{history?.receivable?.titleNumber || selectedItem.title || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Cliente</Label><p>{selectedItem.customerName || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">CNPJ/CPF</Label><p>{history?.receivable?.customerDocument || selectedItem.customerDocument || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor</Label><p className="font-bold text-green-700">{formatCurrency(selectedItem.amount)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor Pago</Label><p>{formatCurrency(selectedItem.amountPaid)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Status</Label><div>{getReceivableStatusBadge(selectedItem.status, selectedItem.dueDate)}</div></div>
+                <div><Label className="text-xs text-muted-foreground">Emissão</Label><p>{formatDate(history?.receivable?.issueDate || selectedItem.issueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Vencimento</Label><p>{formatDate(selectedItem.dueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Forma Pgto</Label><p>{selectedItem.paymentMethod || '-'}</p></div>
-                <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{selectedItem.instanceId || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{selectedItem.instanceId || history?.receivable?.omieInstanceId || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">Criada por</Label><p className="text-sm">{history?.receivable?.createdBy || '-'}<span className="text-xs text-muted-foreground">{history?.receivable?.createdAt ? ' · ' + formatDateTime(history.receivable.createdAt) : ''}</span></p></div>
+                {history?.receivable?.updatedBy && <div><Label className="text-xs text-muted-foreground">Última edição</Label><p className="text-sm">{history.receivable.updatedBy}<span className="text-xs text-muted-foreground">{history?.receivable?.updatedAt ? ' · ' + formatDateTime(history.receivable.updatedAt) : ''}</span></p></div>}
               </div>
               {selectedItem.description && <div><Label className="text-xs text-muted-foreground">Descrição</Label><p className="text-sm bg-muted p-2 rounded">{selectedItem.description}</p></div>}
+
+              {historyLoading && <p className="text-sm text-muted-foreground">Carregando histórico…</p>}
+
+              {/* Documento fiscal (NF-e) */}
+              {history?.fiscalInvoice && (
+                <div className="border rounded p-2">
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">Documento fiscal (NF-e)</p>
+                  <p className="text-sm">NF-e nº <b>{history.fiscalInvoice.invoiceNumber || '-'}</b> · {history.fiscalInvoice.status}{history.fiscalInvoice.emissionDate ? ' · ' + formatDate(history.fiscalInvoice.emissionDate) : ''}</p>
+                  {history.fiscalInvoice.accessKey && <p className="text-[11px] text-muted-foreground break-all">Chave: {history.fiscalInvoice.accessKey}</p>}
+                </div>
+              )}
+
+              {/* Documento de cobrança: boletos + PIX */}
+              {(((history?.boletos?.length || 0) + (history?.pix?.length || 0)) > 0) && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">Documento de cobrança</p>
+                  <div className="space-y-2">
+                    {(history?.boletos || []).map((b: any) => (
+                      <div key={b.id} className="border rounded p-2 text-sm">
+                        <div className="flex justify-between gap-2"><span>Boleto · Nosso nº {b.nossoNumero || '-'}</span><Badge variant="outline">{b.status}</Badge></div>
+                        <p className="text-xs text-muted-foreground">Emitido {formatDateTime(b.createdAt)} · Venc. {formatDate(b.dueDate)} · {formatCurrency(b.amount)}</p>
+                        {b.linhaDigitavel && <p className="text-[11px] break-all">Linha digitável: {b.linhaDigitavel}</p>}
+                        {b.canceledAt && <p className="text-[11px] text-red-600">Cancelado {formatDateTime(b.canceledAt)}{b.canceledBy ? ' · ' + b.canceledBy : ''}</p>}
+                      </div>
+                    ))}
+                    {(history?.pix || []).map((p: any) => (
+                      <div key={p.id} className="border rounded p-2 text-sm">
+                        <div className="flex justify-between gap-2"><span>PIX · {String(p.txid || '').slice(0, 16)}…</span><Badge variant="outline">{p.status}</Badge></div>
+                        <p className="text-xs text-muted-foreground">Criado {formatDateTime(p.createdAt)}{p.createdBy ? ' por ' + p.createdBy : ''} · {formatCurrency(p.amount)}{p.paidAt ? ' · pago ' + formatDateTime(p.paidAt) : ''}</p>
+                        {p.endToEndId && <p className="text-[11px] text-muted-foreground break-all">E2E: {p.endToEndId}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Recebimentos / baixas */}
+              {((history?.payments?.length || 0) > 0) && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">Recebimentos / baixas</p>
+                  <div className="space-y-1">
+                    {(history?.payments || []).map((p: any) => (
+                      <div key={p.id} className="border rounded p-2 text-sm flex justify-between gap-2">
+                        <div><b className="text-green-700">{formatCurrency(p.amount)}</b> · {p.paymentMethod || '-'}{p.notes ? <span className="text-muted-foreground"> · {p.notes}</span> : null}</div>
+                        <div className="text-xs text-muted-foreground text-right whitespace-nowrap">{formatDateTime(p.paidAt)}<br />{p.createdBy || '-'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Conciliações bancárias */}
+              {((history?.reconciliations?.length || 0) > 0) && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">Conciliações bancárias</p>
+                  <div className="space-y-1">
+                    {(history?.reconciliations || []).map((r: any) => (
+                      <div key={r.id} className="border rounded p-2 text-sm">
+                        <div className="flex justify-between gap-2"><span>{r.itemDescription || r.originName || 'Extrato'}{r.itemAmount ? ' · ' + formatCurrency(r.itemAmount) : ''}</span><span className="text-xs text-muted-foreground whitespace-nowrap">{r.matchedAt ? formatDateTime(r.matchedAt) : ''}</span></div>
+                        <p className="text-xs text-muted-foreground">Conciliado por {r.matchedBy || r.createdBy || '-'}{r.account ? ' · ' + r.account : ''}{r.statement ? ' · ' + r.statement : ''}{(r.interest && Number(r.interest) > 0) ? ' · juros ' + formatCurrency(r.interest) : ''}{(r.discount && Number(r.discount) > 0) ? ' · desc. ' + formatCurrency(r.discount) : ''}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Linha do tempo consolidada */}
+              {((history?.timeline?.length || 0) > 0) && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">Linha do tempo</p>
+                  <div className="space-y-1 border-l-2 border-muted pl-3">
+                    {(history?.timeline || []).map((t: any, i: number) => (
+                      <div key={i} className="flex flex-wrap gap-x-2 text-sm items-baseline">
+                        <span className="text-xs text-muted-foreground whitespace-nowrap w-[120px]">{formatDateTime(t.date)}</span>
+                        <span className="font-medium">{t.label}</span>
+                        <span className="text-muted-foreground text-xs">{t.detail || ''}{t.user ? ' — ' + t.user : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
