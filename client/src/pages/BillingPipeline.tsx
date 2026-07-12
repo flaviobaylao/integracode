@@ -581,7 +581,13 @@ export default function BillingPipeline() {
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
     if (nextIdx < 0 || nextIdx >= STAGES.length) return;
-    moveStageMutation.mutate({ id: item.id, stage: STAGES[nextIdx].key });
+    const targetStage = STAGES[nextIdx].key;
+    // Mover para "Bloqueados" NAO e mudanca de stage: e BLOQUEAR (tabela blocked_orders via /block).
+    if (targetStage === 'bloqueado') {
+      if (window.confirm(`Bloquear o pedido de ${item.customerName}? Ele vai para a coluna "Bloqueados".`)) blockOrderMutation.mutate({ id: item.id });
+      return;
+    }
+    moveStageMutation.mutate({ id: item.id, stage: targetStage });
   };
 
   const moveToStage = (item: BillingPipelineItem, stage: string) => {
@@ -589,6 +595,11 @@ export default function BillingPipeline() {
     // O pedido liberado entra na etapa "Pedido" e dali pode ser movido normalmente.
     if (item.stage === 'bloqueado') {
       if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento? Ele entrara na etapa "Pedido".`)) releaseBlockedMutation.mutate([item.id]);
+      return;
+    }
+    // Mover para "Bloqueados" NAO e mudanca de stage: e BLOQUEAR (tabela blocked_orders via /block).
+    if (stage === 'bloqueado') {
+      if (window.confirm(`Bloquear o pedido de ${item.customerName}? Ele vai para a coluna "Bloqueados" e so sai de la por liberacao manual.`)) blockOrderMutation.mutate({ id: item.id });
       return;
     }
     moveStageMutation.mutate({ id: item.id, stage });
