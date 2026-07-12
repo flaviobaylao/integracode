@@ -1297,7 +1297,7 @@ function ChartOfAccountsTab() {
     passivo: { label: 'Passivo', className: 'bg-purple-100 text-purple-800' },
   };
 
-  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', dreGroup: '', instanceId: '', isActive: true }); setShowDialog(true); };
+  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', dreGroup: '', instanceId: '', isActive: true, includeInDre: true }); setShowDialog(true); };
   const openEdit = (item: any) => { setEditItem(item); setForm({ ...item }); setShowDialog(true); };
 
   const isGroupHeader = (code: string) => !code.includes('.');
@@ -1342,7 +1342,7 @@ function ChartOfAccountsTab() {
                   <TableRow key={a.id} className={isHeader ? 'bg-muted/50 font-semibold' : ''}>
                     <TableCell className="font-mono text-xs">{a.code || '-'}</TableCell>
                     <TableCell className={isHeader ? 'font-semibold' : 'pl-8'}>{isHeader ? '' : '(-) '}{a.name}</TableCell>
-                    <TableCell><span className="text-xs text-muted-foreground">{DRE_GROUP_LABELS[a.dreGroup] || a.dreGroup || '-'}</span></TableCell>
+                    <TableCell>{a.includeInDre === false ? <Badge variant="outline" className="border-amber-400 text-amber-700">Só Fluxo de Caixa</Badge> : <span className="text-xs text-muted-foreground">{DRE_GROUP_LABELS[a.dreGroup] || a.dreGroup || '-'}</span>}</TableCell>
                     <TableCell><Badge className={tb.className}>{tb.label}</Badge></TableCell>
                     <TableCell>{a.isActive !== false ? <Badge className="bg-green-100 text-green-800">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}</TableCell>
                     <TableCell>
@@ -1393,6 +1393,15 @@ function ChartOfAccountsTab() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="rounded-md border p-3 bg-muted/30">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.includeInDre !== false} onChange={e => setForm({ ...form, includeInDre: e.target.checked })} className="h-4 w-4 mt-0.5" />
+                <span>
+                  <span className="text-sm font-medium">Considerar na DRE</span>
+                  <span className="block text-xs text-muted-foreground">{form.includeInDre === false ? 'Conta só de fluxo de caixa (não entra na DRE). Ex.: Aportes.' : 'Desmarque para que a conta apareça apenas no fluxo de caixa (ex.: Aportes), fora da DRE.'}</span>
+                </span>
+              </label>
             </div>
             <div>
               <Label>Instância</Label>
