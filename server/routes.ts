@@ -20698,9 +20698,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       });
-      
+
+      // Clientes passados explicitamente pelo frontend (inclui VISITAS VIRTUAIS, que não
+      // entram em visitStops/optimizedOrder — sem isso, virtuais ficavam sem periodicidade/pedido).
+      const extraCustomerIds = String(req.query.customerIds || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+      extraCustomerIds.forEach(id => {
+        if (!customerIds.includes(id)) customerIds.push(id);
+      });
+
       if (customerIds.length === 0) {
-        return res.json({ orders: {}, debts: {} });
+        return res.json({ orders: {}, debts: {}, periodicity: {}, lastOrders: {} });
       }
       
       console.log(`📊 [CUSTOMER-INFO] Rota ${routeId}, data ${routeDate}, ${customerIds.length} clientes, stopIds: ${optimizedOrder.slice(0,3).join(', ')}...`);
