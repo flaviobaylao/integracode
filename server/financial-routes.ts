@@ -489,6 +489,75 @@ export function registerFinancialRoutes(app: Express) {
   // RECEIVABLES (Contas a Receber)
   // ============================================================================
 
+  // FASE 3.1 - Regras de classificacao DRE de contas a pagar por fornecedor.
+  // Aplicadas em massa via /api/financial/payable-rules/apply (dryRun por padrao)
+  // e automaticamente na criacao de novas contas a pagar sem conta gerencial.
+  const PAYABLE_RULES: Array<{ p: string; code: string }> = [
+    { p: 'BANCO DO BRASIL', code: '5.03' },
+    { p: 'SIMPLES NACIONAL', code: '1.02' },
+    { p: 'SECRETARIA DA ECONOMIA', code: '1.02' },
+    { p: 'DOHLER', code: '2.01' },
+    { p: 'BLUEBERRY', code: '2.01' },
+    { p: 'JOAQUIM CORREIA FLORENTINO', code: '2.01' },
+    { p: 'HP GUIMARAES', code: '2.02' },
+    { p: 'CAPITAL EMBALAGENS', code: '2.02' },
+    { p: 'ELLOFLEX', code: '2.02' },
+    { p: 'VANTAGEM ENERGIA', code: '2.03' },
+    { p: 'NAIARA GOMES', code: '2.04' },
+    { p: 'MARCELO CHAVES COSTA BARBOSA', code: '3.09' },
+    { p: 'GILMAR MOREIRA', code: '3.03' },
+    { p: 'VOLUS', code: '4.10' },
+    { p: 'FLAVIO EVANGELISTA BAYLAO', code: '4.01' },
+    { p: 'FGTS', code: '4.01' },
+    { p: 'IMPERIAL EMPREENDIMENTOS', code: '4.06' },
+    { p: 'BANCO VOLKSWAGEN', code: '9.01' },
+    { p: 'BANCO VOTORANTIM', code: '9.01' },
+  ];
+  let __accByCode: { map: Record<string, string>; at: number } = { map: {}, at: 0 };
+  async function chartAccountIdByCode(code: string): Promise<string | null> {
+    const now = Date.now();
+    if (now - __accByCode.at > 60000) {
+      try {
+        const q: any = await db.execute(sql`SELECT id, code FROM chart_of_accounts WHERE is_active = true`);
+        const m: Record<string, string> = {};
+        for (const r of ((q as any).rows || [])) m[String(r.code)] = String(r.id);
+        __accByCode = { map: m, at: now };
+      } catch {}
+    }
+    return __accByCode.map[code] || null;
+  }
+  async function payableRuleAccountFor(supplierName: any): Promise<string | null> {
+    const s = String(supplierName || '').toUpperCase();
+    for (const r of PAYABLE_RULES) if (s.includes(r.p)) return await chartAccountIdByCode(r.code);
+    return null;
+  }
+
+  app.post('/api/financial/payable-rules/apply', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const user = actorOf(req);
+      const results: any[] = [];
+      let total = 0;
+      for (const r of PAYABLE_RULES) {
+        const accId = await chartAccountIdByCode(r.code);
+        if (!accId) { results.push({ regra: r.p, conta: r.code, erro: 'conta nao encontrada' }); continue; }
+        const like = '%' + r.p + '%';
+        if (dryRun) {
+          const q: any = await db.execute(sql`SELECT count(*)::int AS n, COALESCE(sum(amount::numeric),0)::numeric(14,2) AS v FROM payables WHERE chart_account_id IS NULL AND deleted_at IS NULL AND status <> 'cancelada' AND upper(supplier_name) LIKE ${like}`);
+          const row = (q as any).rows?.[0] || {};
+          results.push({ regra: r.p, conta: r.code, titulos: row.n ?? 0, valor: row.v ?? '0' });
+          total += Number(row.n || 0);
+        } else {
+          const u: any = await db.execute(sql`UPDATE payables SET chart_account_id = ${accId}, updated_at = now(), updated_by = ${user?.email || 'payable-rules'} WHERE chart_account_id IS NULL AND deleted_at IS NULL AND status <> 'cancelada' AND upper(supplier_name) LIKE ${like}`);
+          const n = ((u as any)?.rowCount ?? 0) as number;
+          results.push({ regra: r.p, conta: r.code, atualizados: n });
+          total += n;
+        }
+      }
+      res.json({ ok: true, dryRun, total, results });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
   // FASE 2 - PIX recebidos sem cobranca correspondente (capturados pelo webhook).
   // Lista de apoio: a baixa continua sendo feita pela Conciliacao 2.0 (extrato OFX).
   app.get('/api/financial/pix-nao-identificados', authenticateUser, isFinancialAuthorized, async (req, res) => {
@@ -676,6 +745,8 @@ export function registerFinancialRoutes(app: Express) {
       const user = actorOf(req);
       const data: any = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       if (!data.issueDate) data.issueDate = new Date();
+      // FASE 3.1 - classificacao DRE automatica por regra de fornecedor.
+      if (!data.chartAccountId) { try { data.chartAccountId = await payableRuleAccountFor(data.supplierName); } catch {} }
       const rec = req.body.recurrence;
       if (rec && rec.freq && rec.freq !== 'none') {
         const base = data.dueDate instanceof Date ? data.dueDate : (data.dueDate ? new Date(data.dueDate) : new Date());
