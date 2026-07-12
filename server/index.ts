@@ -2349,7 +2349,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const amount = rq.rows?.[0]?.amount || null;
       const b: any = await db.execute(sql`SELECT to_jsonb(bc) AS row, bc.id, bc.status, bc.data_vencimento FROM boleto_charges bc WHERE bc.receivable_id = ${id} AND bc.status <> 'cancelado' AND bc.status <> 'cancelada' ORDER BY bc.created_at DESC LIMIT 1`);
       if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, boleto: bc.row }); }
-      const p: any = await db.execute(sql`SELECT to_jsonb(pc) AS row, pc.id, pc.status, pc.due_date FROM pix_charges pc WHERE pc.receivable_id = ${id} AND pc.status <> 'cancelado' AND pc.status <> 'cancelada' ORDER BY pc.created_at DESC LIMIT 1`);
+      const p: any = await db.execute(sql`SELECT to_jsonb(pc) AS row, pc.id, pc.status, pc.due_date FROM pix_charges pc WHERE pc.receivable_id = ${id} AND pc.status NOT IN ('REMOVIDA_PELO_USUARIO_RECEBEDOR','REMOVIDA_PELO_PSP') ORDER BY pc.created_at DESC LIMIT 1`);
       if (p.rows?.[0]) { const pc = p.rows[0]; const changed = !!(recDue && pc.due_date && ymd(recDue) !== ymd(pc.due_date)); return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}`, chargeDueDate: pc.due_date, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, pix: pc.row }); }
       res.json({ hasCharge: false });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
@@ -2378,7 +2378,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         canceladoAnterior = true;
       } else {
         // PIX ativo: marca cancelado no sistema (cob PIX expira; baixa no BB e follow-up).
-        const upd: any = await db.execute(sql`UPDATE pix_charges SET status = 'cancelado' WHERE receivable_id = ${recId} AND status <> 'cancelado' AND status <> 'cancelada'`);
+        const upd: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${recId} AND status = 'ATIVA'`);
         canceladoAnterior = ((upd?.rowCount ?? 0) as number) > 0;
       }
 
