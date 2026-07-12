@@ -16,7 +16,7 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown
+  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -209,6 +209,9 @@ export default function BillingPipeline() {
   });
 
   const isFlavio = (currentUser as any)?.email === 'flavio@bebahonest.com.br';
+  // Bloqueio manual de pedido: apenas os 3 admins (mesma lista da Rota do Dia).
+  const canBlockOrders = ['cinthiamarque90@gmail.com', 'flaviobaylao@gmail.com', 'flavio@bebahonest.com.br']
+    .includes(String((currentUser as any)?.email || '').toLowerCase());
 
   const { data: items = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
@@ -327,6 +330,18 @@ export default function BillingPipeline() {
     setEditMode(true);
   };
   const saveEdit = () => { if (detailItem && editData) updateItemMutation.mutate({ id: detailItem.id, data: editData }); };
+  const blockOrderMutation = useMutation({
+    mutationFn: async (vars: { id: string; reason?: string }) => await apiRequest('POST', `/api/billing-pipeline/${vars.id}/block`, { reason: vars.reason || '' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      toast({ title: 'Pedido bloqueado', description: 'Movido para a coluna Bloqueados. Só sai de lá por liberação manual.' });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Falha ao bloquear', description: error?.message || 'Erro', variant: 'destructive' });
+    },
+  });
+
   const releaseBlockedMutation = useMutation({
     mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/release', { orderIds }),
     onSuccess: (data: any) => {
@@ -897,6 +912,12 @@ export default function BillingPipeline() {
                       isMoving={moveStageMutation.isPending}
                       onRetryInvoice={() => retryInvoiceMutation.mutate(item.id)}
                       isRetrying={retryingId === item.id}
+                      canBlock={canBlockOrders}
+                      onBlock={() => {
+                        const reason = window.prompt(`Bloquear o pedido de ${item.customerName}?\n\nMotivo (opcional):`, '');
+                        if (reason !== null) blockOrderMutation.mutate({ id: item.id, reason });
+                      }}
+                      isBlocking={blockOrderMutation.isPending}
                     />
                   ))}
                 </div>
@@ -1242,6 +1263,9 @@ function KanbanCard({
   isMoving,
   onRetryInvoice,
   isRetrying,
+  canBlock,
+  onBlock,
+  isBlocking,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -1256,6 +1280,9 @@ function KanbanCard({
   isMoving: boolean;
   onRetryInvoice: () => void;
   isRetrying: boolean;
+  canBlock?: boolean;
+  onBlock?: () => void;
+  isBlocking?: boolean;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
@@ -1365,14 +1392,28 @@ function KanbanCard({
           >
             <ChevronLeft className="h-3 w-3" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-1 text-xs text-red-500 hover:text-red-700"
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {canBlock && !isBlocked && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1 text-xs text-orange-600 hover:text-orange-800"
+                title="Bloquear pedido (admin)"
+                disabled={isBlocking}
+                onClick={(e) => { e.stopPropagation(); onBlock && onBlock(); }}
+              >
+                <Ban className="h-3 w-3" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1 text-xs text-red-500 hover:text-red-700"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
           <Button
             variant="ghost"
             size="sm"
