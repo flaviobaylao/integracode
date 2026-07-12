@@ -387,19 +387,22 @@ export function registerBillingPipelineRoutes(app: Express) {
   app.post('/api/admin/pipeline/classify-dre', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
+      // FASE 3.1 - escopo: 'pipeline' (vendas do pipeline), 'legados' (era Omie/conciliacao) ou 'todos'.
+      const scope = String(req.body?.scope || 'pipeline');
+      const scopeCond = scope === 'legados' ? sql`AND billing_pipeline_id IS NULL` : (scope === 'todos' ? sql`` : sql`AND billing_pipeline_id IS NOT NULL`);
       const accId = await resolveRevenueChartAccountId();
       if (!accId) return res.status(422).json({ error: 'nenhuma conta-filha de receita_bruta (code com ponto) ativa no plano de contas' });
       const cq: any = await db.execute(sql`
         SELECT count(*)::int AS n FROM receivables r
         WHERE r.chart_account_id IS NULL AND r.deleted_at IS NULL
-          AND r.status <> 'cancelada' AND r.billing_pipeline_id IS NOT NULL`);
+          AND r.status <> 'cancelada' ${scopeCond}`);
       const n = (cq as any).rows?.[0]?.n ?? 0;
-      if (dryRun) return res.json({ ok: true, dryRun: true, chartAccountId: accId, candidatos: n });
+      if (dryRun) return res.json({ ok: true, dryRun: true, scope, chartAccountId: accId, candidatos: n });
       const u: any = await db.execute(sql`
         UPDATE receivables SET chart_account_id = ${accId}, updated_at = now(), updated_by = ${req.currentUser?.email || 'classify-dre'}
         WHERE chart_account_id IS NULL AND deleted_at IS NULL
-          AND status <> 'cancelada' AND billing_pipeline_id IS NOT NULL`);
-      res.json({ ok: true, dryRun: false, chartAccountId: accId, atualizados: ((u as any)?.rowCount ?? 0) as number });
+          AND status <> 'cancelada' ${scopeCond}`);
+      res.json({ ok: true, dryRun: false, scope, chartAccountId: accId, atualizados: ((u as any)?.rowCount ?? 0) as number });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
