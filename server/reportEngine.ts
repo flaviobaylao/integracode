@@ -188,25 +188,41 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
   fiscal_invoices: {
     key: 'fiscal_invoices',
     label: 'Notas Fiscais (NF-e)',
-    description: 'Notas fiscais emitidas (NF-e)',
+    description: 'Todas as NF-e emitidas no Integra com dados fiscais completos',
+    baseQuery: `SELECT fi.* FROM fiscal_invoices fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN users u ON (u.id = sc.seller_id OR u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = REPLACE(COALESCE(sc.seller_id,''),'omie-vendor-',''))`,
     fields: [
-      { key: 'invoice_number', label: 'Número NF', type: 'text', category: 'Nota', dbColumn: 'fi.invoice_number' },
-      { key: 'series', label: 'Série', type: 'text', category: 'Nota', dbColumn: 'fi.series' },
-      { key: 'status', label: 'Status', type: 'text', category: 'Nota', dbColumn: 'fi.status' },
-      { key: 'customer_name', label: 'Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_name' },
-      { key: 'customer_cnpj_cpf', label: 'CNPJ/CPF', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_cnpj_cpf' },
-      { key: 'customer_city', label: 'Cidade', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_city' },
-      { key: 'customer_uf', label: 'UF', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_uf' },
-      { key: 'issuer_name', label: 'Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_name' },
-      { key: 'issuer_cnpj', label: 'CNPJ Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_cnpj' },
-      { key: 'cfop', label: 'CFOP', type: 'text', category: 'Fiscal', dbColumn: 'fi.cfop' },
-      { key: 'nature_of_operation', label: 'Natureza', type: 'text', category: 'Fiscal', dbColumn: 'fi.nature_of_operation' },
-      { key: 'total_products', label: 'Total Produtos', type: 'currency', category: 'Valores', dbColumn: 'fi.total_products' },
-      { key: 'total_invoice', label: 'Total NF', type: 'currency', category: 'Valores', dbColumn: 'fi.total_invoice' },
-      { key: 'omie_instance_id', label: 'Instância', type: 'text', category: 'Integração', dbColumn: 'fi.omie_instance_id' },
-      { key: 'created_at', label: 'Data', type: 'date', category: 'Datas', dbColumn: 'fi.created_at' },
+      { key: 'nf_numero', label: 'Nº NF-e', type: 'text', category: 'Identificação', dbColumn: 'fi.invoice_number' },
+      { key: 'nf_serie', label: 'Série', type: 'text', category: 'Identificação', dbColumn: 'fi.series' },
+      { key: 'nf_access_key', label: 'Chave de Acesso', type: 'text', category: 'Identificação', dbColumn: 'fi.access_key' },
+      { key: 'nf_protocol', label: 'Protocolo', type: 'text', category: 'Identificação', dbColumn: 'fi.protocol_number' },
+      { key: 'nf_status', label: 'Situação', type: 'text', category: 'Status', dbColumn: 'fi.status' },
+      { key: 'nf_environment', label: 'Ambiente', type: 'text', category: 'Status', dbColumn: 'fi.environment' },
+      { key: 'nf_operation_type', label: 'Tipo Operação', type: 'text', category: 'Fiscal', dbColumn: 'fi.operation_type' },
+      { key: 'nf_cfop', label: 'CFOP', type: 'text', category: 'Fiscal', dbColumn: 'fi.cfop' },
+      { key: 'nf_nature_of_operation', label: 'Natureza Operação', type: 'text', category: 'Fiscal', dbColumn: 'fi.nature_of_operation' },
+      { key: 'nf_fin_nfe', label: 'Finalidade NF-e', type: 'text', category: 'Fiscal', dbColumn: 'fi.fin_nfe' },
+      { key: 'nf_fiscal_scenario', label: 'Cenário Fiscal', type: 'text', category: 'Fiscal', dbColumn: 'fi.fiscal_scenario_id' },
+      { key: 'nf_customer_name', label: 'Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_name' },
+      { key: 'nf_customer_cnpj_cpf', label: 'CPF/CNPJ Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_cnpj_cpf' },
+      { key: 'nf_customer_ie', label: 'IE Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_ie' },
+      { key: 'nf_customer_city', label: 'Cidade Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_city' },
+      { key: 'nf_customer_uf', label: 'UF Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_uf' },
+      { key: 'nf_customer_bairro', label: 'Bairro Cliente', type: 'text', category: 'Cliente', dbColumn: 'fi.customer_bairro' },
+      { key: 'nf_issuer_name', label: 'Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_name' },
+      { key: 'nf_issuer_cnpj', label: 'CNPJ Emitente', type: 'text', category: 'Emitente', dbColumn: 'fi.issuer_cnpj' },
+      { key: 'nf_seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
+      { key: 'nf_total_products', label: 'Total Produtos', type: 'currency', category: 'Valores', dbColumn: 'fi.total_products' },
+      { key: 'nf_total_discount', label: 'Total Desconto', type: 'currency', category: 'Valores', dbColumn: 'fi.total_discount' },
+      { key: 'nf_total_freight', label: 'Total Frete', type: 'currency', category: 'Valores', dbColumn: 'fi.total_freight' },
+      { key: 'nf_total_icms', label: 'Total ICMS', type: 'currency', category: 'Valores', dbColumn: 'fi.total_icms' },
+      { key: 'nf_total_pis', label: 'Total PIS', type: 'currency', category: 'Valores', dbColumn: 'fi.total_pis' },
+      { key: 'nf_total_cofins', label: 'Total COFINS', type: 'currency', category: 'Valores', dbColumn: 'fi.total_cofins' },
+      { key: 'nf_total_ipi', label: 'Total IPI', type: 'currency', category: 'Valores', dbColumn: 'fi.total_ipi' },
+      { key: 'nf_total_invoice', label: 'Total NF', type: 'currency', category: 'Valores', dbColumn: 'fi.total_invoice' },
+      { key: 'nf_emission_date', label: 'Data Emissão', type: 'date', category: 'Datas', dbColumn: 'fi.emission_date' },
+      { key: 'nf_authorization_date', label: 'Data Autorização', type: 'date', category: 'Datas', dbColumn: 'fi.authorization_date' },
+      { key: 'nf_omie_instance', label: 'Instância', type: 'text', category: 'Integração', dbColumn: 'fi.omie_instance_id' },
     ],
-    baseQuery: `SELECT fi.* FROM fiscal_invoices fi`,
   },
   fiscal_invoice_items: {
     key: 'fiscal_invoice_items',
@@ -297,6 +313,7 @@ export interface ReportConfig {
   filters?: { field: string; operator: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'in' | 'is_null' | 'is_not_null'; value?: any }[];
   orderBy?: { field: string; direction: 'asc' | 'desc' }[];
   limit?: number;
+  dateBuckets?: Record<string, 'day' | 'month' | 'year'>;
 }
 
 function sanitizeIdentifier(str: string): string {
@@ -307,6 +324,13 @@ function fieldSql(field: ReportFieldDef): string | null {
   if (field.sqlExpr) return field.sqlExpr;
   if (field.dbColumn) return sanitizeIdentifier(field.dbColumn);
   return null;
+}
+
+function bucketExpr(col: string, bucket: 'day' | 'month' | 'year'): string {
+  const local = `(${col} AT TIME ZONE 'America/Sao_Paulo')`;
+  if (bucket === 'year') return `to_char(${local}, 'YYYY')`;
+  if (bucket === 'month') return `to_char(${local}, 'YYYY-MM')`;
+  return `to_char(${local}, 'YYYY-MM-DD')`;
 }
 
 function extractFromClause(baseQuery: string): string {
@@ -338,8 +362,10 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
     for (const gKey of config.groupBy!) {
       const field = fieldMap.get(gKey);
       if (!field) continue;
-      const col = fieldSql(field);
+      let col = fieldSql(field);
       if (!col) continue;
+      const gbkt = config.dateBuckets && config.dateBuckets[gKey];
+      if (gbkt) col = bucketExpr(col, gbkt);
       selectParts.push(`${col} AS "${sanitizeIdentifier(gKey)}"`);
       resultColumns.push(gKey);
     }
@@ -435,7 +461,7 @@ export async function executeReport(config: ReportConfig): Promise<{ rows: any[]
 
   if (hasGroupBy) {
     const groupCols = config.groupBy!
-      .map(k => { const f = fieldMap.get(k); return f ? fieldSql(f) : null; })
+      .map(k => { const f = fieldMap.get(k); if (!f) return null; const c = fieldSql(f); if (!c) return null; const b = config.dateBuckets && config.dateBuckets[k]; return b ? bucketExpr(c, b) : c; })
       .filter(Boolean) as string[];
     if (groupCols.length > 0) {
       query += ` GROUP BY ${groupCols.join(', ')}`;
