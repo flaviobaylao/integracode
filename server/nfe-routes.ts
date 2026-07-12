@@ -591,9 +591,6 @@ export function registerNfeRoutes(app: Express) {
         }
       } catch (e) {}
     }
-      // Numeracao por CNPJ emitente + serie (cada CNPJ tem sequencia SEFAZ propria).
-      const nextNumber = await storage.getNextInvoiceNumber(invoiceFields.series || '1', (invoiceFields as any).issuerCnpj);
-      
       // Ambiente de emissao por instancia (system_settings: fiscal_env_<id>). Default homologacao ate cutover.
       try {
         const __instId = (invoiceFields as any).omieInstanceId || 'default';
@@ -604,12 +601,13 @@ export function registerNfeRoutes(app: Express) {
         (invoiceFields as any).environment = 'homologacao';
       }
 
-      const invoice = await storage.createFiscalInvoice({
+      // Numeracao ATOMICA por CNPJ emitente + serie (aloca o numero e insere na mesma transacao
+      // sob advisory lock — evita numero duplicado / rejeicao 539 em criacoes concorrentes).
+      const invoice = await storage.createFiscalInvoiceAtomic({
         ...invoiceFields,
-        invoiceNumber: nextNumber,
         status: 'draft',
         createdBy: req.user?.id || null,
-      });
+      }, invoiceFields.series || '1', (invoiceFields as any).issuerCnpj);
 
       if (items && items.length > 0) {
         for (let i = 0; i < items.length; i++) {
