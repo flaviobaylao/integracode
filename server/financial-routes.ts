@@ -690,6 +690,14 @@ export function registerFinancialRoutes(app: Express) {
       const user = actorOf(req);
       const data: any = { ...normalizeFinancialBody(req.body), createdBy: user?.email || null };
       if (!data.issueDate) data.issueDate = new Date();
+      // FASE 3.4e - categoria DRE obrigatoria: default = receita bruta (venda); sem categoria, nao cria.
+      if (!data.chartAccountId) {
+        try {
+          const q: any = await db.execute(sql`SELECT id FROM chart_of_accounts WHERE dre_group = 'receita_bruta' AND code LIKE '%.%' AND is_active = true ORDER BY code LIMIT 1`);
+          data.chartAccountId = (q as any).rows?.[0]?.id || null;
+        } catch {}
+      }
+      if (!data.chartAccountId) return res.status(400).json({ message: 'Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria.' });
       const receivable = await storage.createReceivable(data);
       await logFinancialAudit({ req, action: 'create', entity: 'receivable', entityId: receivable.id, after: receivable, amount: Number(receivable.amount) });
       res.status(201).json(receivable);
@@ -823,6 +831,8 @@ export function registerFinancialRoutes(app: Express) {
       if (!data.issueDate) data.issueDate = new Date();
       // FASE 3.1 - classificacao DRE automatica por regra de fornecedor.
       if (!data.chartAccountId) { try { data.chartAccountId = await payableRuleAccountFor(data.supplierName); } catch {} }
+      // FASE 3.4e - categoria DRE obrigatoria: sem categoria (manual ou por regra), nao cria.
+      if (!data.chartAccountId) return res.status(400).json({ message: 'Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria.' });
       const rec = req.body.recurrence;
       if (rec && rec.freq && rec.freq !== 'none') {
         const base = data.dueDate instanceof Date ? data.dueDate : (data.dueDate ? new Date(data.dueDate) : new Date());
