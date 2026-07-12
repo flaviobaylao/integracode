@@ -186,6 +186,69 @@ function PixNaoIdentificadosTab() {
   );
 }
 
+// FASE 3.1 - Tela de revisao: fornecedores sem conta gerencial. Classificar cria uma
+// regra (fornecedor -> conta) aplicada aos titulos atuais e aos futuros do fornecedor.
+function ClassificacaoTab() {
+  const { data: pendentes = [], isLoading, refetch } = useQuery<any[]>({
+    queryKey: ['/api/financial/payables-unclassified'],
+    queryFn: async () => { const r = await fetch('/api/financial/payables-unclassified', { credentials: 'include' }); if (!r.ok) return []; const d = await r.json(); return Array.isArray(d) ? d : []; },
+  });
+  const { data: contas = [] } = useQuery<any[]>({
+    queryKey: ['/api/financial/chart-of-accounts', 'children'],
+    queryFn: async () => { const r = await fetch('/api/financial/chart-of-accounts', { credentials: 'include' }); if (!r.ok) return []; const d = await r.json(); return (Array.isArray(d) ? d : []).filter((a: any) => String(a.code).includes('.') && a.isActive !== false).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))); },
+  });
+  const [sel, setSel] = useState<Record<string, string>>({});
+  const classificar = useMutation({
+    mutationFn: ({ pattern, chartAccountId }: any) => apiRequest('POST', '/api/financial/payable-rules', { pattern, chartAccountId }),
+    onSuccess: () => { refetch(); },
+  });
+  const fmtBRL = (v: any) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v || 0));
+  const totalPend = pendentes.reduce((s: number, p: any) => s + Number(p.valor || 0), 0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Classificação DRE — contas a pagar pendentes</CardTitle>
+        <p className="text-sm text-muted-foreground">Escolha a conta gerencial de cada fornecedor e clique em Classificar. A escolha vira regra: classifica os títulos atuais e os futuros do fornecedor automaticamente. Pendentes: {pendentes.length} fornecedores, {fmtBRL(totalPend)}.</p>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fornecedor</TableHead>
+              <TableHead className="text-right">Títulos</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Conta gerencial</TableHead>
+              <TableHead>Ações</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (<TableRow><TableCell colSpan={5} className="text-center py-8">Carregando...</TableCell></TableRow>) : pendentes.length === 0 ? (
+              <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Tudo classificado</TableCell></TableRow>
+            ) : pendentes.slice(0, 100).map((p: any) => (
+              <TableRow key={p.fornecedor}>
+                <TableCell className="max-w-[280px] truncate font-medium" title={p.exemplo || ''}>{p.fornecedor}</TableCell>
+                <TableCell className="text-right">{p.titulos}</TableCell>
+                <TableCell className="text-right">{fmtBRL(p.valor)}</TableCell>
+                <TableCell>
+                  <Select value={sel[p.fornecedor] || ''} onValueChange={(v) => setSel({ ...sel, [p.fornecedor]: v })}>
+                    <SelectTrigger className="w-[300px]"><SelectValue placeholder="Selecione a conta" /></SelectTrigger>
+                    <SelectContent>
+                      {contas.map((c: any) => (<SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Button size="sm" disabled={!sel[p.fornecedor] || classificar.isPending} onClick={() => classificar.mutate({ pattern: p.fornecedor, chartAccountId: sel[p.fornecedor] })}>Classificar</Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -2736,6 +2799,7 @@ export default function Financial() {
           {isFullAccess && <TabsTrigger value="receivables" className="gap-1"><CreditCard className="h-4 w-4" />Contas a Receber</TabsTrigger>}
           {isFullAccess && <TabsTrigger value="payables" className="gap-1"><Banknote className="h-4 w-4" />Contas a Pagar</TabsTrigger>}
           {isFullAccess && <TabsTrigger value="pix-nao-identificados" className="gap-1"><QrCode className="h-4 w-4" />PIX s/ Identificação</TabsTrigger>}
+          {isFullAccess && <TabsTrigger value="classificacao-dre" className="gap-1"><Landmark className="h-4 w-4" />Classificação DRE</TabsTrigger>}
           <TabsTrigger value="overdue" className="gap-1"><AlertTriangle className="h-4 w-4" />Débitos Vencidos</TabsTrigger>
           <TabsTrigger value="blocked" className="gap-1"><Ban className="h-4 w-4" />Pedidos Bloqueados</TabsTrigger>
           {isFullAccess && <TabsTrigger value="chart" className="gap-1"><BarChart3 className="h-4 w-4" />Plano de Contas</TabsTrigger>}
@@ -2748,6 +2812,7 @@ export default function Financial() {
         {isFullAccess && <TabsContent value="receivables"><ReceivablesTab /></TabsContent>}
         {isFullAccess && <TabsContent value="payables"><PayablesTab /></TabsContent>}
         {isFullAccess && <TabsContent value="pix-nao-identificados"><PixNaoIdentificadosTab /></TabsContent>}
+        {isFullAccess && <TabsContent value="classificacao-dre"><ClassificacaoTab /></TabsContent>}
         <TabsContent value="overdue"><OverdueDebtsManagement /></TabsContent>
         <TabsContent value="blocked"><BlockedOrdersManagement user={user as any} /></TabsContent>
         {isFullAccess && <TabsContent value="chart"><ChartOfAccountsTab /></TabsContent>}
