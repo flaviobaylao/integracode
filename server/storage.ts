@@ -5246,23 +5246,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOverdueDebtByDocument(document: string): Promise<any | undefined> {
-    // Normalizar documento de busca: remover pontos, barras, traços
-    const normalizedSearchDocument = document.replace(/[.\-\/]/g, '');
-    console.log(`🔍 [STORAGE] Buscando débito para documento normalizado: ${normalizedSearchDocument}`);
-    
-    // Buscar débitos onde o documento (sem formatação) corresponda
+    // Normaliza REMOVENDO TODOS os não-dígitos (antes só tirava .-/, o que deixava
+    // passar espaços e outros caracteres → falso-negativo que soltava devedores no
+    // bloqueio E na liberação automática). Exige >= 11 dígitos (CPF/CNPJ válido).
+    const normalizedSearchDocument = String(document || '').replace(/\D/g, '');
+    if (normalizedSearchDocument.length < 11) {
+      console.log(`ℹ️ [STORAGE] Documento sem dígitos suficientes para busca de débito: "${document}"`);
+      return undefined;
+    }
     const allDebts = await db.select().from(overdueDebts);
     const debt = allDebts.find(d => {
-      const normalizedDbDocument = d.clientDocument.replace(/[.\-\/]/g, '');
-      return normalizedDbDocument === normalizedSearchDocument;
+      const normalizedDbDocument = String((d as any).clientDocument || '').replace(/\D/g, '');
+      return normalizedDbDocument.length >= 11 && normalizedDbDocument === normalizedSearchDocument;
     });
-    
+
     if (debt) {
-      console.log(`✅ [STORAGE] Débito encontrado: ${debt.clientName} - R$ ${debt.totalAmount}`);
+      console.log(`✅ [STORAGE] Débito encontrado: ${debt.clientName} - R$ ${debt.totalAmount} (doc ${normalizedSearchDocument})`);
     } else {
       console.log(`ℹ️ [STORAGE] Nenhum débito encontrado para: ${normalizedSearchDocument}`);
     }
-    
+
     return debt;
   }
 
