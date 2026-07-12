@@ -711,6 +711,140 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  // HISTÓRICO COMPLETO da conta a receber: cobrança + documento (boleto/PIX) + recebimentos/baixas
+  // + conciliações + auditoria, com DATAS de todos os fatos e USUÁRIOS responsáveis. Somente leitura.
+  app.get('/api/financial/receivables/:id/history', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const id = req.params.id;
+      const receivable: any = await storage.getReceivable(id);
+      if (!receivable) return res.status(404).json({ message: 'Conta a receber não encontrada' });
+
+      // Mapa email -> "Nome" para resolver responsáveis.
+      const userMap: Record<string, string> = {};
+      try {
+        const users = await storage.getUsers();
+        for (const u of users as any[]) {
+          const nm = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email;
+          if (u.email) userMap[String(u.email).toLowerCase()] = nm;
+        }
+      } catch {}
+      const uname = (e: any) => { if (!e) return null; const k = String(e).toLowerCase().trim(); return userMap[k] || e; };
+
+      // NF-e vinculada
+      let fiscalInvoice: any = null;
+      if (receivable.fiscalInvoiceId) {
+        try {
+          const fi: any = await storage.getFiscalInvoice(receivable.fiscalInvoiceId);
+          if (fi) fiscalInvoice = { id: fi.id, invoiceNumber: fi.invoiceNumber, status: fi.status, accessKey: fi.accessKey, emissionDate: fi.emissionDate, environment: fi.environment };
+        } catch {}
+      }
+
+      // Boletos (documento de cobrança)
+      let boletos: any[] = [];
+      try {
+        const b: any = await db.execute(sql`SELECT id, nosso_numero, linha_digitavel, codigo_barras, data_vencimento, valor_original, status, created_at, updated_by, deleted_at, deleted_by FROM boleto_charges WHERE receivable_id = ${id} ORDER BY created_at ASC`);
+        boletos = (b.rows || []).map((r: any) => ({
+          id: r.id, nossoNumero: r.nosso_numero, linhaDigitavel: r.linha_digitavel, codigoBarras: r.codigo_barras,
+          dueDate: r.data_vencimento, amount: r.valor_original, status: r.status, createdAt: r.created_at,
+          canceledAt: r.deleted_at, canceledBy: uname(r.deleted_by),
+        }));
+      } catch {}
+
+      // PIX (documento de cobrança)
+      let pix: any[] = [];
+      try {
+        const p: any = await db.execute(sql`SELECT id, txid, status, amount, amount_paid, end_to_end_id, due_date, expires_at, paid_at, created_by, created_at FROM pix_charges WHERE receivable_id = ${id} ORDER BY created_at ASC`);
+        pix = (p.rows || []).map((r: any) => ({
+          id: r.id, txid: r.txid, status: r.status, amount: r.amount, amountPaid: r.amount_paid,
+          endToEndId: r.end_to_end_id, dueDate: r.due_date, expiresAt: r.expires_at, paidAt: r.paid_at,
+          createdAt: r.created_at, createdBy: uname(r.created_by),
+        }));
+      } catch {}
+
+      // Recebimentos / baixas
+      let payments: any[] = [];
+      try {
+        const pays: any[] = await storage.getReceivablePayments(id);
+        payments = (pays || []).map((pp: any) => ({
+          id: pp.id, paidAt: pp.paidAt, amount: pp.amount, paymentMethod: pp.paymentMethod,
+          reference: pp.reference, notes: pp.notes, financialAccountId: pp.financialAccountId,
+          createdAt: pp.createdAt, createdBy: uname(pp.createdBy),
+        }));
+      } catch {}
+
+      // Conciliações bancárias (extrato x título)
+      let reconciliations: any[] = [];
+      try {
+        const rc: any = await db.execute(sql`
+          SELECT m.id, m.amount, m.match_kind, m.title_amount_settled, m.interest, m.discount, m.created_by, m.created_at,
+                 i.transaction_date, i.description AS item_description, i.document AS item_document, i.origin_name, i.amount AS item_amount,
+                 i.matched_at, i.matched_by, i.reconciliation_status, i.notes AS item_notes,
+                 s.file_name, fa.name AS account_name
+          FROM bank_statement_item_matches m
+          JOIN bank_statement_items i ON i.id = m.bank_statement_item_id
+          LEFT JOIN bank_statements s ON s.id = i.statement_id
+          LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+          WHERE m.receivable_id = ${id}
+          ORDER BY COALESCE(i.matched_at, m.created_at) ASC`);
+        reconciliations = (rc.rows || []).map((r: any) => ({
+          id: r.id, amount: r.amount, matchKind: r.match_kind, settled: r.title_amount_settled, interest: r.interest, discount: r.discount,
+          matchedAt: r.matched_at, matchedBy: uname(r.matched_by), createdAt: r.created_at, createdBy: uname(r.created_by),
+          transactionDate: r.transaction_date, itemDescription: r.item_description, itemDocument: r.item_document, originName: r.origin_name, itemAmount: r.item_amount,
+          status: r.reconciliation_status, statement: r.file_name, account: r.account_name, notes: r.item_notes,
+        }));
+      } catch {}
+      // Fallback: item conciliado diretamente (sem linha de match)
+      if (!reconciliations.length) {
+        try {
+          const rc2: any = await db.execute(sql`
+            SELECT i.id, i.transaction_date, i.description AS item_description, i.amount AS item_amount, i.matched_at, i.matched_by, i.reconciliation_status, i.notes AS item_notes, s.file_name, fa.name AS account_name
+            FROM bank_statement_items i LEFT JOIN bank_statements s ON s.id = i.statement_id LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+            WHERE i.matched_receivable_id = ${id} ORDER BY i.matched_at ASC`);
+          reconciliations = (rc2.rows || []).map((r: any) => ({
+            id: r.id, matchedAt: r.matched_at, matchedBy: uname(r.matched_by), transactionDate: r.transaction_date,
+            itemDescription: r.item_description, itemAmount: r.item_amount, status: r.reconciliation_status,
+            statement: r.file_name, account: r.account_name, notes: r.item_notes,
+          }));
+        } catch {}
+      }
+
+      // Auditoria financeira (create/update/pay/delete/reverse/status)
+      let audit: any[] = [];
+      try {
+        const a: any = await db.execute(sql`SELECT action, user_email, user_role, amount, note, created_at FROM financial_audit_log WHERE entity = 'receivable' AND entity_id = ${id} ORDER BY created_at ASC`);
+        audit = (a.rows || []).map((r: any) => ({ action: r.action, user: uname(r.user_email), role: r.user_role, amount: r.amount, note: r.note, at: r.created_at }));
+      } catch {}
+
+      // Linha do tempo consolidada
+      const ACTION_LABEL: Record<string, string> = { create: 'Conta criada', update: 'Conta editada', delete: 'Conta excluída', pay: 'Baixa registrada', reverse: 'Baixa estornada', status: 'Status alterado', reconcile: 'Conciliação', config: 'Configuração' };
+      const timeline: any[] = [];
+      const push = (date: any, type: string, label: string, user?: any, detail?: any) => { if (date) timeline.push({ date, type, label, user: user || null, detail: detail || null }); };
+      push(receivable.issueDate || receivable.createdAt, 'emissao', 'Conta a receber emitida', uname(receivable.createdBy), receivable.titleNumber ? `Título ${receivable.titleNumber}` : (fiscalInvoice ? `NF-e ${fiscalInvoice.invoiceNumber || ''}` : null));
+      for (const b of boletos) push(b.createdAt, 'boleto', 'Boleto emitido', null, `Nosso nº ${b.nossoNumero || '-'}${b.dueDate ? ' · venc. ' + new Date(b.dueDate).toLocaleDateString('pt-BR') : ''}`);
+      for (const b of boletos) if (b.canceledAt) push(b.canceledAt, 'boleto', 'Boleto cancelado', b.canceledBy, `Nosso nº ${b.nossoNumero || '-'}`);
+      for (const p of pix) push(p.createdAt, 'pix', 'Cobrança PIX criada', p.createdBy, `txid ${String(p.txid || '').slice(0, 12)}…`);
+      for (const p of payments) push(p.paidAt || p.createdAt, 'baixa', 'Recebimento / baixa', p.createdBy, `${p.paymentMethod || ''}${p.notes ? ' · ' + p.notes : ''}`.trim());
+      for (const r of reconciliations) push(r.matchedAt || r.createdAt, 'conciliacao', 'Conciliação bancária', r.matchedBy || r.createdBy, `${r.statement ? 'Extrato ' + r.statement : ''}${r.account ? ' · ' + r.account : ''}`.trim() || null);
+      for (const a of audit) if (a.action !== 'create' && a.action !== 'pay' && a.action !== 'reconcile') push(a.at, 'auditoria', ACTION_LABEL[a.action] || a.action, a.user, a.note);
+      timeline.sort((x, y) => new Date(x.date).getTime() - new Date(y.date).getTime());
+
+      res.json({
+        receivable: {
+          id: receivable.id, titleNumber: receivable.titleNumber, customerName: receivable.customerName, customerDocument: receivable.customerDocument,
+          category: receivable.category, description: receivable.description, amount: receivable.amount, amountPaid: receivable.amountPaid,
+          status: receivable.status, paymentMethod: receivable.paymentMethod, issueDate: receivable.issueDate, dueDate: receivable.dueDate,
+          omieInstanceId: receivable.omieInstanceId, fiscalInvoiceId: receivable.fiscalInvoiceId, billingPipelineId: receivable.billingPipelineId,
+          createdAt: receivable.createdAt, createdBy: uname(receivable.createdBy),
+          updatedAt: receivable.updatedAt, updatedBy: uname(receivable.updatedBy),
+          deletedAt: receivable.deletedAt, deletedBy: uname(receivable.deletedBy),
+        },
+        fiscalInvoice, boletos, pix, payments, reconciliations, audit, timeline,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post('/api/financial/receivables', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = actorOf(req);
