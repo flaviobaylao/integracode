@@ -2113,7 +2113,36 @@ export class SefazService {
           const chaveMatch = errorMsg.match(/(\d{44})/) || (result.xml_recebido || '').match(/(\d{44})/);
           const recoveredKey = chaveMatch ? chaveMatch[1] : null;
 
+          // COLISÃO vs REENVIO: se a chave recuperada JÁ pertence a OUTRA nota local, isto NÃO é
+          // um reenvio da mesma nota — são duas NF-e diferentes com o mesmo número (colisão). NÃO
+          // podemos copiar a chave do outro cliente e marcar como autorizada (falsa autorização).
+          // Marcamos rejeitada com mensagem clara para reemitir com um número novo.
           if (recoveredKey) {
+            let collisionOwner: any = null;
+            try { collisionOwner = await storage.getFiscalInvoiceByAccessKey(recoveredKey); } catch {}
+            if (collisionOwner && collisionOwner.id !== invoiceId) {
+              console.warn(`[SEFAZ] ⛔ Rejeição 539: chave ${recoveredKey} já pertence à NF-e ${collisionOwner.id} (colisão de número ${invoice.invoiceNumber}). Marcando REJEITADA (sem copiar chave).`);
+              await storage.updateFiscalInvoice(invoiceId, { status: 'rejected' });
+              await storage.createFiscalInvoiceEvent({
+                invoiceId,
+                eventType: 'rejeicao_539_colisao',
+                status: 'error',
+                errorCode: '539',
+                errorMessage: errorMsg,
+                description: `Colisão de número: a NF-e #${invoice.invoiceNumber} (série ${invoice.series}, CNPJ ${invoice.issuerCnpj}) já foi autorizada na SEFAZ para OUTRA nota (chave ${recoveredKey}). Esta nota NÃO foi autorizada — reemita com um número novo.`,
+                xmlRequest: result.xml_enviado,
+                xmlResponse: result.xml_recebido,
+                createdBy: invoice.createdBy || undefined,
+              });
+              return {
+                success: false,
+                errorCode: '539',
+                errorMessage: `NF-e #${invoice.invoiceNumber}: número já usado por outra nota (colisão). Reemita com um número novo.`,
+                xmlEnvio: result.xml_enviado,
+                xmlRetorno: result.xml_recebido,
+              };
+            }
+
             console.warn(`[SEFAZ] ⚠️ Rejeição 539 detectada. Recuperando chave autorizada da SEFAZ: ${recoveredKey}`);
             await storage.updateFiscalInvoice(invoiceId, {
               status: 'authorized',
