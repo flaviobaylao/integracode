@@ -118,16 +118,18 @@ export function registerReconciliation(app: Express) {
       let openRecv: any[] = [], openPay: any[] = [], pixPend: any[] = [];
       if (pend.length) {
         openRecv = rowsOf(await db.execute(sql`
-          SELECT id, title_number, customer_name, customer_document, amount,
-                 COALESCE(amount_paid, 0) AS amount_paid, due_date, omie_instance_id
-          FROM receivables
-          WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
+          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount,
+                 COALESCE(r.amount_paid, 0) AS amount_paid, r.due_date, r.omie_instance_id,
+                 r.chart_account_id, (c.code || ' ' || c.name) AS chart_label
+          FROM receivables r LEFT JOIN chart_of_accounts c ON c.id = r.chart_account_id
+          WHERE r.deleted_at IS NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0
           LIMIT 2000`));
         openPay = rowsOf(await db.execute(sql`
-          SELECT id, title_number, supplier_name, supplier_document, amount,
-                 COALESCE(amount_paid, 0) AS amount_paid, due_date, omie_instance_id
-          FROM payables
-          WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
+          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount,
+                 COALESCE(p.amount_paid, 0) AS amount_paid, p.due_date, p.omie_instance_id,
+                 p.chart_account_id, (c.code || ' ' || c.name) AS chart_label
+          FROM payables p LEFT JOIN chart_of_accounts c ON c.id = p.chart_account_id
+          WHERE p.deleted_at IS NULL AND p.status IN ('a_vencer','vencida') AND (p.amount - COALESCE(p.amount_paid,0)) > 0
           LIMIT 2000`));
         try {
           pixPend = rowsOf(await db.execute(sql`
@@ -203,6 +205,8 @@ export function registerReconciliation(app: Express) {
               restante: s.restante.toFixed(2),
               due: t.due_date,
               instance: t.omie_instance_id,
+              chartAccountId: t.chart_account_id || null,
+              chartLabel: t.chart_label || null,
               score: Math.min(100, s.score),
               motivos: s.motivos,
             })),
@@ -374,10 +378,12 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT id, title_number, customer_name, customer_document, amount, due_date, omie_instance_id
-          FROM receivables WHERE ${sql.join(conds, sql` AND `)}
+          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount, r.due_date, r.omie_instance_id,
+                 r.chart_account_id, (c.code || ' ' || c.name) AS chart_label
+          FROM receivables r LEFT JOIN chart_of_accounts c ON c.id = r.chart_account_id
+          WHERE ${sql.join(conds, sql` AND `)}
           ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id })) });
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
       } else {
         const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
         if (q) {
@@ -387,10 +393,12 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT id, title_number, supplier_name, supplier_document, amount, due_date, omie_instance_id
-          FROM payables WHERE ${sql.join(conds, sql` AND `)}
+          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount, p.due_date, p.omie_instance_id,
+                 p.chart_account_id, (c.code || ' ' || c.name) AS chart_label
+          FROM payables p LEFT JOIN chart_of_accounts c ON c.id = p.chart_account_id
+          WHERE ${sql.join(conds, sql` AND `)}
           ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id })) });
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
       }
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
@@ -435,10 +443,50 @@ export function registerReconciliation(app: Express) {
         amount: Number(t.amount || 0),
         interest: Number(t.interest || 0),
         discount: Number(t.discount || 0),
+        chartAccountId: t.chartAccountId ? String(t.chartAccountId) : null,
         settled: Number(t.amount || 0) + Number(t.interest || 0) - Number(t.discount || 0),
       }));
       if (dryRun) {
         return res.json({ ok: true, dryRun: true, item: { id: item.id, amount: item.amount, type: item.type, description: item.description }, method, paidAtISO, accountId, plan });
+      }
+
+      // ---- FASE 3.4h: categoria DRE selecionavel na conciliacao ----------
+      // Valida e aplica a categoria enviada por titulo ANTES da baixa.
+      // Pagar sem categoria (nem existente, nem enviada) -> bloqueia.
+      // Receber sem categoria -> assume a primeira conta de receita bruta.
+      {
+        const wanted = Array.from(new Set(plan.map((t) => t.chartAccountId).filter(Boolean))) as string[];
+        if (wanted.length) {
+          const okIds = new Set(rowsOf(await db.execute(sql`
+            SELECT id FROM chart_of_accounts
+            WHERE is_active = true AND code LIKE '%.%' AND id IN (${inList(wanted)})`)).map((c: any) => String(c.id)));
+          const bad = wanted.find((w) => !okIds.has(String(w)));
+          if (bad) return res.status(400).json({ error: "Categoria DRE invalida ou inativa. Selecione uma categoria do plano de contas." });
+        }
+        let defRecv: string | null = null;
+        for (const t of plan) {
+          if (t.kind === "receivable") {
+            if (t.chartAccountId) {
+              await db.execute(sql`UPDATE receivables SET chart_account_id = ${t.chartAccountId} WHERE id = ${t.id}`);
+            } else {
+              const cur = rowsOf(await db.execute(sql`SELECT chart_account_id FROM receivables WHERE id = ${t.id}`))[0];
+              if (cur && !cur.chart_account_id) {
+                if (defRecv === null) {
+                  const q = rowsOf(await db.execute(sql`SELECT id FROM chart_of_accounts WHERE dre_group = 'receita_bruta' AND code LIKE '%.%' AND is_active = true ORDER BY code LIMIT 1`));
+                  defRecv = (q[0]?.id as string) || "";
+                }
+                if (defRecv) await db.execute(sql`UPDATE receivables SET chart_account_id = ${defRecv} WHERE id = ${t.id}`);
+              }
+            }
+          } else {
+            if (t.chartAccountId) {
+              await db.execute(sql`UPDATE payables SET chart_account_id = ${t.chartAccountId} WHERE id = ${t.id}`);
+            } else {
+              const cur = rowsOf(await db.execute(sql`SELECT chart_account_id FROM payables WHERE id = ${t.id}`))[0];
+              if (cur && !cur.chart_account_id) return res.status(400).json({ error: "Selecione a categoria DRE (plano de contas) do titulo a pagar. Nenhuma baixa sem categoria." });
+            }
+          }
+        }
       }
 
       const kind = titles.length > 1 ? "manual_multi" : "manual";
