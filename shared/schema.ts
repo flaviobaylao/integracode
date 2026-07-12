@@ -1086,7 +1086,12 @@ export const salesGoals = pgTable("sales_goals", {
   
   // Meta de Faturamento (em reais)
   revenueGoal: decimal("revenue_goal", { precision: 12, scale: 2 }), // Ex: 50000.00
-  
+
+  // Meta Desafio (igual ao Integra 1.0): faturamento alvo maior que a meta normal.
+  // Ao bater, o vendedor ganha um bônus extra (challengeBonus, em reais).
+  challengeGoal: decimal("challenge_goal", { precision: 12, scale: 2 }), // Ex: 60000.00
+  challengeBonus: decimal("challenge_bonus", { precision: 12, scale: 2 }), // Ex: 500.00
+
   // Meta de Débito Vencido (relação percentual)
   overdueDebtGoal: decimal("overdue_debt_goal", { precision: 5, scale: 2 }), // Ex: 5.00%
   
@@ -1407,10 +1412,16 @@ export const insertSalesGoalSchema = createInsertSchema(salesGoals).omit({
   positivationGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
     (val === null || val === undefined || val === '') ? null : String(val)
   ),
-  revenueGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+  revenueGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val =>
     (val === null || val === undefined || val === '') ? null : String(val)
   ),
-  overdueDebtGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
+  challengeGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val =>
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
+  challengeBonus: z.union([z.string(), z.number()]).nullable().optional().transform(val =>
+    (val === null || val === undefined || val === '') ? null : String(val)
+  ),
+  overdueDebtGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val =>
     (val === null || val === undefined || val === '') ? null : String(val)
   ),
   serviceGoal: z.union([z.string(), z.number()]).nullable().optional().transform(val => 
