@@ -15,11 +15,12 @@ import { ptBR } from "date-fns/locale";
 import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
-type ServiceType = 'debito_vencido' | 'venda' | 'prospecao';
+type ServiceType = 'debito_vencido' | 'venda' | 'nao_venda' | 'prospecao';
 
 const serviceTypeLabels: Record<ServiceType, { label: string; color: string; icon: typeof DollarSign }> = {
   debito_vencido: { label: 'Débito Vencido', color: 'bg-red-100 text-red-700 border-red-200', icon: DollarSign },
   venda: { label: 'Venda', color: 'bg-green-100 text-green-700 border-green-200', icon: ShoppingCart },
+  nao_venda: { label: 'Não Venda', color: 'bg-red-100 text-red-700 border-red-300', icon: X },
   prospecao: { label: 'Prospecção', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: Search },
 };
 
