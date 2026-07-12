@@ -24934,8 +24934,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   
   // Listar clientes ativos com histórico de visitas
+  // Sincroniza p/ Clientes Ativos os clientes Ativos com dia de rota (e documento) que ainda
+  // não estão na lista — mantém a lista alinhada com as rotas. Idempotente (NOT EXISTS).
+  let __lastActiveRouteSyncMs = 0;
+  let __activeRouteSyncRunning = false;
+  async function syncActiveCustomersFromRoutes(): Promise<number> {
+    const inserted = await db.execute(sql`
+      INSERT INTO active_customers (document, document_type, fantasy_name_imported, customer_id, omie_instance_id, upload_id, match_status, is_active, latitude, longitude)
+      SELECT
+        REGEXP_REPLACE(COALESCE(c.cnpj, c.cpf), '[^0-9]', '', 'g'),
+        CASE WHEN c.cnpj IS NOT NULL AND c.cnpj <> '' THEN 'cnpj' ELSE 'cpf' END,
+        COALESCE(c.fantasy_name, c.name),
+        c.id,
+        c.omie_instance_id,
+        'auto-route-sync',
+        'matched',
+        true,
+        c.latitude, c.longitude
+      FROM customers c
+      WHERE c.is_active = true
+        AND c.is_lead = false
+        AND c.weekdays IS NOT NULL
+        AND c.weekdays NOT IN ('[]', 'null', '')
+        AND NULLIF(REGEXP_REPLACE(COALESCE(c.cnpj, c.cpf, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM active_customers ac2 WHERE REGEXP_REPLACE(COALESCE(ac2.document,''), '[^0-9]', '', 'g') = REGEXP_REPLACE(COALESCE(c.cnpj, c.cpf, ''), '[^0-9]', '', 'g'))
+      RETURNING id
+    `);
+    return (inserted.rows || []).length;
+  }
+
+  // Sincronização explícita (admin/coordenador)
+  app.post('/api/active-customers/sync-routes', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const added = await syncActiveCustomersFromRoutes();
+      res.json({ message: 'Sincronização concluída', added });
+    } catch (error) {
+      console.error('Erro no sync-routes:', error);
+      res.status(500).json({ message: 'Erro na sincronização', error: String(error) });
+    }
+  });
+
   app.get('/api/active-customers', async (req: any, res) => {
     try {
+      // Auto-sync (throttled, fire-and-forget): mantém a lista alinhada às rotas ao abrir a tela.
+      const nowMs = Date.now();
+      if (!__activeRouteSyncRunning && (nowMs - __lastActiveRouteSyncMs) > 120000) {
+        __activeRouteSyncRunning = true;
+        __lastActiveRouteSyncMs = nowMs;
+        syncActiveCustomersFromRoutes()
+          .then(n => { if (n > 0) console.log(`🔄 [ACTIVE-SYNC] ${n} cliente(s) de rota adicionados aos ativos`); })
+          .catch(e => console.warn('[ACTIVE-SYNC] falha:', (e as any)?.message))
+          .finally(() => { __activeRouteSyncRunning = false; });
+      }
       const activeCustomers = await storage.getActiveCustomersWithVisits();
       res.json(activeCustomers);
     } catch (error) {
@@ -24943,6 +24994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Erro ao listar clientes ativos' });
     }
   });
+
   
   // Histórico de uploads
   app.get('/api/active-customers/uploads', async (req: any, res) => {
