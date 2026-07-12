@@ -2512,7 +2512,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { entityType, entityId } = req.params;
       const user = req.currentUser;
-      const { notes, images, serviceType, nextContactDate: userNextContactDate, temperature } = req.body;
+      const { notes, images, serviceType, nextContactDate: userNextContactDate, temperature, attendanceDate } = req.body;
 
       const validEntityTypes = ['customer', 'lead'];
       if (!validEntityTypes.includes(entityType)) {
@@ -2526,9 +2526,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao'];
       const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
 
+      // Vincula o atendimento à data da rota trabalhada (selectedDate). Ao meio-dia BRT
+      // para que DATE(... AT TIME ZONE 'America/Sao_Paulo') caia no dia correto.
+      const attTs = (typeof attendanceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(attendanceDate))
+        ? `${attendanceDate}T12:00:00-03:00` : null;
+
       const result = await db.execute(sql`
-        INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, service_type, notes, images)
-        VALUES (${entityId}, ${entityType}, ${user.id}, ${user.name || user.email}, ${finalServiceType}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb)
+        INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, service_type, notes, images, attendance_date)
+        VALUES (${entityId}, ${entityType}, ${user.id}, ${user.name || user.email}, ${finalServiceType}, ${notes || null}, ${JSON.stringify(images || [])}::jsonb, COALESCE(${attTs}::timestamptz, NOW()))
         RETURNING *
       `);
 
