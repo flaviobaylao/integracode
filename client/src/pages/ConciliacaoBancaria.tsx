@@ -118,7 +118,14 @@ export default function ConciliacaoBancaria() {
       try {
         const r = await fetch("/api/reconciliation/dre-categories?q=" + encodeURIComponent(q), { credentials: "include" });
         const j = await r.json();
-        setCatSug(j.categories || []);
+        const list = j.categories || [];
+        setCatSug(list);
+        // FASE 3.4m - se o texto casa exatamente com uma categoria, resolve o id
+        // automaticamente (habilita "Criar e Conciliar" sem exigir novo clique).
+        const ql = q.toLowerCase();
+        const codeTok = q.split(/\s+/)[0].toLowerCase();
+        const hit = list.find((c: any) => `${c.code} ${c.name}`.toLowerCase() === ql || String(c.name).toLowerCase() === ql || String(c.code).toLowerCase() === codeTok);
+        if (hit) setNovo((prev: any) => (prev && !prev.chartAccountId ? { ...prev, chartAccountId: hit.id } : prev));
       } catch { setCatSug([]); }
     }, 250);
   };
@@ -318,7 +325,7 @@ export default function ConciliacaoBancaria() {
     const amt = num(novo.amount);
     if (!(amt > 0)) { alert("Informe um valor válido."); return; }
     if (!String(novo.name || "").trim()) { alert("Informe o nome do " + (novo.tipo === "receber" ? "cliente" : "fornecedor") + "."); return; }
-    if (!novo.chartAccountId) { alert("Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria."); return; }
+    if (!novo.chartAccountId && !String(novo.category || "").trim()) { alert("Selecione ou preencha a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria."); return; }
     if (!window.confirm(`Criar ${novo.tipo === "receber" ? "conta a receber" : "conta a pagar"} de ${fmtMoney(amt)} e CONCILIAR (dar baixa) com este lançamento?`)) return;
     setBusy(modalItem.id);
     try {
@@ -755,14 +762,14 @@ export default function ConciliacaoBancaria() {
                           ))}
                         </div>
                       )}
-                      {novo.chartAccountId ? <div className="text-[11px] text-emerald-700 mt-0.5">Título será classificado nesta categoria da DRE.</div> : <div className="text-[11px] text-red-600 mt-0.5">Obrigatório: selecione uma categoria da lista.</div>}
+                      {novo.chartAccountId ? <div className="text-[11px] text-emerald-700 mt-0.5">Título será classificado nesta categoria da DRE.</div> : String(novo.category || "").trim() ? <div className="text-[11px] text-amber-600 mt-0.5">Categoria "{novo.category}" será usada. (Clique na lista para trocar.)</div> : <div className="text-[11px] text-red-600 mt-0.5">Obrigatório: selecione ou preencha uma categoria.</div>}
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Descrição</label>
                     <input value={novo.description || ""} onChange={(e) => setNovo({ ...novo, description: e.target.value })} className="w-full border rounded px-3 py-1.5" />
                   </div>
-                  <button onClick={createAndReconcile} disabled={busy === modalItem.id || !novo.chartAccountId} title={!novo.chartAccountId ? "Selecione a categoria DRE para habilitar" : ""} className="w-full mt-1 px-4 py-2 rounded bg-green-600 text-white font-medium disabled:opacity-40">Criar e Conciliar {fmtMoney(num(novo.amount))}</button>
+                  <button onClick={createAndReconcile} disabled={busy === modalItem.id || !(novo.chartAccountId || String(novo.category || "").trim())} title={!(novo.chartAccountId || String(novo.category || "").trim()) ? "Preencha ou selecione a categoria DRE para habilitar" : ""} className="w-full mt-1 px-4 py-2 rounded bg-green-600 text-white font-medium disabled:opacity-40">Criar e Conciliar {fmtMoney(num(novo.amount))}</button>
                 </div>
               )}
             </div>
