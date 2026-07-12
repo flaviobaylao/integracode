@@ -20728,19 +20728,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
       
-      // Buscar clientes para obter o documento (CPF ou CNPJ)
+      // Buscar clientes para obter o documento (CPF ou CNPJ) e a periodicidade de compra
       const customersResult = await db.execute(sql`
-        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(${customerIds}::text[])
+        SELECT id, cpf, cnpj, visit_periodicity FROM customers WHERE id = ANY(${customerIds}::text[])
       `);
-      
+
       const customerDocuments: Record<string, string> = {};
+      const periodicityMap: Record<string, string> = {};
       (customersResult.rows as any[]).forEach(row => {
         // Priorizar CNPJ, senão CPF
         const doc = row.cnpj || row.cpf;
         if (doc) {
           customerDocuments[row.id] = doc.replace(/\D/g, '');
         }
+        if (row.visit_periodicity) {
+          periodicityMap[row.id] = String(row.visit_periodicity);
+        }
       });
+
+      // Data do último pedido efetivo (billing_pipeline = pedidos registrados) por cliente
+      const lastOrdersMap: Record<string, string> = {};
+      try {
+        const lastOrdersResult = await db.execute(sql`
+          SELECT customer_id, MAX(created_at) as last_order
+          FROM billing_pipeline
+          WHERE customer_id = ANY(${customerIds}::text[])
+          GROUP BY customer_id
+        `);
+        (lastOrdersResult.rows as any[]).forEach(row => {
+          if (row.last_order) lastOrdersMap[row.customer_id] = new Date(row.last_order).toISOString();
+        });
+      } catch (e) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar último pedido:', (e as any)?.message);
+      }
       
       // Buscar débitos vencidos por documento do cliente
       const documents = Object.values(customerDocuments).filter(d => d);
@@ -20770,7 +20790,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({
         orders: ordersMap,
-        debts: debtsMap
+        debts: debtsMap,
+        periodicity: periodicityMap,
+        lastOrders: lastOrdersMap
       });
     } catch (error: any) {
       console.error('Erro ao buscar informações dos clientes:', error);
