@@ -139,35 +139,74 @@ export function registerReconciliation(app: Express) {
         }
       }
 
-      // Títulos em aberto casados por valor (receber p/ crédito, pagar p/ débito)
-      const recvByAmt: Record<string, any[]> = {}, payByAmt: Record<string, any[]> = {};
-      if (amtSet.size) {
-        const amtArr = Array.from(amtSet);
-        const orR = await db.execute(sql`
-          SELECT id, title_number, customer_name, customer_document, amount, due_date, omie_instance_id
+      // FASE 3.4 - Titulos em aberto casados com SCORE (valor restante, CPF/CNPJ, data).
+      // Volume de abertos e pequeno (~1.100), entao carrega e casa em memoria.
+      // SOMENTE SUGESTAO: a conciliacao continua 100% manual (modal + clique do usuario).
+      let openRecv: any[] = [], openPay: any[] = [], pixPend: any[] = [];
+      if (pend.length) {
+        openRecv = rowsOf(await db.execute(sql`
+          SELECT id, title_number, customer_name, customer_document, amount,
+                 COALESCE(amount_paid, 0) AS amount_paid, due_date, omie_instance_id
           FROM receivables
           WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
-            AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
-          LIMIT 400`);
-        for (const r of rowsOf(orR)) (recvByAmt[money(r.amount)] ||= []).push(r);
-        const opR = await db.execute(sql`
-          SELECT id, title_number, supplier_name, supplier_document, amount, due_date, omie_instance_id
+          LIMIT 2000`));
+        openPay = rowsOf(await db.execute(sql`
+          SELECT id, title_number, supplier_name, supplier_document, amount,
+                 COALESCE(amount_paid, 0) AS amount_paid, due_date, omie_instance_id
           FROM payables
           WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0
-            AND round(amount::numeric, 2)::text IN (${inList(amtArr)})
-          LIMIT 400`);
-        for (const p of rowsOf(opR)) (payByAmt[money(p.amount)] ||= []).push(p);
+          LIMIT 2000`));
+        try {
+          pixPend = rowsOf(await db.execute(sql`
+            SELECT txid, end_to_end_id, valor, horario, info_pagador
+            FROM pix_unmatched WHERE status = 'pendente' ORDER BY created_at DESC LIMIT 300`));
+        } catch { pixPend = []; }
       }
+
+      const dayMs = 24 * 60 * 60 * 1000;
+      const scoreTitle = (t: any, itemAmt: number, itemDoc: string, itemDate: number, patName: string) => {
+        const restante = Number(t.amount || 0) - Number(t.amount_paid || 0);
+        const dv = Math.abs(restante - itemAmt);
+        const rel = itemAmt > 0 ? dv / itemAmt : 1;
+        let score = 0; const motivos: string[] = [];
+        if (dv <= 0.011) { score += 50; motivos.push("valor exato"); }
+        else if (rel <= 0.02) { score += 35; motivos.push("valor aproximado (ate 2%)"); }
+        else if (rel <= 0.10) { score += 15; motivos.push("valor proximo (ate 10%)"); }
+        const tDoc = onlyDigits(t.customer_document || t.supplier_document);
+        if (itemDoc && tDoc && itemDoc === tDoc) { score += 30; motivos.push("CPF/CNPJ confere"); }
+        if (t.due_date && itemDate) {
+          const dd = Math.abs(new Date(t.due_date).getTime() - itemDate) / dayMs;
+          if (dd <= 5) { score += 15; motivos.push(dd < 1 ? "vence no dia" : `vencimento a ${Math.round(dd)} dia(s)`); }
+          else if (dd <= 15) { score += 8; motivos.push(`vencimento a ${Math.round(dd)} dias`); }
+        }
+        const nome = String(t.customer_name || t.supplier_name || "");
+        if (patName && nome && normDesc(nome) && normDesc(patName).includes(normDesc(nome).slice(0, 10))) { score += 10; motivos.push("padrao aprendido"); }
+        return { score, motivos, restante };
+      };
 
       const suggestions: Record<string, any> = {};
       for (const i of pend) {
-        const { nd, doc, amt } = perKeys[i.id];
+        const { nd, doc } = perKeys[i.id];
         const cand = [...(patByDoc[doc] || []), ...(patByDesc[nd] || [])]
           .filter((p) => !p.direction || p.direction === i.type)
           .sort((a, b) => (b.match_count || 0) - (a.match_count || 0));
         const bestPat = cand[0];
-        const titles = (i.type === "C" ? recvByAmt[amt] || [] : payByAmt[amt] || []).slice(0, 5);
-        if (bestPat || titles.length) {
+        const itemAmt = Number(money(i.amount));
+        const itemDate = i.transaction_date ? new Date(i.transaction_date).getTime() : 0;
+        const pool = i.type === "C" ? openRecv : openPay;
+        const scored = pool
+          .map((t: any) => ({ t, s: scoreTitle(t, itemAmt, doc, itemDate, bestPat?.counterparty_name || "") }))
+          .filter((x: any) => x.s.score >= 35)
+          .sort((a: any, b: any) => b.s.score - a.s.score)
+          .slice(0, 5);
+        // Cruzamento com PIX recebidos sem cobranca (webhook) - so p/ creditos
+        let pix: any = null;
+        if (i.type === "C" && pixPend.length && itemDate) {
+          const hit = pixPend.find((p: any) => Math.abs(Number(p.valor || 0) - itemAmt) <= 0.011
+            && p.horario && Math.abs(new Date(p.horario).getTime() - itemDate) <= 2 * dayMs);
+          if (hit) pix = { txid: hit.txid, e2e: hit.end_to_end_id, horario: hit.horario, valor: hit.valor, pagador: hit.info_pagador };
+        }
+        if (bestPat || scored.length || pix) {
           suggestions[i.id] = {
             counterparty: bestPat
               ? {
@@ -180,15 +219,19 @@ export function registerReconciliation(app: Express) {
                   via: bestPat.pattern_type,
                 }
               : null,
-            titles: titles.map((t: any) => ({
+            pix,
+            titles: scored.map(({ t, s }: any) => ({
               kind: i.type === "C" ? "receivable" : "payable",
               id: t.id,
               title: t.title_number,
               name: t.customer_name || t.supplier_name,
               document: t.customer_document || t.supplier_document,
               amount: t.amount,
+              restante: s.restante.toFixed(2),
               due: t.due_date,
               instance: t.omie_instance_id,
+              score: Math.min(100, s.score),
+              motivos: s.motivos,
             })),
           };
         }
