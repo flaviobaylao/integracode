@@ -1679,11 +1679,12 @@ export default function RotaDoDia() {
                           const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
                           const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
+                          const isFinalized = !!(isAttended || hasOrderToday);
                           return (
                           <div
                             key={visit.id || visit.customerId}
                             className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${
-                              isAttended
+                              isFinalized
                                 ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
                                 : isEmAndamento
                                 ? 'border-yellow-400 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-950'
@@ -1702,7 +1703,7 @@ export default function RotaDoDia() {
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1">
-                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isAttended ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
+                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
                                   {index + 1}
                                 </div>
                                 <div className="flex-1">
@@ -1742,6 +1743,16 @@ export default function RotaDoDia() {
                                       >
                                         <Clock className="h-3 w-3 mr-1" />
                                         Atendimento em andamento
+                                      </Badge>
+                                    )}
+                                    {isFinalized && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-green-500 text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900"
+                                        data-testid={`virtual-finalized-badge-${visit.customerId}`}
+                                      >
+                                        <CheckCircle className="h-3 w-3 mr-1" />
+                                        Atendimento Finalizado
                                       </Badge>
                                     )}
                                   </div>
