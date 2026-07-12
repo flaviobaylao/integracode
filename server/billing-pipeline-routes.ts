@@ -369,7 +369,7 @@ export function registerBillingPipelineRoutes(app: Express) {
             await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
             r.boletosCancelados++;
           }
-          const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'cancelado' WHERE receivable_id = ${t.id} AND status NOT IN ('cancelado','cancelada','CONCLUIDA','LIQUIDADO')`);
+          const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${t.id} AND status = 'ATIVA'`);
           r.pixCancelados = ((pu as any)?.rowCount ?? 0) as number;
           if (!r.erros.length) {
             await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
