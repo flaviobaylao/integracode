@@ -1149,7 +1149,6 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   }
 
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
-  const nextNumber = await storage.getNextInvoiceNumber('1', issuerCnpj);
 
   // Ambiente de emissao POR CNPJ EMITENTE (system_settings fiscal_env_<instanceId>).
   // ANTES estava fixo 'homologacao' -> NF do pipeline saia SEM VALOR FISCAL mesmo com o CNPJ em producao.
@@ -1166,8 +1165,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     if (__v && String(__v).replace(/\"/g, '') === 'producao') invEnv = 'producao';
   } catch {}
 
-  const invoice = await storage.createFiscalInvoice({
-    invoiceNumber: nextNumber,
+  const invoice = await storage.createFiscalInvoiceAtomic({
     series: '1',
     status: 'draft',
     operationType: 'saida',
@@ -1200,7 +1198,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     environment: invEnv,
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
-  });
+  }, '1', issuerCnpj);
 
   // CSOSN do cliente (Simples): padrao '102'; '101' se marcado no cadastro. pCredSN (p/ 101) vem de system_settings 'fiscal_pcredsn'.
   const custCsosn = ((customer as any)?.icmsCsosn === '101') ? '101' : '102';
