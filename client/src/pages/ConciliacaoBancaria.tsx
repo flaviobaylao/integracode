@@ -256,9 +256,10 @@ export default function ConciliacaoBancaria() {
   const addToCart = (t: Title) => {
     setCart((prev) => {
       if (prev.some((c) => c.id === t.id && c.kind === t.kind)) return prev;
-      const cur = prev.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
-      const remaining = Math.max(0, Math.round((itemAmt - cur) * 100) / 100);
-      const defAmt = remaining > 0 ? remaining : Math.abs(num(t.amount));
+      // Valor padrao = saldo em aberto do PROPRIO titulo (restante), nao o valor do extrato.
+      // Se o extrato cobre varios titulos, o usuario adiciona os demais ate zerar o delta.
+      const saldoTitulo = num(t.restante) > 0 ? num(t.restante) : Math.abs(num(t.amount));
+      const defAmt = Math.round(saldoTitulo * 100) / 100;
       return [...prev, { kind: t.kind, id: t.id, title: t.title, name: t.name, amount: defAmt, interest: 0, discount: 0, chartAccountId: (t.chartAccountId as string) || "", chartLabel: (t.chartLabel as string) || "" }];
     });
   };
