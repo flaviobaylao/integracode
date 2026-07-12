@@ -861,10 +861,104 @@ export function registerReconciliation(app: Express) {
         varreduraIgnorados = Number((uv as any)?.rowCount ?? 0);
       } catch {}
 
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, varreduraIgnorados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // FASE 3.4f - concilia automaticamente as tarifas bancarias do BB pendentes.
+      let tarifas: any = { candidatos: 0, conciliados: 0, erros: [] };
+      try { tarifas = await conciliarTarifasBB(by, false); } catch {}
+
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, skipped, autoIgnorados, varreduraIgnorados, tarifas, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // ---- FASE 3.4f: tarifas bancarias do BB conciliadas automaticamente ------
+  // Padroes (tolerantes a acentuacao quebrada): "TARIFA PIX ..." e
+  // "DEBITO SERVICO COBRANCA ...". Para cada lancamento pendente de debito que
+  // casar, cria a conta a pagar (fornecedor BANCO DO BRASIL SA, categoria
+  // "Tarifas bancarias" - criada na DRE se nao existir), da baixa e concilia.
+  const TARIFA_RE = /^\s*(tarifa\s+pix|d.{0,2}bito\s+servi.{0,2}o\s+cobran.{0,2}a)/i;
+
+  async function ensureTarifaChartAccount(): Promise<string | null> {
+    try {
+      const ex = rowsOf(await db.execute(sql`
+        SELECT id FROM chart_of_accounts
+        WHERE code LIKE '%.%' AND lower(name) LIKE '%tarifa%banc%' LIMIT 1`))[0];
+      if (ex) return ex.id;
+      let parent = rowsOf(await db.execute(sql`
+        SELECT id, code, dre_group, type FROM chart_of_accounts
+        WHERE code NOT LIKE '%.%' AND dre_group = 'despesas_financeiras'
+        ORDER BY code LIMIT 1`))[0];
+      if (!parent) parent = rowsOf(await db.execute(sql`SELECT id, code, dre_group, type FROM chart_of_accounts WHERE code = '9' LIMIT 1`))[0];
+      if (!parent) return null;
+      let prox = 1;
+      try {
+        const mx = rowsOf(await db.execute(sql`
+          SELECT COALESCE(MAX(NULLIF(regexp_replace(split_part(code, '.', 2), '[^0-9]', '', 'g'), '')::int), 0) AS n
+          FROM chart_of_accounts WHERE code LIKE ${String(parent.code) + '.%'}`))[0];
+        prox = Number(mx?.n || 0) + 1;
+      } catch {}
+      const novoCode = String(parent.code) + '.' + String(prox).padStart(2, '0');
+      const ins = rowsOf(await db.execute(sql`
+        INSERT INTO chart_of_accounts (id, code, name, type, dre_group, parent_id, is_active)
+        VALUES (gen_random_uuid(), ${novoCode}, ${'Tarifas bancárias'}, ${String(parent.type || 'despesa')}::chart_of_account_type, ${parent.dre_group}, ${parent.id}, true)
+        RETURNING id`))[0];
+      return ins?.id || null;
+    } catch (_e) { return null; }
+  }
+
+  async function conciliarTarifasBB(by: string, dryRun: boolean): Promise<{ candidatos: number; conciliados: number; erros: string[] }> {
+    const out = { candidatos: 0, conciliados: 0, erros: [] as string[] };
+    const items = rowsOf(await db.execute(sql`
+      SELECT i.*, s.financial_account_id AS s_account, s.omie_instance_id AS s_instance
+      FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+      WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending') AND i.type = 'D'
+      ORDER BY i.transaction_date LIMIT 500`));
+    const alvo = items.filter((i: any) => TARIFA_RE.test(String(i.description || "")));
+    out.candidatos = alvo.length;
+    if (dryRun || !alvo.length) return out;
+    const chartId = await ensureTarifaChartAccount();
+    if (!chartId) { out.erros.push("categoria Tarifas bancarias indisponivel"); return out; }
+    const sup = await ensureSupplier("BANCO DO BRASIL SA", null, null, chartId, "Tarifas bancárias", by);
+    for (const item of alvo) {
+      try {
+        const amount = Math.abs(Number(item.amount || 0));
+        if (!(amount > 0)) continue;
+        const dt = item.transaction_date ? new Date(item.transaction_date) : new Date();
+        const paidAtISO = dt.toISOString();
+        const pay: any = await storage.createPayable({
+          supplierName: sup.name || "BANCO DO BRASIL SA",
+          supplierDocument: sup.document || null,
+          amount: amount.toFixed(2),
+          issueDate: dt as any, dueDate: dt as any,
+          description: String(item.description || "Tarifa bancaria BB").slice(0, 300),
+          chartAccountId: chartId,
+          omieInstanceId: item.s_instance || null,
+          financialAccountId: item.s_account || null,
+          status: "a_vencer", source: "manual",
+          createdBy: by, notes: "Tarifa bancaria conciliada automaticamente (importacao OFX)",
+        } as any);
+        await settlePayable(pay.id, amount, "transferencia", item.s_account || null, paidAtISO, by);
+        await db.execute(sql`
+          INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
+          VALUES (gen_random_uuid(), ${item.id}, ${null}, ${pay.id}, ${amount.toFixed(2)}, ${"auto_tarifa"}, ${amount.toFixed(2)}, ${"0.00"}, ${"0.00"}, ${by}, now())`);
+        await db.execute(sql`
+          UPDATE bank_statement_items
+          SET reconciliation_status = 'reconciled', matched_payable_id = ${pay.id}, matched_at = now(), matched_by = ${by},
+              match_confidence = 100, notes = 'Tarifa bancaria BB conciliada automaticamente'
+          WHERE id = ${item.id}`);
+        out.conciliados++;
+      } catch (e: any) { out.erros.push(String(e?.message || e).slice(0, 120)); }
+    }
+    return out;
+  }
+
+  // Disparo manual (dryRun por padrao) - a importacao de OFX tambem roda isso.
+  app.post("/api/reconciliation/conciliar-tarifas", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      res.json({ dryRun, ...(await conciliarTarifasBB(by, dryRun)) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
 
   // FASE 3.4c - marca como ignorados os creditos "COBRANCA" pendentes (repasses
   // de boletos ja baixados via webhook). dryRun por padrao.
