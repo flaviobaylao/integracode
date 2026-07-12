@@ -2789,7 +2789,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await db.execute(sql`
         SELECT 
           COUNT(DISTINCT vsl.id) as count,
-          ARRAY_AGG(DISTINCT vsl.customer_id) as attended_customer_ids
+          ARRAY_AGG(DISTINCT vsl.customer_id) as attended_customer_ids,
+          ARRAY_AGG(DISTINCT vsl.customer_id) FILTER (WHERE vsl.service_type = 'nao_venda') as no_sale_customer_ids
         FROM virtual_service_logs vsl
         INNER JOIN customers c ON vsl.customer_id = c.id
         WHERE c.seller_id = ${sellerId}
@@ -2799,7 +2800,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const count = parseInt(result.rows[0]?.count || '0');
       const attendedCustomerIds = result.rows[0]?.attended_customer_ids || [];
-      res.json({ count, attendedCustomerIds: attendedCustomerIds.filter(Boolean) });
+      const noSaleCustomerIds = result.rows[0]?.no_sale_customer_ids || [];
+      res.json({ count, attendedCustomerIds: attendedCustomerIds.filter(Boolean), noSaleCustomerIds: (noSaleCustomerIds || []).filter(Boolean) });
     } catch (error) {
       console.error("Error counting service logs:", error);
       res.status(500).json({ message: "Falha ao contar atendimentos" });
