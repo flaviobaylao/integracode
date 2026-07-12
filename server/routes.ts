@@ -20728,7 +20728,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
             AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-            AND sc.customer_id = ANY(${customerIds}::text[])
+            AND sc.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
         ),
         omie_orders AS (
           SELECT
@@ -20739,7 +20739,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sale_value
           FROM sales_cards
           WHERE omie_order_id IS NOT NULL
-            AND customer_id = ANY(${customerIds}::text[])
+            AND customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
             AND (
               -- Filtro por data extraída da notes OU omie_sent_at/completed_date
               (notes LIKE '%Enviado para Omie:%' AND 
@@ -20771,7 +20771,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Buscar clientes para obter o documento (CPF ou CNPJ)
       const customersResult = await db.execute(sql`
-        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(${customerIds}::text[])
+        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(string_to_array(${customerIds.join(',')}, ','))
       `);
 
       const customerDocuments: Record<string, string> = {};
@@ -20795,8 +20795,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM active_customers ac
           JOIN customers c ON c.id = ac.customer_id
           WHERE ac.is_active = true
-            AND (ac.customer_id = ANY(${customerIds}::text[])
-                 OR REGEXP_REPLACE(COALESCE(ac.document,''), '[^0-9]', '', 'g') = ANY(${documentsForLookup}::text[]))
+            AND (ac.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+                 OR REGEXP_REPLACE(COALESCE(ac.document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documentsForLookup.join(',')}, ',')))
         `);
         const periByCid: Record<string, string> = {};
         const periByDoc: Record<string, string> = {};
@@ -20824,8 +20824,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                  MAX(created_at) as last_order
           FROM billing_pipeline
           WHERE invoice_number IS NOT NULL AND invoice_number <> ''
-            AND (customer_id = ANY(${customerIds}::text[])
-                 OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(${documentsForLookup}::text[]))
+            AND (customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+                 OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documentsForLookup.join(',')}, ',')))
           GROUP BY customer_id, REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g')
         `);
         const loByCid: Record<string, number> = {};
@@ -20853,7 +20853,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const debtsResult = await db.execute(sql`
           SELECT client_document, total_amount 
           FROM overdue_debts 
-          WHERE REGEXP_REPLACE(client_document, '[^0-9]', '', 'g') = ANY(${documents}::text[])
+          WHERE REGEXP_REPLACE(client_document, '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))
         `);
         
         // Criar mapa de documento -> total de débito
