@@ -535,6 +535,16 @@ export function registerFinancialRoutes(app: Express) {
       const exists = await storage.getReceivable(req.params.id);
       if (!exists) return res.status(404).json({ message: 'Recebível não encontrado' });
       const b = req.body || {};
+      // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
+      // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
+      const amtBaixaR = parseFloat(String(b.amount ?? '0'));
+      if (!(amtBaixaR > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
+      if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
+      const jaPagoR = parseFloat((exists as any).amountPaid || '0');
+      const totalR = parseFloat((exists as any).amount || '0');
+      if (String((exists as any).status) === 'recebida' || (totalR > 0 && jaPagoR >= totalR - 0.005)) {
+        return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
+      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         receivableId: req.params.id,
@@ -692,6 +702,16 @@ export function registerFinancialRoutes(app: Express) {
       const exists = await storage.getPayable(req.params.id);
       if (!exists) return res.status(404).json({ message: 'Conta a pagar não encontrada' });
       const b = req.body || {};
+      // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
+      // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
+      const amtBaixaP = parseFloat(String(b.amount ?? '0'));
+      if (!(amtBaixaP > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
+      if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
+      const jaPagoP = parseFloat((exists as any).amountPaid || '0');
+      const totalP = parseFloat((exists as any).amount || '0');
+      if (String((exists as any).status) === 'paga' || (totalP > 0 && jaPagoP >= totalP - 0.005)) {
+        return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
+      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         payableId: req.params.id,
