@@ -792,8 +792,9 @@ export function registerFinancialRoutes(app: Express) {
       const startDate = new Date(year, 0, 1);
       const endDate = new Date(year, 11, 31, 23, 59, 59);
 
-      const receivables = await storage.getReceivables({ instanceId, startDate, endDate });
-      const payables = await storage.getPayables({ instanceId, startDate, endDate });
+      // FASE 2 - DRE nao considera titulos cancelados.
+      const receivables = (await storage.getReceivables({ instanceId, startDate, endDate })).filter((r: any) => String(r.status) !== 'cancelada');
+      const payables = (await storage.getPayables({ instanceId, startDate, endDate })).filter((p: any) => String(p.status) !== 'cancelada');
       const chartAccounts = await storage.getChartOfAccounts(instanceId);
 
       const accountMap = new Map(chartAccounts.map(a => [a.id, a]));
