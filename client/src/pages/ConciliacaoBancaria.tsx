@@ -19,7 +19,7 @@ type Item = {
   description: string; document: string; origin_name?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
 };
-type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null };
+type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any };
 type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number };
 
 const fmtDate = (d: any): string => {
@@ -425,8 +425,20 @@ export default function ConciliacaoBancaria() {
                                 <span className="text-gray-400"> · {sg.counterparty.via === "cpf_cnpj" ? "por doc" : "por descr"} ({sg.counterparty.matchCount}×)</span>
                               </div>
                             )}
-                            {ms.length === 0 && sg && (sg.titles || []).length > 0 && (
-                              <div className="text-[11px] text-gray-500 mt-0.5">{(sg.titles || []).length} título(s) por valor</div>
+                            {ms.length === 0 && sg && (sg.titles || []).length > 0 && (() => {
+                              const t0 = sg.titles[0];
+                              const chip = (t0.score ?? 0) >= 80 ? "bg-emerald-100 text-emerald-700" : (t0.score ?? 0) >= 60 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600";
+                              return (
+                                <div className="text-[11px] text-gray-600 mt-0.5">
+                                  <span className={`inline-block px-1.5 py-0.5 rounded font-medium mr-1 ${chip}`}>{t0.score ?? 0}%</span>
+                                  <b>{t0.title || "—"}</b> {t0.name || ""}
+                                  {(t0.motivos || []).length > 0 && <span className="text-gray-400"> · {(t0.motivos || []).join(", ")}</span>}
+                                  {sg.titles.length > 1 && <span className="text-gray-400"> · +{sg.titles.length - 1} opção(ões)</span>}
+                                </div>
+                              );
+                            })()}
+                            {ms.length === 0 && sg && sg.pix && (
+                              <div className="text-[11px] text-sky-700 mt-0.5">PIX recebido via webhook{sg.pix.pagador ? ` · pagador: ${sg.pix.pagador}` : ""}</div>
                             )}
                             {ms.length === 0 && !sg && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
                             {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
@@ -511,16 +523,34 @@ export default function ConciliacaoBancaria() {
                   {(() => {
                     const sg = suggestions[modalItem.id];
                     const titles: Title[] = (sg?.titles || []);
-                    if (!titles.length) return <div className="text-sm text-gray-400">Sem sugestão automática. Use “Buscar Título”.</div>;
-                    return titles.map((t, idx) => (
-                      <div key={idx} className="flex items-center gap-2 border rounded px-3 py-2">
-                        <div className="flex-1 text-sm">
-                          <div><b>{t.title || "—"}</b> · {t.name || ""} <span className="text-gray-400">({t.kind === "receivable" ? "Receber" : "Pagar"})</span></div>
-                          <div className="text-xs text-gray-500">{fmtMoney(t.amount)} · venc {fmtDate(t.due)}{t.instance ? ` · ${t.instance}` : ""}</div>
-                        </div>
-                        <button onClick={() => addToCart(t)} disabled={cart.some((c) => c.id === t.id)} className="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40">+ Adicionar</button>
+                    const pixBox = sg?.pix ? (
+                      <div className="border border-sky-200 bg-sky-50 text-sky-800 rounded px-3 py-2 text-xs">
+                        <b>PIX recebido via webhook</b>{sg.pix.pagador ? <> · pagador: <b>{sg.pix.pagador}</b></> : null}
+                        <div className="text-sky-600">{fmtMoney(sg.pix.valor)} · {fmtDate(sg.pix.horario)}{sg.pix.e2e ? ` · e2e ${String(sg.pix.e2e).slice(0, 20)}…` : ""}</div>
                       </div>
-                    ));
+                    ) : null;
+                    if (!titles.length) return <>{pixBox}<div className="text-sm text-gray-400">Sem sugestão automática. Use “Buscar Título”.</div></>;
+                    return (
+                      <>
+                        {pixBox}
+                        {titles.map((t, idx) => {
+                          const chip = (t.score ?? 0) >= 80 ? "bg-emerald-100 text-emerald-700" : (t.score ?? 0) >= 60 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600";
+                          return (
+                            <div key={idx} className="flex items-center gap-2 border rounded px-3 py-2">
+                              <div className="flex-1 text-sm">
+                                <div>
+                                  {typeof t.score === "number" && <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium mr-1.5 ${chip}`}>{t.score}%</span>}
+                                  <b>{t.title || "—"}</b> · {t.name || ""} <span className="text-gray-400">({t.kind === "receivable" ? "Receber" : "Pagar"})</span>
+                                </div>
+                                <div className="text-xs text-gray-500">{fmtMoney(t.amount)}{t.restante != null && num(t.restante) !== num(t.amount) ? ` (restante ${fmtMoney(t.restante)})` : ""} · venc {fmtDate(t.due)}{t.instance ? ` · ${t.instance}` : ""}</div>
+                                {(t.motivos || []).length > 0 && <div className="text-[11px] text-emerald-700">{(t.motivos || []).join(" · ")}</div>}
+                              </div>
+                              <button onClick={() => addToCart(t)} disabled={cart.some((c) => c.id === t.id)} className="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40">+ Adicionar</button>
+                            </div>
+                          );
+                        })}
+                      </>
+                    );
                   })()}
                 </div>
               )}
