@@ -526,9 +526,34 @@ export function registerFinancialRoutes(app: Express) {
     }
     return __accByCode.map[code] || null;
   }
+  // Regras DINAMICAS (criadas pela tela de revisao) - tabela payable_class_rules.
+  let __rulesTableReady = false;
+  async function ensurePayableRulesTable(): Promise<void> {
+    if (__rulesTableReady) return;
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS payable_class_rules (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      pattern varchar NOT NULL UNIQUE,
+      chart_account_id varchar NOT NULL,
+      created_by varchar,
+      created_at timestamp NOT NULL DEFAULT now()
+    )`);
+    __rulesTableReady = true;
+  }
+  let __dynRules: { rows: Array<{ pattern: string; accountId: string }>; at: number } = { rows: [], at: 0 };
+  async function dynamicPayableRules(): Promise<Array<{ pattern: string; accountId: string }>> {
+    const now = Date.now();
+    if (now - __dynRules.at < 60000) return __dynRules.rows;
+    try {
+      await ensurePayableRulesTable();
+      const q: any = await db.execute(sql`SELECT pattern, chart_account_id FROM payable_class_rules ORDER BY created_at`);
+      __dynRules = { rows: ((q as any).rows || []).map((r: any) => ({ pattern: String(r.pattern).toUpperCase(), accountId: String(r.chart_account_id) })), at: now };
+    } catch {}
+    return __dynRules.rows;
+  }
   async function payableRuleAccountFor(supplierName: any): Promise<string | null> {
     const s = String(supplierName || '').toUpperCase();
     for (const r of PAYABLE_RULES) if (s.includes(r.p)) return await chartAccountIdByCode(r.code);
+    for (const r of await dynamicPayableRules()) if (s.includes(r.pattern)) return r.accountId;
     return null;
   }
 
@@ -555,6 +580,49 @@ export function registerFinancialRoutes(app: Express) {
         }
       }
       res.json({ ok: true, dryRun, total, results });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  // FASE 3.1 - Fornecedores com titulos sem classificacao, agrupados (tela de revisao).
+  app.get('/api/financial/payables-unclassified', authenticateUser, isFinancialAuthorized, async (_req, res) => {
+    try {
+      const q: any = await db.execute(sql`
+        SELECT upper(coalesce(supplier_name,'(SEM FORNECEDOR)')) AS fornecedor,
+               count(*)::int AS titulos,
+               COALESCE(sum(amount::numeric),0)::numeric(14,2) AS valor,
+               max(coalesce(description,'')) AS exemplo
+        FROM payables
+        WHERE chart_account_id IS NULL AND deleted_at IS NULL AND status <> 'cancelada'
+        GROUP BY 1 ORDER BY 3 DESC LIMIT 200`);
+      res.json((q as any).rows || []);
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  // FASE 3.1 - Cria regra dinamica (fornecedor -> conta) e aplica na hora aos pendentes.
+  app.post('/api/financial/payable-rules', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const pattern = String(req.body?.pattern || '').trim().toUpperCase();
+      const accountId = String(req.body?.chartAccountId || '');
+      if (pattern.length < 4) return res.status(400).json({ message: 'padrão muito curto (mínimo 4 caracteres)' });
+      if (!accountId) return res.status(400).json({ message: 'conta gerencial obrigatória' });
+      const acc: any = await db.execute(sql`SELECT id FROM chart_of_accounts WHERE id = ${accountId} AND is_active = true LIMIT 1`);
+      if (!((acc as any).rows || []).length) return res.status(404).json({ message: 'conta gerencial não encontrada' });
+      const user = actorOf(req);
+      await ensurePayableRulesTable();
+      await db.execute(sql`INSERT INTO payable_class_rules (pattern, chart_account_id, created_by) VALUES (${pattern}, ${accountId}, ${user?.email || null}) ON CONFLICT (pattern) DO UPDATE SET chart_account_id = ${accountId}`);
+      __dynRules.at = 0;
+      const like = '%' + pattern + '%';
+      const u: any = await db.execute(sql`UPDATE payables SET chart_account_id = ${accountId}, updated_at = now(), updated_by = ${user?.email || 'payable-rules'} WHERE chart_account_id IS NULL AND deleted_at IS NULL AND status <> 'cancelada' AND upper(supplier_name) LIKE ${like}`);
+      await logFinancialAudit({ req, action: 'update', entity: 'payable', entityId: pattern, note: 'regra de classificação DRE criada/aplicada' });
+      res.json({ ok: true, pattern, aplicados: ((u as any)?.rowCount ?? 0) as number });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  app.get('/api/financial/payable-rules', authenticateUser, isFinancialAuthorized, async (_req, res) => {
+    try {
+      await ensurePayableRulesTable();
+      const q: any = await db.execute(sql`SELECT r.id, r.pattern, r.created_by, r.created_at, c.code, c.name FROM payable_class_rules r LEFT JOIN chart_of_accounts c ON c.id = r.chart_account_id ORDER BY r.created_at DESC`);
+      res.json({ fixas: PAYABLE_RULES, dinamicas: (q as any).rows || [] });
     } catch (error: any) { res.status(500).json({ message: error.message }); }
   });
 
