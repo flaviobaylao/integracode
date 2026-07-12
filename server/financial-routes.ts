@@ -952,6 +952,208 @@ export function registerFinancialRoutes(app: Express) {
   });
 
   // ============================================================================
+  // FASE 3.3 - FLUXO DE CAIXA (regime de caixa, por conta bancaria)
+  // ============================================================================
+
+  // Realizado = pagamentos efetivos (data em que o dinheiro entrou/saiu), excluindo
+  // titulos cancelados/apagados. Previsto = titulos abertos pelo mes de vencimento
+  // (valor restante). Tudo quebrado por conta bancaria ('sem_conta' quando nao ha).
+  app.get('/api/financial/cashflow', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
+    try {
+      const year = parseInt(String(req.query.year || '')) || new Date().getFullYear();
+      const startDate = new Date(Date.UTC(year, 0, 1));
+      const endDate = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+
+      const accQ: any = await db.execute(sql`SELECT id, name, type, balance FROM financial_accounts WHERE is_active = true ORDER BY name`);
+      const accounts = (((accQ as any).rows || []) as any[]).map((a: any) => ({ id: a.id, name: a.name, type: a.type, balance: Number(a.balance || 0) }));
+
+      const bucketize = (rows: any[]) => {
+        const out: Record<string, number[]> = { total: new Array(12).fill(0) };
+        for (const r of rows) {
+          const mi = Number(r.m) - 1;
+          if (mi < 0 || mi > 11) continue;
+          const key = r.acc || 'sem_conta';
+          if (!out[key]) out[key] = new Array(12).fill(0);
+          const v = Number(r.v || 0);
+          out[key][mi] += v;
+          out.total[mi] += v;
+        }
+        return out;
+      };
+      const scalarize = (rows: any[]) => {
+        const out: Record<string, number> = { total: 0 };
+        for (const r of rows) {
+          const key = r.acc || 'sem_conta';
+          const v = Number(r.v || 0);
+          out[key] = (out[key] || 0) + v;
+          out.total += v;
+        }
+        return out;
+      };
+
+      const realEntQ: any = await db.execute(sql`
+        SELECT extract(month FROM p.paid_at)::int AS m,
+               COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
+               COALESCE(sum(p.amount::numeric), 0) AS v
+        FROM receivable_payments p
+        JOIN receivables t ON t.id = p.receivable_id
+        WHERE t.status <> 'cancelada' AND t.deleted_at IS NULL
+          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
+        GROUP BY 1, 2`);
+      const realSaiQ: any = await db.execute(sql`
+        SELECT extract(month FROM p.paid_at)::int AS m,
+               COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
+               COALESCE(sum(p.amount::numeric), 0) AS v
+        FROM payable_payments p
+        JOIN payables t ON t.id = p.payable_id
+        WHERE t.status <> 'cancelada' AND t.deleted_at IS NULL
+          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
+        GROUP BY 1, 2`);
+      const prevEntQ: any = await db.execute(sql`
+        SELECT extract(month FROM t.due_date)::int AS m,
+               t.financial_account_id AS acc,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
+        FROM receivables t
+        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
+          AND t.due_date >= ${startDate} AND t.due_date <= ${endDate}
+        GROUP BY 1, 2`);
+      const prevSaiQ: any = await db.execute(sql`
+        SELECT extract(month FROM t.due_date)::int AS m,
+               t.financial_account_id AS acc,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
+        FROM payables t
+        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
+          AND t.due_date >= ${startDate} AND t.due_date <= ${endDate}
+        GROUP BY 1, 2`);
+      const atrEntQ: any = await db.execute(sql`
+        SELECT t.financial_account_id AS acc,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
+        FROM receivables t
+        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
+          AND t.due_date < ${startDate}
+        GROUP BY 1`);
+      const atrSaiQ: any = await db.execute(sql`
+        SELECT t.financial_account_id AS acc,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
+        FROM payables t
+        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
+          AND t.due_date < ${startDate}
+        GROUP BY 1`);
+
+      res.json({
+        year,
+        accounts,
+        realizado: { entradas: bucketize((realEntQ as any).rows || []), saidas: bucketize((realSaiQ as any).rows || []) },
+        previsto: { entradas: bucketize((prevEntQ as any).rows || []), saidas: bucketize((prevSaiQ as any).rows || []) },
+        atrasados: { entradas: scalarize((atrEntQ as any).rows || []), saidas: scalarize((atrSaiQ as any).rows || []) },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // FASE 3.3 - Backfill de conta bancaria (dryRun por padrao; so preenche NULLs,
+  // nunca sobrescreve). Ordem: A) conta do pagamento -> titulo; C) mapa por forma
+  // de pagamento; D) legados baixados sem forma -> BB - MATRIZ; B) titulo -> pagamentos.
+  app.post('/api/financial/backfill-accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (actorOf(req) as any)?.email || 'backfill-f33';
+      const accQ: any = await db.execute(sql`SELECT id, name FROM financial_accounts WHERE is_active = true`);
+      const accRows = (((accQ as any).rows || []) as any[]);
+      const byName = (n: string) => accRows.find((a: any) => String(a.name).trim().toUpperCase() === n)?.id || null;
+      const MATRIZ = byName('BB - MATRIZ');
+      const CAIXINHA = byName('CAIXINHA');
+      const CARTOES = byName('CARTOES');
+      if (!MATRIZ || !CAIXINHA || !CARTOES) {
+        return res.status(400).json({ message: 'Contas BB - MATRIZ / CAIXINHA / CARTOES nao encontradas', encontradas: accRows.map((a: any) => a.name) });
+      }
+
+      const steps: any[] = [];
+      const run = async (label: string, countQ: any, updateQ: any) => {
+        const c: any = await db.execute(countQ);
+        const candidatos = Number((c as any).rows?.[0]?.n || 0);
+        let atualizados = 0;
+        if (!dryRun && candidatos > 0) {
+          const u: any = await db.execute(updateQ);
+          atualizados = Number((u as any)?.rowCount ?? 0);
+        }
+        steps.push({ step: label, candidatos, atualizados });
+      };
+
+      // A1/A2 - conta do pagamento mais recente -> titulo sem conta
+      await run('A1 recebiveis <- conta dos pagamentos',
+        sql`SELECT count(*)::int AS n FROM receivables r
+            WHERE r.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada'
+              AND EXISTS (SELECT 1 FROM receivable_payments p WHERE p.receivable_id = r.id AND p.financial_account_id IS NOT NULL)`,
+        sql`UPDATE receivables r SET financial_account_id = s.acc, updated_by = ${by}, updated_at = now()
+            FROM (SELECT DISTINCT ON (receivable_id) receivable_id, financial_account_id AS acc
+                  FROM receivable_payments WHERE financial_account_id IS NOT NULL
+                  ORDER BY receivable_id, paid_at DESC) s
+            WHERE r.id = s.receivable_id AND r.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada'`);
+      await run('A2 pagaveis <- conta dos pagamentos',
+        sql`SELECT count(*)::int AS n FROM payables r
+            WHERE r.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada'
+              AND EXISTS (SELECT 1 FROM payable_payments p WHERE p.payable_id = r.id AND p.financial_account_id IS NOT NULL)`,
+        sql`UPDATE payables r SET financial_account_id = s.acc, updated_by = ${by}, updated_at = now()
+            FROM (SELECT DISTINCT ON (payable_id) payable_id, financial_account_id AS acc
+                  FROM payable_payments WHERE financial_account_id IS NOT NULL
+                  ORDER BY payable_id, paid_at DESC) s
+            WHERE r.id = s.payable_id AND r.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada'`);
+
+      // C1/C2 - mapa por forma de pagamento (dinheiro -> CAIXINHA; cartao -> CARTOES; resto -> BB - MATRIZ)
+      const mapCase = sql`CASE WHEN payment_method = 'dinheiro' THEN ${CAIXINHA}
+                               WHEN payment_method IN ('cartao_credito', 'cartao_debito') THEN ${CARTOES}
+                               ELSE ${MATRIZ} END`;
+      await run('C1 recebiveis: mapa por forma de pagamento',
+        sql`SELECT count(*)::int AS n FROM receivables
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL
+              AND status IN ('recebida', 'a_vencer', 'vencida') AND payment_method IS NOT NULL`,
+        sql`UPDATE receivables SET financial_account_id = ${mapCase}, updated_by = ${by}, updated_at = now()
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL
+              AND status IN ('recebida', 'a_vencer', 'vencida') AND payment_method IS NOT NULL`);
+      await run('C2 pagaveis: mapa por forma de pagamento',
+        sql`SELECT count(*)::int AS n FROM payables
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL
+              AND status IN ('paga', 'a_vencer', 'vencida') AND payment_method IS NOT NULL`,
+        sql`UPDATE payables SET financial_account_id = ${mapCase}, updated_by = ${by}, updated_at = now()
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL
+              AND status IN ('paga', 'a_vencer', 'vencida') AND payment_method IS NOT NULL`);
+
+      // D1/D2 - legados ja baixados sem forma de pagamento -> BB - MATRIZ
+      await run('D1 recebidas legadas (sem forma) -> BB - MATRIZ',
+        sql`SELECT count(*)::int AS n FROM receivables
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL AND status = 'recebida' AND payment_method IS NULL`,
+        sql`UPDATE receivables SET financial_account_id = ${MATRIZ}, updated_by = ${by}, updated_at = now()
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL AND status = 'recebida' AND payment_method IS NULL`);
+      await run('D2 pagas legadas (sem forma) -> BB - MATRIZ',
+        sql`SELECT count(*)::int AS n FROM payables
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL AND status = 'paga' AND payment_method IS NULL`,
+        sql`UPDATE payables SET financial_account_id = ${MATRIZ}, updated_by = ${by}, updated_at = now()
+            WHERE financial_account_id IS NULL AND deleted_at IS NULL AND status = 'paga' AND payment_method IS NULL`);
+
+      // B1/B2 - conta do titulo -> pagamentos sem conta (depois de A/C/D)
+      await run('B1 pagamentos de recebiveis <- conta do titulo',
+        sql`SELECT count(*)::int AS n FROM receivable_payments p JOIN receivables r ON r.id = p.receivable_id
+            WHERE p.financial_account_id IS NULL AND r.financial_account_id IS NOT NULL`,
+        sql`UPDATE receivable_payments p SET financial_account_id = r.financial_account_id
+            FROM receivables r WHERE r.id = p.receivable_id
+              AND p.financial_account_id IS NULL AND r.financial_account_id IS NOT NULL`);
+      await run('B2 pagamentos de pagaveis <- conta do titulo',
+        sql`SELECT count(*)::int AS n FROM payable_payments p JOIN payables r ON r.id = p.payable_id
+            WHERE p.financial_account_id IS NULL AND r.financial_account_id IS NOT NULL`,
+        sql`UPDATE payable_payments p SET financial_account_id = r.financial_account_id
+            FROM payables r WHERE r.id = p.payable_id
+              AND p.financial_account_id IS NULL AND r.financial_account_id IS NOT NULL`);
+
+      try { await logFinancialAudit({ req, action: 'config', entity: 'backfill_accounts', note: (dryRun ? 'dryRun ' : '') + JSON.stringify(steps).slice(0, 900) }); } catch {}
+      res.json({ dryRun, contas: { MATRIZ, CAIXINHA, CARTOES }, steps });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============================================================================
   // DRE (Income Statement) - Monthly Breakdown
   // ============================================================================
 
