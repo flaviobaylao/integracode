@@ -190,7 +190,7 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
     key: 'fiscal_invoices',
     label: 'Notas Fiscais (NF-e)',
     description: 'Todas as NF-e emitidas no Integra com dados fiscais completos',
-    baseQuery: `SELECT fi.* FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN LATERAL (SELECT TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS seller_name FROM users u WHERE u.id = sc.seller_id OR u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = REPLACE(COALESCE(sc.seller_id,''),'omie-vendor-','') LIMIT 1) u ON true`,
+    baseQuery: `SELECT fi.* FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN (SELECT DISTINCT ON (invoice_number) invoice_number, seller_id AS bp_seller_id FROM billing_pipeline WHERE COALESCE(invoice_number,'') <> '' ORDER BY invoice_number, created_at DESC) bp ON bp.invoice_number = fi.invoice_number LEFT JOIN LATERAL (SELECT TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS seller_name FROM users u WHERE u.id = COALESCE(NULLIF(sc.seller_id,''), bp.bp_seller_id) OR u.omie_vendor_code = COALESCE(NULLIF(sc.seller_id,''), bp.bp_seller_id) OR u.omie_vendor_code = REPLACE(COALESCE(NULLIF(sc.seller_id,''), bp.bp_seller_id,''),'omie-vendor-','') LIMIT 1) u ON true`,
     fields: [
       { key: 'nf_numero', label: 'Nº NF-e', type: 'text', category: 'Identificação', dbColumn: 'fi.invoice_number' },
       { key: 'nf_serie', label: 'Série', type: 'text', category: 'Identificação', dbColumn: 'fi.series' },
