@@ -3020,7 +3020,7 @@ export async function manifestarCiencia(params: {
 
   let signXmlX509: any;
   try {
-    const sx: any = await import('node-nfe-nfce/lib/domain/use-cases/signature/sign-xml-x509');
+    const sx: any = await import('node-nfe-nfce/lib/domain/use-cases/signature/sign-xml-x509.js');
     signXmlX509 = sx.signXmlX509 || (sx.default && sx.default.signXmlX509);
     if (!signXmlX509) throw new Error('signXmlX509 indisponível');
   } catch (e: any) {
