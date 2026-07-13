@@ -474,11 +474,20 @@ export default function ActiveCustomers() {
   const handleActionClick = (e: React.MouseEvent, ac: ActiveCustomerWithVisits) => {
     e.stopPropagation();
     if (ac.customer?.id) {
-      setVirtualActionCustomer({ 
-        id: ac.customer.id, 
-        name: ac.customer.fantasyName || ac.customer.name 
+      setVirtualActionCustomer({
+        id: ac.customer.id,
+        name: ac.customer.fantasyName || ac.customer.name
       });
       setShowVirtualActionModal(true);
+    } else {
+      // Cliente presente na lista mas SEM cadastro vinculado (customer nulo):
+      // as ações de atendimento/pedido dependem do id do cadastro, então avisamos
+      // em vez de o clique não fazer nada.
+      toast({
+        variant: "destructive",
+        title: "Cliente sem cadastro vinculado",
+        description: `${ac.fantasyNameImported || ac.document || 'Este cliente'} está na lista, mas ainda não possui um cadastro completo no sistema. Clique em "Atualizar Cadastros (SEFAZ)" para criar o cadastro e então será possível abrir o atendimento e efetuar pedidos.`,
+      });
     }
   };
 
