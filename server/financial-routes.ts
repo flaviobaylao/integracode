@@ -130,6 +130,14 @@ function buildRecurrenceDates(base: Date, rec: any): Date[] {
 
 export function registerFinancialRoutes(app: Express) {
 
+  // Garante o valor 'cartao' no enum de forma de pagamento (opcao unica "Cartao"
+  // usada na baixa e na criacao de titulos, tanto a receber quanto a pagar). Sem
+  // isso o front envia paymentMethod='cartao' e o Postgres rejeita (o enum so tinha
+  // cartao_credito/cartao_debito) -> a baixa/criacao com cartao falhava com 500.
+  // Aditivo e idempotente; roda uma vez no boot, antes de qualquer requisicao.
+  db.execute(sql`ALTER TYPE financial_payment_method ADD VALUE IF NOT EXISTS 'cartao'`)
+    .catch((e: any) => console.warn('[financial] ensure cartao payment method:', e?.message || e));
+
   // ============================================================================
   // CHART OF ACCOUNTS
   // ============================================================================
