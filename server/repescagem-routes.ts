@@ -742,6 +742,90 @@ async function maybeAutoDraw(): Promise<void> {
   } finally { __drawRunning = false; }
 }
 
+// ============================================================================
+// Repescagem2 — Fase 4: fechamento e devolução
+// "Atendido = tem registro de atendimento OU pedido no dia" → conclui a
+// alocação (status 'completed'), atribuindo a venda/atendimento a QUEM ATENDEU.
+// As alocações 'in_route' de dias anteriores que não foram atendidas expiram
+// (status 'returned') e o cliente volta ao bolo p/ o sorteio do dia seguinte.
+// ============================================================================
+let __closeRunning = false;
+let __lastCloseCheckMs = 0;
+
+async function closeAndExpireRepescagem(date: string): Promise<any> {
+  const inRoute = await db.select().from(repescagemAssignments)
+    .where(and(eq(repescagemAssignments.drawDate, date), eq(repescagemAssignments.status, 'in_route')));
+
+  let completed = 0;
+  if (inRoute.length > 0) {
+    const cids = Array.from(new Set(inRoute.map(r => r.customerId)));
+    const arr = cids.join(',');
+    // Quem atendeu (attendantId/sellerId) por cliente — prioriza o primeiro sinal.
+    const attendedBy = new Map<string, string | null>();
+    const mark = (cid: string, who: any) => { if (cid && !attendedBy.has(cid)) attendedBy.set(cid, who || null); };
+
+    // Registro de atendimento (virtual): virtual_service_logs (inclui 'não venda').
+    const vlogs = await db.execute(sql`
+      SELECT customer_id, attendant_id FROM virtual_service_logs
+      WHERE DATE(attendance_date) = ${date}::date
+        AND customer_id = ANY(string_to_array(${arr}, ','))`);
+    for (const r of vlogs.rows as any[]) mark(r.customer_id, r.attendant_id);
+
+    // Registro de atendimento (presencial): check-in de rota.
+    const cps = await db.execute(sql`
+      SELECT customer_id, seller_id FROM route_checkpoints
+      WHERE checkpoint_type = 'check_in' AND DATE(checkpoint_time) = ${date}::date
+        AND customer_id = ANY(string_to_array(${arr}, ','))`);
+    for (const r of cps.rows as any[]) mark(r.customer_id, r.seller_id);
+
+    // Pedido: billing_pipeline no dia.
+    const orders = await db.execute(sql`
+      SELECT customer_id FROM billing_pipeline
+      WHERE DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) = ${date}::date
+        AND customer_id = ANY(string_to_array(${arr}, ','))`);
+    for (const r of orders.rows as any[]) mark(r.customer_id, null);
+
+    for (const a of inRoute) {
+      if (!attendedBy.has(a.customerId)) continue;
+      const by = attendedBy.get(a.customerId) || a.assignedUserId; // venda de quem atendeu
+      await db.update(repescagemAssignments).set({
+        status: 'completed', completedAt: new Date(), completedByUserId: by, updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
+        action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
+      });
+      completed++;
+    }
+  }
+
+  // Expira alocações 'in_route' de dias anteriores (não atendidas) → volta ao bolo.
+  const expiredRes = await db.execute(sql`
+    UPDATE repescagem_assignments SET status = 'returned', updated_at = now()
+    WHERE status = 'in_route' AND draw_date < ${date} RETURNING id`);
+  const expired = (expiredRes.rows || []).length;
+
+  return { date, inRoute: inRoute.length, completed, expired };
+}
+
+// Fechamento automático (throttled, fire-and-forget). Marca os atendidos do dia
+// como concluídos e expira os pendentes de dias anteriores.
+async function maybeAutoCloseRepescagem(): Promise<void> {
+  const nowMs = Date.now();
+  if (__closeRunning || (nowMs - __lastCloseCheckMs) < 120000) return;
+  __lastCloseCheckMs = nowMs;
+  __closeRunning = true;
+  try {
+    const now = new Date();
+    const local = new Date(now.getTime() + (-3 * 60 - now.getTimezoneOffset()) * 60000);
+    const date = local.toISOString().split('T')[0];
+    const r = await closeAndExpireRepescagem(date);
+    if (r.completed > 0 || r.expired > 0) console.log(`✅ [REPESCAGEM2-CLOSE] ${date}: concluídos=${r.completed}, expirados=${r.expired}`);
+  } catch (e: any) {
+    console.warn('[REPESCAGEM2-CLOSE] falha:', e?.message);
+  } finally { __closeRunning = false; }
+}
+
 export function registerRepescagemRoutes(app: Express, opts: {
   authenticateUser: any;
   requireRole: (roles: string[]) => any;
@@ -760,6 +844,21 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.json(result);
     } catch (e: any) {
       console.error('POST /api/repescagem/draw', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Repescagem2 Fase 4: fechamento manual (admin) — conclui atendidos e expira antigos.
+  app.post('/api/repescagem/close', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const date = String(req.query.date || req.body?.date || '').trim() || (() => {
+        const now = new Date(); const local = new Date(now.getTime() + (-3 * 60 - now.getTimezoneOffset()) * 60000);
+        return local.toISOString().split('T')[0];
+      })();
+      const result = await closeAndExpireRepescagem(date);
+      res.json(result);
+    } catch (e: any) {
+      console.error('POST /api/repescagem/close', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
@@ -808,6 +907,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const date = String(req.query.date || '').trim();
       if (!sellerId || !date) return res.status(400).json({ message: 'sellerId e date obrigatórios' });
       if (user.role === 'vendedor' && sellerId !== user.id) return res.status(403).json({ message: 'Acesso negado' });
+
+      // Fecha os atendidos do dia (throttled) para que saiam da lista de cards.
+      maybeAutoCloseRepescagem();
 
       const rows = await db.select().from(repescagemAssignments).where(and(
         eq(repescagemAssignments.assignedUserId, sellerId),
@@ -939,8 +1041,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
   // Lista de atribuições enriquecida (clientes para repescagem com atendente atribuído)
   app.get('/api/repescagem/assignments', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
     try {
-      // Repescagem2: dispara o sorteio do dia se ainda não ocorreu (throttled).
+      // Repescagem2: dispara o sorteio do dia se ainda não ocorreu (throttled)
+      // e fecha/expira as alocações (atendidos → concluídos; antigos → bolo).
       maybeAutoDraw();
+      maybeAutoCloseRepescagem();
       // Reconciliar primeiro
       await reconcileAssignments((req as any).currentUser?.id);
 
