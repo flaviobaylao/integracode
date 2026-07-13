@@ -1,6 +1,6 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import ReconcileButton from "@/components/ReconcileButton";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearch } from 'wouter';
@@ -841,6 +841,24 @@ function PayablesTab() {
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [supSug, setSupSug] = useState<any[]>([]);
+  const supTimer = useRef<any>(null);
+  const buscarFornecedores = (v: string) => {
+    if (supTimer.current) clearTimeout(supTimer.current);
+    const q = (v || '').trim();
+    if (q.length < 2) { setSupSug([]); return; }
+    supTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/reconciliation/suppliers/search?q=' + encodeURIComponent(q), { credentials: 'include' });
+        const j = await r.json();
+        setSupSug(Array.isArray(j.suppliers) ? j.suppliers : []);
+      } catch { setSupSug([]); }
+    }, 250);
+  };
+  const pickFornecedor = (s: any) => {
+    setForm((f: any) => ({ ...f, supplierName: s.name || '', supplierDocument: s.cnpj || s.cpf || f.supplierDocument || '', chartAccountId: s.default_chart_account_id || f.chartAccountId || '' }));
+    setSupSug([]);
+  };
 
   const buildUrl = () => {
     const p = new URLSearchParams();
@@ -989,7 +1007,7 @@ function PayablesTab() {
         <div><Label className="text-xs">Emissão até</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento de</Label><Input type="date" value={dueDateStart} onChange={e => setDueDateStart(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento até</Label><Input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)} className="w-[150px]" /></div>
-        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setShowCreate(true); }} className="ml-auto">
+        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setSupSug([]); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Pagar
         </Button>
         {selectedIds.length > 0 && (
@@ -1042,7 +1060,7 @@ function PayablesTab() {
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a pagar?')) deleteMutation.mutate(p.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
                   </TableCell>
@@ -1088,7 +1106,7 @@ function PayablesTab() {
           <div className="space-y-3">
             <div><Label>Título</Label><Input value={form.title || ''} onChange={e => setForm({ ...form, title: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Fornecedor</Label><Input value={form.supplierName || ''} onChange={e => setForm({ ...form, supplierName: e.target.value })} /></div>
+              <div className="relative"><Label>Fornecedor</Label><Input autoComplete="off" placeholder="Busque no cadastro…" value={form.supplierName || ''} onChange={e => { const v = e.target.value; setForm({ ...form, supplierName: v }); buscarFornecedores(v); }} onBlur={() => setTimeout(() => setSupSug([]), 150)} />{supSug.length > 0 && (<div className="absolute z-50 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">{supSug.map((s: any) => (<button type="button" key={s.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pickFornecedor(s)} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">{s.name}{(s.cnpj || s.cpf) ? <span className="text-gray-400 text-xs"> · {s.cnpj || s.cpf}</span> : null}</button>))}</div>)}</div>
               <div><Label>CNPJ/CPF</Label><Input value={form.supplierDocument || ''} onChange={e => setForm({ ...form, supplierDocument: e.target.value })} /></div>
             </div>
             <div><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
@@ -1205,7 +1223,7 @@ function PayablesTab() {
           <div className="space-y-3">
             <div><Label>Título</Label><Input value={form.title || ''} onChange={e => setForm({ ...form, title: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Fornecedor</Label><Input value={form.supplierName || ''} onChange={e => setForm({ ...form, supplierName: e.target.value })} /></div>
+              <div className="relative"><Label>Fornecedor</Label><Input autoComplete="off" placeholder="Busque no cadastro…" value={form.supplierName || ''} onChange={e => { const v = e.target.value; setForm({ ...form, supplierName: v }); buscarFornecedores(v); }} onBlur={() => setTimeout(() => setSupSug([]), 150)} />{supSug.length > 0 && (<div className="absolute z-50 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">{supSug.map((s: any) => (<button type="button" key={s.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pickFornecedor(s)} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">{s.name}{(s.cnpj || s.cpf) ? <span className="text-gray-400 text-xs"> · {s.cnpj || s.cpf}</span> : null}</button>))}</div>)}</div>
               <div><Label>CNPJ/CPF</Label><Input value={form.supplierDocument || ''} onChange={e => setForm({ ...form, supplierDocument: e.target.value })} /></div>
             </div>
             <div><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
