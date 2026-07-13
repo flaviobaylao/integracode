@@ -24757,8 +24757,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const { id } = req.params;
       const { latitude, longitude } = req.body;
-      
-      console.log(`📍 Check-in em lead ${id} - User: ${user?.email || 'UNKNOWN'}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude})`);
+      const checkInNotes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+
+      console.log(`📍 Check-in em lead ${id} - User: ${user?.email || 'UNKNOWN'}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude}), Obs: ${checkInNotes ? 'sim' : 'não'}`);
       
       // Foto é obrigatória para check-in em lead
       if (!req.file) {
@@ -24829,12 +24830,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
             lastCheckInAt: now,
             status: 'visited', // Marcar como visitado
             photo: photoUrl, // Salvar foto no lead
+            // Registra a observação do check-in (quando informada) no campo do lead.
+            ...(checkInNotes ? { observation: checkInNotes } : {}),
             updatedAt: now
           })
           .where(eq(leads.id, id))
           .execute();
-        
+
         console.log(`✅ Lead atualizado no banco de dados`);
+
+        // Registra a observação também no histórico de visitas do lead (lead_visits),
+        // para aparecer no histórico como uma visita registrada.
+        if (checkInNotes) {
+          try {
+            const uName = `${(user as any)?.firstName || ''} ${(user as any)?.lastName || ''}`.trim() || (user as any)?.name || user.email || 'Usuário';
+            await storage.createLeadVisit({
+              leadId: id,
+              userId: user.id,
+              userName: uName,
+              observation: checkInNotes,
+            } as any);
+            console.log(`📝 Observação do check-in registrada no histórico do lead ${id}`);
+          } catch (obsErr: any) {
+            console.error('❌ Erro ao registrar observação do check-in no histórico:', obsErr?.message);
+          }
+        }
         
         // Registrar checkpoint na rota diária (para aparecer na listagem)
         let routeProgress = null;
