@@ -3316,6 +3316,7 @@ export const receivableStatusEnum = pgEnum("receivable_status", [
 export const financialPaymentMethodEnum = pgEnum("financial_payment_method", [
   "dinheiro",
   "boleto",
+  "cartao",          // opcao unica "Cartao" (conta CARTOES) usada na baixa/criacao
   "cartao_credito",
   "cartao_debito",
   "pix",
