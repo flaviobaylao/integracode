@@ -186,7 +186,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       items: [
         { id: 'billings', label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', icon: 'fas fa-file-invoice-dollar', available: canAccessReports || isVendedor, badge: null },
         { id: 'fiscal-invoices', label: 'Faturamento NF-e', icon: 'fas fa-file-alt', available: canAccessReports, badge: null },
-        { id: 'billing-pipeline', label: 'Pipeline Faturamento', icon: 'fas fa-columns', available: canAccessReports || isTelemarketing, badge: null },
+        { id: 'billing-pipeline', label: 'Pipeline Faturamento', icon: 'fas fa-columns', available: canAccessReports || isTelemarketing || isVendedor, badge: null },
         { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart', available: canAccessReports, badge: null },
         { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'order-billed', label: 'Faturado', icon: 'fas fa-check-circle', available: canAccessReports, badge: null },
@@ -342,7 +342,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return items
       .filter(item => item.available)
       .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia'].includes(item.id));
+      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
   };
 
   const visibleGroups = useMemo(() => {
