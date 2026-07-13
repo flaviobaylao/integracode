@@ -1924,7 +1924,7 @@ function ChatCenterInner() {
                 {/* Área de Chat + Input de Mensagem - Tudo junto */}
                 <Card className="flex flex-col" style={{ height: 'calc(100vh - 300px)', minHeight: '400px' }}>
                   <CardContent className="flex-1 overflow-hidden p-4 flex flex-col">
-                    <ScrollArea ref={scrollRef} className="flex-1" style={{ maxHeight: 'calc(100% - 120px)' }}>
+                    <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
                       <div className="space-y-4">
                         {messagesLoading ? (
                           <div className="text-center py-8 text-gray-500">Carregando mensagens...</div>
@@ -2063,7 +2063,7 @@ function ChatCenterInner() {
                           }
                         }}
                         data-testid="textarea-message"
-                        className="resize-none flex-1"
+                        className="resize-y flex-1 min-h-[44px] max-h-[50vh]"
                         rows={2}
                         disabled={!!selectedFile}
                       />
