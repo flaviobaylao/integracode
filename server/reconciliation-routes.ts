@@ -50,6 +50,47 @@ export function registerReconciliation(app: Express) {
     __mirrorColReady = true;
   }
 
+  // Trilha de auditoria (append-only) de TODAS as conciliacoes e estornos, para
+  // rastreabilidade do processo mesmo se o item for reimportado/duplicado/desfeito.
+  let __auditReady = false;
+  async function ensureAuditTable() {
+    if (__auditReady) return;
+    try {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS reconciliation_audit_log (
+        id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        event_at timestamptz NOT NULL DEFAULT now(),
+        action text NOT NULL,
+        bank_statement_item_id text,
+        statement_id text,
+        financial_account_id text,
+        omie_instance_id text,
+        amount numeric,
+        item_type text,
+        transaction_date date,
+        description text,
+        titles jsonb,
+        counterpart jsonb,
+        performed_by text,
+        details jsonb
+      )`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_recon_audit_item ON reconciliation_audit_log (bank_statement_item_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_recon_audit_at ON reconciliation_audit_log (event_at DESC)`);
+    } catch {}
+    __auditReady = true;
+  }
+  async function logReconAudit(row: Record<string, any>) {
+    try {
+      await ensureAuditTable();
+      await db.execute(sql`
+        INSERT INTO reconciliation_audit_log
+          (id, action, bank_statement_item_id, statement_id, financial_account_id, omie_instance_id, amount, item_type, transaction_date, description, titles, counterpart, performed_by, details)
+        VALUES (gen_random_uuid()::text, ${row.action}, ${row.itemId ?? null}, ${row.statementId ?? null}, ${row.accountId ?? null}, ${row.instanceId ?? null},
+          ${row.amount ?? null}, ${row.itemType ?? null}, ${row.transactionDate ?? null}, ${(row.description ?? "").toString().slice(0, 300)},
+          ${row.titles ? JSON.stringify(row.titles) : null}::jsonb, ${row.counterpart ? JSON.stringify(row.counterpart) : null}::jsonb,
+          ${row.by ?? null}, ${row.details ? JSON.stringify(row.details) : null}::jsonb)`);
+    } catch {}
+  }
+
   app.get("/api/reconciliation/filters", authenticateUser, requireRole(FIN_ROLES), async (_req, res) => {
     try {
       const r = await db.execute(sql`
@@ -561,6 +602,7 @@ export function registerReconciliation(app: Express) {
             matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}
         WHERE id = ${id}`);
       if (cpInfo) await evolvePattern(item, cpInfo, item.s_instance || null, by);
+      await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results } });
       res.json({ ok: true, status: "reconciled", kind, results });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
@@ -751,6 +793,7 @@ export function registerReconciliation(app: Express) {
       }
       await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
       await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_receivable_id=null, matched_payable_id=null, matched_at=null, matched_by=${by}, match_confidence=null, notes=null WHERE id=${id}`);
+      await logReconAudit({ action: "undo", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: matches.map((m: any) => ({ receivable_id: m.receivable_id, payable_id: m.payable_id, amount: m.amount, settled: m.title_amount_settled })), by, details: { reverted } });
       res.json({ ok: true, status: "pending", reverted });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
@@ -874,51 +917,39 @@ export function registerReconciliation(app: Express) {
       let skipped = 0;                 // duplicata dentro do MESMO arquivo (descartada)
       let toInsert: any[] = [];        // lancamentos novos (pending)
       let toMirror: Array<{ t: any; canonical: string }> = []; // ja existentes (espelho)
-      if (fitCol) {
-        const fitsIn = Array.from(new Set(parsed.transactions.map((t) => t.fitid).filter(Boolean)));
-        const canonByFit: Record<string, string> = {};
-        if (fitsIn.length) {
-          const er = await db.execute(sql`
-            SELECT ${sql.raw('i."' + fitCol + '"')} AS fit, i.id, i.mirror_of
-            FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
-            WHERE s.financial_account_id = ${accountId} AND ${sql.raw('i."' + fitCol + '"')} IN (${inList(fitsIn)})`);
-          for (const x of rowsOf(er)) {
-            const f = String(x.fit);
-            // prefere o item canonico (mirror_of NULL); guarda fallback se so houver espelho
+      // Mira por FITID quando houver; se o lancamento NAO tiver FITID (comum nos
+      // extratos do BB), cai para a chave composta (data|valor|tipo|descricao) na
+      // MESMA conta. Assim, reimportar um extrato sem FITID NAO recria o lancamento
+      // como novo pendente -> evita a "conciliacao que volta a pendente" e a baixa
+      // em duplicidade do titulo.
+      const canonByFit: Record<string, string> = {};
+      const canonByKey: Record<string, string> = {};
+      {
+        const er = await db.execute(sql`
+          SELECT i.id, i.mirror_of, i.transaction_date, i.amount, i.type, i.description${fitCol ? sql.raw(', i."' + fitCol + '" AS fit') : sql``}
+          FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+          WHERE s.financial_account_id = ${accountId}`);
+        for (const x of rowsOf(er)) {
+          const kk = `${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`;
+          if (!x.mirror_of) canonByKey[kk] = String(x.id);
+          else if (!canonByKey[kk]) canonByKey[kk] = String(x.mirror_of || x.id);
+          const fv = (x as any).fit;
+          if (fitCol && fv) {
+            const f = String(fv);
             if (!x.mirror_of) canonByFit[f] = String(x.id);
             else if (!canonByFit[f]) canonByFit[f] = String(x.mirror_of || x.id);
           }
         }
+      }
+      {
         const seen = new Set<string>();
         for (const t of parsed.transactions) {
-          const k = t.fitid || `${t.date}|${t.amount}|${t.type}|${t.description}`;
-          if (seen.has(k)) { skipped++; continue; }   // duplicata literal no mesmo arquivo
-          seen.add(k);
-          if (t.fitid && canonByFit[t.fitid]) toMirror.push({ t, canonical: canonByFit[t.fitid] });
-          else toInsert.push(t);
-        }
-      } else {
-        // Sem coluna de FITID: chave (data|valor|tipo|descrição) contra o período
-        const canonByKey: Record<string, string> = {};
-        if (parsed.dtStart || parsed.dtEnd) {
-          const er = await db.execute(sql`
-            SELECT i.id, i.mirror_of, i.transaction_date, i.amount, i.type, i.description
-            FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
-            WHERE s.financial_account_id = ${accountId}
-              AND (${parsed.dtStart}::date IS NULL OR i.transaction_date >= ${parsed.dtStart}::date)
-              AND (${parsed.dtEnd}::date IS NULL OR i.transaction_date <= ${parsed.dtEnd}::date)`);
-          for (const x of rowsOf(er)) {
-            const kk = `${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`;
-            if (!x.mirror_of) canonByKey[kk] = String(x.id);
-            else if (!canonByKey[kk]) canonByKey[kk] = String(x.mirror_of || x.id);
-          }
-        }
-        const seen = new Set<string>();
-        for (const t of parsed.transactions) {
-          const k = `${t.date}|${money(t.amount)}|${t.type}|${normDesc(t.description)}`;
-          if (seen.has(k)) { skipped++; continue; }
-          seen.add(k);
-          if (canonByKey[k]) toMirror.push({ t, canonical: canonByKey[k] });
+          const compK = `${t.date}|${money(t.amount)}|${t.type}|${normDesc(t.description)}`;
+          const dedK = t.fitid || compK;
+          if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO arquivo
+          seen.add(dedK);
+          const canonical = (t.fitid && canonByFit[t.fitid]) || canonByKey[compK] || null;
+          if (canonical) toMirror.push({ t, canonical });
           else toInsert.push(t);
         }
       }
@@ -1196,6 +1227,23 @@ export function registerReconciliation(app: Express) {
       const delItems = rowsOf(await db.execute(sql`DELETE FROM bank_statement_items WHERE statement_id = ${id} RETURNING id`));
       await db.execute(sql`DELETE FROM bank_statements WHERE id = ${id}`);
       res.json({ ok: true, statementId: id, fileName: st.file_name, deletedItems: delItems.length, by });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // ---- Trilha de auditoria das conciliacoes (rastreabilidade) --------------
+  app.get("/api/reconciliation/audit", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureAuditTable();
+      const itemId = (req.query.itemId as string) || null;
+      const action = (req.query.action as string) || null;
+      const limit = Math.min(Number(req.query.limit) || 500, 2000);
+      const r = await db.execute(sql`
+        SELECT * FROM reconciliation_audit_log
+        WHERE (${itemId}::text IS NULL OR bank_statement_item_id = ${itemId})
+          AND (${action}::text IS NULL OR action = ${action})
+        ORDER BY event_at DESC
+        LIMIT ${limit}`);
+      res.json({ items: rowsOf(r) });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
