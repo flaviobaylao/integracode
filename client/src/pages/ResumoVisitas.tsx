@@ -232,10 +232,10 @@ export default function ResumoVisitas() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {filtered.map((r, i) => {
                 const cm = cellMapFor(r);
                 return (
-                  <tr key={r.customerId} className="border-t hover:bg-muted/20">
+                  <tr key={`${r.customerId}-${r.sellerName}-${i}`} className="border-t hover:bg-muted/20">
                     <td style={{ ...stickyL(0), padding: "4px 8px", fontWeight: 500, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.customerName}>{r.customerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.sellerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
