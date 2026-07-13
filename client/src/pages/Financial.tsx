@@ -52,8 +52,16 @@ function formatDateTime(date: string | null | undefined) {
   return new Date(date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+// Vencido por DIA-CALENDÁRIO (fuso Brasil): só atrasa DEPOIS que o dia do vencimento passa.
+// Vence HOJE não é atrasado (antes comparava o instante e marcava vencido no mesmo dia).
+function isOverdueByDate(dueDate?: string) {
+  if (!dueDate) return false;
+  const opts = { timeZone: 'America/Sao_Paulo' } as const;
+  return new Date(dueDate).toLocaleDateString('en-CA', opts) < new Date().toLocaleDateString('en-CA', opts);
+}
+
 function getReceivableStatusBadge(status: string, dueDate?: string) {
-  if (status === 'a_vencer' && dueDate && new Date(dueDate) < new Date()) {
+  if (status === 'a_vencer' && isOverdueByDate(dueDate)) {
     return <Badge className="bg-orange-100 text-orange-800 border-orange-300">Atrasada</Badge>;
   }
   const map: Record<string, { label: string; className: string }> = {
@@ -67,7 +75,7 @@ function getReceivableStatusBadge(status: string, dueDate?: string) {
 }
 
 function getPayableStatusBadge(status: string, dueDate?: string) {
-  if (status === 'a_vencer' && dueDate && new Date(dueDate) < new Date()) {
+  if (status === 'a_vencer' && isOverdueByDate(dueDate)) {
     return <Badge className="bg-orange-100 text-orange-800 border-orange-300">Atrasada</Badge>;
   }
   const map: Record<string, { label: string; className: string }> = {
