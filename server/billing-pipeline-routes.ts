@@ -155,9 +155,10 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
           notes: sc.notes || null,
           omieInstanceId: (customer as any)?.omieInstanceId || null,
           omieInstanceName: omieInstanceName || null,
-          stageHistory: [{ stage: 'pedido', changedAt: (sc.createdAt ? new Date(sc.createdAt) : nowBrazil()).toISOString(), changedBy: 'reconcile-card' }],
+          stageHistory: [{ stage: 'pedido', changedAt: (sc.completedDate ? new Date(sc.completedDate) : (sc.createdAt ? new Date(sc.createdAt) : nowBrazil())).toISOString(), changedBy: 'reconcile-card' }],
           createdBy: 'reconcile-card',
-          ...(sc.createdAt ? { createdAt: new Date(sc.createdAt) } : {}),
+          // Data da venda = completedDate (conclusao); fallback createdAt do card (aproxima a venda, nao a hora da reconciliacao).
+          ...(sc.completedDate ? { createdAt: new Date(sc.completedDate) } : (sc.createdAt ? { createdAt: new Date(sc.createdAt) } : {})),
         } as any);
         haveCard.add(sc.id); haveCustVal.add(cv);
         await logOrderAudit(sc.id, 'created');
@@ -338,12 +339,15 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       omieInstanceName: omieInstanceName || null,
       stageHistory: [{
         stage: stage,
-        changedAt: (salesCard.createdAt ? new Date(salesCard.createdAt) : nowBrazil()).toISOString(),
+        changedAt: (salesCard.completedDate ? new Date(salesCard.completedDate) : nowBrazil()).toISOString(),
         changedBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`
       }],
       createdBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`,
-      // DATA DE REGISTRO do pedido = quando o vendedor registrou (createdAt do sales_card), nao a hora da reconciliacao
-      ...(salesCard.createdAt ? { createdAt: new Date(salesCard.createdAt) } : {}),
+      // DATA DE REGISTRO do pedido = quando a VENDA foi registrada (completedDate do sales_card).
+      // NAO usar createdAt do card: em clientes AGENDADOS/RECORRENTES o card e criado semanas
+      // antes (data da agenda) e a venda so e registrada na conclusao. Sem completedDate
+      // (ex.: pedido 'agendado' para o futuro), fica o defaultNow() = momento do registro.
+      ...(salesCard.completedDate ? { createdAt: new Date(salesCard.completedDate) } : {}),
     });
 
     await logOrderAudit(salesCard.id, stage === 'agendado' ? 'created_scheduled' : 'created');
