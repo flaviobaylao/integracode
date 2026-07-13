@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive, Tag } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -623,7 +623,7 @@ function ChatCenterInner() {
   };
 
   // Filtrar conversas por termo de busca (cruzando com o cadastro de Clientes)
-  const filteredConversations = normalConversations.filter(convMatchesSearch);
+  const searchedConversations = normalConversations.filter(convMatchesSearch);
   const filteredSpamConversations = spamConversations.filter(convMatchesSearch);
   const filteredGrupoConversations = grupoConversations.filter(convMatchesSearch);
 
@@ -708,6 +708,7 @@ function ChatCenterInner() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
 
   // ===== Etiquetas (labels) das conversas =====
+  const [labelFilter, setLabelFilter] = useState<string>('all');
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
@@ -733,6 +734,10 @@ function ChatCenterInner() {
     arr.push(it.labelId); labelIdsByConv.set(it.conversationId, arr);
   });
   const labelsForConv = (convId: string) => (labelIdsByConv.get(convId) || []).map(id => labelById.get(id)).filter(Boolean);
+  // Lista final de conversas: busca + filtro por etiqueta selecionada
+  const filteredConversations = labelFilter === 'all'
+    ? searchedConversations
+    : searchedConversations.filter((c: any) => (labelIdsByConv.get(c.id) || []).includes(labelFilter));
   const invalidateLabels = () => queryClient.invalidateQueries({ queryKey: ['/api/chat/labels'] });
   const createLabelMutation = useMutation({
     mutationFn: async () => await apiRequest('POST', '/api/chat/labels', { name: newLabelName, color: newLabelColor }),
@@ -1491,27 +1496,53 @@ function ChatCenterInner() {
                 </CardHeader>
 
                 <TabsContent value="conversas" className="m-0">
-                  <div className="px-4 pb-2 flex items-center justify-between gap-4">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg">Conversas</CardTitle>
-                      <CardDescription>{filteredConversations.length} conversas</CardDescription>
+                  <div className="px-4 pb-2 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <CardTitle className="text-lg">Conversas</CardTitle>
+                        <CardDescription>
+                          {filteredConversations.length} conversas
+                          {labelFilter !== 'all' ? ` (filtradas por etiqueta)` : ''}
+                        </CardDescription>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => setShowNewConversation(true)}
+                        className="bg-green-600 hover:bg-green-700 shrink-0"
+                        data-testid="button-new-conversation"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="flex items-center gap-2 flex-1 max-w-[200px]">
-                      <Input 
-                        placeholder="Buscar: nome, CNPJ, telefone ou palavra..." 
+                    <div className="flex items-center gap-2">
+                      {labels.length > 0 && (
+                        <Select value={labelFilter} onValueChange={setLabelFilter}>
+                          <SelectTrigger className="h-8 text-xs w-[150px] shrink-0" data-testid="select-label-filter">
+                            <div className="flex items-center gap-1 truncate">
+                              <Tag className="h-3 w-3 shrink-0" />
+                              <SelectValue placeholder="Etiquetas" />
+                            </div>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todas as etiquetas</SelectItem>
+                            {labels.map((l: any) => (
+                              <SelectItem key={l.id} value={l.id}>
+                                <span className="flex items-center gap-2">
+                                  <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: l.color || '#3B82F6' }} />
+                                  {l.name}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <Input
+                        placeholder="Buscar: nome, CNPJ, telefone ou palavra..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="h-8 text-xs"
+                        className="h-8 text-xs flex-1"
                       />
                     </div>
-                    <Button
-                      size="sm"
-                      onClick={() => setShowNewConversation(true)}
-                      className="bg-green-600 hover:bg-green-700 shrink-0"
-                      data-testid="button-new-conversation"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
                   </div>
                   <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
                       <div className="space-y-2 pr-2">
