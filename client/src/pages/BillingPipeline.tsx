@@ -16,7 +16,7 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban
+  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -189,6 +189,8 @@ function formatDate(dateStr: string) {
 
 export default function BillingPipeline() {
   const [search, setSearch] = useState('');
+  // Classificação por data de criação em cada raia (asc = A-Z / mais antigos primeiro).
+  const [stageSort, setStageSort] = useState<Record<string, 'asc' | 'desc'>>({});
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
@@ -492,28 +494,27 @@ export default function BillingPipeline() {
   }, [selectedItems]);
 
   const handlePrintDanfe = useCallback(async () => {
-    if (selectedItems.length === 0) {
-      toast({ title: 'Nenhum pedido selecionado', description: 'Selecione pedidos já faturados', variant: 'destructive' });
+    const faturadoItems = selectedItems.filter(i => i.invoiceNumber);
+    if (faturadoItems.length === 0) {
+      toast({ title: 'Nenhum pedido faturado selecionado', description: 'Selecione pedidos que já possuem nota fiscal gerada', variant: 'destructive' });
       return;
     }
 
     setIsPrintingDanfe(true);
     try {
-      // Resolve pelo VÍNCULO REAL (sales_card_id): pega a NF mesmo quando o card ficou
-      // "faturado" sem o invoice_number gravado (NF autorizada async pela SEFAZ).
-      const ids = selectedItems.map(i => i.id);
-      const response = await fetch('/api/billing-pipeline/danfes', {
+      const invoiceNumbers = faturadoItems.map(i => i.invoiceNumber!);
+      const response = await fetch('/api/fiscal-invoices/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ invoiceNumbers }),
       });
 
       if (!response.ok) throw new Error('Erro ao buscar notas fiscais');
       const invoices: DanfeInvoice[] = await response.json();
 
       if (invoices.length === 0) {
-        toast({ title: 'Nenhuma NF-e encontrada', description: 'Os pedidos selecionados não possuem nota fiscal autorizada vinculada', variant: 'destructive' });
+        toast({ title: 'Nenhuma NF-e encontrada', description: 'As notas fiscais para os pedidos selecionados não foram encontradas', variant: 'destructive' });
         return;
       }
 
@@ -559,15 +560,15 @@ export default function BillingPipeline() {
       const rows = resp.ok ? await resp.json() : [];
       const byItem = new Map<string, any>();
       for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
-      // Resolve as DANFEs pelo VÍNCULO REAL (sales_card_id) e NÃO só pelo invoice_number do
-      // card — itens "faturado" com invoice_number nulo (NF autorizada async pela SEFAZ) antes
-      // saíam SEM a nota. O endpoint retorna por itemId e cicatriza o card.
-      const danfeByItem = new Map<string, DanfeInvoice>();
-      try {
-        const fr = await fetch('/api/billing-pipeline/danfes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ids }) });
-        if (fr.ok) { const invs: (DanfeInvoice & { itemId?: string })[] = await fr.json(); for (const inv of invs) { if (inv.itemId) danfeByItem.set(inv.itemId, inv); } }
-      } catch (e) {}
-      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const danfe = danfeByItem.get(it.id) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber || (danfe ? `NF-${danfe.invoiceNumber}` : undefined), saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
+      const invNums = selectedItems.filter((i) => i.invoiceNumber).map((i) => i.invoiceNumber);
+      const danfeByNum = new Map<string, DanfeInvoice>();
+      if (invNums.length) {
+        try {
+          const fr = await fetch('/api/fiscal-invoices/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ invoiceNumbers: invNums }) });
+          if (fr.ok) { const invs: DanfeInvoice[] = await fr.json(); for (const inv of invs) { danfeByNum.set(String(inv.invoiceNumber), inv); } }
+        } catch (e) {}
+      }
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
       const n = await generateCompletoPdf(list);
       toast({ title: n + ' pedido(s) impresso(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
@@ -880,6 +881,13 @@ export default function BillingPipeline() {
               return matchesText && matchesSeller && matchesOp && matchesInstance;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
+            // Classificação por data de criação (A-Z = mais antigos primeiro / Z-A = mais recentes primeiro).
+            const sortDir = stageSort[stage.key] || 'asc';
+            const sortedStageItems = [...stageItems].sort((a, b) => {
+              const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+              const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+              return sortDir === 'asc' ? ta - tb : tb - ta;
+            });
             const StageIcon = stage.icon;
             const stageIds = stageItems.map(i => i.id);
             const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
@@ -904,12 +912,26 @@ export default function BillingPipeline() {
                   </div>
                 </div>
                 <div className="bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 min-h-[200px]">
+                  {/* Seletor de classificação por data de criação (A-Z / Z-A) */}
+                  <div className="flex items-center justify-end">
+                    <button
+                      onClick={() => setStageSort(prev => ({ ...prev, [stage.key]: (prev[stage.key] || 'asc') === 'asc' ? 'desc' : 'asc' }))}
+                      className="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-0.5 bg-white dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-700"
+                      title="Classificar por data de criação"
+                      data-testid={`sort-stage-${stage.key}`}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      <span>Data</span>
+                      <ArrowDownUp className="h-3 w-3" />
+                      <span className="font-semibold">{sortDir === 'asc' ? 'A-Z' : 'Z-A'}</span>
+                    </button>
+                  </div>
                   {stageItems.length === 0 && (
                     <div className="text-center text-gray-400 text-sm py-8">
                       Nenhum pedido
                     </div>
                   )}
-                  {stageItems.map((item) => (
+                  {sortedStageItems.map((item) => (
                     <KanbanCard
                       key={item.id}
                       item={item}
@@ -1068,10 +1090,10 @@ export default function BillingPipeline() {
                         {editMode ? (editData?.products || []).map((p: any, i: number) => (
                           <tr key={i} className="border-t">
                             <td className="p-1.5 text-gray-400">{i + 1}</td>
-                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => { const pr = d.products.filter((_: any, x: number) => x !== i); const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="text-red-500 ml-1">✕</button></td>
+                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; return { ...d, products: pr }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; return { ...d, products: pr }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; return { ...d, products: pr }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => ({ ...d, products: d.products.filter((_: any, x: number) => x !== i) }))} className="text-red-500 ml-1">✕</button></td>
                           </tr>
                         )) : detailItem.products?.map((p, i) => (
                           <tr key={i} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
@@ -1086,7 +1108,7 @@ export default function BillingPipeline() {
                       <tfoot className="bg-gray-50 dark:bg-gray-700">
                         <tr className="border-t-2">
                           <td colSpan={4} className="p-2.5 text-right font-bold">Total:</td>
-                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(editMode ? editData?.saleValue : detailItem.saleValue)}</td>
+                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(detailItem.saleValue)}</td>
                         </tr>
                       </tfoot>
                     </table>
