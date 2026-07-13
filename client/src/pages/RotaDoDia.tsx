@@ -176,6 +176,26 @@ export default function RotaDoDia() {
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
   });
 
+  // Repescagem2 (Fase 3): camada de repescagem sobreposta na rota do dia.
+  const { data: repescagemOverlay = [] } = useQuery<any[]>({
+    queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/repescagem/route-overlay?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+    refetchInterval: 30000,
+  });
+  const returnRepescagemMutation = useMutation({
+    mutationFn: async (assignmentId: string) => apiRequest('POST', `/api/repescagem/route-overlay/${assignmentId}/return`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate] });
+      toast({ title: 'Removido', description: 'Cliente devolvido à repescagem.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao remover', variant: 'destructive' }),
+  });
+
   // Buscar pedidos do dia e débitos para os clientes da rota
   interface CustomerInfoResponse {
     orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
@@ -2020,6 +2040,82 @@ export default function RotaDoDia() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Repescagem2 (Fase 3): clientes de repescagem sorteados para o dia.
+              Box âmbar (cor de lead) + tag "Repescagem". Paradas travadas: ficam
+              fora da rota otimizada, então não são movidas/removidas pela
+              otimização nem pela auto-regeneração. Só admin pode remover. */}
+          {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
+            <Card className="border-amber-300">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  Repescagem ({repescagemOverlay.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {repescagemOverlay.map((r: any) => (
+                  <div
+                    key={r.assignmentId}
+                    className="flex items-center justify-between p-2 rounded-lg border border-amber-500 bg-amber-100 dark:bg-amber-900/30"
+                    data-testid={`card-repescagem-${r.customerId}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium truncate">{r.customerName}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500 text-white">Repescagem</span>
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'} • {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {/* Botões só para repescagem que caiu no telemarketing */}
+                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                          onClick={(e) => { e.stopPropagation(); openWhatsappCentral(r.customerId, r.phone); }}
+                          title="Abrir WhatsApp na Central de Atendimento"
+                          data-testid={`button-repescagem-central-${r.customerId}`}
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.phase === 'telemarketing' && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900"
+                          onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
+                          title="Registrar Pedido/Atendimento"
+                          data-testid={`button-repescagem-registro-${r.customerId}`}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Remover ${r.customerName} da repescagem de hoje? O cliente volta para o bolo (novo sorteio).`)) {
+                              returnRepescagemMutation.mutate(r.assignmentId);
+                            }
+                          }}
+                          disabled={returnRepescagemMutation.isPending}
+                          title="Remover da repescagem (volta ao bolo)"
+                          data-testid={`button-repescagem-remove-${r.customerId}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
