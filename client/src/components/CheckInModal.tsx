@@ -31,6 +31,7 @@ export default function CheckInModal({
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
   const [photoData, setPhotoData] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -172,6 +173,9 @@ export default function CheckInModal({
       formData.append('photo', blob, 'checkin.jpg');
       formData.append('latitude', location.latitude.toString());
       formData.append('longitude', location.longitude.toString());
+      if (notes.trim()) {
+        formData.append('notes', notes.trim());
+      }
 
       // Enviar para o backend
       const checkInResponse = await fetch(`/api/sales-cards/${cardId}/check-in`, {
@@ -213,6 +217,7 @@ export default function CheckInModal({
     setLocation(null);
     setDistance(null);
     setPhotoData(null);
+    setNotes('');
     onClose();
   };
 
@@ -304,6 +309,17 @@ export default function CheckInModal({
 
               <div className="relative rounded-lg overflow-hidden">
                 <img src={photoData} alt="Check-in" className="w-full" data-testid="img-checkin-photo" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">📝 Observações</label>
+                <textarea
+                  placeholder="Relatar o ocorrido na visita (opcional)"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full h-20 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
+                  data-testid="textarea-checkin-notes"
+                />
               </div>
 
               <div className="flex gap-2">
