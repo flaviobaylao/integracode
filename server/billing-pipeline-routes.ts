@@ -1413,7 +1413,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     invoiceId: invoice.id,
     eventType: 'criacao',
     status: 'success',
-    description: `NF-e #${nextNumber} criada automaticamente via pipeline de faturamento interno`,
+    description: `NF-e #${invoice.invoiceNumber} criada automaticamente via pipeline de faturamento interno`,
     createdBy: user?.email || null,
   });
 
@@ -1424,12 +1424,12 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     const { sefazService } = await import('./sefaz-service.js');
     const emitRes = await sefazService.emitNfe(invoice.id);
     if (emitRes?.success) {
-      console.log(`[NFE-AUTO] NF-e #${nextNumber} AUTORIZADA automaticamente (${invEnv})`);
+      console.log(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} AUTORIZADA automaticamente (${invEnv})`);
     } else {
-      console.warn(`[NFE-AUTO] NF-e #${nextNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
+      console.warn(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
     }
   } catch (e: any) {
-    console.warn(`[NFE-AUTO] erro ao transmitir NF-e #${nextNumber} (fica em rascunho):`, e?.message);
+    console.warn(`[NFE-AUTO] erro ao transmitir NF-e #${invoice.invoiceNumber} (fica em rascunho):`, e?.message);
   }
 
   return invoice;
