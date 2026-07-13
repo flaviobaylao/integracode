@@ -2634,11 +2634,23 @@ export const repescagemAssignments = pgTable("repescagem_assignments", {
   lastRedDate: varchar("last_red_date").notNull(),
   assignedUserId: varchar("assigned_user_id").notNull(),
   assignedAt: timestamp("assigned_at").defaultNow(),
-  status: varchar("status").notNull().default('pending'), // pending | completed | cancelled
+  status: varchar("status").notNull().default('pending'), // pending | completed | cancelled | in_route | returned
   completedAt: timestamp("completed_at"),
   completedByUserId: varchar("completed_by_user_id"),
   completedServiceLogId: varchar("completed_service_log_id"),
   updatedAt: timestamp("updated_at").defaultNow(),
+  // ---- Repescagem2 (ciclo diário de sorteio/alocação) ----
+  // Dia do sorteio a que esta alocação pertence (YYYY-MM-DD, timezone BR).
+  drawDate: varchar("draw_date"),
+  // Fase do sorteio: 'external' (vendedor externo, por perímetro) | 'telemarketing'.
+  phase: varchar("phase"),
+  // Dono original da carteira do cliente no momento do sorteio (auditoria da
+  // regra "sempre de outra carteira"). Distinto de assignedUserId (quem recebeu).
+  carteiraSellerId: varchar("carteira_seller_id"),
+  // Id da parada injetada na rota do dia (preenchido na Fase 3).
+  routeStopId: varchar("route_stop_id"),
+  // Parada travada no dia: não pode ser movida/removida por otimização ou vendedor.
+  locked: boolean("locked").notNull().default(false),
 });
 
 export const repescagemAssignmentHistory = pgTable("repescagem_assignment_history", {
