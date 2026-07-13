@@ -791,6 +791,34 @@ export default function RotaDoDia() {
     });
   }, [presentialVisits, checkedOutCustomerIds, presentialSearch, presentialFilter]);
 
+  // Atendimentos virtuais (apenas virtuais)
+  const allVirtualVisits = useMemo(
+    () => (route?.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual'),
+    [route?.visits]
+  );
+  // "Atendido" no virtual = tem atendimento registrado OU pedido no dia.
+  const virtualAttendedIds = useMemo(() => {
+    const s = new Set<string>();
+    allVirtualVisits.forEach((v: any) => {
+      const cid = v.customerId;
+      if (!cid) return;
+      const hasOrder = !!(customerInfo?.orders?.[cid]?.length);
+      if (attendedCustomerIds.has(cid) || hasOrder) s.add(cid);
+    });
+    return s;
+  }, [allVirtualVisits, attendedCustomerIds, customerInfo]);
+  // O MESMO filtro do dia (busca + Atendidos/Pendentes) abrange também os virtuais.
+  const filteredVirtualVisits = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    return allVirtualVisits.filter((v: any) => {
+      if (q && !((v.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = virtualAttendedIds.has(v.customerId);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [allVirtualVisits, virtualAttendedIds, presentialSearch, presentialFilter]);
+
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -1707,17 +1735,21 @@ export default function RotaDoDia() {
                 )}
 
                 {(() => {
-                  const virtualVisits = (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual');
-                  if (virtualVisits.length === 0) return null;
+                  if (allVirtualVisits.length === 0) return null;
 
                   return (
                     <div className="my-6 border-t-2 border-blue-300 dark:border-blue-700 pt-4">
                       <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
                         <Phone className="h-5 w-5" />
-                        Atendimentos Virtuais ({virtualVisits.length})
+                        Atendimentos Virtuais ({filteredVirtualVisits.length}{filteredVirtualVisits.length !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
                       </h3>
+                      {filteredVirtualVisits.length === 0 && (
+                        <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="virtual-empty">
+                          Nenhum atendimento virtual corresponde à busca/filtro.
+                        </div>
+                      )}
                       <div className="space-y-2">
-                        {virtualVisits.map((visit, index) => {
+                        {filteredVirtualVisits.map((visit, index) => {
                           const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
                           const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
