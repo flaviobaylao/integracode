@@ -1238,6 +1238,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       <SelectItem value="venda">Venda</SelectItem>
                       <SelectItem value="troca">Troca</SelectItem>
                       <SelectItem value="amostra">Amostra</SelectItem>
+                      <SelectItem value="transferencia">Transferência</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
