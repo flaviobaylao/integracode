@@ -16579,6 +16579,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...(checkInNotes ? { checkInNotes } : {}),
       };
 
+      // ── Coordenada confirmada por GPS no check-in do vendedor externo ──────────
+      // Quando o vendedor externo faz check-in NO LOCAL (≤ 100 m da coordenada
+      // cadastrada — mesma régua do "fora do local" — ou quando ainda não há
+      // coordenada), o GPS do check-in é a localização correta: grava no card,
+      // atualiza o cadastro do cliente e TRAVA (coordinatesLocked). Check-ins
+      // FORA do local (> 100 m) são ignorados. Reconferido a cada visita: se
+      // houver divergência (> 15 m dentro do raio), corrige; se não, mantém.
+      try {
+        const actingRole = req.currentUser?.role;
+        const gLat = parseFloat(String(latitude));
+        const gLng = parseFloat(String(longitude));
+        if (actingRole === 'vendedor' && currentCard.customerId && !isNaN(gLat) && !isNaN(gLng)) {
+          const hasStored = currentCard.customerLatitude != null && currentCard.customerLongitude != null;
+          const inLocation = !hasStored || (checkInDistance != null && checkInDistance <= 100);
+          if (inLocation) {
+            const diverges = !hasStored || (checkInDistance != null && checkInDistance > 15);
+            const gLatS = gLat.toFixed(6);
+            const gLngS = gLng.toFixed(6);
+            if (diverges) {
+              await storage.updateCustomer(currentCard.customerId, { latitude: gLatS, longitude: gLngS, coordinatesLocked: true } as any);
+              updateData.customerLatitude = gLatS;
+              updateData.customerLongitude = gLngS;
+              console.log(`📍 [CHECKIN-COORD] Cliente ${currentCard.customerId}: coordenada corrigida por GPS (dist ${checkInDistance != null ? checkInDistance.toFixed(0) : 'n/a'}m) e travada`);
+            } else {
+              // Sem divergência relevante: confirma o local e garante a trava.
+              await storage.updateCustomer(currentCard.customerId, { coordinatesLocked: true } as any);
+            }
+          }
+        }
+      } catch (coordErr) {
+        console.error('[CHECKIN-COORD] falha ao confirmar/travar coordenada do cliente:', coordErr);
+      }
+
       await storage.updateSalesCard(id, updateData);
       
       // Registrar checkpoint na rota diária (se existir)
