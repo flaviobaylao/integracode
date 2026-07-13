@@ -22112,15 +22112,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const cleanPhone = phone.replace(/\D/g, '');
-      
-      const contact = await storage.createPhonebookContact({
+
+      // Upsert por telefone: se o contato já existe na agenda (ex.: sincronizado
+      // automaticamente dos clientes ativos), ATUALIZA o nome informado em vez de
+      // criar um duplicado — assim a edição do nome no modal reflete na agenda.
+      const contact = await storage.upsertPhonebookContactByPhone({
         name,
         phone: cleanPhone,
         notes: notes || null,
         customerId: customerId || null,
         createdByUserId: user.id
       });
-      
+
       res.status(201).json(contact);
     } catch (error: any) {
       console.error('Erro ao criar contato:', error);
