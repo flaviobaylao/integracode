@@ -983,6 +983,7 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in fora do local (&gt;100m)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Ação do Adm</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e]"></span>Repescagem</span>
         </div>
       </div>
 
@@ -1512,17 +1513,7 @@ export default function RotaDoDia() {
                                   Adm - {adminMark.by}
                                 </Badge>
                               )}
-                              {/* ✏️ Botão de ajuste admin de check-in/out (só admins autorizados) */}
-                              {isCheckinAdmin && !isLead && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openAdminEdit(visit, checkInCheckpoint, checkOutCheckpoint); }}
-                                  className="inline-flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 rounded px-1.5 py-0.5 hover:bg-purple-50 dark:hover:bg-purple-950"
-                                  data-testid={`admin-edit-checkin-${visit.customerId}`}
-                                  title="Ajustar / assumir atendimento (Adm)"
-                                >
-                                  <Clock className="h-3 w-3" /> Ajustar
-                                </button>
-                              )}
+                              {/* Botão "Ajustar" movido para a linha de ícones de ação (à direita). */}
                               {/* Mostrar pedidos do dia */}
                               {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
                                 <Badge 
@@ -1667,6 +1658,19 @@ export default function RotaDoDia() {
                         </div>
                         
                         <div className="flex items-center gap-1">
+                          {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
+                          {isCheckinAdmin && !isLead && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-purple-700 hover:text-purple-800 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950"
+                              onClick={(e) => { e.stopPropagation(); openAdminEdit(visit, checkInCheckpoint, checkOutCheckpoint); }}
+                              title="Ajustar / assumir atendimento (Adm)"
+                              data-testid={`admin-edit-checkin-${visit.customerId}`}
+                            >
+                              <Clock className="h-4 w-4" />
+                            </Button>
+                          )}
                           {/* Botão Atendimento Virtual (apenas para clientes, não leads) */}
                           {!isLead && visit.customerId && (
                             <Button
@@ -2074,14 +2078,14 @@ export default function RotaDoDia() {
           </Card>
 
           {/* Repescagem2 (Fase 3): clientes de repescagem sorteados para o dia.
-              Box âmbar (cor de lead) + tag "Repescagem". Paradas travadas: ficam
-              fora da rota otimizada, então não são movidas/removidas pela
-              otimização nem pela auto-regeneração. Só admin pode remover. */}
+              Box BEGE (distinto do amarelo/ouro de lead) + tag "Repescagem". Paradas
+              travadas: ficam fora da rota otimizada, então não são movidas/removidas
+              pela otimização nem pela auto-regeneração. Só admin pode remover. */}
           {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
-            <Card className="border-amber-300">
+            <Card className="border-[#d6c7a1]">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
                   Repescagem ({repescagemOverlay.length})
                 </CardTitle>
               </CardHeader>
@@ -2089,13 +2093,13 @@ export default function RotaDoDia() {
                 {repescagemOverlay.map((r: any) => (
                   <div
                     key={r.assignmentId}
-                    className="flex items-center justify-between p-2 rounded-lg border border-amber-500 bg-amber-100 dark:bg-amber-900/30"
+                    className="flex items-center justify-between p-2 rounded-lg border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]"
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-medium truncate">{r.customerName}</span>
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500 text-white">Repescagem</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
                       </div>
                       <p className="text-xs text-gray-600 dark:text-gray-400">
                         {[r.city, r.uf].filter(Boolean).join(' / ') || '—'} • {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
