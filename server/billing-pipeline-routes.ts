@@ -423,6 +423,35 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
   });
 
+  // Corrige a DATA DE REGISTRO de pedidos criados com a data errada: usa a data real da
+  // venda (sales_cards.completed_date) no lugar da data de CRIACAO DO CARD. Afeta clientes
+  // agendados/recorrentes (card criado semanas antes da venda). Atualiza created_at E a 1a
+  // entrada do stage_history. So mexe onde a diferenca e > 1 dia. {"dryRun":true} so conta.
+  app.post('/api/admin/pipeline/backfill-order-dates', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const countQ: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n
+        FROM billing_pipeline bp JOIN sales_cards sc ON sc.id = bp.sales_card_id
+        WHERE sc.completed_date IS NOT NULL AND bp.created_at IS NOT NULL
+          AND ABS(EXTRACT(EPOCH FROM (bp.created_at - sc.completed_date))) > 86400`);
+      const eligible = (countQ?.rows?.[0]?.n ?? 0) as number;
+      if (dryRun) return res.json({ ok: true, dryRun: true, eligible });
+      const upd: any = await db.execute(sql`
+        UPDATE billing_pipeline bp
+        SET created_at = sc.completed_date,
+            stage_history = CASE
+              WHEN jsonb_typeof(bp.stage_history) = 'array' AND jsonb_array_length(bp.stage_history) > 0
+              THEN jsonb_set(bp.stage_history, '{0,changedAt}', to_jsonb(to_char(sc.completed_date, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
+              ELSE bp.stage_history END,
+            updated_at = now()
+        FROM sales_cards sc
+        WHERE bp.sales_card_id = sc.id AND sc.completed_date IS NOT NULL AND bp.created_at IS NOT NULL
+          AND ABS(EXTRACT(EPOCH FROM (bp.created_at - sc.completed_date))) > 86400`);
+      res.json({ ok: true, eligible, updated: upd?.rowCount ?? upd?.rowsAffected ?? null });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
   // BLOQUEIO MANUAL de um pedido do pipeline (somente os 3 admins). Move o item para
   // blocked_orders (motivo 'manual') e o remove do funil. So sai de la por liberacao manual.
   app.post('/api/billing-pipeline/:id/block', authenticateUser, isThreeAdmins, async (req: any, res) => {
