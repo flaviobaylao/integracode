@@ -156,6 +156,7 @@ run();
       await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
       await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_repescagem_assign_draw ON repescagem_assignments(draw_date)"));
       await db.execute(sql.raw("ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS check_in_notes text"));
+      await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinates_locked boolean NOT NULL DEFAULT false"));
     } catch (e: any) {
       console.warn('[REPESCAGEM2-MIGRATION] falha (ignorada):', e?.message);
     }
