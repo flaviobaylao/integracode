@@ -17,6 +17,17 @@ import {
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
+// ── Repescagem2 ──────────────────────────────────────────────────────────────
+// Elegibilidade do sorteio: usuários com função de vendedor externo OU
+// telemarketing, EXCETO os três abaixo. Admins gerenciam a habilitação, mas
+// não entram no sorteio. Não há auto-habilitação (somente admin habilita).
+const REPESCAGEM_ELIGIBLE_ROLES = ['vendedor', 'telemarketing'];
+const REPESCAGEM_EXCLUDED_USER_IDS = new Set<string>([
+  '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest 1
+  'f87166f7-0431-4bd1-8c8c-074d13b2c861', // Honest 2
+  'omie-vendor-2425693369',               // Flavio E
+]);
+
 function brTodayStr(): string {
   const now = new Date();
   const offset = -3 * 60; // BRT
@@ -286,9 +297,18 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const candidates = await computeRedCandidates({ startDate, endDate });
   const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
 
-  // Atendentes habilitados
-  const enabled = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
-  const enabledIds = enabled.map(a => a.userId);
+  // Atendentes habilitados. IMPORTANTE (Repescagem2): o fluxo antigo de
+  // distribuição por menor carga é de ATENDIMENTO INTERNO. Vendedores externos
+  // podem estar habilitados (para o sorteio por perímetro da Fase 2), mas NÃO
+  // devem receber clientes neste fluxo antigo — por isso são filtrados aqui.
+  const enabledRaw = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
+  const enabledRawIds = enabledRaw.map(a => a.userId);
+  const enabledUsers = enabledRawIds.length > 0
+    ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, enabledRawIds))
+    : [];
+  const roleById = new Map(enabledUsers.map(u => [u.id, u.role]));
+  const enabledIds = enabledRawIds.filter(id =>
+    !REPESCAGEM_EXCLUDED_USER_IDS.has(id) && roleById.get(id) !== 'vendedor');
   const enabledSet = new Set(enabledIds);
 
   // Atribuições pendentes existentes
@@ -546,21 +566,23 @@ export function registerRepescagemRoutes(app: Express, opts: {
       }).from(users).where(
         and(
           eq(users.isActive, true),
-          inArray(users.role, ['admin', 'administrative', 'coordinator', 'telemarketing'] as any),
+          inArray(users.role, REPESCAGEM_ELIGIBLE_ROLES as any),
         )
       );
       const attendants = await db.select().from(repescagemAttendants);
       const map = new Map(attendants.map(a => [a.userId, a]));
-      const out = eligible.map(u => {
-        const a = map.get(u.id);
-        return {
-          userId: u.id,
-          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id,
-          role: u.role,
-          isEnabled: a?.isEnabled || false,
-          enabledAt: a?.enabledAt || null,
-        };
-      }).sort((a, b) => a.name.localeCompare(b.name));
+      const out = eligible
+        .filter(u => !REPESCAGEM_EXCLUDED_USER_IDS.has(u.id))
+        .map(u => {
+          const a = map.get(u.id);
+          return {
+            userId: u.id,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id,
+            role: u.role, // 'vendedor' (externo) | 'telemarketing' (interno)
+            isEnabled: a?.isEnabled || false,
+            enabledAt: a?.enabledAt || null,
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name));
       res.json(out);
     } catch (e: any) {
       console.error('GET /api/repescagem/attendants', e);
@@ -568,12 +590,26 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
-  // Habilitar/desabilitar a si mesmo
-  app.post('/api/repescagem/attendants/me', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+  // Repescagem2: NÃO há mais auto-habilitação. Endpoint mantido apenas para
+  // responder de forma clara a clientes antigos que ainda chamem /me.
+  app.post('/api/repescagem/attendants/me', authenticateUser, requireRole(ALLOWED_ROLES), async (_req: any, res) => {
+    return res.status(403).json({ message: 'Auto-habilitação desativada. Fale com um administrador.' });
+  });
+
+  // Repescagem2: administrador habilita/desabilita um atendente elegível.
+  app.post('/api/repescagem/attendants/:userId', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
-      const userId = (req as any).currentUser?.id;
+      const { userId } = req.params;
       const { isEnabled } = req.body || {};
-      if (!userId) return res.status(401).json({ message: 'no user' });
+      if (!userId) return res.status(400).json({ message: 'userId obrigatório' });
+      // Valida elegibilidade: função externo/telemarketing, ativo e não excluído.
+      const target = await db.select({ id: users.id, role: users.role, isActive: users.isActive })
+        .from(users).where(eq(users.id, userId));
+      if (target.length === 0) return res.status(404).json({ message: 'Usuário não encontrado' });
+      const t = target[0];
+      if (REPESCAGEM_EXCLUDED_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
+        return res.status(400).json({ message: 'Usuário não elegível para a repescagem' });
+      }
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
       if (existing.length === 0) {
         await db.insert(repescagemAttendants).values({
@@ -590,11 +626,11 @@ export function registerRepescagemRoutes(app: Express, opts: {
           updatedAt: new Date(),
         }).where(eq(repescagemAttendants.userId, userId));
       }
-      // Reconciliar (redistribuição em cascata)
-      await reconcileAssignments(userId);
+      // Reconciliar (redistribuição em cascata do fluxo atual)
+      await reconcileAssignments((req as any).currentUser?.id);
       res.json({ ok: true });
     } catch (e: any) {
-      console.error('POST /api/repescagem/attendants/me', e);
+      console.error('POST /api/repescagem/attendants/:userId', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
@@ -628,6 +664,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         phone: customers.phone,
         city: customers.city,
         neighborhood: customers.neighborhood,
+        uf: customers.state,
       }).from(customers).where(inArray(customers.id, customerIds));
       const customerById = new Map(cs.map(c => [c.id, c]));
 
@@ -652,6 +689,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           customerPhone: c?.phone || null,
           customerCity: c?.city || null,
           customerNeighborhood: c?.neighborhood || null,
+          customerUf: c?.uf || null,
           sellerId: c?.sellerId || null,
           sellerName: c?.sellerId ? sellerNameById.get(c.sellerId) : null,
           periodicity: c?.periodicity || 'semanal',
@@ -684,6 +722,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           phone: customers.phone,
           city: customers.city,
           neighborhood: customers.neighborhood,
+          uf: customers.state,
         }).from(customers).where(inArray(customers.id, orphanCustomerIds));
         const orphanById = new Map(orphanCustomers.map(c => [c.id, c]));
         const orphanSellerIds = Array.from(new Set(orphanCustomers.map(c => c.sellerId).filter(Boolean) as string[]));
@@ -705,6 +744,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
             customerPhone: c?.phone || null,
             customerCity: c?.city || null,
             customerNeighborhood: c?.neighborhood || null,
+            customerUf: c?.uf || null,
             sellerId: c?.sellerId || null,
             sellerName: c?.sellerId ? (sellerNameById.get(c.sellerId) || null) : null,
             periodicity: c?.periodicity || cand.periodicity || 'semanal',
