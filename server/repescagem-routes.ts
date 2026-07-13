@@ -13,6 +13,8 @@ import {
   billings,
   billingPipeline as billingPipelineTable,
   virtualServiceLogs,
+  dailyRoutes,
+  leads,
 } from '@shared/schema';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
@@ -549,11 +551,252 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   }
 }
 
+// ============================================================================
+// Repescagem2 — Fase 2: sorteio diário e alocação
+// Fase A (externos): até 3 clientes por vendedor, dentro de 1,5 km de qualquer
+//   parada da rota do dia, SEMPRE de outra carteira e com coordenada.
+// Fase B (telemarketing): o restante (inclui sem-coordenada) via aleatório
+//   ponderado (inverso à carga). Persistência em repescagem_assignments com
+//   draw_date + phase + status 'in_route'. Idempotente por dia.
+// Observação: esta fase NÃO injeta na rota nem trava paradas (isso é a Fase 3);
+// é validável por API/log. Não interfere na lista antiga (status 'pending').
+// ============================================================================
+const REPESCAGEM_PERIMETER_KM = 1.5;
+const EXTERNAL_MAX_PER_SELLER = 3;
+let __drawRunning = false;
+let __lastDrawCheckMs = 0;
+
+function repHaversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = (bLat - aLat) * Math.PI / 180;
+  const dLng = (bLng - aLng) * Math.PI / 180;
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(aLat * Math.PI / 180) * Math.cos(bLat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+// Chave pseudo-aleatória estável por (id, dia): mantém o "sorteio" reproduzível
+// dentro do mesmo dia (idempotência) sem depender de Math.random.
+function repShuffleKey(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
+// Coordenadas das paradas (customers + leads) da rota do vendedor no dia.
+async function repGetRouteAnchors(sellerId: string, dayStr: string): Promise<Array<{ lat: number; lng: number }>> {
+  const r = await db.execute(sql`
+    SELECT visit_stops FROM daily_routes
+    WHERE seller_id = ${sellerId} AND DATE(route_date) = ${dayStr}::date
+    ORDER BY updated_at DESC NULLS LAST LIMIT 1`);
+  const rows = r.rows as any[];
+  if (rows.length === 0) return [];
+  const vs = rows[0].visit_stops || {};
+  const custIds: string[] = []; const leadIds: string[] = [];
+  for (const k of Object.keys(vs)) {
+    const s = vs[k]; if (!s || !s.entityId) continue;
+    if (s.entityType === 'customer') custIds.push(s.entityId);
+    else if (s.entityType === 'lead') leadIds.push(s.entityId);
+  }
+  const out: Array<{ lat: number; lng: number }> = [];
+  if (custIds.length) {
+    const cr = await db.select({ lat: customers.latitude, lng: customers.longitude })
+      .from(customers).where(inArray(customers.id, custIds));
+    for (const c of cr) if (c.lat != null && c.lng != null) out.push({ lat: Number(c.lat), lng: Number(c.lng) });
+  }
+  if (leadIds.length) {
+    const lr = await db.select({ lat: leads.latitude, lng: leads.longitude })
+      .from(leads).where(inArray(leads.id, leadIds));
+    for (const l of lr) if (l.lat != null && l.lng != null) out.push({ lat: Number(l.lat), lng: Number(l.lng) });
+  }
+  return out;
+}
+
+async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promise<any> {
+  const drawDate = opts.drawDate;
+
+  // Idempotência: se o dia já foi sorteado, não refaz (a menos que force).
+  const existing = await db.select({ id: repescagemAssignments.id })
+    .from(repescagemAssignments)
+    .where(and(eq(repescagemAssignments.drawDate, drawDate), isNotNull(repescagemAssignments.phase)));
+  if (existing.length > 0 && !opts.force) {
+    return { skipped: true, reason: 'dia já sorteado', drawDate, existing: existing.length };
+  }
+  if (existing.length > 0 && opts.force) {
+    // Refaz apenas o que ainda não foi atendido (não apaga 'completed').
+    await db.delete(repescagemAssignments).where(and(
+      eq(repescagemAssignments.drawDate, drawDate),
+      isNotNull(repescagemAssignments.phase),
+      inArray(repescagemAssignments.status, ['in_route', 'returned', 'pending'] as any),
+    ));
+  }
+
+  // Atendentes habilitados, separados por função.
+  const enabled = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
+  const enabledIds = enabled.map(a => a.userId).filter(id => !REPESCAGEM_EXCLUDED_USER_IDS.has(id));
+  const roleRows = enabledIds.length
+    ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, enabledIds))
+    : [];
+  const roleById = new Map(roleRows.map(u => [u.id, u.role]));
+  const externalSellers = enabledIds.filter(id => roleById.get(id) === 'vendedor').sort();
+  const telemarketers = enabledIds.filter(id => roleById.get(id) === 'telemarketing').sort();
+
+  // Candidatos vermelhos + coordenadas + carteira.
+  const startDate = (() => { const d = new Date(drawDate); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0]; })();
+  const endDate = (() => { const d = new Date(drawDate); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })();
+  const candidates = await computeRedCandidates({ startDate, endDate });
+  const candIds = candidates.map((c: any) => c.customerId);
+  const coordRows = candIds.length
+    ? await db.select({ id: customers.id, lat: customers.latitude, lng: customers.longitude, sellerId: customers.sellerId })
+        .from(customers).where(inArray(customers.id, candIds))
+    : [];
+  const coordById = new Map(coordRows.map(c => [c.id, {
+    lat: c.lat != null ? Number(c.lat) : null,
+    lng: c.lng != null ? Number(c.lng) : null,
+    sellerId: c.sellerId as string | null,
+  }]));
+
+  const allocated = new Set<string>();
+  const rows: any[] = [];
+
+  // ---- Fase A: externos (perímetro 1,5 km, outra carteira, até 3) ----
+  for (const sellerId of externalSellers) {
+    const anchors = await repGetRouteAnchors(sellerId, drawDate);
+    if (anchors.length === 0) continue;
+    const pool = candidates.filter((c: any) => {
+      if (allocated.has(c.customerId)) return false;
+      const info = coordById.get(c.customerId);
+      if (!info || info.lat == null || info.lng == null) return false;
+      if (info.sellerId && info.sellerId === sellerId) return false; // nunca da própria carteira
+      return anchors.some(a => repHaversineKm(info.lat as number, info.lng as number, a.lat, a.lng) <= REPESCAGEM_PERIMETER_KM);
+    });
+    pool.sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
+    for (const c of pool.slice(0, EXTERNAL_MAX_PER_SELLER)) {
+      allocated.add(c.customerId);
+      rows.push({ customerId: c.customerId, lastRedDate: c.lastRedDate, assignedUserId: sellerId,
+        carteiraSellerId: coordById.get(c.customerId)?.sellerId || c.sellerId || null,
+        phase: 'external', drawDate, status: 'in_route' });
+    }
+  }
+
+  // ---- Fase B: telemarketing (aleatório ponderado, inverso à carga) ----
+  const remaining = candidates
+    .filter((c: any) => !allocated.has(c.customerId))
+    .sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
+  if (telemarketers.length > 0) {
+    const load = new Map<string, number>(telemarketers.map(id => [id, 0]));
+    for (const c of remaining) {
+      let best: string | null = null; let bestScore = Infinity;
+      for (const t of telemarketers) {
+        // score = carga atual + ruído determinístico pequeno (peso inverso à carga).
+        const noise = (repShuffleKey(c.customerId + '|' + t) % 1000) / 100000;
+        const score = (load.get(t) || 0) + noise;
+        if (score < bestScore) { bestScore = score; best = t; }
+      }
+      if (!best) break;
+      load.set(best, (load.get(best) || 0) + 1);
+      allocated.add(c.customerId);
+      rows.push({ customerId: c.customerId, lastRedDate: c.lastRedDate, assignedUserId: best,
+        carteiraSellerId: coordById.get(c.customerId)?.sellerId || c.sellerId || null,
+        phase: 'telemarketing', drawDate, status: 'in_route' });
+    }
+  }
+
+  // Persistência + histórico.
+  let inserted = 0;
+  for (const r of rows) {
+    const ins = await db.insert(repescagemAssignments).values(r).returning();
+    await db.insert(repescagemAssignmentHistory).values({
+      assignmentId: ins[0].id, customerId: r.customerId, fromUserId: null, toUserId: r.assignedUserId,
+      action: 'assigned', reason: `Sorteio ${r.phase} (${drawDate})`,
+    });
+    inserted++;
+  }
+
+  const withoutCoords = candidates.filter((c: any) => { const i = coordById.get(c.customerId); return !i || i.lat == null; }).length;
+  return {
+    drawDate, externalSellers: externalSellers.length, telemarketers: telemarketers.length,
+    candidates: candidates.length, withoutCoords,
+    allocatedExternal: rows.filter(r => r.phase === 'external').length,
+    allocatedTelemarketing: rows.filter(r => r.phase === 'telemarketing').length,
+    inserted,
+  };
+}
+
+// Auto-sorteio do dia (throttled, fire-and-forget). Idempotente: só sorteia se
+// o dia ainda não foi sorteado. Disparado ao abrir a Repescagem. (Fase 3 moverá
+// o gatilho para o carregamento das rotas, para rodar cedo pela manhã.)
+async function maybeAutoDraw(): Promise<void> {
+  const nowMs = Date.now();
+  if (__drawRunning || (nowMs - __lastDrawCheckMs) < 300000) return;
+  __lastDrawCheckMs = nowMs;
+  __drawRunning = true;
+  try {
+    const now = new Date();
+    const local = new Date(now.getTime() + (-3 * 60 - now.getTimezoneOffset()) * 60000);
+    const drawDate = local.toISOString().split('T')[0];
+    const r = await runDailyDraw({ drawDate });
+    if (!r.skipped) console.log(`🎲 [REPESCAGEM2-DRAW] ${drawDate}: ext=${r.allocatedExternal} tele=${r.allocatedTelemarketing} (cand=${r.candidates}, semCoord=${r.withoutCoords})`);
+  } catch (e: any) {
+    console.warn('[REPESCAGEM2-DRAW] falha:', e?.message);
+  } finally { __drawRunning = false; }
+}
+
 export function registerRepescagemRoutes(app: Express, opts: {
   authenticateUser: any;
   requireRole: (roles: string[]) => any;
 }) {
   const { authenticateUser, requireRole } = opts;
+
+  // Repescagem2: sorteio diário — disparo manual (admin) e inspeção.
+  app.post('/api/repescagem/draw', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const date = String(req.query.date || req.body?.date || '').trim() || (() => {
+        const now = new Date(); const local = new Date(now.getTime() + (-3 * 60 - now.getTimezoneOffset()) * 60000);
+        return local.toISOString().split('T')[0];
+      })();
+      const force = String(req.query.force || req.body?.force || '') === '1' || req.body?.force === true;
+      const result = await runDailyDraw({ drawDate: date, force });
+      res.json(result);
+    } catch (e: any) {
+      console.error('POST /api/repescagem/draw', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Inspeção da alocação de um dia (para validação da Fase 2, sem tocar a rota).
+  app.get('/api/repescagem/draw', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+    try {
+      const date = String(req.query.date || '').trim() || (() => {
+        const now = new Date(); const local = new Date(now.getTime() + (-3 * 60 - now.getTimezoneOffset()) * 60000);
+        return local.toISOString().split('T')[0];
+      })();
+      const rows = await db.select().from(repescagemAssignments)
+        .where(and(eq(repescagemAssignments.drawDate, date), isNotNull(repescagemAssignments.phase)));
+      const uids = Array.from(new Set(rows.map(r => r.assignedUserId)));
+      const us = uids.length ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, role: users.role }).from(users).where(inArray(users.id, uids)) : [];
+      const nameById = new Map(us.map(u => [u.id, { name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id, role: u.role }]));
+      const cids = Array.from(new Set(rows.map(r => r.customerId)));
+      const cs = cids.length ? await db.select({ id: customers.id, name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`, city: customers.city, uf: customers.state }).from(customers).where(inArray(customers.id, cids)) : [];
+      const custById = new Map(cs.map(c => [c.id, c]));
+      const byPhase: any = { external: 0, telemarketing: 0 };
+      const perUser: Record<string, number> = {};
+      for (const r of rows) { byPhase[r.phase as string] = (byPhase[r.phase as string] || 0) + 1; perUser[r.assignedUserId] = (perUser[r.assignedUserId] || 0) + 1; }
+      res.json({
+        drawDate: date, total: rows.length, byPhase,
+        perUser: Object.entries(perUser).map(([uid, count]) => ({ userId: uid, name: nameById.get(uid)?.name || uid, role: nameById.get(uid)?.role, count })).sort((a, b) => b.count - a.count),
+        items: rows.map(r => ({
+          assignmentId: r.id, customerId: r.customerId, customerName: custById.get(r.customerId)?.name || r.customerId,
+          uf: custById.get(r.customerId)?.uf || null, city: custById.get(r.customerId)?.city || null,
+          phase: r.phase, status: r.status, assignedUserId: r.assignedUserId, assignedUserName: nameById.get(r.assignedUserId)?.name || r.assignedUserId,
+          carteiraSellerId: r.carteiraSellerId,
+        })),
+      });
+    } catch (e: any) {
+      console.error('GET /api/repescagem/draw', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
 
   // Listar atendentes (habilitados + perfil disponíveis para se habilitarem)
   app.get('/api/repescagem/attendants', authenticateUser, requireRole(ALLOWED_ROLES), async (_req, res) => {
@@ -638,6 +881,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
   // Lista de atribuições enriquecida (clientes para repescagem com atendente atribuído)
   app.get('/api/repescagem/assignments', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
     try {
+      // Repescagem2: dispara o sorteio do dia se ainda não ocorreu (throttled).
+      maybeAutoDraw();
       // Reconciliar primeiro
       await reconcileAssignments((req as any).currentUser?.id);
 
