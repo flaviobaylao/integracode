@@ -377,10 +377,13 @@ export function registerPurchaseRoutes(app: Express) {
 
       const parsed = parseNFeXml(xmlContent);
 
+      let existing: any = null;
       if (parsed.accessKey) {
-        const [existing] = await db.select().from(purchaseInvoices)
+        [existing] = await db.select().from(purchaseInvoices)
           .where(eq(purchaseInvoices.accessKey, parsed.accessKey));
-        if (existing) {
+        // Só recusa se já foi realmente importada (ou além). Nota apenas DETECTADA
+        // pelo Radar (só o resumo) deve ser ENRIQUECIDA com o XML, não recusada.
+        if (existing && existing.status !== "detected") {
           return res.status(409).json({ error: "Nota fiscal já importada", existingId: existing.id });
         }
       }
@@ -394,6 +397,30 @@ export function registerPurchaseRoutes(app: Express) {
       }
 
       const issueDateParsed = parsed.issueDate ? new Date(parsed.issueDate) : null;
+
+      // Nota já DETECTADA pelo Radar: completa o registro com o XML (itens/impostos)
+      // e passa para "imported" — inicia o recebimento sem exigir manifestação SEFAZ.
+      if (existing && existing.status === "detected") {
+        const [invoice] = await db.update(purchaseInvoices).set({
+          invoiceNumber: parsed.invoiceNumber,
+          series: parsed.series || "1",
+          issueDate: issueDateParsed,
+          supplierName: parsed.supplierName,
+          supplierDocument: parsed.supplierDocument,
+          supplierIe: parsed.supplierIe,
+          totalValue: parsed.totalValue || "0",
+          items: parsed.items,
+          taxes: parsed.taxes,
+          status: "imported",
+          xmlContent: xmlContent,
+          cfop: parsed.cfop,
+          natureOfOperation: parsed.natureOfOperation,
+          omieInstanceId: matchedInstanceId || existing.omieInstanceId,
+          importedAt: nowBrazil(),
+          updatedAt: nowBrazil(),
+        }).where(eq(purchaseInvoices.id, existing.id)).returning();
+        return res.json(invoice);
+      }
 
       const [invoice] = await db.insert(purchaseInvoices).values({
         accessKey: parsed.accessKey || null,
@@ -744,6 +771,16 @@ export function registerPurchaseRoutes(app: Express) {
       const { fetchNFeByChave } = await import("./sefaz-service");
       const result: any = await fetchNFeByChave({ chave, uf, cnpj, ambiente });
       if (!result?.ok || !result?.fullXml) {
+        // cStat 138 = "Documento localizado", porém a SEFAZ só devolveu o RESUMO
+        // (resNFe), não o XML completo. Isso ocorre quando o destinatário ainda não
+        // fez a manifestação/ciência da operação. Orienta o usuário em vez de um erro cru.
+        if (result?.cStat === "138" && !result?.fullXml) {
+          return res.status(422).json({
+            error: "A nota foi localizada na SEFAZ, mas o XML completo ainda não está disponível para download automático (a SEFAZ só libera o XML ao destinatário após a manifestação/ciência da operação). Para receber agora, use \"Importar XML\" com o arquivo enviado pelo fornecedor.",
+            cStat: "138",
+            resumoOnly: true,
+          });
+        }
         return res.status(422).json({ error: `SEFAZ: ${result?.xMotivo || result?.error || "não foi possível obter o XML da nota"}${result?.cStat ? ` (cStat ${result.cStat})` : ""}`, cStat: result?.cStat || null });
       }
 
