@@ -20933,21 +20933,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (e) {
         console.warn('[CUSTOMER-INFO] falha ao buscar último faturamento:', (e as any)?.message);
       }
-        const loByCid: Record<string, number> = {};
-        const loByDoc: Record<string, number> = {};
-        (lastOrdersResult.rows as any[]).forEach(row => {
-          if (!row.last_order) return;
-          const t = new Date(row.last_order).getTime();
-          if (row.customer_id) loByCid[row.customer_id] = Math.max(loByCid[row.customer_id] || 0, t);
-          if (row.ndoc) loByDoc[row.ndoc] = Math.max(loByDoc[row.ndoc] || 0, t);
-        });
-        customerIds.forEach(cid => {
-          const t = Math.max(loByCid[cid] || 0, loByDoc[customerDocuments[cid]] || 0);
-          if (t > 0) lastOrdersMap[cid] = new Date(t).toISOString();
-        });
-      } catch (e) {
-        console.warn('[CUSTOMER-INFO] falha ao buscar último pedido faturado:', (e as any)?.message);
-      }
 
 
       // Buscar débitos vencidos por documento do cliente
