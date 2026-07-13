@@ -2650,6 +2650,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const q2 = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
       const statsRows = await q2(`SELECT COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS today_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1), 0) AS yesterday_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 7), 0) AS last_week_same_day_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('week', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS week_sales, COALESCE(SUM(sale_value) FILTER (WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS month_sales FROM billing_pipeline`);
       const stats = { todaySales: statsRows[0]?.today_sales ?? 0, lastWeekSameDaySales: statsRows[0]?.last_week_same_day_sales ?? 0, yesterdaySales: statsRows[0]?.yesterday_sales ?? 0, weekSales: statsRows[0]?.week_sales ?? 0, monthSales: statsRows[0]?.month_sales ?? 0 };
+      // Séries para os mini gráficos do dashboard (faturamento = billing_pipeline.sale_value):
+      //  - daily: faturamento por dia do MÊS corrente; monthly: por mês do ANO corrente.
+      const dailySeriesRows = await q2(`SELECT (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date GROUP BY d ORDER BY d`);
+      const monthlySeriesRows = await q2(`SELECT to_char(date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')), 'YYYY-MM') AS m, COALESCE(SUM(sale_value),0) AS v FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('year', (now() AT TIME ZONE 'America/Sao_Paulo'))::date GROUP BY m ORDER BY m`);
+      const series = { daily: dailySeriesRows.map((r: any) => ({ d: r.d, v: Number(r.v) || 0 })), monthly: monthlySeriesRows.map((r: any) => ({ m: r.m, v: Number(r.v) || 0 })) };
       const vendasEfetivasMes: any = { label: null, value: 0, approx: true };
       const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked' ORDER BY bo.blocked_at DESC NULLS LAST`);
       const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar') ORDER BY bp.created_at DESC NULLS LAST`);
@@ -2679,7 +2684,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         return { customerId: cid, customerName: info.customer_name || "-", sellerId: info.seller_name ? info.seller_id : "admin-flavio", sellerName: info.seller_name || "Flavio Administrador", visits };
       });
       const visitSummary = { start: startDate, end: endDate, dates, rows };
-      res.json({ stats, vendasEfetivasMes, ordersOverview, visitSummary });
+      res.json({ stats, series, vendasEfetivasMes, ordersOverview, visitSummary });
     } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
   });
     app.get('/api/reports/clientes-sem-pedido', async (req: Request, res: Response) => {
