@@ -1570,7 +1570,7 @@ export type InsertExportedReport = z.infer<typeof insertExportedReportSchema>;
 
 // Payment methods type for frontend forms
 export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
-export type OperationType = 'venda' | 'troca' | 'amostra';
+export type OperationType = 'venda' | 'troca' | 'amostra' | 'transferencia';
 
 // Mapeamento dos métodos de pagamento para contas do Omie
 export const PAYMENT_METHOD_TO_OMIE_ACCOUNT = {
@@ -1602,7 +1602,8 @@ export const PAYMENT_METHOD_LABELS = {
 export const OPERATION_TYPE_LABELS = {
   'venda': 'Venda',
   'troca': 'Troca',
-  'amostra': 'Amostra'
+  'amostra': 'Amostra',
+  'transferencia': 'Transferência'
 } as const;
 
 // Sync Status enum
