@@ -15467,10 +15467,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         omieOrderId: string | null;
         omieCustomerCode: string | null;
       }>(sql`
-        SELECT DISTINCT ON (b.id)
-          b.id,
-          b.invoice_number as "invoiceNumber",
-          COALESCE(c.fantasy_name, b.customer_fantasy_name) as "customerName",
+        SELECT DISTINCT ON (bp.id)
+          bp.id,
+          bp.invoice_number as "invoiceNumber",
+          COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           COALESCE(c.id, '') as "customerId",
           COALESCE(CAST(c.latitude AS TEXT), '0') as "customerLatitude",
@@ -15478,16 +15478,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.delivery_weekdays as "deliveryWeekdays",
           c.receiving_weekdays as "receivingWeekdays",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-          b.order_number as "orderNumber",
-          b.omie_order_id as "omieOrderId",
-          b.omie_customer_code as "omieCustomerCode"
-        FROM billings b
-        LEFT JOIN customers c ON (
-          c.id = CONCAT('omie-client-', b.omie_customer_code)
-          OR REGEXP_REPLACE(c.cpf, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-          OR REGEXP_REPLACE(c.cnpj, '[^0-9]', '', 'g') = REGEXP_REPLACE(b.customer_document, '[^0-9]', '', 'g')
-        )
-        WHERE b.id = ${billingId}
+          bp.order_number as "orderNumber",
+          NULL as "omieOrderId",
+          NULL as "omieCustomerCode"
+        FROM billing_pipeline bp
+        LEFT JOIN customers c ON c.id = bp.customer_id
+        WHERE bp.id = ${billingId}
       `);
 
       if (billingsResult.rows.length === 0) {
