@@ -2107,6 +2107,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'bsb'`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'aguardando_rota_bsb'`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'outras_cidades'`).catch(() => {});
+  // Tipo de operacao Transferencia entre filiais (NF de transferencia). Idempotente.
+  db.execute(sql`ALTER TYPE operation_type ADD VALUE IF NOT EXISTS 'transferencia'`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
