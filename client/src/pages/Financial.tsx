@@ -1426,7 +1426,7 @@ function ChartOfAccountsTab() {
     passivo: { label: 'Passivo', className: 'bg-purple-100 text-purple-800' },
   };
 
-  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', dreGroup: '', instanceId: '', isActive: true, includeInDre: true }); setShowDialog(true); };
+  const openCreate = () => { setEditItem(null); setForm({ code: '', name: '', type: 'receita', dreGroup: '', omieInstanceId: '', isActive: true, includeInDre: true }); setShowDialog(true); };
   const openEdit = (item: any) => { setEditItem(item); setForm({ ...item }); setShowDialog(true); };
 
   const isGroupHeader = (code: string) => !code.includes('.');
@@ -1534,7 +1534,7 @@ function ChartOfAccountsTab() {
             </div>
             <div>
               <Label>Instância</Label>
-              <Select value={form.instanceId || 'none'} onValueChange={v => setForm({ ...form, instanceId: v === 'none' ? '' : v })}>
+              <Select value={form.omieInstanceId || 'none'} onValueChange={v => setForm({ ...form, omieInstanceId: v === 'none' ? '' : v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Todas</SelectItem>
