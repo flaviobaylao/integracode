@@ -78,6 +78,27 @@ function monthLabel(d = new Date()): string {
 
 const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
+// Mini gráfico de barras (somente barras, sem eixos/valores) para os boxes do topo.
+function MiniBars({ values, highlight, color = "#10b981", height = 40 }: { values: number[]; highlight?: number; color?: string; height?: number }) {
+  const nums = values.map((v) => Number(v) || 0);
+  const max = Math.max(1, ...nums);
+  return (
+    <div className="mt-2 flex items-end gap-[2px]" style={{ height }} aria-hidden="true">
+      {nums.map((val, i) => {
+        const h = Math.max(2, Math.round((val / max) * height));
+        const isHi = highlight === i;
+        return (
+          <div
+            key={i}
+            className="flex-1 rounded-sm"
+            style={{ height: h, minWidth: 2, backgroundColor: isHi ? "#059669" : val > 0 ? color : "#e5e7eb" }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
   const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 15000, refetchOnWindowFocus: true, staleTime: 0 });
@@ -139,6 +160,38 @@ export default function Dashboard() {
   const todayISO = bounds.today;
   const lastWeekISO = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
 
+  // ── Séries dos mini gráficos de barras ──────────────────────────────────────
+  const series = data?.series || {};
+  const monthDailyBars = useMemo(() => {
+    const [y, m] = bounds.today.split("-");
+    const lastDay = new Date(Number(y), Number(m), 0).getDate();
+    const map: Record<string, number> = {};
+    for (const r of (series.daily || [])) map[r.d] = Number(r.v) || 0;
+    const arr: number[] = [];
+    for (let d = 1; d <= lastDay; d++) arr.push(map[`${y}-${m}-${String(d).padStart(2, "0")}`] || 0);
+    return { arr, todayIdx: Number(bounds.today.slice(8, 10)) - 1 };
+  }, [series.daily, bounds.today]);
+  const weekBars = useMemo(() => {
+    // 5 semanas do mês: dias 1-7, 8-14, 15-21, 22-28, 29+.
+    const buckets = [0, 0, 0, 0, 0];
+    const ym = bounds.today.slice(0, 7);
+    for (const r of (series.daily || [])) {
+      if (!String(r.d).startsWith(ym)) continue;
+      const day = Number(String(r.d).slice(8, 10));
+      buckets[Math.min(4, Math.floor((day - 1) / 7))] += Number(r.v) || 0;
+    }
+    return { arr: buckets, curWeek: Math.min(4, Math.floor((Number(bounds.today.slice(8, 10)) - 1) / 7)) };
+  }, [series.daily, bounds.today]);
+  const yearMonthBars = useMemo(() => {
+    const y = bounds.today.slice(0, 4);
+    const curMonth = Number(bounds.today.slice(5, 7));
+    const map: Record<string, number> = {};
+    for (const r of (series.monthly || [])) map[r.m] = Number(r.v) || 0;
+    const arr: number[] = [];
+    for (let mo = 1; mo <= curMonth; mo++) arr.push(map[`${y}-${String(mo).padStart(2, "0")}`] || 0);
+    return { arr, curIdx: curMonth - 1 };
+  }, [series.monthly, bounds.today]);
+
   const blocked: any[] = ov.blocked || [];
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
@@ -160,15 +213,17 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
+            <MiniBars values={monthDailyBars.arr} highlight={monthDailyBars.todayIdx} />
+            <div className="text-[10px] text-gray-400 mt-1">Dias do mês</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
@@ -186,8 +241,24 @@ export default function Dashboard() {
             {dailyPct !== null && (
               <div className="text-xs mt-0.5"><span className={dailyPct >= 0 ? "text-green-600" : "text-red-600"}>{dailyPct >= 0 ? "+" : ""}{dailyPct}% vs mesmo dia sem. passada</span></div>
             )}
-            <Sparkline data={dailyRevenue} highlight={[lastWeekISO, todayISO]} />
-            <div className="text-xs mt-1 text-gray-400"><span className="inline-block w-2 h-2 rounded-full bg-amber-500 align-middle mr-1"></span>Hoje e mesmo dia da semana passada</div>
+            {(() => {
+              const pair = [
+                { label: "Sem. passada", v: dailyLastWeek, color: "#9ca3af" },
+                { label: "Hoje", v: dailyTodaySales, color: "#10b981" },
+              ];
+              const mx = Math.max(1, dailyLastWeek, dailyTodaySales);
+              return (
+                <div className="mt-3 flex items-end justify-around gap-6 h-28">
+                  {pair.map((p, i) => (
+                    <div key={i} className="flex flex-col items-center flex-1">
+                      <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(p.v)}</div>
+                      <div className="w-10 rounded-t" style={{ height: Math.max(6, Math.round((p.v / mx) * 72)), backgroundColor: p.color }} />
+                      <div className="text-[10px] text-gray-500 mt-1">{p.label}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
