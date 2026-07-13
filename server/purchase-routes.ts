@@ -768,17 +768,32 @@ export function registerPurchaseRoutes(app: Express) {
         if (row && String(row.value) === "homologacao") ambiente = "homologacao";
       } catch (_e) { /* default producao */ }
 
-      const { fetchNFeByChave } = await import("./sefaz-service");
-      const result: any = await fetchNFeByChave({ chave, uf, cnpj, ambiente });
+      const { fetchNFeByChave, manifestarCiencia } = await import("./sefaz-service");
+      let result: any = await fetchNFeByChave({ chave, uf, cnpj, ambiente });
+
+      // Só o RESUMO veio (cStat 138 sem XML completo): faz a Ciência da Operação
+      // (manifestação do destinatário) para a SEFAZ liberar o procNFe, e refaz a consulta.
+      let manifestacao: any = null;
+      if (!result?.fullXml && result?.cStat === "138") {
+        manifestacao = await manifestarCiencia({ chave, cnpj, ambiente });
+        if (manifestacao?.ok) {
+          await new Promise((r) => setTimeout(r, 1500));
+          result = await fetchNFeByChave({ chave, uf, cnpj, ambiente });
+        }
+      }
+
       if (!result?.ok || !result?.fullXml) {
-        // cStat 138 = "Documento localizado", porém a SEFAZ só devolveu o RESUMO
-        // (resNFe), não o XML completo. Isso ocorre quando o destinatário ainda não
-        // fez a manifestação/ciência da operação. Orienta o usuário em vez de um erro cru.
         if (result?.cStat === "138" && !result?.fullXml) {
+          const maniMsg = manifestacao
+            ? (manifestacao.ok
+                ? " A manifestação (Ciência da Operação) foi registrada, mas o XML ainda não retornou — tente novamente em alguns instantes."
+                : ` A manifestação automática não foi aceita pela SEFAZ (${manifestacao.xMotivo || manifestacao.error || "motivo não informado"}${manifestacao.cStat ? ", cStat " + manifestacao.cStat : ""}).`)
+            : "";
           return res.status(422).json({
-            error: "A nota foi localizada na SEFAZ, mas o XML completo ainda não está disponível para download automático (a SEFAZ só libera o XML ao destinatário após a manifestação/ciência da operação). Para receber agora, use \"Importar XML\" com o arquivo enviado pelo fornecedor.",
+            error: `A nota foi localizada na SEFAZ, mas o XML completo ainda não está disponível para download.${maniMsg} Você também pode receber usando "Importar XML" com o arquivo enviado pelo fornecedor.`,
             cStat: "138",
             resumoOnly: true,
+            manifestacao: manifestacao || null,
           });
         }
         return res.status(422).json({ error: `SEFAZ: ${result?.xMotivo || result?.error || "não foi possível obter o XML da nota"}${result?.cStat ? ` (cStat ${result.cStat})` : ""}`, cStat: result?.cStat || null });
