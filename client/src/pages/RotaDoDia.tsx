@@ -948,11 +948,11 @@ export default function RotaDoDia() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex items-start justify-between">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto overflow-x-auto">
+      <div className="mb-6 flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-            <Route className="h-8 w-8 text-green-600" />
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+            <Route className="h-6 w-6 sm:h-8 sm:w-8 text-green-600" />
             Rota do Dia
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-2">
@@ -1359,7 +1359,7 @@ export default function RotaDoDia() {
                   </Select>
                 </div>
                 {(isAdmin || isVendedor || isTelemarketing) && route.id && (
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
                       variant="outline"
@@ -1485,8 +1485,8 @@ export default function RotaDoDia() {
                       data-testid={`visit-${visit.customerId || visit.id}`}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div 
-                          className="flex items-start gap-3 flex-1 cursor-pointer"
+                        <div
+                          className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
                           onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
@@ -1494,8 +1494,8 @@ export default function RotaDoDia() {
                           }`}>
                             {index + 1}
                           </div>
-                          
-                          <div className="flex-1">
+
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
@@ -1657,7 +1657,7 @@ export default function RotaDoDia() {
                           </div>
                         </div>
                         
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-wrap justify-end shrink-0">
                           {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
                           {isCheckinAdmin && !isLead && (
                             <Button
@@ -1781,11 +1781,11 @@ export default function RotaDoDia() {
                             }}
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3 flex-1">
+                              <div className="flex items-start gap-3 flex-1 min-w-0">
                                 <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
                                   {index + 1}
                                 </div>
-                                <div className="flex-1">
+                                <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
                                       <Phone className="h-4 w-4" />
@@ -1878,7 +1878,7 @@ export default function RotaDoDia() {
                                 </div>
                               </div>
                               {/* Botões de ação para visitas virtuais */}
-                              <div className="flex items-center gap-1 flex-shrink-0">
+                              <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
                                 {/* Botão WhatsApp → Central de Atendimento (apenas Admin e Telemarketing ativo) */}
                                 {visit.customerId && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                                   <Button
