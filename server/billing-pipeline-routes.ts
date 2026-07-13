@@ -587,6 +587,19 @@ export function registerBillingPipelineRoutes(app: Express) {
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Envia UM card especifico (por id) para o pipeline de faturamento. Idempotente
+  // (dedup por sales_card_id) e respeita as regras de bloqueio (debito/tipo de operacao).
+  // Util para reconciliar pontualmente um pedido orfao (ex.: pedido do hotsite finalizado
+  // antes do fix) sem rodar o reconcile em lote.
+  app.post('/api/admin/pipeline/send-card/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const card = await storage.getSalesCard(req.params.id);
+      if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
+      const item = await autoSendToBillingPipeline(card as any, req.currentUser?.email || 'system');
+      res.json({ ok: true, created: !!item, item: item || null });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Forcar criacao de card 'faturado' p/ NFs ESPECIFICAS (sem dedup cliente+valor).
   // Recupera NF rejeitada/orfa que a rede de seguranca pulou por dedup. So evita duplicar pelo NUMERO exato da NF.
   app.post('/api/admin/pipeline/create-cards-for-nfs', authenticateUser, isAdminOnly, async (req: any, res) => {
