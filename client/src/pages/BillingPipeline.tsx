@@ -212,6 +212,9 @@ export default function BillingPipeline() {
   // Bloqueio manual de pedido: apenas os 3 admins (mesma lista da Rota do Dia).
   const canBlockOrders = ['cinthiamarque90@gmail.com', 'flaviobaylao@gmail.com', 'flavio@bebahonest.com.br']
     .includes(String((currentUser as any)?.email || '').toLowerCase());
+  // Edição (mover/excluir/selecionar em lote): admins. Telemarketing tem acesso
+  // SOMENTE de leitura (consulta + filtros). As mutações também são bloqueadas no backend.
+  const canEdit = ['admin', 'coordinator', 'administrative'].includes(String((currentUser as any)?.role || ''));
 
   const { data: items = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
@@ -884,7 +887,7 @@ export default function BillingPipeline() {
               <div key={stage.key} className="flex-shrink-0 w-72">
                 <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between sticky top-0 z-20`}>
                   <div className="flex items-center gap-2">
-                    {stageItems.length > 0 && (
+                    {canEdit && stageItems.length > 0 && (
                       <Checkbox
                         checked={allStageSelected}
                         className="border-white data-[state=checked]:bg-white data-[state=checked]:text-gray-900 h-5 w-5"
@@ -929,6 +932,7 @@ export default function BillingPipeline() {
                         if (reason !== null) blockOrderMutation.mutate({ id: item.id, reason });
                       }}
                       isBlocking={blockOrderMutation.isPending}
+                      canEdit={canEdit}
                     />
                   ))}
                 </div>
@@ -1277,6 +1281,7 @@ function KanbanCard({
   canBlock,
   onBlock,
   isBlocking,
+  canEdit = true,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -1294,6 +1299,7 @@ function KanbanCard({
   canBlock?: boolean;
   onBlock?: () => void;
   isBlocking?: boolean;
+  canEdit?: boolean;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
@@ -1316,12 +1322,14 @@ function KanbanCard({
     >
       <CardContent className="p-3 space-y-2">
         <div className="flex items-start gap-2">
+          {canEdit && (
           <Checkbox
             checked={selected}
             onCheckedChange={() => onToggleSelect()}
             onClick={(e) => e.stopPropagation()}
             className="mt-0.5 h-6 w-6 flex-shrink-0"
           />
+          )}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm truncate">{item.customerName}</p>
             {item.sellerName && (
@@ -1375,7 +1383,7 @@ function KanbanCard({
           {formatDate(item.createdAt)}
         </div>
 
-        {stage.key !== 'bloqueado' && (['rejected', 'rejeitada', 'denied', 'draft'].includes(fs) || !!item.fiscalError) && (
+        {canEdit && stage.key !== 'bloqueado' && (['rejected', 'rejeitada', 'denied', 'draft'].includes(fs) || !!item.fiscalError) && (
           <div className="rounded bg-red-50 dark:bg-red-900/20 border border-red-200 p-1.5 space-y-1">
             <p className="text-[10px] text-red-700 leading-snug">
               <span className="font-semibold">Falha no faturamento:</span>{' '}
@@ -1393,6 +1401,7 @@ function KanbanCard({
             </Button>
           </div>
         )}
+        {canEdit && (
         <div className="flex items-center justify-between pt-1 border-t">
           <Button
             variant="ghost"
@@ -1435,6 +1444,7 @@ function KanbanCard({
             <ChevronRight className="h-3 w-3" />
           </Button>
         </div>
+        )}
       </CardContent>
     </Card>
   );
