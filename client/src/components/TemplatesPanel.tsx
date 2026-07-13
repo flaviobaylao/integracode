@@ -276,7 +276,7 @@ export function TemplatesPanel({ onSelectTemplate, onSendImage, isAdmin, current
       </CardContent>
 
       <Dialog open={showManageDialog} onOpenChange={setShowManageDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Gerenciar Templates de Resposta</DialogTitle>
             <DialogDescription>
@@ -402,7 +402,7 @@ export function TemplatesPanel({ onSelectTemplate, onSendImage, isAdmin, current
             <div className="border-l pl-4">
               <h3 className="font-semibold text-sm mb-3">Templates Existentes</h3>
               <ScrollArea className="h-[350px]">
-                <div className="space-y-2 pr-2">
+                <div className="space-y-2 pr-4">
                   {templates.map((template) => {
                     const mine = template.createdBy === currentUserId;
                     const canManage = canManageTemplate(template);
