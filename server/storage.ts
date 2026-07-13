@@ -8519,9 +8519,12 @@ export class DatabaseStorage implements IStorage {
     const conditions: any[] = [isNull(receivables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
     if (filters?.status === 'vencida') {
-      conditions.push(or(eq(receivables.status, 'vencida' as any), and(eq(receivables.status, 'a_vencer' as any), lt(receivables.dueDate, new Date())))!);
+      // VENCIDA por DIA-CALENDÁRIO (fuso Brasil): só é vencida se a data de vencimento
+      // é ANTERIOR a hoje. Vence HOJE (qualquer hora) NÃO é vencida — antes comparava o
+      // instante (dueDate < now), então um débito que vence hoje mais cedo virava "vencido".
+      conditions.push(or(eq(receivables.status, 'vencida' as any), and(eq(receivables.status, 'a_vencer' as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`))!);
     } else if (filters?.status === 'a_vencer') {
-      conditions.push(and(eq(receivables.status, 'a_vencer' as any), gte(receivables.dueDate, new Date()))!);
+      conditions.push(and(eq(receivables.status, 'a_vencer' as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status) {
       conditions.push(eq(receivables.status, filters.status as any));
     }
@@ -8536,11 +8539,14 @@ export class DatabaseStorage implements IStorage {
     const rows = conditions.length > 0
       ? await db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt))
       : await db.select().from(receivables).orderBy(desc(receivables.createdAt));
-    // Recomputa status exibido por DATA (paridade c/ 1.0): a_vencer com vencimento passado => vencida
-    const _hojeRec = new Date();
+    // Recomputa status exibido por DIA-CALENDÁRIO (fuso Brasil): a_vencer com vencimento
+    // ANTERIOR a hoje => vencida. Vence HOJE NÃO é vencida (antes comparava o instante,
+    // marcando como vencido o débito que vence hoje mais cedo que a hora atual).
+    const _hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     for (const r of rows) {
-      if ((r.status as any) === 'a_vencer' && r.dueDate && new Date(r.dueDate) < _hojeRec) {
-        (r as any).status = 'vencida';
+      if ((r.status as any) === 'a_vencer' && r.dueDate) {
+        const _dueBR = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        if (_dueBR < _hojeBR) (r as any).status = 'vencida';
       }
     }
     try {
