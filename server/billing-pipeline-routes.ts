@@ -1001,17 +1001,18 @@ export function registerBillingPipelineRoutes(app: Express) {
       const user = req.currentUser || req.user;
       const { sefazService } = await import('./sefaz-service.js');
 
-      // Localiza a NF do item: por número (invoiceNumber) OU pela referência do pedido nas notes.
+      // Localiza a NF do item de forma A PROVA DE COLISAO. O numero da NF-e SE REPETE entre
+      // emitentes/clientes (e ate e reaproveitado apos uma emissao que falhou), entao NUNCA
+      // casar so por numero: (1) sales_card_id COMPLETO; (2) numero + MESMO cliente; (3) ref por notes.
       const numRef = String(item.invoiceNumber || '').replace(/\D/g, '');
       let nf: any = null;
-      if (numRef) {
-        const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} ORDER BY created_at DESC LIMIT 1`);
-        nf = (byNum?.rows ?? byNum ?? [])[0] || null;
-      }
-      // Chave à prova de colisão: sales_card_id COMPLETO (o ref 'INT-<8 hex>' colide entre cartões).
-      if (!nf && item.salesCardId) {
+      if (item.salesCardId) {
         const byCard: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
         nf = (byCard?.rows ?? byCard ?? [])[0] || null;
+      }
+      if (!nf && numRef && item.customerId) {
+        const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} AND customer_id = ${item.customerId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        nf = (byNum?.rows ?? byNum ?? [])[0] || null;
       }
       if (!nf && !item.salesCardId && item.orderNumber) {
         const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
@@ -1061,6 +1062,21 @@ export function registerBillingPipelineRoutes(app: Express) {
       // Re-transmite a MESMA NF (draft/rejected).
       const emitRes: any = await sefazService.emitNfe(nf.id);
       if (emitRes?.success) return res.json({ success: true });
+
+      // Falha na re-transmissao (ex.: numero DUPLICADO / 539 por reaproveitamento apos uma
+      // emissao que falhou — o numero ja foi autorizado para OUTRA nota). Emite uma NF-e NOVA
+      // com numero atomico livre. createInvoiceFromPipelineItem tem dedup por sales_card_id e
+      // ja transmite a SEFAZ; so cria nova quando NAO ha NF (nao-cancelada) com este card
+      // (o createdNew.id !== nf.id evita reprocessar a mesma nota).
+      try {
+        const createdNew: any = await createInvoiceFromPipelineItem(item, user);
+        if (createdNew?.id && createdNew.id !== nf.id) {
+          if (createdNew?.invoiceNumber) await storage.updateBillingPipelineItem(item.id, { invoiceNumber: `NF-${createdNew.invoiceNumber}` });
+          const chk2: any = await db.execute(sql`SELECT status FROM fiscal_invoices WHERE id = ${createdNew.id} LIMIT 1`);
+          const st2 = (chk2?.rows ?? chk2 ?? [])[0]?.status;
+          if (st2 === 'authorized') return res.json({ success: true, invoiceNumber: createdNew.invoiceNumber, reissued: true });
+        }
+      } catch (e: any) { console.warn('[RETRY-NFE] falha ao reemitir NF nova:', e?.message); }
       return res.status(422).json({ success: false, message: emitRes?.errorMessage || 'Falha ao transmitir a NF-e.' });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
