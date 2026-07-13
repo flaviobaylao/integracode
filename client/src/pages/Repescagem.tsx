@@ -35,6 +35,7 @@ type Assignment = {
   customerPhone?: string | null;
   customerCity?: string | null;
   customerNeighborhood?: string | null;
+  customerUf?: string | null;
   sellerId: string | null;
   sellerName: string | null;
   periodicity: string;
@@ -116,15 +117,17 @@ export default function Repescagem() {
     enabled: !!historyCustomer?.id,
   });
 
-  const meAttendant = attendants.find(a => a.userId === user?.id);
   const enabledAttendants = attendants.filter(a => a.isEnabled);
+  const isAdmin = user?.role === 'admin';
 
-  const toggleSelf = useMutation({
-    mutationFn: async (isEnabled: boolean) => apiRequest('POST', '/api/repescagem/attendants/me', { isEnabled }),
+  // Repescagem2: somente administradores habilitam/desabilitam atendentes.
+  const toggleAttendant = useMutation({
+    mutationFn: async ({ userId, isEnabled }: { userId: string; isEnabled: boolean }) =>
+      apiRequest('POST', `/api/repescagem/attendants/${userId}`, { isEnabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/attendants'] });
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
-      toast({ title: 'Atualizado', description: 'Sua disponibilidade foi atualizada.' });
+      toast({ title: 'Atualizado', description: 'Disponibilidade do atendente atualizada.' });
     },
     onError: (e: any) => {
       toast({ title: 'Erro', description: e?.message || 'Falha ao atualizar', variant: 'destructive' });
@@ -221,43 +224,53 @@ export default function Repescagem() {
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0 space-y-3">
-          {meAttendant && (
-            <div className="flex items-center justify-between rounded-md border bg-gradient-to-r from-sky-50 to-white p-3">
-              <div>
-                <p className="text-sm font-medium">Estou disponível para atender repescagem agora</p>
-                <p className="text-xs text-gray-500">
-                  Quando habilitado, você passa a receber clientes desta lista automaticamente.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={meAttendant.isEnabled}
-                  onCheckedChange={(v) => toggleSelf.mutate(v)}
-                  disabled={toggleSelf.isPending}
-                  data-testid="switch-self-enabled"
-                />
-                <Badge variant={meAttendant.isEnabled ? 'default' : 'secondary'}>
-                  {meAttendant.isEnabled ? 'Habilitado' : 'Desabilitado'}
-                </Badge>
-              </div>
-            </div>
-          )}
           {loadingAttendants ? (
             <div className="text-sm text-gray-500"><Loader2 className="inline h-3 w-3 animate-spin mr-1" /> Carregando...</div>
+          ) : isAdmin ? (
+            <>
+              <p className="text-xs text-gray-500">
+                Somente administradores habilitam atendentes. Elegíveis: vendedores externos e telemarketing.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {attendants.map(a => (
+                  <div
+                    key={a.userId}
+                    className={`flex items-center justify-between rounded-md border p-2 ${a.isEnabled ? 'bg-green-50 border-green-300 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-800'}`}
+                    data-testid={`attendant-row-${a.userId}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{a.name}</p>
+                      <p className="text-[11px] text-gray-500">
+                        {a.role === 'vendedor' ? 'Externo' : a.role === 'telemarketing' ? 'Telemarketing' : a.role}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={a.isEnabled}
+                      onCheckedChange={(v) => toggleAttendant.mutate({ userId: a.userId, isEnabled: v })}
+                      disabled={toggleAttendant.isPending}
+                      data-testid={`switch-attendant-${a.userId}`}
+                    />
+                  </div>
+                ))}
+                {attendants.length === 0 && (
+                  <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
+                )}
+              </div>
+            </>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {attendants.map(a => (
+              {attendants.filter(a => a.isEnabled).map(a => (
                 <Badge
                   key={a.userId}
                   variant="outline"
-                  className={`text-xs ${a.isEnabled ? 'bg-green-50 text-green-800 border-green-300' : 'bg-gray-50 text-gray-500'}`}
+                  className="text-xs bg-green-50 text-green-800 border-green-300"
                   data-testid={`badge-attendant-${a.userId}`}
                 >
-                  {a.isEnabled ? '● ' : '○ '}{a.name}
+                  ● {a.name}
                 </Badge>
               ))}
-              {attendants.length === 0 && (
-                <span className="text-xs text-gray-500">Nenhum atendente cadastrado.</span>
+              {enabledAttendants.length === 0 && (
+                <span className="text-xs text-gray-500">Nenhum atendente habilitado. Fale com um administrador.</span>
               )}
             </div>
           )}
@@ -453,6 +466,7 @@ export default function Repescagem() {
                     <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Cliente</th>
                     <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Cidade</th>
                     <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Bairro</th>
+                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">UF</th>
                     <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Vendedor</th>
                     <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Periodicidade</th>
                     <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">
@@ -483,6 +497,7 @@ export default function Repescagem() {
                       </td>
                       <td className="px-3 py-2 text-gray-700">{a.customerCity || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{a.customerNeighborhood || '-'}</td>
+                      <td className="px-3 py-2 text-center text-gray-700">{a.customerUf || '-'}</td>
                       <td className="px-3 py-2 text-gray-700">{a.sellerName || '-'}</td>
                       <td className="px-3 py-2 text-center">
                         <Badge variant="outline" className="text-[11px]">
