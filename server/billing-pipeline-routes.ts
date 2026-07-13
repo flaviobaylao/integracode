@@ -375,6 +375,16 @@ function isAdminOnly(req: any, res: any, next: any) {
   next();
 }
 
+// Leitura do pipeline (consulta + filtros): admins + telemarketing (interno).
+// Telemarketing tem acesso SOMENTE de leitura — as mutações seguem em isAdminOnly.
+function isPipelineViewer(req: any, res: any, next: any) {
+  const user = req.currentUser || req.user;
+  if (!user || !['admin', 'coordinator', 'administrative', 'telemarketing'].includes(user.role)) {
+    return res.status(403).json({ message: 'Access denied' });
+  }
+  next();
+}
+
 function isFlavioOnly(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
   if (!user || user.email !== 'flavio@bebahonest.com.br') {
@@ -620,7 +630,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Get internal billing mode status
-  app.get('/api/billing-pipeline/mode', authenticateUser, isAdminOnly, async (req: any, res) => {
+  app.get('/api/billing-pipeline/mode', authenticateUser, isPipelineViewer, async (req: any, res) => {
     res.json({ active: internalBillingModeActive, activatedBy: internalBillingActivatedBy });
   });
 
@@ -635,7 +645,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Get all billing pipeline items (optionally filter by stage)
-  app.get('/api/billing-pipeline', authenticateUser, isAdminOnly, async (req: any, res) => {
+  app.get('/api/billing-pipeline', authenticateUser, isPipelineViewer, async (req: any, res) => {
     try {
       // Promove pedidos agendados vencidos antes de listar (throttle 60s para não custar a cada request).
       if (Date.now() - _lastScheduledPromoteAt > 60_000) {
@@ -652,7 +662,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Get single billing pipeline item
-  app.get('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+  app.get('/api/billing-pipeline/:id', authenticateUser, isPipelineViewer, async (req: any, res) => {
     try {
       const item = await storage.getBillingPipelineItem(req.params.id);
       if (!item) return res.status(404).json({ message: 'Item não encontrado' });
