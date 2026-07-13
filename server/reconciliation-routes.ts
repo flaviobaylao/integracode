@@ -404,7 +404,11 @@ export function registerReconciliation(app: Express) {
       const qNumRaw = q.replace(/[^0-9.,]/g, "").replace(/\./g, "").replace(",", ".");
       const qNum = qNumRaw ? parseFloat(qNumRaw) : NaN;
       if (type === "C") {
-        const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        // Em aberto OU ja baixado manualmente mas SEM vinculo bancario (permite conciliar
+        // o extrato ao titulo ja pago — a baixa nao e duplicada; so cria o vinculo).
+        const openCond = sql`(status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0)`;
+        const settledUnlinked = sql`(status = 'recebida' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = r.id))`;
+        const conds: any[] = [sql`deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`customer_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(customer_document,'') ILIKE ${'%' + qDigits + '%'}`);
@@ -412,15 +416,19 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount,
+          SELECT r.id, r.title_number, r.customer_name, r.customer_document, r.amount, r.status,
                  (r.amount - COALESCE(r.amount_paid,0)) AS restante, r.due_date, r.omie_instance_id,
                  r.chart_account_id, (c.code || ' ' || c.name) AS chart_label
           FROM receivables r LEFT JOIN chart_of_accounts c ON c.id = r.chart_account_id
           WHERE ${sql.join(conds, sql` AND `)}
-          ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
+          ORDER BY (status IN ('a_vencer','vencida')) DESC, due_date NULLS LAST LIMIT ${limit}`);
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "receivable", id: t.id, title: t.title_number, name: t.customer_name, document: t.customer_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null, jaBaixado: String(t.status) === 'recebida' })) });
       } else {
-        const conds: any[] = [sql`deleted_at IS NULL`, sql`status IN ('a_vencer','vencida')`, sql`(amount - COALESCE(amount_paid,0)) > 0`];
+        // Em aberto OU ja baixado manualmente mas SEM vinculo bancario (permite conciliar
+        // o extrato ao titulo ja pago — a baixa nao e duplicada; so cria o vinculo).
+        const openCond = sql`(status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0)`;
+        const settledUnlinked = sql`(status = 'paga' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = p.id))`;
+        const conds: any[] = [sql`deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`supplier_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(supplier_document,'') ILIKE ${'%' + qDigits + '%'}`);
@@ -428,13 +436,13 @@ export function registerReconciliation(app: Express) {
           conds.push(sql`(${sql.join(ors, sql` OR `)})`);
         }
         const r = await db.execute(sql`
-          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount,
+          SELECT p.id, p.title_number, p.supplier_name, p.supplier_document, p.amount, p.status,
                  (p.amount - COALESCE(p.amount_paid,0)) AS restante, p.due_date, p.omie_instance_id,
                  p.chart_account_id, (c.code || ' ' || c.name) AS chart_label
           FROM payables p LEFT JOIN chart_of_accounts c ON c.id = p.chart_account_id
           WHERE ${sql.join(conds, sql` AND `)}
-          ORDER BY due_date NULLS LAST LIMIT ${limit}`);
-        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null })) });
+          ORDER BY (status IN ('a_vencer','vencida')) DESC, due_date NULLS LAST LIMIT ${limit}`);
+        return res.json({ titles: rowsOf(r).map((t: any) => ({ kind: "payable", id: t.id, title: t.title_number, name: t.supplier_name, document: t.supplier_document, amount: t.amount, restante: t.restante, due: t.due_date, instance: t.omie_instance_id, chartAccountId: t.chart_account_id || null, chartLabel: t.chart_label || null, jaBaixado: String(t.status) === 'paga' })) });
       }
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
