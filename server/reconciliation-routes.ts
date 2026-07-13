@@ -406,9 +406,9 @@ export function registerReconciliation(app: Express) {
       if (type === "C") {
         // Em aberto OU ja baixado manualmente mas SEM vinculo bancario (permite conciliar
         // o extrato ao titulo ja pago — a baixa nao e duplicada; so cria o vinculo).
-        const openCond = sql`(status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0)`;
-        const settledUnlinked = sql`(status = 'recebida' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = r.id))`;
-        const conds: any[] = [sql`deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
+        const openCond = sql`(r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0)`;
+        const settledUnlinked = sql`(r.status = 'recebida' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = r.id))`;
+        const conds: any[] = [sql`r.deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`customer_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(customer_document,'') ILIKE ${'%' + qDigits + '%'}`);
@@ -426,9 +426,9 @@ export function registerReconciliation(app: Express) {
       } else {
         // Em aberto OU ja baixado manualmente mas SEM vinculo bancario (permite conciliar
         // o extrato ao titulo ja pago — a baixa nao e duplicada; so cria o vinculo).
-        const openCond = sql`(status IN ('a_vencer','vencida') AND (amount - COALESCE(amount_paid,0)) > 0)`;
-        const settledUnlinked = sql`(status = 'paga' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = p.id))`;
-        const conds: any[] = [sql`deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
+        const openCond = sql`(p.status IN ('a_vencer','vencida') AND (p.amount - COALESCE(p.amount_paid,0)) > 0)`;
+        const settledUnlinked = sql`(p.status = 'paga' AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = p.id))`;
+        const conds: any[] = [sql`p.deleted_at IS NULL`, q ? sql`(${openCond} OR ${settledUnlinked})` : openCond];
         if (q) {
           const ors: any[] = [sql`title_number ILIKE ${like}`, sql`supplier_name ILIKE ${like}`];
           if (qDigits) ors.push(sql`COALESCE(supplier_document,'') ILIKE ${'%' + qDigits + '%'}`);
