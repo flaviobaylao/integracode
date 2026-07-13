@@ -385,9 +385,10 @@ export const paymentMethodEnum = pgEnum('payment_method', [
 
 // Operation type enum
 export const operationTypeEnum = pgEnum('operation_type', [
-  'venda',     // Venda normal
-  'troca',     // Troca de produto
-  'amostra'    // Amostra grátis
+  'venda',        // Venda normal
+  'troca',        // Troca de produto
+  'amostra',      // Amostra grátis
+  'transferencia' // Transferência entre filiais (NF de transferência via cenário fiscal)
 ]);
 
 // Delivery status enum
