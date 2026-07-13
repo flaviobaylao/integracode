@@ -114,6 +114,7 @@ export default function RoutesSummary() {
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
   const [showAddVisits, setShowAddVisits] = useState(false);
+  const [orderSearch, setOrderSearch] = useState('');
   const [showAllRoutesMap, setShowAllRoutesMap] = useState(false);
   const [selectedStopForTransfer, setSelectedStopForTransfer] = useState<StopForTransfer | null>(null);
   const [newDriverIdForTransfer, setNewDriverIdForTransfer] = useState<string>('');
@@ -491,6 +492,9 @@ export default function RoutesSummary() {
   });
 
   const activeDrivers = drivers.filter(d => d.isActive);
+  // FASE 3.4n - filtro do pop-up "Adicionar Pedidos" (nome, endereco, NF, pedido)
+  const orderSearchLower = orderSearch.trim().toLowerCase();
+  const filteredOrders = !orderSearchLower ? orders : orders.filter((o: any) => [o.customerName, o.customerAddress, o.customerCity, o.customerNeighborhood, o.invoiceNumber, o.orderNumber, o.customerCnpj, o.customerCpf].some((f: any) => String(f || '').toLowerCase().includes(orderSearchLower)));
 
   // Contar rotas pendentes de envio (status 'rota salva' ou 'pending')
   const pendingSendRoutes = routes.filter(r => r.status === 'rota salva' || r.status === 'pending');
@@ -860,7 +864,7 @@ export default function RoutesSummary() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowAddOrders(true)}
+                onClick={() => { setOrderSearch(''); setShowAddOrders(true); }}
                 data-testid={`button-add-orders-route-${selectedRoute}`}
               >
                 <Plus className="h-4 w-4 mr-2" />
@@ -1592,13 +1596,21 @@ export default function RoutesSummary() {
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            {orders.length === 0 ? (
+            <Input
+              autoFocus
+              placeholder="Pesquisar por cliente, endereço, NF ou pedido…"
+              value={orderSearch}
+              onChange={(e) => setOrderSearch(e.target.value)}
+              data-testid="input-search-orders"
+            />
+            {filteredOrders.length === 0 ? (
               <div className="text-center text-muted-foreground py-8">
-                Não há pedidos disponíveis para adicionar
+                {orderSearch ? 'Nenhum pedido encontrado' : 'Não há pedidos disponíveis para adicionar'}
               </div>
             ) : (
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {orders.map((order) => (
+                <div className="text-xs text-muted-foreground">{filteredOrders.length} pedido(s)</div>
+                {filteredOrders.map((order) => (
                   <div
                     key={order.id}
                     className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition"
@@ -1634,13 +1646,21 @@ export default function RoutesSummary() {
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            {orders.length === 0 ? (
+            <Input
+              autoFocus
+              placeholder="Pesquisar por cliente, endereço, NF ou pedido…"
+              value={orderSearch}
+              onChange={(e) => setOrderSearch(e.target.value)}
+              data-testid="input-search-visits"
+            />
+            {filteredOrders.length === 0 ? (
               <div className="text-center text-muted-foreground py-8">
-                Não há pedidos disponíveis para adicionar
+                {orderSearch ? 'Nenhum pedido encontrado' : 'Não há pedidos disponíveis para adicionar'}
               </div>
             ) : (
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {orders.map((order) => (
+                <div className="text-xs text-muted-foreground">{filteredOrders.length} pedido(s)</div>
+                {filteredOrders.map((order) => (
                   <div
                     key={order.id}
                     className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition"
