@@ -254,7 +254,7 @@ function ClassificacaoTab() {
   );
 }
 
-function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
+function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: boolean; canBoleto?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('vencida');
@@ -524,8 +524,8 @@ function ReceivablesTab({ readOnly = false }: { readOnly?: boolean } = {}) {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      {!readOnly && (<><Button variant="ghost" size="icon" title="Cobrança (boleto/PIX)" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
+                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
                     </div>
@@ -2882,6 +2882,9 @@ export default function Financial() {
   const { user } = useAuth();
   const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canViewReceivables = isFullAccess || (!!user?.role && ['vendedor', 'telemarketing'].includes(user.role));
+  // Boleto bancário no Contas a Receber: liberado para todos os vendedores
+  // (externos e telemarketing), mesmo em modo leitura. Demais ações seguem admin.
+  const canEmitBoleto = !!user?.role && ['vendedor', 'telemarketing'].includes(user.role);
   const searchString = useSearch();
   const urlTab = new URLSearchParams(searchString).get('tab');
   const defaultTab = isFullAccess ? 'receivables' : 'overdue';
@@ -2899,7 +2902,7 @@ export default function Financial() {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'receivables': return canViewReceivables ? <ReceivablesTab readOnly={!isFullAccess} /> : null;
+      case 'receivables': return canViewReceivables ? <ReceivablesTab readOnly={!isFullAccess} canBoleto={canEmitBoleto} /> : null;
       case 'payables': return isFullAccess ? <PayablesTab /> : null;
       case 'overdue': return <OverdueDebtsManagement />;
       case 'blocked': return <BlockedOrdersManagement user={user as any} />;
