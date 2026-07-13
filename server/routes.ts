@@ -3559,12 +3559,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const results: any[] = [];
 
-      // Faturamento realizado a partir de billing_pipeline (billings/Omie descontinuado)
+      // Ft. Atual = faturamento realizado a partir das NOTAS FISCAIS (fiscal_invoices):
+      // autorizadas, CFOP de venda (5102/5405/6102), deduplicadas por chave de acesso, e
+      // atribuidas ao vendedor pelo card de venda e, na falta, pelo vendedor que registrou o pedido (billing_pipeline).
+      const _mm = String(targetMonth).padStart(2, '0');
+      const _startStr = `${targetYear}-${_mm}-01`;
+      const _ny = targetMonth === 12 ? targetYear + 1 : targetYear;
+      const _nm = targetMonth === 12 ? 1 : targetMonth + 1;
+      const _endStr = `${_ny}-${String(_nm).padStart(2, '0')}-01`;
       const pipelineRevenueResult: any = await db.execute(sql`
-        SELECT seller_id, omie_instance_id, COALESCE(SUM(sale_value), 0) AS total
-        FROM billing_pipeline
-        WHERE created_at >= ${startDate} AND created_at < (${startDate}::timestamptz + interval '1 month')
-        GROUP BY seller_id, omie_instance_id
+        SELECT seller_key AS seller_id, omie_instance_id, COALESCE(SUM(total_invoice), 0) AS total
+        FROM (
+          SELECT COALESCE(NULLIF(sc.seller_id, ''), bp.bp_seller_id) AS seller_key, fi.omie_instance_id AS omie_instance_id, fi.total_invoice AS total_invoice
+          FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi
+          LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id
+          LEFT JOIN (SELECT DISTINCT ON (inv_num) inv_num, bp_seller_id FROM (SELECT NULLIF(regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint AS inv_num, seller_id AS bp_seller_id, created_at FROM billing_pipeline WHERE regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g') <> '') t ORDER BY inv_num, created_at DESC) bp ON bp.inv_num = fi.invoice_number
+          WHERE fi.status = 'authorized' AND fi.cfop IN ('5102', '5405', '6102') AND fi.emission_date >= ${_startStr}::date AND fi.emission_date < ${_endStr}::date
+        ) sub
+        GROUP BY seller_key, omie_instance_id
       `);
       const pipelineRevenueBySeller = new Map<string, number>();
       const pipelineInstanceBySeller = new Map<string, Record<string, number>>();
