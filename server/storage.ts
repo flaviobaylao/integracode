@@ -7852,10 +7852,12 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getPhonebookContactByPhone(cleanPhone);
     
     if (existing) {
+      // Atualiza o nome; preserva vínculo do cliente e observações quando o
+      // payload não os traz (ex.: edição só do nome pelo modal da agenda).
       return await this.updatePhonebookContact(existing.id, {
         name: contact.name,
-        customerId: contact.customerId,
-        notes: contact.notes,
+        customerId: contact.customerId ?? existing.customerId,
+        notes: contact.notes ?? existing.notes,
       });
     } else {
       return await this.createPhonebookContact(contact);
