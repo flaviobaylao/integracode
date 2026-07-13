@@ -147,6 +147,22 @@ export function registerFinancialRoutes(app: Express) {
     const q: any = await db.execute(sql`SELECT id, include_in_dre FROM chart_of_accounts`);
     return new Map((((q as any).rows) || []).map((x: any) => [String(x.id), x.include_in_dre !== false]));
   }
+  // Sanitiza o payload de gravacao do plano de contas: mantem SO as colunas reais e
+  // editaveis. Sem isso, o front manda o objeto inteiro (form = {...item}) com id e
+  // createdAt (string ISO); ao passar createdAt para db.update().set(), o drizzle tenta
+  // value.toISOString() numa string e quebra ("value.toISOString is not a function"),
+  // impedindo QUALQUER edicao. Tambem mapeia o campo antigo instanceId -> omieInstanceId.
+  function sanitizeChartAccount(body: any): any {
+    const src = (body || {}) as any;
+    const out: any = {};
+    for (const k of ['code', 'name', 'type', 'parentId', 'dreGroup', 'omieInstanceId', 'isActive']) {
+      if (src[k] !== undefined) out[k] = src[k];
+    }
+    if (out.omieInstanceId === undefined && src.instanceId !== undefined) {
+      out.omieInstanceId = src.instanceId || null;
+    }
+    return out;
+  }
 
   app.get('/api/financial/chart-of-accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
@@ -175,7 +191,8 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/financial/chart-of-accounts', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       await ensureIncludeInDreColumn();
-      const { includeInDre, ...rest } = (req.body || {}) as any;
+      const { includeInDre } = (req.body || {}) as any;
+      const rest = sanitizeChartAccount(req.body);
       const account: any = await storage.createChartOfAccount(rest);
       if (includeInDre === false) { try { await db.execute(sql`UPDATE chart_of_accounts SET include_in_dre = false WHERE id = ${account.id}`); } catch {} }
       res.status(201).json({ ...account, includeInDre: includeInDre !== false });
@@ -187,8 +204,11 @@ export function registerFinancialRoutes(app: Express) {
   app.patch('/api/financial/chart-of-accounts/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       await ensureIncludeInDreColumn();
-      const { includeInDre, ...rest } = (req.body || {}) as any;
-      const account: any = await storage.updateChartOfAccount(req.params.id, rest);
+      const { includeInDre } = (req.body || {}) as any;
+      const rest = sanitizeChartAccount(req.body);
+      const account: any = Object.keys(rest).length
+        ? await storage.updateChartOfAccount(req.params.id, rest)
+        : await storage.getChartOfAccount(req.params.id);
       if (typeof includeInDre === 'boolean') { try { await db.execute(sql`UPDATE chart_of_accounts SET include_in_dre = ${includeInDre} WHERE id = ${req.params.id}`); } catch {} }
       const fq: any = await db.execute(sql`SELECT include_in_dre FROM chart_of_accounts WHERE id = ${req.params.id}`);
       const inc = ((((fq as any).rows) || [])[0]?.include_in_dre) !== false;
