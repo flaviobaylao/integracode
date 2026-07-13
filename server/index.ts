@@ -146,6 +146,20 @@ run();
   const { fireAutomation } = await import('./automation-engine');
   const server = await registerRoutes(app);
 
+  // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
+  (async () => {
+    try {
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS draw_date varchar"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS phase varchar"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS carteira_seller_id varchar"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS route_stop_id varchar"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
+      await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_repescagem_assign_draw ON repescagem_assignments(draw_date)"));
+    } catch (e: any) {
+      console.warn('[REPESCAGEM2-MIGRATION] falha (ignorada):', e?.message);
+    }
+  })();
+
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
   app.get('/api/admin/automations/mode', async (_req, res) => {
     try {
