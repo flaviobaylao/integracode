@@ -492,27 +492,28 @@ export default function BillingPipeline() {
   }, [selectedItems]);
 
   const handlePrintDanfe = useCallback(async () => {
-    const faturadoItems = selectedItems.filter(i => i.invoiceNumber);
-    if (faturadoItems.length === 0) {
-      toast({ title: 'Nenhum pedido faturado selecionado', description: 'Selecione pedidos que já possuem nota fiscal gerada', variant: 'destructive' });
+    if (selectedItems.length === 0) {
+      toast({ title: 'Nenhum pedido selecionado', description: 'Selecione pedidos já faturados', variant: 'destructive' });
       return;
     }
 
     setIsPrintingDanfe(true);
     try {
-      const invoiceNumbers = faturadoItems.map(i => i.invoiceNumber!);
-      const response = await fetch('/api/fiscal-invoices/batch', {
+      // Resolve pelo VÍNCULO REAL (sales_card_id): pega a NF mesmo quando o card ficou
+      // "faturado" sem o invoice_number gravado (NF autorizada async pela SEFAZ).
+      const ids = selectedItems.map(i => i.id);
+      const response = await fetch('/api/billing-pipeline/danfes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ invoiceNumbers }),
+        body: JSON.stringify({ ids }),
       });
 
       if (!response.ok) throw new Error('Erro ao buscar notas fiscais');
       const invoices: DanfeInvoice[] = await response.json();
 
       if (invoices.length === 0) {
-        toast({ title: 'Nenhuma NF-e encontrada', description: 'As notas fiscais para os pedidos selecionados não foram encontradas', variant: 'destructive' });
+        toast({ title: 'Nenhuma NF-e encontrada', description: 'Os pedidos selecionados não possuem nota fiscal autorizada vinculada', variant: 'destructive' });
         return;
       }
 
@@ -558,15 +559,15 @@ export default function BillingPipeline() {
       const rows = resp.ok ? await resp.json() : [];
       const byItem = new Map<string, any>();
       for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
-      const invNums = selectedItems.filter((i) => i.invoiceNumber).map((i) => i.invoiceNumber);
-      const danfeByNum = new Map<string, DanfeInvoice>();
-      if (invNums.length) {
-        try {
-          const fr = await fetch('/api/fiscal-invoices/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ invoiceNumbers: invNums }) });
-          if (fr.ok) { const invs: DanfeInvoice[] = await fr.json(); for (const inv of invs) { danfeByNum.set(String(inv.invoiceNumber), inv); } }
-        } catch (e) {}
-      }
-      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
+      // Resolve as DANFEs pelo VÍNCULO REAL (sales_card_id) e NÃO só pelo invoice_number do
+      // card — itens "faturado" com invoice_number nulo (NF autorizada async pela SEFAZ) antes
+      // saíam SEM a nota. O endpoint retorna por itemId e cicatriza o card.
+      const danfeByItem = new Map<string, DanfeInvoice>();
+      try {
+        const fr = await fetch('/api/billing-pipeline/danfes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ids }) });
+        if (fr.ok) { const invs: (DanfeInvoice & { itemId?: string })[] = await fr.json(); for (const inv of invs) { if (inv.itemId) danfeByItem.set(inv.itemId, inv); } }
+      } catch (e) {}
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const danfe = danfeByItem.get(it.id) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber || (danfe ? `NF-${danfe.invoiceNumber}` : undefined), saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
       const n = await generateCompletoPdf(list);
       toast({ title: n + ' pedido(s) impresso(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
