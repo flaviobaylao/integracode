@@ -714,11 +714,20 @@ export function registerFinancialRoutes(app: Express) {
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
       const receivables = await storage.getReceivables(filters);
+      const all = receivables as any[];
       // FASE 3.2 - paginacao opcional (?limit=&offset=). Sem os parametros, retorna tudo.
       const limitR = parseInt(String(req.query.limit || '')) || 0;
       const offsetR = parseInt(String(req.query.offset || '')) || 0;
-      const pageR = limitR > 0 ? (receivables as any[]).slice(offsetR, offsetR + limitR) : (receivables as any[]);
+      const pageR = limitR > 0 ? all.slice(offsetR, offsetR + limitR) : all;
       try { attachBadges(pageR, await badgeFlagsFor('receivable'), 'recebida'); } catch {}
+      // ?paged=1: retorna a PAGINA + um RESUMO (contagem e somas) calculado sobre TODO o
+      // conjunto filtrado no servidor. Permite abrir a tela SEM filtro e ainda assim rapido:
+      // manda so a 1a pagina e os totais vem do resumo (nao baixa 10k+ linhas no cliente).
+      if (req.query.paged) {
+        let amount = 0, paid = 0;
+        for (const r of all) { amount += Number(r.amount || 0); paid += Number(r.amountPaid || 0); }
+        return res.json({ rows: pageR, total: all.length, summary: { count: all.length, amount, paid, saldo: amount - paid } });
+      }
       res.json(pageR);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
