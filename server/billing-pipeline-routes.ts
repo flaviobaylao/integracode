@@ -1281,6 +1281,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
 
   let cfop = isWithinState ? '5102' : '6102';
   let natureOfOperation = 'Venda de mercadoria';
+  let fiscalScenarioId: string | null = null;
   if (operationType === 'bonificacao') {
     cfop = isWithinState ? '5910' : '6910';
     natureOfOperation = 'Bonificação';
@@ -1290,6 +1291,23 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   } else if (operationType === 'amostra') {
     cfop = isWithinState ? '5911' : '6911';
     natureOfOperation = 'Amostra grátis';
+  } else if (operationType === 'transferencia') {
+    // Transferência entre filiais: usa o CENÁRIO FISCAL de transferência
+    // (CFOP/CST/natureza configurados em Cenários Fiscais), preferindo o cenário
+    // da instância emitente. A NF é criada como rascunho para conferência antes de emitir.
+    natureOfOperation = 'Transferência de mercadoria';
+    cfop = isWithinState ? '5152' : '6152';
+    try {
+      const _scen = await storage.getFiscalScenarios();
+      const _inst = item.omieInstanceId || null;
+      const _t = (_scen || []).find((s: any) => s.operationType === 'transferencia' && _inst && s.omieInstanceId === _inst)
+              || (_scen || []).find((s: any) => s.operationType === 'transferencia');
+      if (_t) {
+        fiscalScenarioId = _t.id;
+        if (_t.cfop) cfop = _t.cfop;
+        if (_t.natureOfOperation) natureOfOperation = _t.natureOfOperation;
+      }
+    } catch { /* mantém CFOP/natureza padrão de transferência */ }
   }
 
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
@@ -1333,6 +1351,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     customerPhone: customer?.phone || '',
     natureOfOperation,
     cfop,
+    fiscalScenarioId,
     totalProducts: totalValue.toFixed(2),
     totalInvoice: totalValue.toFixed(2),
     paymentMethod: item.paymentMethod || 'a_vista',
