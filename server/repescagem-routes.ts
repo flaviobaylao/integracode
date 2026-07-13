@@ -798,6 +798,64 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
+  // ── Repescagem2 Fase 3: camada sobreposta na Rota do Dia ───────────────────
+  // Alocações do sorteio (status 'in_route') do vendedor no dia. Ficam FORA de
+  // optimized_order, logo intocadas pela otimização/auto-regeneração (travadas).
+  app.get('/api/repescagem/route-overlay', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const sellerId = String(req.query.sellerId || '').trim();
+      const date = String(req.query.date || '').trim();
+      if (!sellerId || !date) return res.status(400).json({ message: 'sellerId e date obrigatórios' });
+      if (user.role === 'vendedor' && sellerId !== user.id) return res.status(403).json({ message: 'Acesso negado' });
+
+      const rows = await db.select().from(repescagemAssignments).where(and(
+        eq(repescagemAssignments.assignedUserId, sellerId),
+        eq(repescagemAssignments.drawDate, date),
+        eq(repescagemAssignments.status, 'in_route'),
+      ));
+      if (rows.length === 0) return res.json([]);
+      const cids = Array.from(new Set(rows.map(r => r.customerId)));
+      const cs = await db.select({
+        id: customers.id,
+        name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+        phone: customers.phone, city: customers.city, uf: customers.state,
+        virtualService: customers.virtualService,
+      }).from(customers).where(inArray(customers.id, cids));
+      const byId = new Map(cs.map(c => [c.id, c]));
+      res.json(rows.map(r => {
+        const c = byId.get(r.customerId);
+        return {
+          assignmentId: r.id, customerId: r.customerId, customerName: c?.name || r.customerId,
+          phone: c?.phone || null, city: c?.city || null, uf: c?.uf || null,
+          phase: r.phase, isVirtualClient: !!c?.virtualService,
+        };
+      }));
+    } catch (e: any) {
+      console.error('GET /api/repescagem/route-overlay', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Admin remove um cliente da repescagem do dia — volta ao bolo (novo sorteio).
+  app.post('/api/repescagem/route-overlay/:assignmentId/return', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { assignmentId } = req.params;
+      const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, assignmentId));
+      if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
+      await db.update(repescagemAssignments).set({ status: 'returned', locked: false, updatedAt: new Date() })
+        .where(eq(repescagemAssignments.id, assignmentId));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId, customerId: rows[0].customerId, fromUserId: rows[0].assignedUserId, toUserId: null,
+        action: 'cancelled', reason: 'Removido da rota pelo admin — volta à repescagem',
+      });
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/route-overlay/:id/return', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   // Listar atendentes (habilitados + perfil disponíveis para se habilitarem)
   app.get('/api/repescagem/attendants', authenticateUser, requireRole(ALLOWED_ROLES), async (_req, res) => {
     try {
