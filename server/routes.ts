@@ -2260,12 +2260,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Only allow coordinate changes if user can manage locks or if they're unlocking simultaneously
         if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
-          return res.status(403).json({ 
-            message: "As coordenadas estão travadas e só podem ser modificadas por administradores, coordenadores ou administrativos" 
+          return res.status(403).json({
+            message: "As coordenadas estão travadas e só podem ser modificadas por administradores, coordenadores ou administrativos"
           });
         }
       }
-      
+
+      // Alteração MANUAL da coordenada destrava o cadastro: o próximo check-in do
+      // vendedor volta a gravar+travar a coordenada correta (reverificação). Se quem
+      // edita já enviou coordinatesLocked explicitamente, respeitamos essa escolha.
+      if ((data.latitude !== undefined || data.longitude !== undefined) &&
+          (String(data.latitude) !== String(currentCustomer.latitude) || String(data.longitude) !== String(currentCustomer.longitude)) &&
+          data.coordinatesLocked === undefined) {
+        data.coordinatesLocked = false;
+        console.log(`🔓 [COORD-UNLOCK] Cliente ${id}: coordenada alterada manualmente → destravada para reverificação no próximo check-in`);
+      }
+
       // Verificar duplicidade de CPF (se está sendo alterado)
       if (data.cpf && data.cpf !== currentCustomer.cpf) {
         const existingCustomer = await storage.getCustomerByCpf(data.cpf);
@@ -16580,11 +16590,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // ── Coordenada confirmada por GPS no check-in do vendedor externo ──────────
-      // 1ª visita (coordenada ainda NÃO travada): adota o GPS do check-in SEMPRE,
-      //   mesmo > 100 m, para autocorrigir cadastros grosseiramente errados, e trava.
-      // Visitas seguintes (já travada): corrige só se estiver NO LOCAL (≤ 100 m —
-      //   mesma régua do "fora do local") e houver divergência (> 15 m). Check-ins
-      //   FORA do local (> 100 m) são ignorados. Sem divergência, mantém.
+      // O vendedor chega no local e tira a foto: neste momento a coordenada do GPS é
+      // gravada no cadastro e TRAVADA (só ocorre quando ainda NÃO está travada).
+      // Enquanto travada, o check-in NÃO refaz essa checagem nem altera a coordenada
+      // (o vendedor ainda pode buscar a localização manualmente, como hoje). Se a
+      // localização for alterada manualmente, o cadastro é destravado e o próximo
+      // check-in volta a gravar+travar a coordenada correta (reverificação).
       try {
         const actingRole = req.currentUser?.role;
         const gLat = parseFloat(String(latitude));
@@ -16592,16 +16603,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (actingRole === 'vendedor' && currentCard.customerId && !isNaN(gLat) && !isNaN(gLng)) {
           const cust: any = await storage.getCustomer(currentCard.customerId);
           const isLocked = !!(cust && cust.coordinatesLocked);
-          const gLatS = gLat.toFixed(6);
-          const gLngS = gLng.toFixed(6);
-          const adopt = !isLocked
-            ? true // 1ª confirmação: adota sempre (bootstrap)
-            : (checkInDistance != null && checkInDistance <= 100 && checkInDistance > 15); // já travada: corrige no local
-          if (adopt) {
+          if (!isLocked) {
+            const gLatS = gLat.toFixed(6);
+            const gLngS = gLng.toFixed(6);
             await storage.updateCustomer(currentCard.customerId, { latitude: gLatS, longitude: gLngS, coordinatesLocked: true } as any);
             updateData.customerLatitude = gLatS;
             updateData.customerLongitude = gLngS;
-            console.log(`📍 [CHECKIN-COORD] Cliente ${currentCard.customerId}: coordenada ${isLocked ? 'corrigida' : 'adotada (1a visita)'} por GPS (dist ${checkInDistance != null ? checkInDistance.toFixed(0) : 'n/a'}m) e travada`);
+            console.log(`📍 [CHECKIN-COORD] Cliente ${currentCard.customerId}: coordenada gravada por GPS (dist ${checkInDistance != null ? checkInDistance.toFixed(0) : 'n/a'}m) e travada`);
           }
         }
       } catch (coordErr) {
@@ -24631,6 +24639,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Alteração MANUAL da coordenada destrava o lead: o próximo check-in do
+      // vendedor volta a gravar+travar a coordenada correta (reverificação).
+      if ((updateData.latitude !== undefined || updateData.longitude !== undefined) &&
+          (String(updateData.latitude) !== String(existingLead.latitude) || String(updateData.longitude) !== String(existingLead.longitude)) &&
+          updateData.coordinatesLocked === undefined) {
+        updateData.coordinatesLocked = false;
+        console.log(`🔓 [COORD-UNLOCK] Lead ${id}: coordenada alterada manualmente → destravada para reverificação no próximo check-in`);
+      }
+
       const lead = await storage.updateLead(id, updateData);
       res.json(lead);
     } catch (error) {
@@ -24849,17 +24866,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       checkInDistance = R * c;
 
       // Coordenada por GPS do vendedor externo (mesma regra dos clientes):
-      // 1ª visita (lead ainda sem check-in) adota o GPS SEMPRE, mesmo > 100 m,
-      // para autocorrigir cadastro errado; depois corrige só NO LOCAL (≤ 100 m)
-      // e com divergência (> 15 m). Fora do local (> 100 m) é ignorado.
+      // grava e TRAVA na 1ª confirmação (enquanto NÃO travada). Enquanto travada, o
+      // check-in não refaz a checagem nem altera a coordenada. Alteração manual
+      // destrava e o próximo check-in volta a gravar+travar (reverificação).
       const leadCoordUpdate: any = {};
-      if (user.role === 'vendedor' && !isNaN(userLat) && !isNaN(userLon)) {
-        const firstVisit = !lead.lastCheckInAt;
-        if (firstVisit || (checkInDistance != null && checkInDistance <= 100 && checkInDistance > 15)) {
-          leadCoordUpdate.latitude = userLat.toFixed(6);
-          leadCoordUpdate.longitude = userLon.toFixed(6);
-          console.log(`📍 [CHECKIN-COORD] Lead ${id}: coordenada ${firstVisit ? 'adotada (1a visita)' : 'corrigida'} por GPS (dist ${checkInDistance != null ? checkInDistance.toFixed(0) : 'n/a'}m)`);
-        }
+      if (user.role === 'vendedor' && !isNaN(userLat) && !isNaN(userLon) && !(lead as any).coordinatesLocked) {
+        leadCoordUpdate.latitude = userLat.toFixed(6);
+        leadCoordUpdate.longitude = userLon.toFixed(6);
+        leadCoordUpdate.coordinatesLocked = true;
+        console.log(`📍 [CHECKIN-COORD] Lead ${id}: coordenada gravada por GPS (dist ${checkInDistance != null ? checkInDistance.toFixed(0) : 'n/a'}m) e travada`);
       }
 
       // Converter foto para base64
