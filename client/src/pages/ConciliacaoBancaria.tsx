@@ -20,7 +20,7 @@ type Item = {
   matched_at: string | null; notes: string | null;
   is_mirror?: boolean; mirror_from?: string | null;
 };
-type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any; chartAccountId?: string | null; chartLabel?: string | null };
+type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any; chartAccountId?: string | null; chartLabel?: string | null; jaBaixado?: boolean };
 type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number; chartAccountId: string; chartLabel: string };
 
 const fmtDate = (d: any): string => {
@@ -693,7 +693,7 @@ export default function ConciliacaoBancaria() {
                     {searchResults.map((t, idx) => (
                       <div key={idx} className="flex items-center gap-2 border rounded px-3 py-2">
                         <div className="flex-1 text-sm">
-                          <div><b>{t.title || "—"}</b> · {t.name || ""}</div>
+                          <div><b>{t.title || "—"}</b> · {t.name || ""}{t.jaBaixado ? <span className="ml-1 px-1 rounded bg-amber-100 text-amber-700 text-[10px] align-middle" title="Título já baixado (pago) mas ainda não conciliado no extrato — conciliar apenas vincula ao banco, sem dar baixa em dobro">já baixado</span> : null}</div>
                           <div className="text-xs text-gray-500">{fmtMoney(t.amount)} · venc {fmtDate(t.due)}{t.instance ? ` · ${t.instance}` : ""}{t.document ? ` · ${t.document}` : ""}</div>
                         </div>
                         <button onClick={() => addToCart(t)} disabled={cart.some((c) => c.id === t.id)} className="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40">+ Adicionar</button>
