@@ -1155,7 +1155,10 @@ export function registerReconciliation(app: Express) {
         WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending') AND i.mirror_of IS NULL`));
       const groups: Record<string, any[]> = {};
       for (const r of rows) {
-        const k = [r.acc || '', r.d, r.v, r.type, r.nd, r.doc].join('|');
+        // Chave por identidade ECONOMICA (conta|data|valor|tipo|descricao normalizada).
+        // NAO inclui o document/FITID: a mesma transacao vem com refs diferentes entre
+        // importacoes, e incluir o doc quebrava os grupos e deixava duplicatas passarem.
+        const k = [r.acc || '', r.d, r.v, r.type, r.nd].join('|');
         (groups[k] ||= []).push(r);
       }
       const ignorar: string[] = [];
