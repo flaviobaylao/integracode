@@ -16511,6 +16511,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
+      const checkInNotes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
 
       // Buscar dados do card para verificar se é virtual e calcular distância
       const currentCard = await storage.getSalesCard(id);
@@ -16568,12 +16569,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
       }
 
-      const updateData = {
+      const updateData: any = {
         checkInTime: nowBrazil(),
         checkInLatitude: latitude.toString(),
         checkInLongitude: longitude.toString(),
         distanceToCustomer: checkInDistance?.toString() || null,
-        checkInPhotoUrl: photoUrl
+        checkInPhotoUrl: photoUrl,
+        // Observações do check-in (quando informadas).
+        ...(checkInNotes ? { checkInNotes } : {}),
       };
 
       await storage.updateSalesCard(id, updateData);
