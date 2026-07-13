@@ -1068,10 +1068,10 @@ export default function BillingPipeline() {
                         {editMode ? (editData?.products || []).map((p: any, i: number) => (
                           <tr key={i} className="border-t">
                             <td className="p-1.5 text-gray-400">{i + 1}</td>
-                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; return { ...d, products: pr }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; return { ...d, products: pr }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; return { ...d, products: pr }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => ({ ...d, products: d.products.filter((_: any, x: number) => x !== i) }))} className="text-red-500 ml-1">✕</button></td>
+                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => { const pr = d.products.filter((_: any, x: number) => x !== i); const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="text-red-500 ml-1">✕</button></td>
                           </tr>
                         )) : detailItem.products?.map((p, i) => (
                           <tr key={i} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
@@ -1086,7 +1086,7 @@ export default function BillingPipeline() {
                       <tfoot className="bg-gray-50 dark:bg-gray-700">
                         <tr className="border-t-2">
                           <td colSpan={4} className="p-2.5 text-right font-bold">Total:</td>
-                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(detailItem.saleValue)}</td>
+                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(editMode ? editData?.saleValue : detailItem.saleValue)}</td>
                         </tr>
                       </tfoot>
                     </table>
