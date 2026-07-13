@@ -915,7 +915,21 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (operationType !== undefined) updates.operationType = operationType || null;
       if (sellerId !== undefined) updates.sellerId = sellerId || null;
       if (sellerName !== undefined) updates.sellerName = sellerName || null;
-      if (products !== undefined) updates.products = products;
+      if (products !== undefined) {
+        updates.products = products;
+        // Valor Total = soma dos produtos (fonte da verdade). Ao duplicar e editar um
+        // pedido, o total ficava defasado (mantinha o valor do pedido original). Aqui
+        // recalculamos sempre que os produtos mudam, para o total (e a NF) baterem com os itens.
+        if (Array.isArray(products)) {
+          const _sum = products.reduce((t: number, p: any) => {
+            const line = (p && p.totalPrice != null && String(p.totalPrice) !== '')
+              ? parseFloat(String(p.totalPrice))
+              : (parseFloat(String(p?.quantity ?? 0)) || 0) * (parseFloat(String(p?.unitPrice ?? 0)) || 0);
+            return t + (isNaN(line) ? 0 : line);
+          }, 0);
+          updates.saleValue = _sum.toFixed(2);
+        }
+      }
       if (customerName !== undefined) updates.customerName = customerName;
       if (customerDocument !== undefined) updates.customerDocument = customerDocument;
 
