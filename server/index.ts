@@ -2578,6 +2578,58 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     }
   });
 
+  // Resolve as DANFEs dos itens do pipeline pelo VÍNCULO REAL da nota (sales_card_id),
+  // NÃO só pelo invoice_number do card. Muitos itens ficam "faturado" com invoice_number
+  // NULO (a NF-e é autorizada de forma assíncrona pela SEFAZ e o número não é gravado de
+  // volta no card) — então a impressão "completo"/DANFE saía SEM a nota. Aqui achamos a NF
+  // pelo cartão de venda (à prova de colisão de número entre emitentes/clientes), retornamos
+  // no MESMO formato do /batch e AINDA cicatrizamos o card (grava o NF-xxxx que faltava).
+  app.post("/api/billing-pipeline/danfes", async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+      const valid = ids.filter((x: any) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));
+      if (valid.length === 0) return res.json([]);
+      const results: any[] = [];
+      for (const id of valid) {
+        try {
+          const item: any = await storage.getBillingPipelineItem(id);
+          if (!item) continue;
+          let nf: any = null;
+          // 1) VÍNCULO FORTE: sales_card_id (melhor NF: produção + autorizada primeiro).
+          if (item.salesCardId) {
+            const r: any = await db.execute(sql`SELECT id, invoice_number, status FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status NOT IN ('cancelled','cancelada') ORDER BY (COALESCE(environment,'producao')='producao') DESC, (status='authorized') DESC, created_at DESC LIMIT 1`);
+            nf = ((r?.rows ?? r) as any[])[0] || null;
+          }
+          // 2) número + MESMO cliente (nunca só por número — ele se repete entre emitentes).
+          if (!nf) {
+            const numRef = String(item.invoiceNumber || '').replace(/\D/g, '');
+            if (numRef && item.customerId) {
+              const r: any = await db.execute(sql`SELECT id, invoice_number, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} AND customer_id = ${item.customerId} AND status NOT IN ('cancelled','cancelada') ORDER BY (COALESCE(environment,'producao')='producao') DESC, (status='authorized') DESC, created_at DESC LIMIT 1`);
+              nf = ((r?.rows ?? r) as any[])[0] || null;
+            }
+          }
+          // 3) referência por notes (pedido pipeline interno sem sales_card_id).
+          if (!nf && !item.salesCardId && item.orderNumber) {
+            const r: any = await db.execute(sql`SELECT id, invoice_number, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status NOT IN ('cancelled','cancelada') ORDER BY (status='authorized') DESC, created_at DESC LIMIT 1`);
+            nf = ((r?.rows ?? r) as any[])[0] || null;
+          }
+          if (!nf) continue;
+          const inv: any = await storage.getFiscalInvoice(nf.id);
+          if (!inv) continue;
+          const invItems = await storage.getFiscalInvoiceItems(nf.id);
+          results.push({ itemId: id, ...inv, items: invItems });
+          // Cicatriza o card: grava o número da NF que faltava (idempotente).
+          if (!item.invoiceNumber && nf.invoice_number) {
+            try { await storage.updateBillingPipelineItem(id, { invoiceNumber: `NF-${nf.invoice_number}` } as any); } catch (e) {}
+          }
+        } catch (e) { /* item a item: uma falha não derruba o lote */ }
+      }
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
   app.get("/api/dashboard2/full", async (_req, res) => {
