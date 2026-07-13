@@ -32,10 +32,14 @@ function attachBadges(items: any[], flags: { ofx: Set<string>; autoBB: Set<strin
     const amt = parseFloat(it.amount || '0');
     const paid = parseFloat(it.amountPaid || '0');
     const quitada = String(it.status) === paidStatus || (amt > 0 && paid >= amt - 0.005);
+    // Conciliada = quitada COM vinculo bancario real (extrato OFX ou baixa automatica BB).
+    // Baixado = quitada por baixa manual, SEM conciliacao no extrato bancario (nao confundir).
+    const conciliadoBanco = quitada && (flags.autoBB.has(String(it.id)) || flags.ofx.has(String(it.id)));
     it.badges = {
       dre: !!it.chartAccountId,
       fluxo: !!it.financialAccountId,
-      conciliada: quitada,
+      conciliada: conciliadoBanco,
+      baixado: quitada && !conciliadoBanco,
       origem: quitada ? (flags.autoBB.has(String(it.id)) ? 'webhook' : (flags.ofx.has(String(it.id)) ? 'extrato' : 'manual')) : null,
     };
   }
