@@ -8532,70 +8532,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Regeneração ESCOPADA dos telemarketing: agenda por periodicidade+dia (isVirtual) + rotas virtuais.
   // Âncora = próxima ocorrência (regra dos externos). Não toca nos vendedores externos.
+  // ============================================================================
+  // Regeneração de agenda de telemarketing (reutilizável): usada tanto pelo
+  // endpoint manual quanto pela auto-regeneração semanal (trava de 7 dias).
+  // Gera 4 próximas ocorrências por cliente conforme periodicidade + weekdays,
+  // limpa o "dump" de virtuais em daily_routes e garante rota-âncora vazia.
+  // ============================================================================
+  let __tmRegenRunning = false;
+  let __lastTmRegenCheckMs = 0;
+  const TM_AUTOREGEN_KEY = 'telemarketing_last_autoregen';
+  const TM_AUTOREGEN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+
+  async function runTelemarketingRegen(): Promise<any> {
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    const tm = await db.execute(sql`SELECT id FROM users WHERE role = 'telemarketing'`);
+    const sellerIds = (tm.rows as any[]).map(r => String(r.id)).filter(Boolean);
+    if (sellerIds.length === 0) return { message: 'Nenhum vendedor telemarketing', custProcessed: 0 };
+
+    const custRes = await db.execute(sql`
+      SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address
+      FROM customers
+      WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
+        AND is_active = true
+        AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
+
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+    let custProcessed = 0, agendaCreated = 0;
+    const routeKeys = new Set<string>();
+
+    for (const c of custRes.rows as any[]) {
+      let weekdays: any;
+      try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { continue; }
+      if (!Array.isArray(weekdays) || weekdays.length === 0) continue;
+      const periodicity = c.visit_periodicity || 'semanal';
+
+      // Limpa agenda futura pendente deste cliente e regenera
+      await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${today.toISOString()}`);
+
+      let dates: Date[] = [];
+      try {
+        const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today }).nextDate;
+        dates.push(first);
+        let last = first;
+        for (let i = 0; i < 3; i++) { const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last }).nextDate; dates.push(nx); last = nx; }
+      } catch { continue; }
+
+      for (const dt of dates) {
+        const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
+        const iso = ds.toISOString();
+        await db.execute(sql`
+          INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+          VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
+        agendaCreated++;
+        routeKeys.add(`${c.seller_id}|${iso.slice(0, 10)}`);
+      }
+      custProcessed++;
+    }
+
+    // Garante uma rota (vazia) por vendedor/dia para o GET montar os atendimentos virtuais;
+    // limpa o "dump" de rotas já existentes (optimized_order de virtuais).
+    let routesTouched = 0;
+    for (const key of routeKeys) {
+      const [sid, ds] = key.split('|');
+      const sod = ds + 'T00:00:00.000Z';
+      const ex = await db.execute(sql`SELECT id FROM daily_routes WHERE seller_id = ${sid} AND DATE(route_date) = ${ds}::date LIMIT 1`);
+      if ((ex.rows as any[]).length > 0) {
+        await db.execute(sql`UPDATE daily_routes SET optimized_order = '[]'::jsonb, visit_stops = '{}'::jsonb, total_visits = 0, updated_at = now() WHERE id = ${(ex.rows[0] as any).id}`);
+      } else {
+        await db.execute(sql`INSERT INTO daily_routes (seller_id, route_date, start_latitude, start_longitude, optimized_order, visit_stops, total_visits, completed_visits, route_status) VALUES (${sid}, ${sod}, '0', '0', '[]'::jsonb, '{}'::jsonb, 0, 0, 'pending')`);
+      }
+      routesTouched++;
+    }
+
+    return { message: 'Regeneração telemarketing concluída', sellers: sellerIds.length, custProcessed, agendaCreated, routesTouched };
+  }
+
+  // Auto-regeneração semanal (Opção A): disparada de forma throttled quando a
+  // Rota do Dia é carregada. Trava de 7 dias persistida em system_settings, então
+  // sobrevive a reinícios/deploys. Fire-and-forget — nunca bloqueia o request.
+  async function maybeAutoRegenTelemarketing(): Promise<void> {
+    const nowMs = Date.now();
+    // Evita ler settings a cada request: checa no máx. 1x a cada 10 min por instância.
+    if (__tmRegenRunning || (nowMs - __lastTmRegenCheckMs) < 600000) return;
+    __lastTmRegenCheckMs = nowMs;
+    try {
+      const settings = await storage.getSystemSettings();
+      const row = (settings as any[]).find((s: any) => s.key === TM_AUTOREGEN_KEY);
+      const lastMs = row ? Number(row.value) || 0 : 0;
+      if (nowMs - lastMs < TM_AUTOREGEN_INTERVAL_MS) return;
+      __tmRegenRunning = true;
+      // Marca ANTES de rodar p/ evitar corrida entre requests/instâncias concorrentes.
+      await storage.upsertSystemSetting({ key: TM_AUTOREGEN_KEY, value: String(nowMs), description: 'Última auto-regeneração semanal de rotas telemarketing (epoch ms)', updatedBy: 'system' });
+      runTelemarketingRegen()
+        .then((r) => console.log(`🔄 [TM-AUTOREGEN] ${r.custProcessed} clientes, ${r.agendaCreated} agendas, ${r.routesTouched} rotas`))
+        .catch((e) => console.warn('[TM-AUTOREGEN] falha:', (e as any)?.message))
+        .finally(() => { __tmRegenRunning = false; });
+    } catch (e) {
+      __tmRegenRunning = false;
+      console.warn('[TM-AUTOREGEN] check falhou:', (e as any)?.message);
+    }
+  }
+
   app.post('/api/telemarketing/regenerate-schedule', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
-      const { calculateNextVisitDate } = await import('../shared/visitSchedule');
-      const tm = await db.execute(sql`SELECT id FROM users WHERE role = 'telemarketing'`);
-      const sellerIds = (tm.rows as any[]).map(r => String(r.id)).filter(Boolean);
-      if (sellerIds.length === 0) return res.json({ message: 'Nenhum vendedor telemarketing', custProcessed: 0 });
-
-      const custRes = await db.execute(sql`
-        SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address
-        FROM customers
-        WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
-          AND is_active = true
-          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
-
-      const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-      const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-      let custProcessed = 0, agendaCreated = 0;
-      const routeKeys = new Set<string>();
-
-      for (const c of custRes.rows as any[]) {
-        let weekdays: any;
-        try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { continue; }
-        if (!Array.isArray(weekdays) || weekdays.length === 0) continue;
-        const periodicity = c.visit_periodicity || 'semanal';
-
-        // Limpa agenda futura pendente deste cliente e regenera
-        await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${today.toISOString()}`);
-
-        let dates: Date[] = [];
-        try {
-          const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today }).nextDate;
-          dates.push(first);
-          let last = first;
-          for (let i = 0; i < 3; i++) { const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last }).nextDate; dates.push(nx); last = nx; }
-        } catch { continue; }
-
-        for (const dt of dates) {
-          const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
-          const iso = ds.toISOString();
-          await db.execute(sql`
-            INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
-            VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
-          agendaCreated++;
-          routeKeys.add(`${c.seller_id}|${iso.slice(0, 10)}`);
-        }
-        custProcessed++;
-      }
-
-      // Garante uma rota (vazia) por vendedor/dia para o GET montar os atendimentos virtuais;
-      // limpa o "dump" de rotas já existentes (optimized_order de virtuais).
-      let routesTouched = 0;
-      for (const key of routeKeys) {
-        const [sid, ds] = key.split('|');
-        const sod = ds + 'T00:00:00.000Z';
-        const ex = await db.execute(sql`SELECT id FROM daily_routes WHERE seller_id = ${sid} AND DATE(route_date) = ${ds}::date LIMIT 1`);
-        if ((ex.rows as any[]).length > 0) {
-          await db.execute(sql`UPDATE daily_routes SET optimized_order = '[]'::jsonb, visit_stops = '{}'::jsonb, total_visits = 0, updated_at = now() WHERE id = ${(ex.rows[0] as any).id}`);
-        } else {
-          await db.execute(sql`INSERT INTO daily_routes (seller_id, route_date, start_latitude, start_longitude, optimized_order, visit_stops, total_visits, completed_visits, route_status) VALUES (${sid}, ${sod}, '0', '0', '[]'::jsonb, '{}'::jsonb, 0, 0, 'pending')`);
-        }
-        routesTouched++;
-      }
-
-      res.json({ message: 'Regeneração telemarketing concluída', sellers: sellerIds.length, custProcessed, agendaCreated, routesTouched });
+      const result = await runTelemarketingRegen();
+      res.json(result);
     } catch (error: any) {
       console.error('Erro na regeneração telemarketing:', error);
       res.status(500).json({ message: 'Erro na regeneração', error: String(error?.message || error) });
@@ -18633,11 +18675,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       const { sellerId } = req.params;
-      
+
       // Vendedor só pode ver sua própria rota
       if (user.role === 'vendedor' && sellerId !== user.id) {
         return res.status(403).json({ message: 'Acesso negado' });
       }
+
+      // Auto-regeneração semanal de telemarketing (throttled, fire-and-forget).
+      maybeAutoRegenTelemarketing();
 
       // Usar timezone do Brasil para garantir que encontramos a rota correta
       const todayBrazil = todayBrazilMidnight();
@@ -19068,6 +19113,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (user.role === 'vendedor' && sellerId !== user.id) {
         return res.status(403).json({ message: 'Acesso negado' });
       }
+
+      // Auto-regeneração semanal de telemarketing (throttled, fire-and-forget).
+      maybeAutoRegenTelemarketing();
 
       // Parse date string as UTC midnight (matches how routes are stored)
       const routeDate = new Date(`${date}T00:00:00.000Z`);
