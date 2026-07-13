@@ -4601,6 +4601,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updated = await storage.updateSalesCard(orderId, { status: 'completed' } as any);
 
+      // Envia o pedido finalizado do hotsite para o Pipeline de Faturamento
+      // (mesma rede de seguranca do PUT de sales-cards). Sem isto, os pedidos do
+      // hotsite finalizados nao entravam no pipeline. Idempotente (dedup por
+      // salesCardId) e nao bloqueia a resposta.
+      try {
+        const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+        const cardForPipeline: any = { ...updated, saleValue: (updated as any).saleValue ?? (order as any).saleValue };
+        await autoSendToBillingPipeline(cardForPipeline, user?.email || 'system');
+      } catch (e: any) {
+        console.error('[FINALIZE-HOTSITE-ORDER] autoSend pipeline (ignorado):', e?.message);
+      }
+
       console.log('✅ [FINALIZE-HOTSITE-ORDER] Pedido finalizado:', orderId);
       res.json({ success: true, order: updated });
     } catch (error) {
