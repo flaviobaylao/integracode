@@ -379,7 +379,7 @@ function isAdminOnly(req: any, res: any, next: any) {
 // Telemarketing tem acesso SOMENTE de leitura — as mutações seguem em isAdminOnly.
 function isPipelineViewer(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
-  if (!user || !['admin', 'coordinator', 'administrative', 'telemarketing'].includes(user.role)) {
+  if (!user || !['admin', 'coordinator', 'administrative', 'telemarketing', 'vendedor'].includes(user.role)) {
     return res.status(403).json({ message: 'Access denied' });
   }
   next();
