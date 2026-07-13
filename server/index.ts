@@ -2437,7 +2437,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
   // Emite um boleto (hibrido boleto+PIX) para um recebivel e devolve a viewUrl.
-  app.post("/api/financial/receivables/:id/emit-boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+  app.post("/api/financial/receivables/:id/emit-boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req, res) => {
     try {
       const recId = req.params.id;
       const ex: any = await db.execute(sql`SELECT id FROM boleto_charges WHERE receivable_id = ${recId} ORDER BY created_at DESC LIMIT 1`);
