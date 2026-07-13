@@ -2980,4 +2980,97 @@ export async function fetchNFeByChave(params: {
   return { ok: cStat === '138', cStat, xMotivo, fullXml, summary };
 }
 
+// ─── Manifestação do Destinatário — Ciência da Operação (tpEvento 210210) ────
+// Enviada ao Ambiente Nacional (cOrgao 91). É o que faz a SEFAZ liberar o XML
+// completo (procNFe) da NF-e de ENTRADA para o destinatário baixar. Reaproveita
+// o assinador do node-nfe-nfce (xml-crypto) e o mesmo mTLS do postSoap.
+const RECEP_EVENTO_AN_URL: Record<'producao' | 'homologacao', string> = {
+  producao: 'https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
+  homologacao: 'https://hom1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
+};
+
+function brasiliaIsoNow(): string {
+  const b = new Date(Date.now() - 3 * 3600 * 1000); // Brasil = UTC-3 (sem horário de verão)
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${b.getUTCFullYear()}-${p(b.getUTCMonth() + 1)}-${p(b.getUTCDate())}T${p(b.getUTCHours())}:${p(b.getUTCMinutes())}:${p(b.getUTCSeconds())}-03:00`;
+}
+
+export interface ManifestacaoResult {
+  ok: boolean;
+  cStat: string | null;
+  xMotivo: string | null;
+  error?: string;
+}
+
+export async function manifestarCiencia(params: {
+  chave: string;
+  cnpj: string;
+  ambiente?: 'producao' | 'homologacao';
+}): Promise<ManifestacaoResult> {
+  const chave = onlyDigits(params.chave);
+  const cnpj = onlyDigits(params.cnpj);
+  const ambiente: 'producao' | 'homologacao' = params.ambiente === 'homologacao' ? 'homologacao' : 'producao';
+  const tpAmb = ambiente === 'homologacao' ? '2' : '1';
+  if (chave.length !== 44) return { ok: false, cStat: null, xMotivo: null, error: 'Chave de acesso inválida.' };
+
+  const certId = await findCertificateForCnpj(cnpj);
+  if (!certId) return { ok: false, cStat: null, xMotivo: null, error: `Nenhum certificado A1 para o CNPJ ${cnpj}.` };
+  const certData = await loadCertFromStorage(certId);
+  if (!certData) return { ok: false, cStat: null, xMotivo: null, error: 'Falha ao carregar o certificado.' };
+
+  let signXmlX509: any;
+  try {
+    const sx: any = await import('node-nfe-nfce/lib/domain/use-cases/signature/sign-xml-x509');
+    signXmlX509 = sx.signXmlX509 || (sx.default && sx.default.signXmlX509);
+    if (!signXmlX509) throw new Error('signXmlX509 indisponível');
+  } catch (e: any) {
+    return { ok: false, cStat: null, xMotivo: null, error: `Assinador indisponível: ${e.message}` };
+  }
+
+  const id = `ID210210${chave}01`;
+  const evento =
+    `<evento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe">` +
+    `<infEvento Id="${id}">` +
+    `<cOrgao>91</cOrgao>` +
+    `<tpAmb>${tpAmb}</tpAmb>` +
+    `<CNPJ>${cnpj}</CNPJ>` +
+    `<chNFe>${chave}</chNFe>` +
+    `<dhEvento>${brasiliaIsoNow()}</dhEvento>` +
+    `<tpEvento>210210</tpEvento>` +
+    `<nSeqEvento>1</nSeqEvento>` +
+    `<verEvento>1.00</verEvento>` +
+    `<detEvento versao="1.00"><descEvento>Ciencia da Operacao</descEvento></detEvento>` +
+    `</infEvento></evento>`;
+
+  let signedEvento: string;
+  try {
+    signedEvento = signXmlX509(evento, 'infEvento', certData);
+  } catch (e: any) {
+    return { ok: false, cStat: null, xMotivo: null, error: `Falha ao assinar o evento: ${e.message}` };
+  }
+
+  const lote = `<envEvento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe"><idLote>1</idLote>${signedEvento}</envEvento>`;
+  const envelope =
+    `<?xml version="1.0" encoding="utf-8"?>` +
+    `<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">` +
+    `<soap12:Body>` +
+    `<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">${lote}</nfeDadosMsg>` +
+    `</soap12:Body></soap12:Envelope>`;
+
+  let responseXml: string;
+  try {
+    responseXml = await postSoap(RECEP_EVENTO_AN_URL[ambiente], envelope, certData.pem, certData.key);
+  } catch (e: any) {
+    return { ok: false, cStat: null, xMotivo: null, error: `Erro ao transmitir manifestação à SEFAZ: ${e.message}` };
+  }
+
+  // Prioriza o cStat DENTRO de retEvento (evento individual) sobre o cStat do lote.
+  const retScope = (responseXml.match(/<retEvento[\s\S]*?<\/retEvento>/i) || [])[0] || responseXml;
+  const cStat = ((retScope.match(/<cStat>(\d+)<\/cStat>/i) || [])[1]) || ((responseXml.match(/<cStat>(\d+)<\/cStat>/i) || [])[1]) || null;
+  const xMotivo = ((retScope.match(/<xMotivo>([^<]*)<\/xMotivo>/i) || [])[1]) || ((responseXml.match(/<xMotivo>([^<]*)<\/xMotivo>/i) || [])[1]) || null;
+  // 135 = registrado e vinculado; 136 = registrado (não vinculado); 573 = duplicidade (já manifestado)
+  const ok = ['135', '136', '573'].includes(String(cStat || ''));
+  return { ok, cStat: cStat ? String(cStat) : null, xMotivo: xMotivo || null };
+}
+
 export const sefazService = new SefazService();
