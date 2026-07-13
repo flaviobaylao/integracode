@@ -129,7 +129,8 @@ function LancamentoBadges({ item }: { item: any }) {
       {b.fluxo && <Badge variant="outline" className="border-blue-400 text-blue-700 px-1.5 py-0" title="Vinculada a conta financeira — entra no fluxo de caixa">Fluxo</Badge>}
       {b.conciliada && (b.origem === 'webhook'
         ? <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white px-1.5 py-0" title="Conciliada automaticamente pelo BB (webhook/consulta)">Conciliada</Badge>
-        : <Badge className="bg-green-500 hover:bg-green-500 text-white px-1.5 py-0" title={b.origem === 'extrato' ? 'Conciliada via extrato bancario (OFX)' : 'Baixa manual'}>Conciliada</Badge>)}
+        : <Badge className="bg-green-500 hover:bg-green-500 text-white px-1.5 py-0" title="Conciliada via extrato bancario (OFX)">Conciliada</Badge>)}
+      {b.baixado && <Badge className="bg-slate-400 hover:bg-slate-400 text-white px-1.5 py-0" title="Baixa manual (marcada como paga) — ainda NÃO conciliada no extrato bancário">Baixado</Badge>}
     </div>
   );
 }
