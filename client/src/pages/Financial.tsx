@@ -266,8 +266,11 @@ function ClassificacaoTab() {
 function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: boolean; canBoleto?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('vencida');
+  const [statusFilter, setStatusFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [dueDateStart, setDueDateStart] = useState('');
@@ -280,6 +283,9 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [form, setForm] = useState<any>({});
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
 
+  // Abre SEM filtro do usuario -> modo paginado rapido (1a pagina + resumo do servidor).
+  // Assim que qualquer filtro do cliente e usado, busca o conjunto completo (filtra no cliente).
+  const noClientFilters = sellerMulti.length === 0 && !customerSearch && valueMin === '' && valueMax === '';
   const buildUrl = () => {
     const p = new URLSearchParams();
     if (instanceId) p.set('instanceId', instanceId);
@@ -289,30 +295,32 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     if (endDate) p.set('endDate', endDate);
     if (dueDateStart) p.set('dueDateStart', dueDateStart);
     if (dueDateEnd) p.set('dueDateEnd', dueDateEnd);
+    if (noClientFilters) { p.set('paged', '1'); p.set('limit', '300'); }
     const qs = p.toString();
     return `/api/financial/receivables${qs ? `?${qs}` : ''}`;
   };
 
   const instanceNames = useInstanceNames();
-  const { data: receivables = [], isLoading } = useQuery<any[]>({
-    queryKey: ['/api/financial/receivables', instanceId, statusFilter, paymentMethodFilter, startDate, endDate, dueDateStart, dueDateEnd],
+  const { data: recData, isLoading } = useQuery<any>({
+    queryKey: ['/api/financial/receivables', instanceId, statusFilter, paymentMethodFilter, startDate, endDate, dueDateStart, dueDateEnd, noClientFilters],
     queryFn: async () => {
       const res = await fetch(buildUrl(), { credentials: 'include' });
-      if (!res.ok) return [];
+      if (!res.ok) return { rows: [], total: null, summary: null };
       const data = await res.json();
-      return Array.isArray(data) ? data : [];
+      if (data && !Array.isArray(data) && Array.isArray(data.rows)) return data;
+      return { rows: Array.isArray(data) ? data : [], total: null, summary: null };
     },
   });
+  const receivables: any[] = recData?.rows || [];
+  const serverSummary: any = recData?.summary || null;
+  const serverTotal: number | null = recData?.total ?? null;
 
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ['/api/financial/accounts'],
   });
 
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
-  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [sortAZ, setSortAZ] = useState(false);
-  const [valueMin, setValueMin] = useState('');
-  const [valueMax, setValueMax] = useState('');
   const filtered = receivables.filter((r: any) => {
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
@@ -324,6 +332,14 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     return true;
   });
   if (sortAZ) filtered.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
+
+  // Totais: no modo paginado usa o RESUMO do servidor (sobre todas as contas); com filtro
+  // do cliente ativo, soma sobre o conjunto completo carregado (filtered).
+  const dispCount = serverSummary ? serverSummary.count : filtered.length;
+  const dispAmount = serverSummary ? serverSummary.amount : filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
+  const dispPaid = serverSummary ? serverSummary.paid : filtered.reduce((s: number, r: any) => s + (Number(r.amountPaid) || 0), 0);
+  const dispSaldo = serverSummary ? serverSummary.saldo : filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0);
+  const dispShownOf = serverTotal ?? filtered.length;
 
   // Emite o DOCUMENTO de cobrança (boleto/PIX) em PDF, idêntico ao do pipeline de faturamento.
   const emitirCobranca = async (r: any) => {
@@ -541,13 +557,13 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length > 300 && (<TableRow><TableCell colSpan={13} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {filtered.length} contas — refine por status, período, vendedor ou busca. O total abaixo considera todas as {filtered.length} contas.</TableCell></TableRow>)}
-                  {filtered.length > 0 && (
+              {dispShownOf > 300 && (<TableRow><TableCell colSpan={13} className="text-center py-3 text-amber-700 bg-amber-50">Mostrando as primeiras 300 de {dispShownOf} contas — refine por status, período, vendedor ou busca. O total abaixo considera todas as {dispShownOf} contas.</TableCell></TableRow>)}
+                  {(filtered.length > 0 || dispCount > 0) && (
                 <TableRow className="bg-muted/50 font-semibold border-t-2">
-                  <TableCell colSpan={5}>Total ({filtered.length} {filtered.length === 1 ? 'conta' : 'contas'})</TableCell>
-                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0))}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(filtered.reduce((s: number, r: any) => s + (Number(r.amountPaid) || 0), 0))}</TableCell>
-                  <TableCell colSpan={6} className="text-muted-foreground">Saldo a receber: {formatCurrency(filtered.reduce((s: number, r: any) => s + ((Number(r.amount) || 0) - (Number(r.amountPaid) || 0)), 0))}</TableCell>
+                  <TableCell colSpan={5}>Total ({dispCount} {dispCount === 1 ? 'conta' : 'contas'})</TableCell>
+                  <TableCell className="text-right">{formatCurrency(dispAmount)}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(dispPaid)}</TableCell>
+                  <TableCell colSpan={6} className="text-muted-foreground">Saldo a receber: {formatCurrency(dispSaldo)}</TableCell>
                 </TableRow>
               )}
             </TableBody>
