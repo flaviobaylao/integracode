@@ -503,7 +503,8 @@ export const salesCards = pgTable("sales_cards", {
   distanceToCustomer: decimal("distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-in
   checkOutDistanceToCustomer: decimal("check_out_distance_to_customer", { precision: 10, scale: 2 }), // Distância em metros entre vendedor e cliente no check-out
   checkInPhotoUrl: text("check_in_photo_url"), // URL da foto tirada no check-in
-  
+  checkInNotes: text("check_in_notes"), // Observações registradas no check-in do cliente
+
   // Configurações de entrega com veículo exclusivo (admin-only)
   exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Entrega em veículo exclusivo
   vehicleTypes: jsonb("vehicle_types").$type<string[]>().default([]), // Tipos de veículos: ["caminhao", "carro", "moto"] - max 2
