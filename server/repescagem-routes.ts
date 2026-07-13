@@ -1015,7 +1015,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
       }
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
       if (existing.length === 0) {
+        // id explícito: a coluna no banco pode não ter DEFAULT gen_random_uuid(),
+        // então geramos o UUID no próprio INSERT para não violar o NOT NULL.
         await db.insert(repescagemAttendants).values({
+          id: sql`gen_random_uuid()`,
           userId,
           isEnabled: !!isEnabled,
           enabledAt: isEnabled ? new Date() : null,
