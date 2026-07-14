@@ -20942,6 +20942,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Pedidos do dia = BILLING_PIPELINE (fonte de verdade atual dos pedidos/faturamento).
       // Antes buscava em order_history/sales_cards (legado) e retornava vazio → "Visitas com Pedidos = 0".
       // Casa por customer_id + data de criação do pedido (todos os estágios do pipeline).
+      // SÓ conta como "pedido" a operação VENDA. Troca/Amostra/Devolução/etc. NÃO são pedido
+      // (contam apenas como registro de atendimento). Legado sem operation_type é tratado como venda.
       const ordersResult = await db.execute(sql`
         SELECT
           customer_id,
@@ -20952,6 +20954,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM billing_pipeline
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+          AND LOWER(COALESCE(NULLIF(operation_type, ''), 'venda')) = 'venda'
       `);
       
       // Indexar pedidos por customerId
@@ -20969,6 +20972,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Regras de "pedido do dia":
       //   - sale_value > 0 (tem venda)
       //   - status <> 'no_sale' (não-venda NÃO é pedido)
+      //   - operação = VENDA (Troca/Amostra/Devolução/etc. contam só como atendimento, não pedido;
+      //     legado sem operation_type é tratado como venda)
       //   - AGENDADO para o dia da rota: scheduled_date (America/Sao_Paulo) = routeDate
       //     (usar SÓ scheduled_date: completed/attendance de outras datas trazia cards duplicados de
       //      cadeias de recorrência, inflando o valor).
@@ -20980,6 +20985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND COALESCE(sale_value::numeric, 0) > 0
           AND status <> 'no_sale'
+          AND LOWER(COALESCE(NULLIF(operation_type, ''), 'venda')) = 'venda'
           AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
         ORDER BY customer_id, sale_value::numeric DESC
       `);
