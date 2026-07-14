@@ -742,20 +742,20 @@ export default function RotaDoDia() {
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
   }, [route?.visits]);
 
-  // Concluídas VIRTUAIS = SOMENTE clientes virtuais da rota que foram atendidos (atendimento registrado OU pedido do dia).
-  // Antes usava virtualServiceCount (contagem de service-logs), que incluía atendimentos de clientes
+  // Concluídas VIRTUAIS = SOMENTE clientes virtuais da rota com ATENDIMENTO virtual registrado (service log).
+  // Antes usava virtualServiceCount (contagem bruta de service-logs), que incluía atendimentos de clientes
   // presenciais e inflava as "concluídas virtuais" (ex.: 16 em vez de 4). Restringe aos virtuais da rota.
+  // (Não usar "tem pedido" como critério: um pedido sem atendimento virtual registrado não é uma concluída virtual.)
   const virtualConcludedIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => {
       if (!(v.isVirtual || v.visitType === 'virtual')) return;
       const cid = v.customerId;
       if (!cid) return;
-      const hasOrder = !!(customerInfo?.orders?.[cid]?.length);
-      if (attendedCustomerIds.has(cid) || hasOrder) s.add(String(cid));
+      if (attendedCustomerIds.has(cid)) s.add(String(cid));
     });
     return s;
-  }, [route?.visits, attendedCustomerIds, customerInfo]);
+  }, [route?.visits, attendedCustomerIds]);
 
   // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (CHECK-IN) + atendimentos virtuais realizados.
   // (Regra do check-out desligada: a visita é concluída no CHECK-IN.)
