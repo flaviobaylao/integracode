@@ -66,6 +66,8 @@ export default function PurchaseRadar() {
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
+  const [numParcelas, setNumParcelas] = useState(1);
+  const [installments, setInstallments] = useState<any[]>([]);
 
   const { data: invoices = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/purchases", statusFilter, search],
@@ -191,6 +193,23 @@ export default function PurchaseRadar() {
   const rmUnit = (id: string) => String((rawMaterials as any[]).find((r: any) => r.id === id)?.unit || "");
   const stockQtyOf = (m: any) => (Number(m.nfQty) || 0) * (Number(m.factor) || 0);
   const stockCostOf = (m: any) => { const f = Number(m.factor) || 0; return f > 0 ? (Number(m.nfUnitCost) || 0) / f : (Number(m.nfUnitCost) || 0); };
+
+  // Parcelamento da conta a pagar: divide o total em N parcelas (vencimento mensal a partir
+  // do 1o vencimento, valor dividido igualmente com a ultima parcela ajustando o arredondamento).
+  const genParcelas = (n: number, firstDue: string, total: number) => {
+    const arr: any[] = [];
+    const per = Math.floor((total / n) * 100) / 100;
+    let acc = 0;
+    for (let i = 0; i < n; i++) {
+      const val = i === n - 1 ? Math.round((total - acc) * 100) / 100 : per;
+      acc += per;
+      let ds = "";
+      if (firstDue) { const d = new Date(firstDue + "T12:00:00"); d.setMonth(d.getMonth() + i); ds = d.toISOString().slice(0, 10); }
+      arr.push({ dueDate: ds, amount: val.toFixed(2) });
+    }
+    return arr;
+  };
+  const parcelasTotal = installments.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
   const createSupplier = useMutation({
     mutationFn: async (data: any) => {
@@ -807,6 +826,8 @@ export default function PurchaseRadar() {
                     size="sm"
                     onClick={() => {
                       setPayableData({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
+                      setNumParcelas(1);
+                      setInstallments([]);
                       setShowPayable(true);
                     }}
                   >
@@ -940,15 +961,43 @@ export default function PurchaseRadar() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <Label>Data de Vencimento</Label>
-              <Input
-                type="date"
-                value={payableData.dueDate}
-                onChange={(e) => setPayableData(prev => ({ ...prev, dueDate: e.target.value }))}
-                className="mt-1"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{numParcelas > 1 ? "1º Vencimento" : "Data de Vencimento"}</Label>
+                <Input
+                  type="date"
+                  value={payableData.dueDate}
+                  onChange={(e) => { const v = e.target.value; setPayableData(prev => ({ ...prev, dueDate: v })); if (numParcelas > 1) setInstallments(genParcelas(numParcelas, v, Number(selectedInvoice?.totalValue || 0))); }}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label>Parcelas</Label>
+                <Input
+                  type="number" min={1} max={60}
+                  value={numParcelas}
+                  onChange={(e) => { const n = Math.max(1, Math.min(60, parseInt(e.target.value) || 1)); setNumParcelas(n); setInstallments(n > 1 ? genParcelas(n, payableData.dueDate, Number(selectedInvoice?.totalValue || 0)) : []); }}
+                  className="mt-1"
+                />
+              </div>
             </div>
+            {numParcelas > 1 && (
+              <div className="border rounded-lg overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted"><tr><th className="text-left p-2">Parcela</th><th className="text-left p-2">Vencimento</th><th className="text-right p-2">Valor</th></tr></thead>
+                  <tbody>
+                    {installments.map((p: any, i: number) => (
+                      <tr key={i} className="border-t">
+                        <td className="p-2">{i + 1}/{numParcelas}</td>
+                        <td className="p-2"><Input type="date" value={p.dueDate} onChange={(e) => setInstallments(prev => prev.map((x, j) => j === i ? { ...x, dueDate: e.target.value } : x))} className="h-8" /></td>
+                        <td className="p-2 w-32"><Input type="number" step="0.01" value={p.amount} onChange={(e) => setInstallments(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} className="h-8 text-right" /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className={`text-xs px-2 py-1 ${Math.abs(parcelasTotal - Number(selectedInvoice?.totalValue || 0)) < 0.01 ? "text-muted-foreground" : "text-red-600 font-medium"}`}>Soma das parcelas: {formatCurrency(parcelasTotal)} de {formatCurrency(selectedInvoice?.totalValue)}</div>
+              </div>
+            )}
             <div>
               <Label>Forma de Pagamento</Label>
               <Select value={payableData.paymentMethod} onValueChange={(v) => setPayableData(prev => ({ ...prev, paymentMethod: v }))}>
@@ -979,10 +1028,10 @@ export default function PurchaseRadar() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPayable(false)}>Cancelar</Button>
             <Button
-              disabled={!payableData.dueDate || createPayable.isPending}
-              onClick={() => createPayable.mutate({ id: selectedInvoice?.id, ...payableData })}
+              disabled={createPayable.isPending || (numParcelas > 1 ? !(installments.length > 0 && installments.every((p: any) => p.dueDate && Number(p.amount) > 0)) : !payableData.dueDate)}
+              onClick={() => { if (numParcelas > 1) { createPayable.mutate({ id: selectedInvoice?.id, paymentMethod: payableData.paymentMethod, financialAccountId: payableData.financialAccountId, description: payableData.description, installments }); } else { createPayable.mutate({ id: selectedInvoice?.id, ...payableData }); } }}
             >
-              {createPayable.isPending ? "Criando..." : "Criar Conta a Pagar"}
+              {createPayable.isPending ? "Criando..." : (numParcelas > 1 ? `Criar ${numParcelas} parcelas` : "Criar Conta a Pagar")}
             </Button>
           </DialogFooter>
         </DialogContent>
