@@ -20954,7 +20954,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM billing_pipeline
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-          AND LOWER(COALESCE(NULLIF(operation_type, ''), 'venda')) = 'venda'
+          AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
       `);
       
       // Indexar pedidos por customerId
@@ -20985,7 +20985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND COALESCE(sale_value::numeric, 0) > 0
           AND status <> 'no_sale'
-          AND LOWER(COALESCE(NULLIF(operation_type, ''), 'venda')) = 'venda'
+          AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
           AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
         ORDER BY customer_id, sale_value::numeric DESC
       `);
