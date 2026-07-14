@@ -909,6 +909,40 @@ function PayablesTab() {
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [supSug, setSupSug] = useState<any[]>([]);
   const supTimer = useRef<any>(null);
+  const [danfeFile, setDanfeFile] = useState<File | null>(null);
+  const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
+  const [attBusy, setAttBusy] = useState(false);
+  const { data: payableAttachments = [], refetch: refetchAttachments } = useQuery<any[]>({
+    queryKey: ['/api/financial/payables', selectedItem?.id, 'attachments'],
+    queryFn: async () => { if (!selectedItem?.id) return []; const r = await fetch(`/api/financial/payables/${selectedItem.id}/attachments`, { credentials: 'include' }); return r.ok ? r.json() : []; },
+    enabled: !!(showDetail && selectedItem?.id),
+  });
+  const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve(String(rd.result).split(',')[1] || ''); rd.onerror = reject; rd.readAsDataURL(file); });
+  const uploadPayableAttachments = async (payableId: string) => {
+    const jobs: { kind: string; file: File }[] = [];
+    if (danfeFile) jobs.push({ kind: 'danfe', file: danfeFile });
+    boletoFiles.forEach((f) => jobs.push({ kind: 'boleto', file: f }));
+    for (const j of jobs) {
+      const b64 = await fileToBase64(j.file);
+      await fetch(`/api/financial/payables/${payableId}/attachments`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: j.kind, fileName: j.file.name, mimeType: j.file.type || 'application/octet-stream', base64: b64 }) });
+    }
+  };
+  const submitCreatePayable = async () => {
+    if (!form.chartAccountId) return;
+    setAttBusy(true);
+    try {
+      const rec = (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined;
+      const res: any = await apiRequest('POST', '/api/financial/payables', { ...form, source: 'manual', recurrence: rec });
+      const payableId = res?.id || (Array.isArray(res?.items) && res.items[0]?.id) || null;
+      if (payableId && (danfeFile || boletoFiles.length)) {
+        try { await uploadPayableAttachments(payableId); } catch (e: any) { toast({ title: 'Conta criada, mas falha ao anexar arquivos', description: e?.message, variant: 'destructive' }); }
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
+      setShowCreate(false); setDanfeFile(null); setBoletoFiles([]);
+      toast({ title: res?.recurring ? `${res.count} contas a pagar criadas` : 'Conta a pagar criada com sucesso' });
+    } catch (e: any) { toast({ title: 'Erro', description: e?.message || String(e), variant: 'destructive' }); }
+    finally { setAttBusy(false); }
+  };
   const buscarFornecedores = (v: string) => {
     if (supTimer.current) clearTimeout(supTimer.current);
     const q = (v || '').trim();
@@ -1269,12 +1303,27 @@ function PayablesTab() {
               {form.recurFreq && form.recurFreq !== 'none' && (
                 <p className="text-xs text-muted-foreground">Serão criados vários lançamentos a partir do vencimento informado, conforme a regra acima.</p>
               )}
+              <div className="border-t pt-3 mt-1">
+                <Label className="text-sm font-semibold">Anexos (DANFE e Boletos)</Label>
+                <div className="grid grid-cols-1 gap-2 mt-2">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">DANFE (PDF ou XML)</Label>
+                    <Input type="file" accept=".pdf,.xml,application/pdf,text/xml" onChange={(e) => setDanfeFile(e.target.files?.[0] || null)} />
+                    {danfeFile && <p className="text-xs text-green-700 mt-1">✓ {danfeFile.name}</p>}
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Boleto(s) (PDF — pode selecionar vários)</Label>
+                    <Input type="file" accept=".pdf,application/pdf" multiple onChange={(e) => setBoletoFiles(Array.from(e.target.files || []))} />
+                    {boletoFiles.length > 0 && <p className="text-xs text-green-700 mt-1">✓ {boletoFiles.length} boleto(s): {boletoFiles.map((f) => f.name).join(', ')}</p>}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
-            <Button onClick={() => createMutation.mutate({ ...form, source: 'manual', recurrence: (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined })} disabled={createMutation.isPending || !form.chartAccountId}>
-              {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
+            <Button variant="outline" onClick={() => { setShowCreate(false); setDanfeFile(null); setBoletoFiles([]); }}>Cancelar</Button>
+            <Button onClick={submitCreatePayable} disabled={attBusy || createMutation.isPending || !form.chartAccountId}>
+              {(attBusy || createMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1400,6 +1449,23 @@ function PayablesTab() {
                 <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{selectedItem.instanceId || '-'}</p></div>
               </div>
               {selectedItem.description && <div><Label className="text-xs text-muted-foreground">Descrição</Label><p className="text-sm bg-muted p-2 rounded">{selectedItem.description}</p></div>}
+              <div>
+                <Label className="text-xs text-muted-foreground">Anexos (DANFE / Boletos)</Label>
+                {(payableAttachments as any[]).length === 0 ? (
+                  <p className="text-sm text-muted-foreground mt-1">Nenhum anexo.</p>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {(payableAttachments as any[]).map((a: any) => (
+                      <div key={a.id} className="flex items-center justify-between border rounded px-2 py-1 text-sm gap-2">
+                        <a href={`/api/financial/payable-attachments/${a.id}/download`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate">
+                          {a.kind === 'danfe' ? '📄 DANFE' : a.kind === 'boleto' ? '🧾 Boleto' : '📎 Anexo'} — {a.file_name}
+                        </a>
+                        <button title="Remover anexo" onClick={async () => { if (!confirm('Remover este anexo?')) return; await fetch(`/api/financial/payable-attachments/${a.id}`, { method: 'DELETE', credentials: 'include' }); refetchAttachments(); }} className="text-red-500 shrink-0">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
