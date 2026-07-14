@@ -282,6 +282,24 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [custSug, setCustSug] = useState<any[]>([]);
+  const custTimer = useRef<any>(null);
+  const buscarClientes = (v: string) => {
+    if (custTimer.current) clearTimeout(custTimer.current);
+    const q = (v || '').trim();
+    if (q.length < 2) { setCustSug([]); return; }
+    custTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/reconciliation/customers/search?q=' + encodeURIComponent(q), { credentials: 'include' });
+        const j = await r.json();
+        setCustSug(Array.isArray(j.customers) ? j.customers : []);
+      } catch { setCustSug([]); }
+    }, 250);
+  };
+  const pickCliente = (c: any) => {
+    setForm((f: any) => ({ ...f, customerName: c.name || c.company_name || '', customerId: c.id || f.customerId, customerDocument: c.cnpj || c.cpf || f.customerDocument || '' }));
+    setCustSug([]);
+  };
 
   // Abre SEM filtro do usuario -> modo paginado rapido (1a pagina + resumo do servidor).
   // Assim que qualquer filtro do cliente e usado, busca o conjunto completo (filtra no cliente).
@@ -620,7 +638,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
           </DialogHeader>
           <div className="space-y-3">
             <div><Label>Título</Label><Input value={form.title || ''} onChange={e => setForm({ ...form, title: e.target.value })} /></div>
-            <div><Label>Cliente</Label><Input value={form.customerName || ''} onChange={e => setForm({ ...form, customerName: e.target.value })} /></div>
+            <div className="relative"><Label>Cliente</Label><Input autoComplete="off" placeholder="Busque no cadastro…" value={form.customerName || ''} onChange={e => { const v = e.target.value; setForm({ ...form, customerName: v }); buscarClientes(v); }} onBlur={() => setTimeout(() => setCustSug([]), 150)} />{custSug.length > 0 && (<div className="absolute z-50 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">{custSug.map((c: any) => (<button type="button" key={c.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pickCliente(c)} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">{c.name || c.company_name}{(c.cnpj || c.cpf) ? <span className="text-gray-400 text-xs"> · {c.cnpj || c.cpf}</span> : null}</button>))}</div>)}</div>
             <div><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount || ''} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
@@ -684,7 +702,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
           </DialogHeader>
           <div className="space-y-3">
             <div><Label>Título</Label><Input value={form.title || ''} onChange={e => setForm({ ...form, title: e.target.value })} /></div>
-            <div><Label>Cliente</Label><Input value={form.customerName || ''} onChange={e => setForm({ ...form, customerName: e.target.value })} /></div>
+            <div className="relative"><Label>Cliente</Label><Input autoComplete="off" placeholder="Busque no cadastro…" value={form.customerName || ''} onChange={e => { const v = e.target.value; setForm({ ...form, customerName: v }); buscarClientes(v); }} onBlur={() => setTimeout(() => setCustSug([]), 150)} />{custSug.length > 0 && (<div className="absolute z-50 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">{custSug.map((c: any) => (<button type="button" key={c.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pickCliente(c)} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">{c.name || c.company_name}{(c.cnpj || c.cpf) ? <span className="text-gray-400 text-xs"> · {c.cnpj || c.cpf}</span> : null}</button>))}</div>)}</div>
             <div><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount || ''} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
