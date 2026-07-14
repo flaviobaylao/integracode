@@ -1206,6 +1206,55 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // FASE 3.4p - LIMPEZA: vincula como ESPELHO as copias pendentes cuja MESMA
+  // transacao economica (conta|data|valor|tipo|descricao normalizada) ja esta
+  // CONCILIADA em outra linha/extrato. NAO apaga nada: apenas aponta mirror_of ->
+  // canonico conciliado e marca status 'mirror'. Assim a copia some dos pendentes
+  // e passa a aparecer como "ja conciliado" tambem no extrato individual.
+  // dryRun por padrao (so conta). Idempotente e reversivel.
+  app.post("/api/reconciliation/relink-espelho", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      await ensureMirrorColumn();
+      const cand = rowsOf(await db.execute(sql`
+        SELECT i.id AS pending_id,
+               (SELECT j.id FROM bank_statement_items j
+                  JOIN bank_statements sj ON sj.id = j.statement_id
+                 WHERE sj.financial_account_id = s.financial_account_id
+                   AND j.id <> i.id
+                   AND j.reconciliation_status = 'reconciled'
+                   AND j.mirror_of IS NULL
+                   AND j.transaction_date::date = i.transaction_date::date
+                   AND round(j.amount::numeric, 2) = round(i.amount::numeric, 2)
+                   AND j.type = i.type
+                   AND regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
+                     = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
+                 ORDER BY j.matched_at ASC NULLS LAST, j.id ASC
+                 LIMIT 1) AS canonical_id
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+          AND i.mirror_of IS NULL`));
+      const toLink = cand.filter((c: any) => c.canonical_id);
+      let atualizados = 0;
+      if (!dryRun && toLink.length) {
+        for (const c of toLink) {
+          const u: any = await db.execute(sql`
+            UPDATE bank_statement_items
+            SET mirror_of = ${String(c.canonical_id)}, reconciliation_status = 'mirror',
+                matched_by = ${by}, matched_at = now(),
+                notes = 'Espelho (limpeza 3.4p): lançamento já conciliado em outro extrato da mesma conta'
+            WHERE id = ${String(c.pending_id)}
+              AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')
+              AND mirror_of IS NULL`);
+          atualizados += Number((u as any)?.rowCount ?? 0);
+        }
+      }
+      res.json({ dryRun, candidatos: toLink.length, atualizados });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // FASE 3.4c - marca como ignorados os creditos "COBRANCA" pendentes (repasses
   // de boletos ja baixados via webhook). dryRun por padrao.
   app.post("/api/reconciliation/ignore-cobranca", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
