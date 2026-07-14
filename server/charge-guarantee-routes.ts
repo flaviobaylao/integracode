@@ -107,6 +107,7 @@ export function registerChargeGuarantee(app: Express) {
           AND (r.amount - COALESCE(r.amount_paid,0)) > 0
           AND r.created_at >= ${since}
           AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
           AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)
         ORDER BY r.created_at ASC
         LIMIT 200`);
