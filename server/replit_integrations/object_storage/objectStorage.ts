@@ -52,6 +52,17 @@ class LocalFile {
   constructor(public filePath: string) {}
 }
 
+// Objeto guardado no BANCO (tabela stored_objects). Modo durável padrão no Railway
+// (disco efêmero perde arquivo a cada deploy). Se UPLOAD_DIR (volume) estiver setado,
+// usa disco; senão, banco.
+class DbFile {
+  constructor(public mime: string, public base64: string) {}
+}
+// true quando um volume persistente foi montado e configurado; senão, usa o banco.
+export function useDiskStorage(): boolean {
+  return !!process.env.UPLOAD_DIR;
+}
+
 // ─── ObjectStorageService ──────────────────────────────────────────────────────
 export class ObjectStorageService {
   getPublicObjectSearchPaths(): Array<string> {
@@ -83,6 +94,16 @@ export class ObjectStorageService {
   }
 
   async downloadObject(file: any, res: Response, cacheTtlSec: number = 3600) {
+    if (file instanceof DbFile) {
+      const buf = Buffer.from(file.base64, "base64");
+      res.set({
+        "Content-Type": file.mime || "application/octet-stream",
+        "Content-Length": String(buf.length),
+        "Cache-Control": `private, max-age=${cacheTtlSec}`,
+      });
+      res.end(buf);
+      return;
+    }
     if (file instanceof LocalFile) {
       if (!fs.existsSync(file.filePath)) {
         if (!res.headersSent) res.status(404).json({ error: "File not found" });
@@ -138,12 +159,23 @@ export class ObjectStorageService {
     if (!IS_REPLIT) {
       if (!objectPath.startsWith("/objects/")) throw new ObjectNotFoundError();
       const uuid = objectPath.slice("/objects/".length);
+      // 1) Arquivo em disco (volume UPLOAD_DIR ou uploads local herdado).
       const uploadDir = getUploadDir();
       const files = fs.existsSync(uploadDir)
         ? fs.readdirSync(uploadDir).filter((f) => f.startsWith(uuid))
         : [];
-      if (files.length === 0) throw new ObjectNotFoundError();
-      return new LocalFile(nodePath.join(uploadDir, files[0]));
+      if (files.length > 0) return new LocalFile(nodePath.join(uploadDir, files[0]));
+      // 2) Fallback: objeto guardado no banco (stored_objects).
+      try {
+        const { db } = await import("../../db");
+        const { sql } = await import("drizzle-orm");
+        const r: any = await db.execute(sql`SELECT mime_type, content_base64 FROM stored_objects WHERE id = ${uuid} LIMIT 1`);
+        const row = r.rows?.[0];
+        if (row && row.content_base64) return new DbFile(row.mime_type || "application/octet-stream", String(row.content_base64));
+      } catch (e: any) {
+        console.warn("[objectStorage] falha ao ler stored_objects:", e?.message);
+      }
+      throw new ObjectNotFoundError();
     }
     if (!objectPath.startsWith("/objects/")) throw new ObjectNotFoundError();
     const parts = objectPath.slice(1).split("/");
