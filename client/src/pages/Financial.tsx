@@ -25,7 +25,7 @@ import {
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
   CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
   History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
-  Key, Ban
+  Key, Ban, Camera
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -279,6 +279,8 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [showEdit, setShowEdit] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+  const [showPhotos, setShowPhotos] = useState(false); // comprovante de entrega (fotos do entregador)
+  const [photosItem, setPhotosItem] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
@@ -610,6 +612,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                     <div className="flex gap-1">
                       {(canBoleto || !readOnly) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<input type="checkbox" title="Selecionar p/ boleto unificado" className="mr-1 h-4 w-4 self-center cursor-pointer" checked={unifySel.includes(r.id)} onChange={() => toggleUnify(r.id)} />)}
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
+                      {r.deliveryPhotos?.length ? (<Button variant="ghost" size="icon" title="Comprovante de entrega (foto do entregador)" onClick={() => { setPhotosItem(r); setShowPhotos(true); }}><Camera className="h-4 w-4 text-emerald-600" /></Button>) : null}
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
@@ -696,7 +699,33 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showEdit} onOpenChange={setShowEdit}>
+            <Dialog open={showPhotos} onOpenChange={setShowPhotos}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Camera className="h-5 w-5 text-emerald-600" /> Comprovante de entrega</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1 text-sm text-muted-foreground">
+            <div><span className="font-medium text-foreground">{photosItem?.customerName || '-'}</span></div>
+            <div>{photosItem?.titleNumber ? `NF/Título ${photosItem.titleNumber}` : ''}{photosItem?.amount ? ` · ${formatCurrency(photosItem.amount)}` : ''}</div>
+          </div>
+          {photosItem?.deliveryPhotos?.length ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+              {photosItem.deliveryPhotos.map((url: string, i: number) => (
+                <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block border rounded-md overflow-hidden hover:opacity-90" title="Abrir em tamanho real">
+                  <img src={url} alt={`Comprovante de entrega ${i + 1}`} className="w-full h-56 object-cover bg-muted" loading="lazy" />
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground py-6 text-center">Nenhuma foto de entrega encontrada para este título.</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPhotos(false)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+<Dialog open={showEdit} onOpenChange={setShowEdit}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Conta a Receber</DialogTitle>
