@@ -1703,13 +1703,16 @@ export default function ActiveCustomers() {
                   <input type="date" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} className="w-full border rounded px-2 py-1.5" />
                 </div>
               </div>
-              <div className="px-5 py-3 border-t flex justify-end gap-2">
-                <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
-                <button
-                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
-                  disabled={bulkUpdateMutation.isPending}
-                  className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
-                >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
+              <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
+                <GeocodeAllButton customerIds={Array.from(selectedCustomerIds)} label="Buscar coordenadas" />
+                <div className="flex gap-2">
+                  <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
+                  <button
+                    onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                    disabled={bulkUpdateMutation.isPending}
+                    className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
+                  >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
+                </div>
               </div>
             </div>
           </div>
