@@ -1051,6 +1051,44 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  // ===== ANEXOS (DANFE / BOLETO) DE CONTAS A PAGAR =====
+  // Armazenados no banco (base64) para durabilidade no Railway (disco efemero).
+  // Reutilizavel por Contas a Pagar e por Compras (ambos criam payables).
+  app.post('/api/financial/payables/:id/attachments', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const { kind, fileName, mimeType, base64 } = req.body || {};
+      if (!fileName || !base64) return res.status(400).json({ message: 'fileName e base64 sao obrigatorios' });
+      const clean = String(base64).replace(/^data:[^;]+;base64,/, '');
+      const size = Math.floor(clean.length * 3 / 4);
+      if (size > 15 * 1024 * 1024) return res.status(413).json({ message: 'Arquivo muito grande (limite 15MB).' });
+      const k = ['danfe', 'boleto', 'outro'].includes(String(kind)) ? String(kind) : 'outro';
+      const user = actorOf(req);
+      const r: any = await db.execute(sql`INSERT INTO payable_attachments (id, payable_id, kind, file_name, mime_type, size_bytes, content_base64, created_by, created_at) VALUES (gen_random_uuid(), ${req.params.id}, ${k}, ${String(fileName)}, ${mimeType || null}, ${size}, ${clean}, ${user?.email || null}, now()) RETURNING id, kind, file_name, mime_type, size_bytes, created_at`);
+      res.status(201).json(r.rows?.[0] || { ok: true });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.get('/api/financial/payables/:id/attachments', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT id, kind, file_name, mime_type, size_bytes, created_at, created_by FROM payable_attachments WHERE payable_id = ${req.params.id} ORDER BY created_at ASC`);
+      res.json(r.rows || []);
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.get('/api/financial/payable-attachments/:attId/download', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT file_name, mime_type, content_base64 FROM payable_attachments WHERE id = ${req.params.attId} LIMIT 1`);
+      const row = r.rows?.[0];
+      if (!row) return res.status(404).json({ message: 'Anexo nao encontrado' });
+      const buf = Buffer.from(String(row.content_base64), 'base64');
+      res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || 'anexo')}"`);
+      res.send(buf);
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.delete('/api/financial/payable-attachments/:attId', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try { await db.execute(sql`DELETE FROM payable_attachments WHERE id = ${req.params.attId}`); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
   app.patch('/api/financial/payables/:id', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const before = await storage.getPayable(req.params.id);
