@@ -801,7 +801,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <div className="space-y-4">
               {/* Resumo da cobrança */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div><Label className="text-xs text-muted-foreground">Título</Label><p className="font-medium">{history?.receivable?.titleNumber || selectedItem.title || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">Título</Label><p className="font-medium">{selectedItem.titleNumber || history?.receivable?.titleNumber || selectedItem.title || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Cliente</Label><p>{selectedItem.customerName || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">CNPJ/CPF</Label><p>{history?.receivable?.customerDocument || selectedItem.customerDocument || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor</Label><p className="font-bold text-green-700">{formatCurrency(selectedItem.amount)}</p></div>
@@ -810,7 +810,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                 <div><Label className="text-xs text-muted-foreground">Emissão</Label><p>{formatDate(history?.receivable?.issueDate || selectedItem.issueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Vencimento</Label><p>{formatDate(selectedItem.dueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Forma Pgto</Label><p>{selectedItem.paymentMethod || '-'}</p></div>
-                <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{selectedItem.instanceId || history?.receivable?.omieInstanceId || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{instanceNames[selectedItem.omieInstanceId] || instanceNames[history?.receivable?.omieInstanceId] || selectedItem.omieInstanceId || history?.receivable?.omieInstanceId || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Criada por</Label><p className="text-sm">{history?.receivable?.createdBy || '-'}<span className="text-xs text-muted-foreground">{history?.receivable?.createdAt ? ' · ' + formatDateTime(history.receivable.createdAt) : ''}</span></p></div>
                 {history?.receivable?.updatedBy && <div><Label className="text-xs text-muted-foreground">Última edição</Label><p className="text-sm">{history.receivable.updatedBy}<span className="text-xs text-muted-foreground">{history?.receivable?.updatedAt ? ' · ' + formatDateTime(history.receivable.updatedAt) : ''}</span></p></div>}
               </div>
