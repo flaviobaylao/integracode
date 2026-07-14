@@ -52,24 +52,39 @@ export function registerObjectStorageRoutes(app: Express): void {
         }
 
         const contentType = (req.headers["content-type"] || "application/octet-stream").split(";")[0].trim();
-        const extMap: Record<string, string> = {
-          "image/jpeg": ".jpg", "image/png": ".png",
-          "image/gif": ".gif", "image/webp": ".webp",
-          "application/pdf": ".pdf",
-        };
-        const ext = extMap[contentType] || "";
-        const fileName = `${uuid}${ext}`;
-        const uploadDir = getUploadDir();
-        const filePath = nodePath.join(uploadDir, fileName);
 
-        const writeStream = fs.createWriteStream(filePath);
-        req.pipe(writeStream);
-
+        // Buffer o corpo (mídia WhatsApp / anexos — tamanhos moderados).
+        const chunks: Buffer[] = [];
         await new Promise<void>((resolve, reject) => {
-          writeStream.on("finish", resolve);
-          writeStream.on("error", reject);
+          req.on("data", (c: Buffer) => chunks.push(c));
+          req.on("end", () => resolve());
           req.on("error", reject);
         });
+        const buf = Buffer.concat(chunks);
+        if (buf.length > 25 * 1024 * 1024) {
+          return res.status(413).json({ error: "Arquivo muito grande (limite 25MB)." });
+        }
+
+        if (process.env.UPLOAD_DIR) {
+          // Modo DISCO: volume persistente montado (UPLOAD_DIR). Escalável p/ mídia grande.
+          const extMap: Record<string, string> = {
+            "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp",
+            "application/pdf": ".pdf", "text/xml": ".xml", "application/xml": ".xml",
+            "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/opus": ".opus", "audio/amr": ".amr",
+            "video/mp4": ".mp4", "video/3gpp": ".3gp",
+            "application/msword": ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.ms-excel": ".xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "text/plain": ".txt",
+          };
+          const ext = extMap[contentType] || "";
+          const filePath = nodePath.join(getUploadDir(), `${uuid}${ext}`);
+          fs.writeFileSync(filePath, buf);
+        } else {
+          // Modo BANCO (padrão no Railway): durável, sobrevive a deploys (disco é efêmero).
+          const { db } = await import("../../db");
+          const { sql } = await import("drizzle-orm");
+          await db.execute(sql`INSERT INTO stored_objects (id, mime_type, size_bytes, content_base64, created_at) VALUES (${uuid}, ${contentType}, ${buf.length}, ${buf.toString("base64")}, now()) ON CONFLICT (id) DO UPDATE SET mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes, content_base64 = EXCLUDED.content_base64`);
+        }
 
         res.status(200).json({ success: true, objectPath: `/objects/${uuid}` });
       } catch (error) {
