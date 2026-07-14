@@ -31,7 +31,7 @@ async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; 
 
 // Etapas VÁLIDAS do funil de faturamento (billing_pipeline.stage). NÃO inclui 'bloqueado':
 // bloquear é feito pela tabela blocked_orders via POST /:id/block, não por mudança de stage.
-const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue'] as const;
+const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
 let internalBillingModeActive = false;
 let internalBillingActivatedBy: string | null = null;
