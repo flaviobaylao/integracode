@@ -558,7 +558,7 @@ export function registerPurchaseRoutes(app: Express) {
 
         await db.execute(sql`
           INSERT INTO inventory_movements (id, product_id, instance_id, movement_type, source_type, source_id, quantity, previous_quantity, new_quantity, notes, created_by, created_at)
-          VALUES (gen_random_uuid(), ${productId}, ${targetInstanceId}, 'replenish', 'invoice', ${invoice.id}, ${quantity}, 0, ${quantity}, ${`Entrada NF ${invoice.invoiceNumber} - ${invoice.supplierName}`}, ${req.userId}, NOW())
+          VALUES (gen_random_uuid(), ${productId}, ${targetInstanceId}, 'replenish', 'invoice', ${invoice.id}, ${quantity}, 0, ${quantity}, ${`Entrada NF ${invoice.invoiceNumber} - ${invoice.supplierName}`}, ${(req as any).currentUser?.id || (req as any).currentUser?.email || 'radar-compras'}, NOW())
         `);
 
         results.push({ productId, quantity, lotNumber: lot });
@@ -642,7 +642,7 @@ export function registerPurchaseRoutes(app: Express) {
         await db.execute(sql`UPDATE raw_materials SET quantity = ${next}, unit_cost = COALESCE(${uc}, unit_cost), updated_at = NOW() WHERE id = ${rawMaterialId}`);
         await db.execute(sql`
           INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, notes, created_by, created_at, unit_cost)
-          VALUES (gen_random_uuid(), ${rawMaterialId}, 'entrada_compra', ${qty}, ${prev}, ${next}, ${`Entrada NF ${invoice.invoiceNumber || "SN"} - ${invoice.supplierName}`}, ${req.userId}, NOW(), ${uc})
+          VALUES (gen_random_uuid(), ${rawMaterialId}, 'entrada_compra', ${qty}, ${prev}, ${next}, ${`Entrada NF ${invoice.invoiceNumber || "SN"} - ${invoice.supplierName}`}, ${(req as any).currentUser?.id || (req as any).currentUser?.email || 'radar-compras'}, NOW(), ${uc})
         `);
         results.push({ rawMaterialId, quantity: qty, previousQuantity: prev, newQuantity: next, unitCost: uc });
       }
