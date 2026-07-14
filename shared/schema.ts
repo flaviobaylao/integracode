@@ -2181,9 +2181,12 @@ export interface PendingDelivery {
   orderNumber: string | null;
   customerId: string;
   customerName: string;
+  customerRazaoSocial?: string;
   customerCpf: string | null;
   customerCnpj: string | null;
   customerAddress: string;
+  customerCity?: string;
+  customerNeighborhood?: string;
   customerLatitude: string | null;
   customerLongitude: string | null;
   customerWeekdays: string[] | null;
