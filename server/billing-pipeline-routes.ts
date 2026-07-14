@@ -425,7 +425,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         JOIN receivables r ON r.id = pc.receivable_id AND r.deleted_at IS NULL
         WHERE pc.status = 'ATIVA' AND pc.expires_at < now()
           AND r.status::text NOT IN ('cancelada','cancelado','recebida','paga','pago')
-          AND COALESCE(NULLIF(r.amount_paid,'')::numeric, 0) < r.amount::numeric
+          AND COALESCE(NULLIF(r.amount_paid,'')::numeric, 0) < COALESCE(NULLIF(r.amount,'')::numeric, 0)
           AND NOT EXISTS (SELECT 1 FROM boleto_charges bc WHERE bc.receivable_id = r.id AND bc.status NOT IN ('cancelado','cancelada'))
         ORDER BY pc.created_at DESC`);
       const rows = (cand?.rows ?? cand ?? []) as any[];
