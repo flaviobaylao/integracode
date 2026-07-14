@@ -158,6 +158,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
+      docsEmail: '',
+      docsSendXml: false,
+      docsSendDanfe: false,
+      docsSendBoleto: false,
+      docsSendPedido: false,
       paymentMethod: undefined,
       boletoDays: null,
       collectionDiscount: null,
@@ -213,6 +218,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         icmsCsosn: (customer as any).icmsCsosn || '102',
         omieInstanceId: (customer as any).omieInstanceId || '',
         isSupplier: (customer as any).isSupplier || false,
+        docsEmail: (customer as any).docsEmail || '',
+        docsSendXml: (customer as any).docsSendXml || false,
+        docsSendDanfe: (customer as any).docsSendDanfe || false,
+        docsSendBoleto: (customer as any).docsSendBoleto || false,
+        docsSendPedido: (customer as any).docsSendPedido || false,
         paymentMethod: (customer as any).paymentMethod || undefined,
         boletoDays: (customer as any).boletoDays ?? null,
         collectionDiscount: (customer as any).collectionDiscount ?? null,
@@ -252,6 +262,11 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
+      docsEmail: '',
+      docsSendXml: false,
+      docsSendDanfe: false,
+      docsSendBoleto: false,
+      docsSendPedido: false,
       paymentMethod: undefined,
       boletoDays: null,
       collectionDiscount: null,
@@ -877,6 +892,70 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
                       </FormItem>
                     )}
                   />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Envio automático de e-mails ao faturar NF (replicado do Integra 1.0) */}
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold flex items-center space-x-2">
+                    <i className="fas fa-paper-plane text-blue-600"></i>
+                    <span>Envio automático de e-mails ao faturar NF</span>
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Quando um pedido for movido para o estágio "Faturado" no pipeline, os documentos selecionados abaixo serão enviados automaticamente para o e-mail informado. Cada tipo de documento é enviado em um e-mail separado.
+                  </p>
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name={"docsEmail" as any}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="flex items-center space-x-1">
+                        <Mail className="h-4 w-4" />
+                        <span>E-mail para recebimento dos documentos</span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value || ''} type="email" placeholder="financeiro@cliente.com.br" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {([
+                    { name: 'docsSendXml', label: 'Enviar XML da NF-e', icon: 'fa-file-code' },
+                    { name: 'docsSendDanfe', label: 'Enviar DANFE (PDF)', icon: 'fa-file-pdf' },
+                    { name: 'docsSendBoleto', label: 'Enviar Boleto / PIX', icon: 'fa-file-invoice-dollar' },
+                    { name: 'docsSendPedido', label: 'Enviar resumo do Pedido', icon: 'fa-receipt' },
+                  ] as const).map((opt) => (
+                    <FormField
+                      key={opt.name}
+                      control={form.control}
+                      name={opt.name as any}
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center space-x-3 rounded-lg border p-3">
+                          <FormControl>
+                            <input
+                              type="checkbox"
+                              checked={!!field.value}
+                              onChange={field.onChange}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-600"
+                              data-testid={`checkbox-${opt.name}`}
+                            />
+                          </FormControl>
+                          <FormLabel className="!mt-0 flex items-center space-x-2 font-normal cursor-pointer">
+                            <i className={`fas ${opt.icon} text-gray-500`}></i>
+                            <span>{opt.label}</span>
+                          </FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                  ))}
                 </div>
               </CardContent>
             </Card>
