@@ -1656,6 +1656,17 @@ export async function resolveRevenueChartAccountId(): Promise<string | null> {
   } catch { return __revAccCache.id; }
 }
 
+// Cronograma de parcelas do cliente: "7/14/21" -> [7,14,21] (cada numero = dias ate o vencimento).
+function parseInstallmentSchedule(raw: any): number[] {
+  if (raw == null) return [];
+  return String(raw).split(/[^0-9]+/).map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10)).filter(n => Number.isFinite(n) && n > 0 && n <= 3650);
+}
+let __instSchedColReady = false;
+async function ensureInstallmentScheduleColumn(): Promise<void> {
+  if (__instSchedColReady) return;
+  try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule text`); __instSchedColReady = true; } catch (e: any) { console.warn('[BILLING-PIPELINE] ensure installment_schedule:', e?.message); }
+}
+
 export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   // FASE 2 - Somente VENDA gera conta a receber. Amostra, troca, bonificacao,
   // transferencia, remessa e devolucao nao geram titulo nem cobranca (boleto/PIX).
@@ -1678,8 +1689,6 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   const defaultDays = (fm: string) => (fm === 'pix' ? 5 : fm === 'boleto' ? 7 : 0);
   const prazoDaysRaw = (hasCadastro && custCond.boletoDays != null) ? Number(custCond.boletoDays) : defaultDays(effForma);
   const prazoDays = isNaN(prazoDaysRaw) ? 0 : prazoDaysRaw;
-  const dueDate = new Date(now);
-  dueDate.setDate(dueDate.getDate() + prazoDays);
 
   const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix' };
   const paymentMethod: string | null = methodMap[effForma] || 'outros';
@@ -1696,31 +1705,73 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   else if (item.invoiceNumber) titleNumber = String(item.invoiceNumber);
   else titleNumber = `TIT-${item.salesCardId?.substring(0, 8)}`;
 
-  const receivable = await storage.createReceivable({
-    titleNumber: titleNumber,
+  const chartAccountId = await resolveRevenueChartAccountId();
+  const baseReceivable: any = {
     customerId: item.customerId || null,
     customerName: item.customerName || 'Cliente',
     customerDocument: item.customerDocument || null,
-    description: `Faturamento pipeline - ${item.orderNumber || item.salesCardId}`,
-    issueDate: now,
-    dueDate: dueDate,
-    amount: totalValue.toFixed(2),
     amountPaid: '0',
     status: 'a_vencer',
-    chartAccountId: await resolveRevenueChartAccountId(),
+    chartAccountId,
     paymentMethod: paymentMethod as any,
     fiscalInvoiceId: fiscalInvoiceId,
     billingPipelineId: item.id,
     salesCardId: item.salesCardId || null,
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
-  });
+  };
+  const emitCharge = (rcv: any) => {
+    if (effForma === 'boleto') { void generateBoletoForReceivable(rcv, item); }
+    else if (effForma === 'pix' || effForma === 'a_vista' || effForma === 'dinheiro') { void generatePixForReceivable(rcv, item); }
+  };
 
-  if (effForma === 'boleto') {
-    void generateBoletoForReceivable(receivable, item);
-  } else if (effForma === 'pix' || effForma === 'a_vista' || effForma === 'dinheiro') {
-    void generatePixForReceivable(receivable, item);
+  // CRONOGRAMA DE PARCELAS (cadastro do cliente): "7/14/21" => 3 titulos, um por parcela,
+  // cada um vencendo em N dias e com o valor total dividido igualmente (a ultima parcela
+  // absorve o arredondamento). Sem cronograma, mantem 1 titulo pelo PRAZO (comportamento atual).
+  let scheduleDays: number[] = [];
+  try {
+    if (item.customerId) {
+      await ensureInstallmentScheduleColumn();
+      const rs: any = await db.execute(sql`SELECT installment_schedule FROM customers WHERE id = ${item.customerId} LIMIT 1`);
+      scheduleDays = parseInstallmentSchedule(rs?.rows?.[0]?.installment_schedule);
+    }
+  } catch (e: any) { console.warn('[BILLING-PIPELINE] cronograma de parcelas indisponivel:', e?.message); }
+
+  if (scheduleDays.length >= 1) {
+    const nParc = scheduleDays.length;
+    const totalCents = Math.round(totalValue * 100);
+    const baseCents = Math.floor(totalCents / nParc);
+    let firstRcv: any = null;
+    for (let i = 0; i < nParc; i++) {
+      const cents = i < nParc - 1 ? baseCents : (totalCents - baseCents * (nParc - 1));
+      const due = new Date(now);
+      due.setDate(due.getDate() + (isNaN(scheduleDays[i]) ? 0 : scheduleDays[i]));
+      const rcv = await storage.createReceivable({
+        ...baseReceivable,
+        titleNumber: `${titleNumber}/${i + 1}`,
+        description: `Faturamento pipeline - ${item.orderNumber || item.salesCardId} (parcela ${i + 1}/${nParc})`,
+        issueDate: now,
+        dueDate: due,
+        amount: (cents / 100).toFixed(2),
+      });
+      if (!firstRcv) firstRcv = rcv;
+      emitCharge(rcv);
+    }
+    console.log(`\u{1F4B3} [BILLING-PIPELINE] ${nParc} parcela(s) geradas (cronograma ${scheduleDays.join('/')} dias) p/ pedido ${item.orderNumber || item.salesCardId}`);
+    return firstRcv;
   }
 
+  // Sem cronograma: 1 titulo com vencimento pelo PRAZO (comportamento padrao).
+  const dueDate = new Date(now);
+  dueDate.setDate(dueDate.getDate() + prazoDays);
+  const receivable = await storage.createReceivable({
+    ...baseReceivable,
+    titleNumber: titleNumber,
+    description: `Faturamento pipeline - ${item.orderNumber || item.salesCardId}`,
+    issueDate: now,
+    dueDate: dueDate,
+    amount: totalValue.toFixed(2),
+  });
+  emitCharge(receivable);
   return receivable;
 }
