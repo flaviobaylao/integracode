@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { VirtualServiceSummary } from "@/components/VirtualServiceSummary";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -132,6 +133,16 @@ export default function RotaDoDia() {
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{ id: string; name: string } | null>(null);
+
+  // Ocultar/mostrar o box "Mapa da Rota" (preferência persistida por navegador)
+  const [showMap, setShowMap] = useState<boolean>(() => {
+    try { return localStorage.getItem('honest_rota_show_map') !== '0'; } catch { return true; }
+  });
+  const toggleMap = () => setShowMap(prev => {
+    const next = !prev;
+    try { localStorage.setItem('honest_rota_show_map', next ? '1' : '0'); } catch {}
+    return next;
+  });
 
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users'],
@@ -1299,8 +1310,22 @@ export default function RotaDoDia() {
           {route.sellerHome && (
             <Card className="mb-6">
               <CardHeader>
-                <CardTitle>Mapa da Rota</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle>Mapa da Rota</CardTitle>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleMap}
+                    className="text-muted-foreground"
+                    data-testid="button-toggle-map"
+                    title={showMap ? 'Ocultar mapa' : 'Mostrar mapa'}
+                  >
+                    {showMap ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                    {showMap ? 'Ocultar' : 'Mostrar'}
+                  </Button>
+                </div>
               </CardHeader>
+              {showMap && (
               <CardContent>
                 <RouteMap
                   homeLocation={route.sellerHome}
@@ -1318,6 +1343,7 @@ export default function RotaDoDia() {
                   checkpoints={route.checkpoints || []}
                 />
               </CardContent>
+              )}
             </Card>
           )}
 
@@ -2548,6 +2574,15 @@ export default function RotaDoDia() {
             <p className="text-sm text-muted-foreground mb-4">
               Cliente: <span className="font-semibold text-foreground">{virtualActionCustomer?.name}</span>
             </p>
+            {virtualActionCustomer && (
+              <VirtualServiceSummary
+                customerId={virtualActionCustomer.id}
+                date={selectedDate || getBrazilDateISO()}
+                orderValue={customerInfo?.orders?.[virtualActionCustomer.id]?.[0]?.saleValue != null
+                  ? Number(customerInfo.orders[virtualActionCustomer.id][0].saleValue)
+                  : null}
+              />
+            )}
             <div className="flex flex-col gap-3">
               <Button
                 variant="outline"
