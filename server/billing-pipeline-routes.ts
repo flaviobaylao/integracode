@@ -408,6 +408,57 @@ function isThreeAdmins(req: any, res: any, next: any) {
 }
 
 export function registerBillingPipelineRoutes(app: Express) {
+  // Regenera PIX EXPIRADOS para recebiveis AINDA EM ABERTO. A cob imediata do a-vista vencia
+  // em 1h -> o cliente nao conseguia pagar depois. Cria um QR NOVO (validade 3 dias) e marca o
+  // antigo como removido. PULA recebiveis cancelados, ja pagos (amount_paid >= amount) ou que ja
+  // tem boleto ativo (boleto tem PIX proprio). dryRun=true so conta; processa no maximo `limit`
+  // por chamada (default 25, max 100) -> chame em loop ate remaining=0.
+  app.post('/api/admin/pix/regenerate-expired', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const limit = Math.min(Number(req.body?.limit) || 25, 100);
+      const EXP = 259200; // 3 dias
+      const cand: any = await db.execute(sql`
+        SELECT pc.id AS pix_id, pc.receivable_id, pc.amount, pc.customer_id, pc.omie_instance_id, pc.description,
+               r.customer_name, r.customer_document
+        FROM pix_charges pc
+        JOIN receivables r ON r.id = pc.receivable_id AND r.deleted_at IS NULL
+        WHERE pc.status = 'ATIVA' AND pc.expires_at < now()
+          AND r.status NOT IN ('cancelada','cancelado','recebida','paga','pago')
+          AND COALESCE(NULLIF(r.amount_paid,'')::numeric, 0) < r.amount::numeric
+          AND NOT EXISTS (SELECT 1 FROM boleto_charges bc WHERE bc.receivable_id = r.id AND bc.status NOT IN ('cancelado','cancelada'))
+        ORDER BY pc.created_at DESC`);
+      const rows = (cand?.rows ?? cand ?? []) as any[];
+      const eligible = rows.length;
+      if (dryRun) return res.json({ ok: true, dryRun: true, eligible });
+      const batch = rows.slice(0, limit);
+      let regenerated = 0, failed = 0; const errors: string[] = [];
+      for (const row of batch) {
+        try {
+          let accounts = await storage.getFinancialAccounts(row.omie_instance_id || undefined);
+          let account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
+          if (!account) { const all = await storage.getFinancialAccounts(); account = (all || []).find((a: any) => a.bbPixEnabled && a.pixKey); }
+          if (!account) { failed++; if (errors.length < 10) errors.push('sem conta PIX p/ rec ' + row.receivable_id); continue; }
+          const fresh: any = await createImmediateCharge(account.id, {
+            amount: parseFloat(row.amount),
+            debtorName: row.customer_name || undefined,
+            debtorDocument: row.customer_document || undefined,
+            description: row.description || undefined,
+            expirationSeconds: EXP,
+            receivableId: row.receivable_id,
+            customerId: row.customer_id || undefined,
+            createdBy: 'regenerate-expired',
+          });
+          if (fresh?.id) {
+            await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE id = ${row.pix_id} AND status = 'ATIVA'`);
+            regenerated++;
+          } else { failed++; }
+        } catch (e: any) { failed++; if (errors.length < 10) errors.push(String(e?.message || e).slice(0, 90)); }
+      }
+      res.json({ ok: true, eligible, processed: batch.length, regenerated, failed, remaining: eligible - batch.length, errors });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
   // Corrige o NUMERO DO TITULO das contas a receber que ficaram com "TIT-<pedido>"
   // (prefixo do salesCardId) em vez do numero da NF-e. Usa a NF-e vinculada
   // (fiscal_invoice_id). Idempotente: so mexe em titulos 'TIT-%' cuja NF-e tem numero.
@@ -1578,7 +1629,7 @@ export async function generatePixForReceivable(receivable: any, item: any): Prom
       debtorName: receivable.customerName || customer?.name || 'Cliente',
       debtorDocument: receivable.customerDocument || customer?.cnpj || customer?.cpf || undefined,
       description: `Pedido ${item.orderNumber || item.salesCardId || ''}`.trim(),
-      expirationSeconds: Math.max(3600, Math.round((new Date(receivable.dueDate).getTime() - Date.now()) / 1000)), // ate o vencimento
+      expirationSeconds: Math.max(259200, Math.round((new Date(receivable.dueDate).getTime() - Date.now()) / 1000)), // min 3 DIAS (a vista vencia em 1h e o cliente nao conseguia pagar), ou ate o vencimento se for maior
       receivableId: receivable.id,
       customerId: receivable.customerId || undefined,
       createdBy: 'auto-faturamento',
