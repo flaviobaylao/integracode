@@ -1507,7 +1507,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     try {
       const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
       // 1) Faturado SEM cobranca: recebivel de VENDA (billing_pipeline_id), em aberto, sem boleto E sem pix vinculado
-      const semCobBase = "FROM receivables r WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)";
+      const semCobBase = "FROM receivables r WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL AND r.status IN ('a_vencer','vencida') AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id) AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)";
       const semCobTot = (await many("SELECT COUNT(*)::int AS n, COALESCE(SUM(r.amount - COALESCE(r.amount_paid,0)),0)::float AS v " + semCobBase))[0] || {};
       const semCobItens = await many("SELECT r.id, r.title_number AS titulo, r.customer_name AS cliente, (r.amount - COALESCE(r.amount_paid,0))::float AS saldo, r.due_date AS vencimento, r.payment_method AS forma, r.omie_instance_id AS instancia " + semCobBase + " ORDER BY saldo DESC LIMIT 200");
       // 2) Baixa SEM lastro bancario: pagamento de recebivel registrado sem conta financeira (nao lastreado em banco)
@@ -2111,6 +2111,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'outras_cidades'`).catch(() => {});
   // Tipo de operacao Transferencia entre filiais (NF de transferencia). Idempotente.
   db.execute(sql`ALTER TYPE operation_type ADD VALUE IF NOT EXISTS 'transferencia'`).catch(() => {});
+  // Boleto UNIFICADO: liga um boleto a varios titulos (contas a receber). Quando o
+  // boleto e pago, TODOS os titulos ligados sao baixados. Idempotente.
+  db.execute(sql`CREATE TABLE IF NOT EXISTS boleto_charge_receivables (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), boleto_charge_id varchar NOT NULL, receivable_id varchar NOT NULL, amount numeric(12,2) NOT NULL DEFAULT 0, created_at timestamp DEFAULT now(), CONSTRAINT uq_bcr UNIQUE (boleto_charge_id, receivable_id))`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bcr_receivable ON boleto_charge_receivables (receivable_id)`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bcr_boleto ON boleto_charge_receivables (boleto_charge_id)`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
@@ -2375,8 +2380,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const recDue = rq.rows?.[0]?.due_date || null;
       const customerName = rq.rows?.[0]?.customer_name || null;
       const amount = rq.rows?.[0]?.amount || null;
-      const b: any = await db.execute(sql`SELECT to_jsonb(bc) AS row, bc.id, bc.status, bc.data_vencimento FROM boleto_charges bc WHERE bc.receivable_id = ${id} AND bc.status <> 'cancelado' AND bc.status <> 'cancelada' ORDER BY bc.created_at DESC LIMIT 1`);
-      if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, boleto: bc.row }); }
+      const b: any = await db.execute(sql`SELECT to_jsonb(bc) AS row, bc.id, bc.status, bc.data_vencimento, (SELECT COUNT(*) FROM boleto_charge_receivables jr2 WHERE jr2.boleto_charge_id = bc.id)::int AS combined_count FROM boleto_charges bc WHERE (bc.receivable_id = ${id} OR bc.id IN (SELECT boleto_charge_id FROM boleto_charge_receivables WHERE receivable_id = ${id})) AND bc.status <> 'cancelado' AND bc.status <> 'cancelada' ORDER BY bc.created_at DESC LIMIT 1`);
+      if (b.rows?.[0]) { const bc = b.rows[0]; const changed = !!(recDue && bc.data_vencimento && ymd(recDue) !== ymd(bc.data_vencimento)); return res.json({ hasCharge: true, type: "boleto", id: bc.id, status: bc.status, viewUrl: `/api/boleto-view/${bc.id}`, chargeDueDate: bc.data_vencimento, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, boleto: bc.row, combined: Number(bc.combined_count || 0) > 1, combinedCount: Number(bc.combined_count || 0) }); }
       const p: any = await db.execute(sql`SELECT to_jsonb(pc) AS row, pc.id, pc.status, pc.due_date FROM pix_charges pc WHERE pc.receivable_id = ${id} AND pc.status NOT IN ('REMOVIDA_PELO_USUARIO_RECEBEDOR','REMOVIDA_PELO_PSP') ORDER BY pc.created_at DESC LIMIT 1`);
       if (p.rows?.[0]) { const pc = p.rows[0]; const changed = !!(recDue && pc.due_date && ymd(recDue) !== ymd(pc.due_date)); return res.json({ hasCharge: true, type: "pix", id: pc.id, status: pc.status, viewUrl: `/api/pix-view/${pc.id}`, chargeDueDate: pc.due_date, receivableDueDate: recDue, dueDateChanged: changed, customerName, amount, pix: pc.row }); }
       res.json({ hasCharge: false });
@@ -2442,6 +2447,77 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
   // Emite um boleto (hibrido boleto+PIX) para um recebivel e devolve a viewUrl.
+  // BOLETO UNIFICADO: junta a cobranca de 2+ titulos (mesmo cliente) em UM unico boleto.
+  // Quando pago, o settleBoletoCharge da baixa em TODOS os titulos ligados (boleto_charge_receivables).
+  // Body: { receivableIds: string[], dueDate?: 'YYYY-MM-DD' }.
+  app.post("/api/financial/boleto/combined", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.receivableIds) ? req.body.receivableIds.map((x: any) => String(x)).filter(Boolean) : [];
+      const uniqIds = Array.from(new Set(ids));
+      if (uniqIds.length < 2) return res.status(400).json({ error: "Selecione ao menos 2 titulos para unir em um boleto." });
+
+      // Carrega e valida cada titulo
+      const recs: any[] = [];
+      for (const id of uniqIds) {
+        const r: any = await storage.getReceivable(id);
+        if (!r || r.deletedAt) return res.status(404).json({ error: `Titulo ${id} nao encontrado.` });
+        if (!['a_vencer', 'vencida'].includes(String(r.status))) return res.status(422).json({ error: `Titulo ${r.titleNumber || id} nao esta em aberto (status ${r.status}).` });
+        const saldo = parseFloat(r.amount) - parseFloat(r.amountPaid || '0');
+        if (!(saldo > 0)) return res.status(422).json({ error: `Titulo ${r.titleNumber || id} nao possui saldo em aberto.` });
+        recs.push(r);
+      }
+
+      // Mesmo cliente (um boleto = um pagador)
+      const docKey = (r: any) => String(r.customerDocument || '').replace(/\D/g, '') || String(r.customerId || '');
+      const docs = new Set(recs.map(docKey));
+      if (docs.size > 1) return res.status(422).json({ error: "Os titulos devem ser do mesmo cliente (um boleto tem um unico pagador)." });
+
+      // Nenhum titulo pode ja ter cobranca ativa (boleto simples, unificado ou PIX)
+      for (const r of recs) {
+        const b: any = await db.execute(sql`SELECT 1 FROM boleto_charges WHERE receivable_id = ${r.id} AND COALESCE(status,'') NOT IN ('cancelado','cancelada') LIMIT 1`);
+        const j: any = await db.execute(sql`SELECT 1 FROM boleto_charge_receivables jr JOIN boleto_charges b2 ON b2.id = jr.boleto_charge_id WHERE jr.receivable_id = ${r.id} AND COALESCE(b2.status,'') NOT IN ('cancelado','cancelada') LIMIT 1`);
+        const p: any = await db.execute(sql`SELECT 1 FROM pix_charges WHERE receivable_id = ${r.id} LIMIT 1`);
+        if (b.rows?.length || j.rows?.length || p.rows?.length) return res.status(409).json({ error: `Titulo ${r.titleNumber || r.id} ja possui cobranca ativa. Cancele-a antes de unificar.` });
+      }
+
+      const total = recs.reduce((s, r) => s + (parseFloat(r.amount) - parseFloat(r.amountPaid || '0')), 0);
+      const dueDates = recs.map((r) => new Date(r.dueDate)).sort((a, b) => a.getTime() - b.getTime());
+      const dueDate = req.body?.dueDate ? new Date(String(req.body.dueDate) + 'T12:00:00-03:00') : dueDates[0];
+
+      const base = await boletoParamsFromReceivable(recs[0].id);
+      if (!base) return res.status(404).json({ error: "Falha ao montar dados do pagador." });
+      const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL ORDER BY (omie_instance_id = ${base.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "Nenhuma conta com boleto BB habilitado." });
+
+      const titulos = recs.map((r) => r.titleNumber).filter(Boolean).join(', ');
+      const params = {
+        ...base.params,
+        amount: Number(total.toFixed(2)),
+        dueDate,
+        receivableId: null,            // boleto unificado: vinculo fica na juncao, nao no receivable_id
+        fiscalInvoiceId: null,
+        billingPipelineId: null,
+        description: `Boleto unificado de ${recs.length} titulos${titulos ? ' (' + titulos + ')' : ''}`,
+        instrucoes: `Cobranca unificada de ${recs.length} titulos${titulos ? ': ' + titulos : ''}.`,
+      };
+      const result: any = await registrarBoleto(accId, params);
+      if (!result?.success || !result?.boletoChargeId) return res.status(422).json(result || { error: "Falha ao registrar boleto." });
+
+      // Grava a juncao (titulo -> boleto) com o saldo de cada titulo
+      for (const r of recs) {
+        const saldo = (parseFloat(r.amount) - parseFloat(r.amountPaid || '0')).toFixed(2);
+        try {
+          await db.execute(sql`INSERT INTO boleto_charge_receivables (id, boleto_charge_id, receivable_id, amount, created_at) VALUES (gen_random_uuid(), ${result.boletoChargeId}, ${r.id}, ${saldo}, now()) ON CONFLICT ON CONSTRAINT uq_bcr DO NOTHING`);
+        } catch (e: any) { console.warn('[BOLETO-UNIFICADO] falha ao gravar juncao', r.id, e?.message); }
+      }
+
+      result.viewUrl = `/api/boleto-view/${result.boletoChargeId}`;
+      result.combined = { receivableIds: uniqIds, count: recs.length, total: total.toFixed(2), dueDate };
+      return res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.post("/api/financial/receivables/:id/emit-boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req, res) => {
     try {
       const recId = req.params.id;
