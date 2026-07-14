@@ -12796,6 +12796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const savedRoutes = [];
       const allBillingIds: string[] = [];
+      const bsbBillingIds: string[] = []; // rotas do BARUC (vehicleType 'baruc') → coluna "Em Rota BSB"
 
       for (const routePlan of routes) {
         const { route, stops } = routePlan;
@@ -13018,6 +13019,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .filter((id: any) => id);
         
         allBillingIds.push(...billingIds);
+        // Rota atribuída ao BARUC (entregador único de Brasília) → esses cards vão para "Em Rota BSB".
+        if (String(route.vehicleType || '').toLowerCase() === 'baruc') bsbBillingIds.push(...billingIds);
       }
 
       // Atualizar status dos billings para "Em Rota"
@@ -13028,16 +13031,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // ✅ Mover os CARDS DO PIPELINE (Kanban) para a fase "Em Rota" (allBillingIds são ids de billing_pipeline).
         // Sem isto o card permanecia em "Aguardando Rota" mesmo após planejar/salvar a rota.
         try {
-          const movedRes: any = await db.execute(sql`
-            UPDATE billing_pipeline
-            SET stage = 'em_rota', updated_at = NOW()
-            WHERE id IN (${sql.join(allBillingIds.map((bid) => sql`${bid}`), sql`, `)})
-              AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
-          `);
-          const movedCount = movedRes?.rowCount ?? movedRes?.rows?.length ?? 0;
-          console.log(`🚚 [SAVE-ROUTES] ${movedCount} card(s) do pipeline movidos para a fase "em_rota"`);
+          // Cada card vai para "em_rota_bsb" se a rota for do BARUC (Brasília), senão "em_rota".
+          // Mesma origem de sempre (impresso/aguardando_rota/aguardando_rota_bsb); só muda a coluna de destino.
+          const bsbSet = new Set(bsbBillingIds);
+          const nonBsbIds = allBillingIds.filter((bid) => !bsbSet.has(bid));
+          let movedCount = 0;
+          if (bsbBillingIds.length > 0) {
+            const r: any = await db.execute(sql`
+              UPDATE billing_pipeline
+              SET stage = 'em_rota_bsb', updated_at = NOW()
+              WHERE id IN (${sql.join(bsbBillingIds.map((bid) => sql`${bid}`), sql`, `)})
+                AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
+            `);
+            movedCount += r?.rowCount ?? r?.rows?.length ?? 0;
+          }
+          if (nonBsbIds.length > 0) {
+            const r: any = await db.execute(sql`
+              UPDATE billing_pipeline
+              SET stage = 'em_rota', updated_at = NOW()
+              WHERE id IN (${sql.join(nonBsbIds.map((bid) => sql`${bid}`), sql`, `)})
+                AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
+            `);
+            movedCount += r?.rowCount ?? r?.rows?.length ?? 0;
+          }
+          console.log(`🚚 [SAVE-ROUTES] ${movedCount} card(s) do pipeline movidos (BSB/BARUC=${bsbBillingIds.length} → em_rota_bsb; demais → em_rota)`);
         } catch (e: any) {
-          console.error('[SAVE-ROUTES] Falha ao mover cards do pipeline para "em_rota":', e?.message);
+          console.error('[SAVE-ROUTES] Falha ao mover cards do pipeline para em_rota/em_rota_bsb:', e?.message);
         }
 
 
