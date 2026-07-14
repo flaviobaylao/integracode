@@ -644,6 +644,25 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // Busca clientes no cadastro p/ o campo Cliente de Contas a Receber (nome/razao/cnpj/cpf).
+  app.get("/api/reconciliation/customers/search", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const like = `%${q}%`;
+      const digits = onlyDigits(q);
+      const digitsLike = digits ? "%" + digits + "%" : "__none__";
+      const r = await db.execute(sql`
+        SELECT id, name, company_name, cnpj, cpf
+        FROM customers
+        WHERE (is_supplier IS NOT TRUE)
+          AND (${q} = '' OR name ILIKE ${like} OR company_name ILIKE ${like}
+               OR regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') LIKE ${digitsLike}
+               OR regexp_replace(COALESCE(cpf, ''), '[^0-9]', '', 'g') LIKE ${digitsLike})
+        ORDER BY (is_active IS TRUE) DESC, name LIMIT 10`);
+      res.json({ customers: rowsOf(r) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // Busca categorias analiticas do DRE (plano de contas) p/ o campo Categoria.
   app.get("/api/reconciliation/dre-categories", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
