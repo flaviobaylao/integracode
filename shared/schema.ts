@@ -281,14 +281,6 @@ export const customers = pgTable("customers", {
   // Fornecedor: cadastro que NÃO é cliente. Fica no cadastro, mas NÃO entra em rota de visitas.
   isSupplier: boolean("is_supplier").default(false),
 
-  // Envio automático de documentos por e-mail ao faturar NF (replicado do Integra 1.0).
-  // Quando o pedido vai para o estágio 'faturado', os documentos marcados são enviados ao docsEmail.
-  docsEmail: varchar("docs_email"),
-  docsSendXml: boolean("docs_send_xml").default(false),
-  docsSendDanfe: boolean("docs_send_danfe").default(false),
-  docsSendBoleto: boolean("docs_send_boleto").default(false),
-  docsSendPedido: boolean("docs_send_pedido").default(false),
-
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
