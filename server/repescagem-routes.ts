@@ -950,6 +950,69 @@ export function registerRepescagemRoutes(app: Express, opts: {
   // ── Repescagem2 Fase 3: camada sobreposta na Rota do Dia ───────────────────
   // Alocações do sorteio (status 'in_route') do vendedor no dia. Ficam FORA de
   // optimized_order, logo intocadas pela otimização/auto-regeneração (travadas).
+  // TESTE (admin): dry-run do "pular ciclo". Sem ?apply=true NÃO grava — só mostra o que faria.
+  // ?anchor=YYYY-MM-DD opcional (senão usa a última visita agendada passada do cliente).
+  app.get('/api/repescagem/pular-ciclo-test/:customerId', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { customerId } = req.params;
+      const apply = String(req.query.apply || '') === 'true';
+      const anchorStr = String(req.query.anchor || '');
+      const { visitAgenda } = await import('@shared/schema');
+      const { calculateNextVisitDate } = await import('@shared/visitSchedule');
+
+      const [cust] = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
+      if (!cust) return res.status(404).json({ error: 'cliente não encontrado' });
+      let weekdays: string[] = [];
+      try { weekdays = typeof cust.weekdays === 'string' ? JSON.parse(cust.weekdays as string) : ((cust.weekdays as any) || []); } catch { weekdays = []; }
+
+      const readAgenda = async () => {
+        const rows = await db.select().from(visitAgenda).where(and(
+          eq(visitAgenda.customerId, customerId),
+          eq(visitAgenda.visitStatus, 'pending'),
+        )).orderBy(sql`${visitAgenda.scheduledDate} ASC`);
+        return rows.map((r: any) => new Date(r.scheduledDate).toISOString().slice(0, 10));
+      };
+      const before = await readAgenda();
+
+      let anchor: Date;
+      if (anchorStr) { anchor = new Date(anchorStr + 'T00:00:00'); }
+      else {
+        const todayStr = brTodayStr();
+        const past = await db.select().from(visitAgenda).where(and(
+          eq(visitAgenda.customerId, customerId),
+          sql`DATE(${visitAgenda.scheduledDate}) <= ${todayStr}`,
+        )).orderBy(sql`${visitAgenda.scheduledDate} DESC`).limit(1);
+        anchor = past.length ? new Date(past[0].scheduledDate as any) : new Date(todayStr + 'T00:00:00');
+      }
+      anchor.setHours(0, 0, 0, 0);
+
+      let preview: any = { erro: 'cliente sem weekdays/periodicidade' };
+      if (weekdays.length && cust.visitPeriodicity) {
+        const per = cust.visitPeriodicity as any;
+        const skipped = calculateNextVisitDate({ weekdays, periodicity: per, lastCompletedDate: anchor }).nextDate;
+        const resume = calculateNextVisitDate({ weekdays, periodicity: per, lastCompletedDate: skipped }).nextDate;
+        const d2 = calculateNextVisitDate({ weekdays, periodicity: per, lastCompletedDate: resume }).nextDate;
+        const d3 = calculateNextVisitDate({ weekdays, periodicity: per, lastCompletedDate: d2 }).nextDate;
+        preview = {
+          periodicidade: per, weekdays,
+          ancora: anchor.toISOString().slice(0, 10),
+          visitaPulada: skipped.toISOString().slice(0, 10),
+          novasProximas3: [resume, d2, d3].map((d: Date) => d.toISOString().slice(0, 10)),
+        };
+      }
+
+      let after: any = null, result: any = null;
+      if (apply) {
+        const { recalcularAgendaPulandoCiclo } = await import('./visitScheduleService');
+        result = await recalcularAgendaPulandoCiclo(customerId, anchor);
+        after = await readAgenda();
+      }
+      res.json({ customer: cust.name, apply, agendaAntes: before, preview, result, agendaDepois: after });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   app.get('/api/repescagem/route-overlay', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
