@@ -2197,6 +2197,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`CREATE TABLE IF NOT EXISTS boleto_charge_receivables (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), boleto_charge_id varchar NOT NULL, receivable_id varchar NOT NULL, amount numeric(12,2) NOT NULL DEFAULT 0, created_at timestamp DEFAULT now(), CONSTRAINT uq_bcr UNIQUE (boleto_charge_id, receivable_id))`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bcr_receivable ON boleto_charge_receivables (receivable_id)`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bcr_boleto ON boleto_charge_receivables (boleto_charge_id)`).catch(() => {});
+  // Anexos (DANFE/boleto) de contas a pagar — armazenados no banco (base64) para
+  // durabilidade no Railway (disco efemero). Idempotente.
+  db.execute(sql`CREATE TABLE IF NOT EXISTS payable_attachments (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), payable_id varchar NOT NULL, kind varchar NOT NULL DEFAULT 'outro', file_name varchar NOT NULL, mime_type varchar, size_bytes integer, content_base64 text NOT NULL, created_by varchar, created_at timestamp DEFAULT now())`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_payable_attachments_payable ON payable_attachments (payable_id)`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
