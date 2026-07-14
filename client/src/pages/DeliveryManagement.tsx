@@ -79,6 +79,7 @@ interface DeliveryOrder {
   invoiceNumber: string;
   customerId: string;
   customerName: string;
+  customerRazaoSocial?: string;
   customerCpf: string | null;
   customerCnpj: string | null;
   customerAddress: string;
@@ -1581,8 +1582,32 @@ export default function DeliveryManagement() {
                               {stop.stopOrder}
                             </div>
                             <div className="flex-1">
-                              <div className="font-medium">{stop.customerName}</div>
-                              <div className="text-sm text-muted-foreground">{stop.customerAddress}</div>
+                              {(() => {
+                                const ord: any = (orders || []).find((o: any) => o.id === stop.salesCardId);
+                                const fantasia = ord?.customerName || stop.customerName || '-';
+                                const razao = ord?.customerRazaoSocial;
+                                const bairro = ord?.customerNeighborhood;
+                                const cidade = ord?.customerCity;
+                                const endereco = stop.customerAddress || ord?.customerAddress || '';
+                                const nf = ord?.invoiceNumber;
+                                return (
+                                  <>
+                                    <div className="font-semibold leading-tight">{fantasia}</div>
+                                    {razao && razao !== fantasia && (
+                                      <div className="text-xs text-muted-foreground leading-tight">{razao}</div>
+                                    )}
+                                    <div className="text-sm text-muted-foreground mt-0.5">
+                                      {endereco}{cidade ? `, ${cidade}` : ''}
+                                      {bairro && (<span className="ml-1 font-semibold text-foreground">· {bairro}</span>)}
+                                    </div>
+                                    {nf && (
+                                      <div className="mt-1">
+                                        <span className="inline-block px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 text-xs font-semibold">NF {nf}</span>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               <div className="text-xs text-gray-600 mt-1">
                                 <Clock className="h-3 w-3 inline mr-1" />
                                 ETA: {stop.estimatedArrival}
