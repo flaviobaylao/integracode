@@ -17,6 +17,7 @@ import OmieClientImport from "./OmieClientImport";
 import OmieSyncManager from "./OmieSyncManager";
 import CustomerExcelImport from "./CustomerExcelImport";
 import WhatsAppButton from "./WhatsAppButton";
+import GeocodeAllButton from "./GeocodeAllButton";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
 import OmieInstanceBadge from "./OmieInstanceBadge";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
@@ -359,6 +360,7 @@ export default function CustomerManagement() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Gestão de Clientes</h2>
         <div className="flex space-x-2">
+          <GeocodeAllButton />
           <Button
             variant="outline"
             className="border-orange-500 text-orange-600 hover:bg-orange-500 hover:text-white"
