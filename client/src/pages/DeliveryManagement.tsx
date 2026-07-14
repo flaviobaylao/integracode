@@ -167,6 +167,7 @@ export default function DeliveryManagement() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
   const [selectedCities, setSelectedCities] = useState<Set<string>>(new Set());
+  const [coordFilter, setCoordFilter] = useState<string>(""); // "", "com", "sem"
   
   // Função para limpar cache local e recarregar
   const handleClearCache = async () => {
@@ -603,9 +604,13 @@ export default function DeliveryManagement() {
       // Se nenhuma cidade selecionada, mostrar todas; caso contrário, filtrar
       const matchesCity = selectedCities.size === 0 || (order.customerCity && selectedCities.has(order.customerCity));
 
-      return matchesSearch && matchesCity;
+      // Filtro com/sem coordenadas do cliente do pedido
+      const hasCoords = !!(order.customerLatitude && order.customerLongitude && Number(order.customerLatitude) !== 0 && Number(order.customerLongitude) !== 0);
+      const matchesCoords = !coordFilter || (coordFilter === 'com' ? hasCoords : !hasCoords);
+
+      return matchesSearch && matchesCity && matchesCoords;
     });
-  }, [orders, searchTerm, selectedCities]);
+  }, [orders, searchTerm, selectedCities, coordFilter]);
 
   // Funções de veículos
   const addVehicle = () => {
@@ -782,6 +787,21 @@ export default function DeliveryManagement() {
                   data-testid="input-search"
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="coord-filter">Coordenadas</Label>
+              <select
+                id="coord-filter"
+                value={coordFilter}
+                onChange={(e) => setCoordFilter(e.target.value)}
+                className="w-full border rounded-md h-9 px-2 text-sm bg-white"
+                data-testid="select-coords-filter"
+              >
+                <option value="">Todos</option>
+                <option value="com">Com coordenada</option>
+                <option value="sem">Sem coordenada</option>
+              </select>
             </div>
 
             <div className="space-y-2">
