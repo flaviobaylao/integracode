@@ -108,6 +108,29 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   
   const intervalDays = PERIODICITY_DAYS[periodicity];
 
+  // MENSAL = 1ª ocorrência do DIA DE ROTA no mês (base de calendário), NÃO "+28 dias".
+  // Ex.: dia de rota terça → sempre a 1ª terça de cada mês (07/07 → 04/08 → 01/09 → 06/10).
+  if (periodicity === 'mensal') {
+    if (!lastCompletedDate) {
+      // Sem última visita: 1º dia-alvo do mês de referência; se já passou, do mês seguinte.
+      let cand = firstTargetWeekdayOfMonth(baseDate.getFullYear(), baseDate.getMonth(), targetWeekdays);
+      if (!cand || cand < baseDate) {
+        const y = baseDate.getMonth() === 11 ? baseDate.getFullYear() + 1 : baseDate.getFullYear();
+        const m = baseDate.getMonth() === 11 ? 0 : baseDate.getMonth() + 1;
+        cand = firstTargetWeekdayOfMonth(y, m, targetWeekdays);
+      }
+      cand.setHours(8, 0, 0, 0);
+      return { nextDate: cand, interval: intervalDays, reason: 'next_weekday' };
+    }
+    // Com última visita: 1º dia-alvo do mês SEGUINTE ao da última visita.
+    const last = new Date(lastCompletedDate);
+    const y = last.getMonth() === 11 ? last.getFullYear() + 1 : last.getFullYear();
+    const m = last.getMonth() === 11 ? 0 : last.getMonth() + 1;
+    const next = firstTargetWeekdayOfMonth(y, m, targetWeekdays);
+    next.setHours(8, 0, 0, 0);
+    return { nextDate: next, interval: intervalDays, reason: 'periodicity_applied' };
+  }
+
   // Se não há última visita, encontrar o próximo dia válido da semana
   if (!lastCompletedDate) {
     const nextDate = findNextWeekday(baseDate, targetWeekdays);
@@ -130,6 +153,21 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     interval: intervalDays,
     reason: 'periodicity_applied'
   };
+}
+
+/**
+ * Retorna a 1ª ocorrência (mais cedo no mês) de qualquer dia-alvo da semana.
+ * Usado para periodicidade MENSAL (ex.: 1ª terça do mês).
+ */
+function firstTargetWeekdayOfMonth(year: number, month: number, targetWeekdays: number[]): Date {
+  let best: Date | null = null;
+  for (let day = 1; day <= 7; day++) {
+    const d = new Date(year, month, day);
+    if (targetWeekdays.includes(d.getDay())) {
+      if (!best || d < best) best = d;
+    }
+  }
+  return best || new Date(year, month, 1);
 }
 
 /**
