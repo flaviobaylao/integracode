@@ -2222,6 +2222,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // durabilidade no Railway (disco efemero). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS payable_attachments (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), payable_id varchar NOT NULL, kind varchar NOT NULL DEFAULT 'outro', file_name varchar NOT NULL, mime_type varchar, size_bytes integer, content_base64 text NOT NULL, created_by varchar, created_at timestamp DEFAULT now())`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_payable_attachments_payable ON payable_attachments (payable_id)`).catch(() => {});
+  // Object storage durável no banco (mídia WhatsApp/anexos). Evita perda no disco
+  // efemero do Railway. Se UPLOAD_DIR (volume) estiver setado, usa disco no lugar. Idempotente.
+  db.execute(sql`CREATE TABLE IF NOT EXISTS stored_objects (id varchar PRIMARY KEY, mime_type varchar, size_bytes integer, content_base64 text NOT NULL, created_at timestamp DEFAULT now())`).catch(() => {});
 
   // Trilha imutavel de pedidos -> pipeline (rede de seguranca: nenhum pedido pode desaparecer). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS order_pipeline_audit (
