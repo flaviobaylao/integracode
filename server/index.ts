@@ -3626,6 +3626,17 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // HOTFIX (14/jul): garante as colunas de envio de documentos ANTES dos workers de sync e do listen.
+  // getCustomers() usa db.select().from(customers) com TODAS as colunas do schema; se as colunas nao
+  // existirem no banco, a query quebra e o worker de sync derruba o processo (502). Idempotente.
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_email varchar`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_xml boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_danfe boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_boleto boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_pedido boolean DEFAULT false`);
+  } catch (e: any) { console.warn('[DOCS-EMAIL-MIGRATION] falha ao garantir colunas:', e?.message); }
+
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
 
