@@ -20965,36 +20965,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
 
-      // Complemento: pedidos do dia que AINDA não estão no billing_pipeline (ex.: cards com venda
-      // aguardando sync/faturamento). Fonte: sales_cards. Regras de "pedido do dia":
+      // Complemento: pedidos do dia (abertos) que AINDA não estão no billing_pipeline. Fonte: sales_cards.
+      // Regras de "pedido do dia":
       //   - sale_value > 0 (tem venda)
       //   - status <> 'no_sale' (não-venda NÃO é pedido)
-      //   - datado no dia: completed_date OU attendance_start_date OU scheduled_date (America/Sao_Paulo)
-      // Só adiciona clientes que NÃO têm pedido no billing (evita somar o mesmo pedido em dobro).
+      //   - AGENDADO para o dia da rota: scheduled_date (America/Sao_Paulo) = routeDate
+      //     (usar SÓ scheduled_date: completed/attendance de outras datas trazia cards duplicados de
+      //      cadeias de recorrência, inflando o valor).
+      //   - DISTINCT ON (customer_id): 1 card por cliente (o de maior valor), evita duplicatas.
+      // Só adiciona clientes que NÃO têm pedido no billing (billing tem prioridade; evita dobrar valor).
       const scOrdersResult = await db.execute(sql`
-        SELECT customer_id, omie_order_id, sale_value
+        SELECT DISTINCT ON (customer_id) customer_id, omie_order_id, sale_value
         FROM sales_cards
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND COALESCE(sale_value::numeric, 0) > 0
           AND status <> 'no_sale'
-          AND (
-            DATE(completed_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-            OR DATE(attendance_start_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-            OR DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-          )
+          AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+        ORDER BY customer_id, sale_value::numeric DESC
       `);
-      const scAddedCustomers = new Set<string>();
       (scOrdersResult.rows as any[]).forEach(row => {
         const cid = row.customer_id;
-        // Pula clientes já vindos do billing (só complementa quem não tem pedido lá).
-        if (ordersMap[cid] && !scAddedCustomers.has(cid)) return;
-        if (!ordersMap[cid]) ordersMap[cid] = [];
-        scAddedCustomers.add(cid);
-        ordersMap[cid].push({
+        if (ordersMap[cid]) return; // billing já tem o pedido desse cliente
+        ordersMap[cid] = [{
           cardNumber: null,
           omieOrderId: row.omie_order_id || null,
           saleValue: row.sale_value != null ? parseFloat(row.sale_value) : null
-        });
+        }];
       });
 
       // Buscar clientes para obter o documento (CPF ou CNPJ)
