@@ -20602,7 +20602,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       if (currentOrder.length === newOrder.length) {
-        console.error(`❌ [DELETE-VISIT] Visita ${visitId} NÃO encontrada no optimizedOrder:`, currentOrder);
+        // Não está no optimizedOrder → pode ser uma VISITA VIRTUAL (atendimento virtual), que NÃO
+        // fica no optimizedOrder — ela vem da visit_agenda (is_virtual = true). Nesse caso, remover
+        // a entrada virtual da agenda daquele dia é o que "tira o cliente da rota".
+        const entityId = visitId.includes(':') ? visitId.split(':')[1] : visitId;
+        const routeDateStr = new Date(route.routeDate as any).toISOString().split('T')[0];
+        try {
+          const delRes: any = await db.execute(sql`
+            DELETE FROM visit_agenda
+            WHERE customer_id = ${entityId}
+              AND is_virtual = true
+              AND DATE(scheduled_date) = ${routeDateStr}::date
+          `);
+          const removed = delRes?.rowCount ?? 0;
+          if (removed > 0) {
+            console.log(`🗑️ [DELETE-VISIT] Visita VIRTUAL ${entityId} removida da agenda (${removed}) para ${routeDateStr}`);
+            return res.json({
+              success: true,
+              message: 'Atendimento virtual removido da rota com sucesso',
+              removedVisitId: visitId,
+              virtual: true,
+            });
+          }
+        } catch (e: any) {
+          console.error('❌ [DELETE-VISIT] Falha ao remover visita virtual da agenda:', e?.message);
+        }
+        console.error(`❌ [DELETE-VISIT] Visita ${visitId} NÃO encontrada no optimizedOrder nem como virtual:`, currentOrder);
         return res.status(404).json({ message: 'Visita não encontrada na rota' });
       }
       
