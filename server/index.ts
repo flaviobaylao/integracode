@@ -2169,6 +2169,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
+  // Condição de pagamento por cliente (editada em Clientes Ativos): forma + prazo do boleto.
+  // Sem estas colunas o salvamento da "Forma de Pagamento" não persistia. Idempotente.
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS boleto_days integer DEFAULT 7`).catch(() => {});
   // FIX (08/jul): sales_cards tambem tem collection_discount/payment_installments no schema drizzle (l.486/487) -> criar no banco p/ nao quebrar SELECT/RETURNING de sales_cards. Idempotente.
   db.execute(sql`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
