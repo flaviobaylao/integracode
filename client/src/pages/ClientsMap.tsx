@@ -12,6 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import GeocodeAllButton from "@/components/GeocodeAllButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
@@ -263,7 +264,10 @@ export default function ClientsMap() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Mapa de Clientes</h2>
-        <BackToDashboardButton />
+        <div className="flex items-center gap-2">
+          <GeocodeAllButton />
+          <BackToDashboardButton />
+        </div>
       </div>
       <Card>
         <CardHeader>
