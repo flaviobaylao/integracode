@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import GeocodeAllButton from "@/components/GeocodeAllButton";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import {
   Dialog,
@@ -702,8 +703,9 @@ export default function DeliveryManagement() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
+          <GeocodeAllButton />
           <BackToDashboardButton />
-          <Button 
+          <Button
             onClick={() => setShowVehicleConfig(true)}
             data-testid="button-configure-routes"
             size="lg"
