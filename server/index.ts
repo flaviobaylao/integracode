@@ -2190,6 +2190,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'bsb'`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'aguardando_rota_bsb'`).catch(() => {});
   db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'outras_cidades'`).catch(() => {});
+  // Etapa "Em Rota BSB": mesmo comportamento de "em_rota", separa as entregas de Brasília (motorista BARUC). Idempotente.
+  db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'em_rota_bsb'`).catch(() => {});
   // Tipo de operacao Transferencia entre filiais (NF de transferencia). Idempotente.
   db.execute(sql`ALTER TYPE operation_type ADD VALUE IF NOT EXISTS 'transferencia'`).catch(() => {});
   // Boleto UNIFICADO: liga um boleto a varios titulos (contas a receber). Quando o
