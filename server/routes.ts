@@ -20939,49 +20939,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📊 [CUSTOMER-INFO] Rota ${routeId}, data ${routeDate}, ${customerIds.length} clientes, stopIds: ${optimizedOrder.slice(0,3).join(', ')}...`);
       
-      // Buscar pedidos do dia para esses clientes
-      // Usa UNION para combinar order_history + omie_order_id
+      // Pedidos do dia = BILLING_PIPELINE (fonte de verdade atual dos pedidos/faturamento).
+      // Antes buscava em order_history/sales_cards (legado) e retornava vazio → "Visitas com Pedidos = 0".
+      // Casa por customer_id + data de criação do pedido (todos os estágios do pipeline).
       const ordersResult = await db.execute(sql`
-        WITH order_history_orders AS (
-          SELECT
-            sc.customer_id,
-            sc.id as sales_card_id,
-            NULL::text as card_number,
-            oh.order_date,
-            sc.omie_order_id,
-            sc.sale_value
-          FROM order_history oh
-          JOIN sales_cards sc ON sc.id = oh.sales_card_id
-          WHERE oh.status = 'completed'
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-            AND sc.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
-        ),
-        omie_orders AS (
-          SELECT
-            customer_id,
-            id as sales_card_id,
-            NULL::text as card_number,
-            omie_order_id,
-            sale_value
-          FROM sales_cards
-          WHERE omie_order_id IS NOT NULL
-            AND customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
-            AND (
-              -- Filtro por data extraída da notes OU omie_sent_at/completed_date
-              (notes LIKE '%Enviado para Omie:%' AND 
-               TO_DATE(SUBSTRING(notes FROM 'Enviado para Omie: ([0-9]{2}/[0-9]{2}/[0-9]{4})'), 'DD/MM/YYYY') = ${routeDate}::date)
-              OR
-              (notes NOT LIKE '%Enviado para Omie:%' AND 
-               COALESCE(DATE(omie_sent_at AT TIME ZONE 'America/Sao_Paulo'), 
-                        DATE(completed_date AT TIME ZONE 'America/Sao_Paulo')) = ${routeDate}::date)
-            )
-        )
-        SELECT DISTINCT customer_id, sales_card_id, card_number, omie_order_id, sale_value
-        FROM (
-          SELECT customer_id, sales_card_id, card_number, omie_order_id, sale_value FROM order_history_orders
-          UNION
-          SELECT customer_id, sales_card_id, card_number, omie_order_id, sale_value FROM omie_orders
-        ) all_orders
+        SELECT
+          customer_id,
+          id AS sales_card_id,
+          order_number AS card_number,
+          COALESCE(invoice_number, order_number) AS omie_order_id,
+          sale_value
+        FROM billing_pipeline
+        WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+          AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
       `);
       
       // Indexar pedidos por customerId
