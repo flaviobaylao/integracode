@@ -474,19 +474,56 @@ export function registerPurchaseRoutes(app: Express) {
 
   app.post("/api/purchases/:id/create-payable", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
     try {
-      const { dueDate, financialAccountId, paymentMethod, description } = req.body;
+      const { dueDate, financialAccountId, paymentMethod, description, installments } = req.body;
 
       const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
       if (!invoice) return res.status(404).json({ error: "NF de compra não encontrada" });
       if (invoice.payableId) return res.status(400).json({ error: "Conta a pagar já vinculada" });
       if (invoice.status !== "classified") return res.status(400).json({ error: "NF precisa estar classificada antes de criar conta a pagar" });
+
+      const by = (req as any).currentUser?.id || (req as any).currentUser?.email || null;
+      const baseDesc = description || `Compra NF ${invoice.invoiceNumber} - ${invoice.supplierName}`;
+
+      // PARCELAMENTO: se vier uma lista de parcelas, cria UMA conta a pagar por parcela (cada
+      // uma com seu vencimento e valor). Sem parcelas, cria uma unica (comportamento antigo).
+      const parc = Array.isArray(installments) ? installments.filter((p: any) => p && p.dueDate && Number(p.amount) > 0) : [];
+      if (parc.length > 0) {
+        const created: any[] = [];
+        for (let i = 0; i < parc.length; i++) {
+          const p = parc[i];
+          const [pay] = await db.insert(payables).values({
+            titleNumber: `NF-${invoice.invoiceNumber || "SN"}${parc.length > 1 ? ` (${i + 1}/${parc.length})` : ""}`,
+            supplierName: invoice.supplierName,
+            supplierDocument: invoice.supplierDocument,
+            description: parc.length > 1 ? `${baseDesc} - Parcela ${i + 1}/${parc.length}` : baseDesc,
+            issueDate: invoice.issueDate || nowBrazil(),
+            dueDate: new Date(p.dueDate),
+            amount: String(p.amount),
+            amountPaid: "0",
+            status: "a_vencer",
+            paymentMethod: paymentMethod || "boleto",
+            financialAccountId: financialAccountId || null,
+            chartAccountId: invoice.chartAccountId || null,
+            source: "radar",
+            omieInstanceId: invoice.omieInstanceId || null,
+            createdBy: by,
+          }).returning();
+          created.push(pay);
+        }
+        const [updatedInvoiceP] = await db.update(purchaseInvoices)
+          .set({ payableId: created[0].id, status: "linked", updatedAt: nowBrazil() })
+          .where(eq(purchaseInvoices.id, req.params.id))
+          .returning();
+        return res.json({ invoice: updatedInvoiceP, payables: created, count: created.length });
+      }
+
       if (!dueDate) return res.status(400).json({ error: "Data de vencimento obrigatória" });
 
       const [payable] = await db.insert(payables).values({
         titleNumber: `NF-${invoice.invoiceNumber || "SN"}`,
         supplierName: invoice.supplierName,
         supplierDocument: invoice.supplierDocument,
-        description: description || `Compra NF ${invoice.invoiceNumber} - ${invoice.supplierName}`,
+        description: baseDesc,
         issueDate: invoice.issueDate || nowBrazil(),
         dueDate: dueDate ? new Date(dueDate) : nowBrazil(),
         amount: invoice.totalValue,
@@ -497,7 +534,7 @@ export function registerPurchaseRoutes(app: Express) {
         chartAccountId: invoice.chartAccountId || null,
         source: "radar",
         omieInstanceId: invoice.omieInstanceId || null,
-        createdBy: req.userId,
+        createdBy: by,
       }).returning();
 
       const [updatedInvoice] = await db.update(purchaseInvoices)
