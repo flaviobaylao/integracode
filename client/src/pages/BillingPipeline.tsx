@@ -198,6 +198,8 @@ export default function BillingPipeline() {
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
+  const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
+  const [prodSearch, setProdSearch] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
@@ -332,6 +334,7 @@ export default function BillingPipeline() {
       notes: detailItem.notes ?? '',
       products: (detailItem.products || []).map((pp: any) => ({ ...pp })),
     });
+    setProdSearch('');
     setEditMode(true);
   };
   const saveEdit = () => { if (detailItem && editData) updateItemMutation.mutate({ id: detailItem.id, data: editData }); };
@@ -1090,10 +1093,10 @@ export default function BillingPipeline() {
                         {editMode ? (editData?.products || []).map((p: any, i: number) => (
                           <tr key={i} className="border-t">
                             <td className="p-1.5 text-gray-400">{i + 1}</td>
-                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; return { ...d, products: pr }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; return { ...d, products: pr }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; return { ...d, products: pr }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => ({ ...d, products: d.products.filter((_: any, x: number) => x !== i) }))} className="text-red-500 ml-1">✕</button></td>
+                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => { const pr = d.products.filter((_: any, x: number) => x !== i); const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="text-red-500 ml-1">✕</button></td>
                           </tr>
                         )) : detailItem.products?.map((p, i) => (
                           <tr key={i} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
@@ -1108,11 +1111,53 @@ export default function BillingPipeline() {
                       <tfoot className="bg-gray-50 dark:bg-gray-700">
                         <tr className="border-t-2">
                           <td colSpan={4} className="p-2.5 text-right font-bold">Total:</td>
-                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(detailItem.saleValue)}</td>
+                          <td className="text-right p-2.5 font-bold text-green-700">{formatCurrency(editMode ? editData?.saleValue : detailItem.saleValue)}</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
+                  {editMode && (
+                    <div className="mt-2 relative">
+                      <input
+                        value={prodSearch}
+                        onChange={(e) => setProdSearch(e.target.value)}
+                        placeholder="🔍 Buscar produto para adicionar ao pedido…"
+                        className="w-full border rounded px-2 py-1.5 text-xs"
+                        data-testid="input-add-product-search"
+                      />
+                      {prodSearch.trim() && (
+                        <div className="absolute z-20 left-0 right-0 border rounded mt-1 max-h-48 overflow-auto bg-white dark:bg-gray-800 shadow-lg">
+                          {(productCatalog as any[])
+                            .filter((pc: any) => (pc.name || '').toLowerCase().includes(prodSearch.toLowerCase()) && !(editData?.products || []).some((ep: any) => ep.id && ep.id === pc.id))
+                            .slice(0, 25)
+                            .map((pc: any) => {
+                              const up = parseFloat(pc.price ?? pc.unitPrice ?? '0') || 0;
+                              return (
+                                <button
+                                  key={pc.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setEditData((d: any) => {
+                                      const pr = [...(d.products || []), { id: pc.id, name: pc.name, quantity: 1, unitPrice: up, totalPrice: up }];
+                                      const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0);
+                                      return { ...d, products: pr, saleValue: _sv.toFixed(2) };
+                                    });
+                                    setProdSearch('');
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-blue-50 dark:hover:bg-gray-700 flex justify-between items-center gap-2 border-b last:border-b-0"
+                                >
+                                  <span className="truncate">{pc.name}</span>
+                                  <span className="text-gray-500 whitespace-nowrap">{formatCurrency(up)}</span>
+                                </button>
+                              );
+                            })}
+                          {(productCatalog as any[]).filter((pc: any) => (pc.name || '').toLowerCase().includes(prodSearch.toLowerCase()) && !(editData?.products || []).some((ep: any) => ep.id && ep.id === pc.id)).length === 0 && (
+                            <div className="px-2 py-1.5 text-xs text-gray-400">Nenhum produto encontrado.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
