@@ -728,6 +728,35 @@ export function registerFinancialRoutes(app: Express) {
       const offsetR = parseInt(String(req.query.offset || '')) || 0;
       const pageR = limitR > 0 ? all.slice(offsetR, offsetR + limitR) : all;
       try { attachBadges(pageR, await badgeFlagsFor('receivable'), 'recebida'); } catch {}
+      // Comprovante de entrega: anexa as fotos tiradas pelo entregador (delivery_route_stops.photos),
+      // ligadas ao recebível por billing_pipeline (billingPipelineId) ou pelo sales_card_id. Batched.
+      try {
+        const pipeIds = Array.from(new Set(pageR.map((r: any) => r.billingPipelineId).filter(Boolean)));
+        const cardIds = Array.from(new Set(pageR.map((r: any) => r.salesCardId).filter(Boolean)));
+        if (pipeIds.length || cardIds.length) {
+          const conds: any[] = [];
+          if (pipeIds.length) conds.push(sql`billing_id IN (${sql.join(pipeIds.map((id: string) => sql`${id}`), sql`, `)})`);
+          if (cardIds.length) conds.push(sql`sales_card_id IN (${sql.join(cardIds.map((id: string) => sql`${id}`), sql`, `)})`);
+          const stopsRes: any = await db.execute(sql`
+            SELECT billing_id, sales_card_id, photos
+            FROM delivery_route_stops
+            WHERE photos IS NOT NULL AND jsonb_array_length(photos) > 0 AND (${sql.join(conds, sql` OR `)})
+          `);
+          const stopRows: any[] = stopsRes?.rows || stopsRes || [];
+          const byBilling = new Map<string, string[]>();
+          const byCard = new Map<string, string[]>();
+          for (const s of stopRows) {
+            let ph: string[] = [];
+            try { ph = Array.isArray(s.photos) ? s.photos : (s.photos ? JSON.parse(s.photos) : []); } catch {}
+            if (!ph.length) continue;
+            if (s.billing_id && !byBilling.has(s.billing_id)) byBilling.set(s.billing_id, ph);
+            if (s.sales_card_id && !byCard.has(s.sales_card_id)) byCard.set(s.sales_card_id, ph);
+          }
+          for (const r of pageR as any[]) {
+            r.deliveryPhotos = (r.billingPipelineId && byBilling.get(r.billingPipelineId)) || (r.salesCardId && byCard.get(r.salesCardId)) || [];
+          }
+        }
+      } catch { /* nunca bloqueia a lista */ }
       // ?paged=1: retorna a PAGINA + um RESUMO (contagem e somas) calculado sobre TODO o
       // conjunto filtrado no servidor. Permite abrir a tela SEM filtro e ainda assim rapido:
       // manda so a 1a pagina e os totais vem do resumo (nao baixa 10k+ linhas no cliente).
