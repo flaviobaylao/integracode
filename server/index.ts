@@ -23,6 +23,7 @@ import { authenticateUser, requireRole } from './authMiddleware';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
+import { calculateNextVisitDate } from "../shared/visitSchedule";
 
 const app = express();
 
@@ -347,60 +348,69 @@ run();
     const apply = req.body?.apply === true;
     const count = Math.max(1, Math.min(6, Number(req.body?.count) || 4));
     const replaceFuture = req.body?.replaceFuture !== false; // default true no apply
-    const pgMod = await import('pg');
-    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
     try {
-      await src.connect();
-      const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
-      // 1) ultima visita AGENDADA por documento no 1.0
-      const q = await src.query(`SELECT c.cnpj AS cnpj, c.cpf AS cpf, MAX(va.scheduled_date) AS last_sched
-        FROM visit_agenda va JOIN customers c ON c.id = va.customer_id
-        GROUP BY c.cnpj, c.cpf`);
-      const lastByDoc = new Map<string, Date>();
-      for (const r of q.rows as any[]) {
-        if (!r.last_sched) continue;
-        for (const d of [dg(r.cnpj), dg(r.cpf)]) {
-          if (d && d.length >= 11) { const prev = lastByDoc.get(d); const dt = new Date(r.last_sched); if (!prev || dt > prev) lastByDoc.set(d, dt); }
-        }
+      // 1) ÚLTIMO ATENDIMENTO por cliente (Integra 2.0). Âncora = data do último atendimento real
+      //    ao cliente: atendimento virtual (virtual_service_logs) ou visita/venda concluída no card
+      //    de venda (sales_cards: completed_date / check_in_time). NÃO usa mais a agenda do Integra 1.0.
+      const lastAtendR: any = await db.execute(sql`
+        SELECT customer_id, MAX(dt) AS last_atend FROM (
+          SELECT customer_id, attendance_date AS dt FROM virtual_service_logs
+            WHERE entity_type = 'customer' AND attendance_date IS NOT NULL
+          UNION ALL
+          SELECT customer_id, completed_date AS dt FROM sales_cards
+            WHERE completed_date IS NOT NULL AND status IN ('completed','no_sale')
+          UNION ALL
+          SELECT customer_id, check_in_time AS dt FROM sales_cards
+            WHERE check_in_time IS NOT NULL
+        ) t GROUP BY customer_id`);
+      const lastAtendByCustomer = new Map<string, Date>();
+      for (const r of ((lastAtendR.rows || lastAtendR) as any[])) {
+        if (r.customer_id && r.last_atend) lastAtendByCustomer.set(String(r.customer_id), new Date(r.last_atend));
       }
       // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
       const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address
         FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
       const cust = (custR.rows || custR) as any[];
-      // cadencia
-      const INTERVAL: any = { semanal: 7, quinzenal: 14, mensal: 28, bimestral: 56 };
       const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
       const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
       const today = new Date(); today.setHours(0, 0, 0, 0);
-      const snapFwd = (date: Date, targets: number[]) => { for (let i = 0; i <= 7; i++) { const t = new Date(date); t.setDate(date.getDate() + i); if (targets.includes(t.getDay())) { t.setHours(8, 0, 0, 0); return t; } } const t = new Date(date); t.setHours(8, 0, 0, 0); return t; };
-      const nextFrom = (a: Date, targets: number[], iv: number) => { const t = new Date(a); t.setDate(t.getDate() + iv); return snapFwd(t, targets); };
-      const parseWk = (w: any) => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => ABBR[String(d)]).filter((n: any) => n != null); };
-      const result: any = { apply, count, totalClientes: cust.length, comAncora1_0: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
+      const parseWk = (w: any): string[] => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => String(d)); };
+      const result: any = { apply, count, totalClientes: cust.length, comAncora: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
       // por cliente: guarda ancoraThreshold p/ delete seletivo (preserva visitas ate a ancora)
       const insertRows: any[] = [];
       const delThreshold: Record<string, string> = {}; // customerId -> ISO (apaga futuras pendentes > este)
       for (const c of cust) {
         try {
-          const targets = parseWk(c.weekdays);
-          if (targets.length === 0) { result.semDiaValido++; continue; }
-          const iv = INTERVAL[String(c.visit_periodicity)] || 7;
-          const doc = (dg(c.cnpj).length >= 11) ? dg(c.cnpj) : (dg(c.cpf).length >= 11 ? dg(c.cpf) : '');
-          const anchor = doc ? lastByDoc.get(doc) : undefined;
-          let dates: Date[] = [];
-          if (anchor) {
-            result.comAncora1_0++;
-            let d = new Date(anchor); d.setHours(0, 0, 0, 0); let guard = 0;
-            do { d = nextFrom(d, targets, iv); guard++; } while (d < today && guard < 1000);
-            dates.push(d);
-          } else {
-            result.semAncora++;
-            dates.push(snapFwd(today, targets));
+          const weekdaysRaw = parseWk(c.weekdays);
+          const targetNums = weekdaysRaw.map((d) => ABBR[d]).filter((n: any) => n != null);
+          if (targetNums.length === 0) { result.semDiaValido++; continue; }
+          const periodicity = String(c.visit_periodicity) as any;
+          // ÂNCORA = data do último atendimento do cliente (2.0). Sem atendimento → agenda a partir de hoje.
+          const anchor = lastAtendByCustomer.get(String(c.id)) || null;
+          if (anchor) result.comAncora++; else result.semAncora++;
+          // Gera `count` próximas visitas seguindo as REGRAS BASE (calculateNextVisitDate):
+          // semanal=+7, quinzenal=+14, mensal=1ª ocorrência do dia de rota no mês seguinte.
+          // Avança a partir da âncora até cair em data futura (>= hoje), depois encadeia.
+          const dates: Date[] = [];
+          let cursor: Date | null = anchor ? new Date(anchor) : null;
+          let guard = 0;
+          while (dates.length < count && guard < 2000) {
+            guard++;
+            let next: Date;
+            try {
+              next = calculateNextVisitDate(cursor
+                ? { weekdays: weekdaysRaw, periodicity, lastCompletedDate: cursor }
+                : { weekdays: weekdaysRaw, periodicity, referenceDate: today }).nextDate;
+            } catch (e) { break; }
+            if (cursor && next.getTime() <= cursor.getTime()) break; // trava anti-loop
+            cursor = next;
+            if (next >= today) dates.push(next);
           }
+          if (dates.length === 0) { result.semDiaValido++; continue; }
           // limite de exclusao: se ancora futura, preserva ate ela (apaga > ancora); senao apaga tudo futuro (> ontem)
           const aDate = anchor ? new Date(anchor) : null; if (aDate) aDate.setHours(23,59,59,0);
           delThreshold[c.id] = (aDate && aDate >= today) ? aDate.toISOString() : new Date(today.getTime() - 86400000).toISOString();
-          for (let i = 1; i < count; i++) dates.push(nextFrom(dates[i - 1], targets, iv));
-          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targets.map((n: number) => DOW[n]).join(','), ancora1_0: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
+          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targetNums.map((n: number) => DOW[n]).join(','), ancora: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
           for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
         } catch (e) { result.erros++; }
       }
@@ -425,10 +435,9 @@ run();
             try { await db.execute(sql`INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT DO NOTHING`); inserted += batch.length; } catch (e) { errs++; }
           }
         } catch (e) { errs++; }
-        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('visits_seed_last', ${JSON.stringify({ at: new Date().toISOString(), clientes: cust.length, comAncora1_0: result.comAncora1_0, semAncora: result.semAncora, semDiaValido: result.semDiaValido, futurasRemovidas: removed, visitasInseridas: inserted, erros: errs })}, 'visits-seed') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('visits_seed_last', ${JSON.stringify({ at: new Date().toISOString(), clientes: cust.length, comAncora: result.comAncora, semAncora: result.semAncora, semDiaValido: result.semDiaValido, futurasRemovidas: removed, visitasInseridas: inserted, erros: errs })}, 'visits-seed') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
       })();
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
-    finally { await src.end().catch(() => {}); }
   });
 
   app.get('/api/admin/routes/day-check', async (req: Request, res: Response) => {
