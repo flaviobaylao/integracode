@@ -537,11 +537,12 @@ export function registerPurchaseRoutes(app: Express) {
         const targetInstanceId = instanceId || invoice.omieInstanceId;
         const lot = lotNumber || `NF-${invoice.invoiceNumber}-${new Date().toISOString().slice(0, 10)}`;
 
-        const [existingLot] = await db.execute(sql`
+        const existingLotRes: any = await db.execute(sql`
           SELECT id, quantity FROM inventory_lots
           WHERE product_id = ${productId} AND instance_id = ${targetInstanceId} AND stock_type = 'in_use'
           LIMIT 1
         `);
+        const existingLot = ((existingLotRes as any).rows || existingLotRes)[0];
 
         if (existingLot) {
           await db.execute(sql`
@@ -631,7 +632,10 @@ export function registerPurchaseRoutes(app: Express) {
         const qty = Number(mapping.quantity);
         if (!rawMaterialId || !qty || isNaN(qty)) continue;
         const uc = (mapping.unitCost !== undefined && mapping.unitCost !== null && mapping.unitCost !== "") ? Number(mapping.unitCost) : null;
-        const [cur] = await db.execute(sql`SELECT quantity, unit_cost FROM raw_materials WHERE id = ${rawMaterialId} LIMIT 1`);
+        // db.execute retorna { rows } — NAO e iteravel (destruturar como array quebra:
+        // "(intermediate value) is not iterable"). Pega a 1a linha via .rows.
+        const curRes: any = await db.execute(sql`SELECT quantity, unit_cost FROM raw_materials WHERE id = ${rawMaterialId} LIMIT 1`);
+        const cur = ((curRes as any).rows || curRes)[0];
         if (!cur) continue;
         const prev = Number((cur as any).quantity || 0);
         const next = prev + qty;
