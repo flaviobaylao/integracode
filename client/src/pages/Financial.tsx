@@ -286,6 +286,24 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   // Abre SEM filtro do usuario -> modo paginado rapido (1a pagina + resumo do servidor).
   // Assim que qualquer filtro do cliente e usado, busca o conjunto completo (filtra no cliente).
   const noClientFilters = sellerMulti.length === 0 && !customerSearch && valueMin === '' && valueMax === '';
+  const [unifySel, setUnifySel] = useState<string[]>([]);
+  const [unifyBusy, setUnifyBusy] = useState(false);
+  const toggleUnify = (id: string) => setUnifySel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const emitirCobrancaUnificada = async () => {
+    if (unifySel.length < 2) { alert('Selecione ao menos 2 títulos do mesmo cliente.'); return; }
+    if (!confirm(`Gerar UM boleto único juntando ${unifySel.length} títulos?\n\nQuando esse boleto for pago, TODOS os títulos serão baixados automaticamente.`)) return;
+    setUnifyBusy(true);
+    try {
+      const res = await fetch('/api/financial/boleto/combined', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receivableIds: unifySel }) });
+      const j = await res.json();
+      if (!res.ok || !(j.success || j.ok)) { alert('Não foi possível unir os títulos: ' + (j.error || j.persistError || 'erro')); return; }
+      setUnifySel([]);
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+      if (j.viewUrl) window.open(j.viewUrl, '_blank');
+      alert('Boleto unificado gerado com sucesso.');
+    } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
+    finally { setUnifyBusy(false); }
+  };
   const buildUrl = () => {
     const p = new URLSearchParams();
     if (instanceId) p.set('instanceId', instanceId);
@@ -507,6 +525,14 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
         )}
       </div>
 
+      {(canBoleto || !readOnly) && unifySel.length > 0 && (
+        <div className="flex items-center gap-3 mb-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
+          <span className="text-sm font-medium text-blue-900">{unifySel.length} título(s) selecionado(s) — gere um único boleto que, ao ser pago, baixa todos.</span>
+          <Button size="sm" onClick={emitirCobrancaUnificada} disabled={unifyBusy || unifySel.length < 2} className="ml-auto">{unifyBusy ? 'Gerando…' : 'Unir em um boleto'}</Button>
+          <Button size="sm" variant="outline" onClick={() => setUnifySel([])}>Limpar</Button>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin" /></div>
       ) : (
@@ -548,6 +574,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   <TableCell><Badge variant="outline">{instanceNames[r.omieInstanceId] || r.omieInstanceId || '-'}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
+                      {(canBoleto || !readOnly) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<input type="checkbox" title="Selecionar p/ boleto unificado" className="mr-1 h-4 w-4 self-center cursor-pointer" checked={unifySel.includes(r.id)} onChange={() => toggleUnify(r.id)} />)}
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
