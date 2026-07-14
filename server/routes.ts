@@ -21015,7 +21015,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Complemento: pedidos do dia (abertos) que AINDA não estão no billing_pipeline. Fonte: sales_cards.
       // Regras de "pedido do dia":
       //   - sale_value > 0 (tem venda)
-      //   - status <> 'no_sale' (não-venda NÃO é pedido)
+      //   - status = 'completed' (pedido REALMENTE feito). Cards 'pending'/'in_progress' apenas
+      //     têm um sale_value previsto/herdado do ciclo e NÃO representam pedido do dia — incluí-los
+      //     marcava a tag "Pedido" para clientes que não fecharam venda hoje.
       //   - operação = VENDA (Troca/Amostra/Devolução/etc. contam só como atendimento, não pedido;
       //     legado sem operation_type é tratado como venda)
       //   - AGENDADO para o dia da rota: scheduled_date (America/Sao_Paulo) = routeDate
@@ -21028,7 +21030,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM sales_cards
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
           AND COALESCE(sale_value::numeric, 0) > 0
-          AND status <> 'no_sale'
+          AND status = 'completed'
           AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
           AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
         ORDER BY customer_id, sale_value::numeric DESC
