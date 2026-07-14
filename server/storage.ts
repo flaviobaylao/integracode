@@ -6732,6 +6732,14 @@ export class DatabaseStorage implements IStorage {
         try {
           // 1. Buscar TODOS os vendedores de uma vez
           const customersData = await db.select().from(customers).where(inArray(customers.id, customerIds));
+          // Condição de pagamento (payment_method/boleto_days/collection_discount/payment_installments):
+          // NÃO está no schema drizzle de customers, então o select acima não a traz. Busca via SQL
+          // cru para o modal de edição de Clientes Ativos exibir a forma de pagamento salva.
+          const _pmMap = new Map<string, any>();
+          try {
+            const _pmRows: any = await db.execute(sql`SELECT id, payment_method AS "paymentMethod", boleto_days AS "boletoDays", collection_discount AS "collectionDiscount", payment_installments AS "paymentInstallments" FROM customers WHERE id = ANY(${customerIds})`);
+            for (const _r of (((_pmRows as any).rows) || [])) _pmMap.set(String(_r.id), _r);
+          } catch (e) { /* colunas garantidas no boot; ignora se ausentes */ }
           const sellerIds = Array.from(new Set(customersData.map(c => c.sellerId).filter(Boolean)));
           
           let sellerMap = new Map<string, string>();
@@ -6750,7 +6758,7 @@ export class DatabaseStorage implements IStorage {
           // 2. Mapear clientes com nomes de vendedores
           for (const c of customersData) {
             const sellerName = c.sellerId ? sellerMap.get(c.sellerId) : undefined;
-            customerMap.set(c.id, { ...c, sellerName });
+            customerMap.set(c.id, { ...c, ...(_pmMap.get(c.id) || {}), sellerName });
           }
           
           // 3. Buscar positivações do mês atual através dos faturamentos (billings)
