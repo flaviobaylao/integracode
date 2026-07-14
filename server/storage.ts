@@ -8556,9 +8556,18 @@ export class DatabaseStorage implements IStorage {
     try {
       const pipeIds = Array.from(new Set(rows.map((r) => r.billingPipelineId).filter(Boolean)));
       if (pipeIds.length > 0) {
-        const pipes = await db.select({ id: billingPipeline.id, sellerName: billingPipeline.sellerName }).from(billingPipeline).where(inArray(billingPipeline.id, pipeIds));
+        const pipes = await db.select({ id: billingPipeline.id, sellerName: billingPipeline.sellerName, invoiceNumber: billingPipeline.invoiceNumber }).from(billingPipeline).where(inArray(billingPipeline.id, pipeIds));
         const sm = new Map(pipes.map((p) => [p.id, p.sellerName]));
-        for (const r of rows) { r.sellerName = sm.get(r.billingPipelineId) || null; }
+        const nfm = new Map(pipes.map((p) => [p.id, p.invoiceNumber]));
+        for (const r of rows) {
+          r.sellerName = sm.get(r.billingPipelineId) || null;
+          // NUMERO DA NOTA: recebivel criado pelo pipeline ANTES da NF-e fica com "TIT-<pedido>".
+          // Quando a NF-e sai, o item do pipeline ganha invoice_number "NF-xxxx", mas o titulo do
+          // recebivel nao era atualizado (o reparo existente so cobre NF-e vinculada por
+          // fiscal_invoice_id, aqui nulo). Exibe o numero real da NF quando o titulo ainda e "TIT-%".
+          const _nf = nfm.get(r.billingPipelineId);
+          if (_nf && /^NF-/.test(String(_nf)) && /^TIT-/.test(String((r as any).titleNumber || ''))) (r as any).titleNumber = String(_nf);
+        }
       }
       // Fallback (paridade c/ 1.0): vendedor a partir do cadastro do cliente (por id OU por documento) p/ recebiveis sem pipeline
       const needSeller = rows.filter((r) => !r.sellerName);
