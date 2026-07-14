@@ -320,7 +320,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const emitirCobrancaUnificada = async () => {
     if (unifySel.length < 2) { alert('Selecione ao menos 2 títulos do mesmo cliente.'); return; }
     if (!unifyDate) { alert('Escolha a data de vencimento do boleto.'); return; }
-    if (!confirm(`Gerar UM boleto único juntando ${unifySel.length} títulos, com vencimento em ${new Date(unifyDate + 'T12:00:00').toLocaleDateString('pt-BR')}?\n\nQuando esse boleto for pago, TODOS os títulos serão baixados automaticamente.`)) return;
+    if (!confirm(`Gerar UM boleto único juntando ${unifySel.length} títulos, com vencimento em ${new Date(unifyDate + 'T12:00:00').toLocaleDateString('pt-BR')}?\n\nAs cobranças anteriores desses títulos (boletos/PIX ainda em aberto) serão canceladas automaticamente.\n\nQuando esse boleto for pago, TODOS os títulos serão baixados automaticamente.`)) return;
     setUnifyBusy(true);
     try {
       const res = await fetch('/api/financial/boleto/combined', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receivableIds: unifySel, dueDate: unifyDate }) });
@@ -329,7 +329,9 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
       setUnifySel([]); setUnifyDate('');
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       if (j.viewUrl) window.open(j.viewUrl, '_blank');
-      alert('Boleto unificado gerado com sucesso.');
+      const c = j.cancelamentos || {};
+      const canceladas = (c.boletos || 0) + (c.combinados || 0) + (c.pix || 0);
+      alert('Boleto unificado gerado com sucesso.' + (canceladas > 0 ? `\n\n${canceladas} cobrança(s) anterior(es) cancelada(s) automaticamente.` : ''));
     } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
     finally { setUnifyBusy(false); }
   };
