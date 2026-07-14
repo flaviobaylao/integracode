@@ -1217,7 +1217,9 @@ export function registerReconciliation(app: Express) {
       const dryRun = req.body?.dryRun !== false;
       const by = (req.body?.by || "conciliacao-2.0").toString();
       await ensureMirrorColumn();
-      const cand = rowsOf(await db.execute(sql`
+      // Subconsulta: cada pendente (nao-espelho) + o id do seu GEMEO ja CONCILIADO
+      // (mesma conta|data|valor|tipo|descricao normalizada), ou NULL se nao houver.
+      const CAND = sql`
         SELECT i.id AS pending_id,
                (SELECT j.id FROM bank_statement_items j
                   JOIN bank_statements sj ON sj.id = j.statement_id
@@ -1235,23 +1237,25 @@ export function registerReconciliation(app: Express) {
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
         WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
-          AND i.mirror_of IS NULL`));
-      const toLink = cand.filter((c: any) => c.canonical_id);
-      let atualizados = 0;
-      if (!dryRun && toLink.length) {
-        for (const c of toLink) {
-          const u: any = await db.execute(sql`
-            UPDATE bank_statement_items
-            SET mirror_of = ${String(c.canonical_id)}, reconciliation_status = 'mirror',
-                matched_by = ${by}, matched_at = now(),
-                notes = 'Espelho (limpeza 3.4p): lançamento já conciliado em outro extrato da mesma conta'
-            WHERE id = ${String(c.pending_id)}
-              AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')
-              AND mirror_of IS NULL`);
-          atualizados += Number((u as any)?.rowCount ?? 0);
-        }
+          AND i.mirror_of IS NULL`;
+      if (dryRun) {
+        const c = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM (${CAND}) q WHERE q.canonical_id IS NOT NULL`))[0];
+        return res.json({ dryRun, candidatos: Number(c?.n || 0), atualizados: 0 });
       }
-      res.json({ dryRun, candidatos: toLink.length, atualizados });
+      // Aplicacao em UM unico UPDATE em conjunto (rapido e atomico; sem loop/timeout).
+      const u = rowsOf(await db.execute(sql`
+        UPDATE bank_statement_items t
+        SET mirror_of = q.canonical_id, reconciliation_status = 'mirror',
+            matched_by = ${by}, matched_at = now(),
+            notes = 'Espelho (limpeza 3.4p): lançamento já conciliado em outro extrato da mesma conta'
+        FROM (${CAND}) q
+        WHERE t.id = q.pending_id
+          AND q.canonical_id IS NOT NULL
+          AND (t.reconciliation_status IS NULL OR t.reconciliation_status = 'pending')
+          AND t.mirror_of IS NULL
+        RETURNING t.id`));
+      const atualizados = u.length;
+      res.json({ dryRun, candidatos: atualizados, atualizados });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
