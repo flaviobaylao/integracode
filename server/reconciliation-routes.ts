@@ -1077,7 +1077,12 @@ export function registerReconciliation(app: Express) {
       let tarifas: any = { candidatos: 0, conciliados: 0, erros: [] };
       try { tarifas = await conciliarTarifasBB(by, false); } catch {}
 
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, autoIgnorados, varreduraIgnorados, tarifas, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // FASE 3.4q - PIX recebidos ja baixados via webhook BB: vincula ao titulo ja
+      // quitado e marca conciliado, SEM gerar nova baixa (o titulo ja esta recebido).
+      let pixWebhook: any = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] };
+      try { pixWebhook = await conciliarPixWebhook(by, false); } catch {}
+
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, autoIgnorados, varreduraIgnorados, tarifas, pixWebhook, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -1169,6 +1174,102 @@ export function registerReconciliation(app: Express) {
       const dryRun = req.body?.dryRun !== false;
       const by = (req.body?.by || "conciliacao-2.0").toString();
       res.json({ dryRun, ...(await conciliarTarifasBB(by, dryRun)) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // ---- FASE 3.4q: PIX recebidos ja baixados via webhook BB -----------------
+  // O pagamento de uma cobranca PIX (QR Code) e baixado automaticamente pelo
+  // webhook do BB no titulo (receivable). O MESMO PIX reaparece no extrato OFX
+  // como credito "PIX-RECEBIDO ..." e ficava pendente, correndo o risco de ser
+  // conciliado ao titulo ERRADO (a sugestao por valor aproximado erra o cliente)
+  // ou de gerar baixa em duplicidade. Aqui identificamos esses creditos e os
+  // vinculamos ao titulo JA quitado, marcando-os como conciliados SEM nova baixa.
+  // Chave de casamento: documento do pagador (CPF/CNPJ na descricao do extrato)
+  // + valor, desempatado por instancia e data. So vincula se o titulo ja estiver
+  // integralmente recebido (a baixa ja foi feita pelo webhook). Reversivel (undo).
+  function extractPayerDoc(desc: string): string {
+    const m = String(desc || "").match(/(?<!\d)(\d{14}|\d{11})(?!\d)/);
+    return m ? m[1] : "";
+  }
+
+  async function conciliarPixWebhook(by: string, dryRun: boolean): Promise<{ candidatos: number; conciliados: number; ambiguos: number; semMatch: number; erros: string[]; exemplos: any[] }> {
+    const out = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] as string[], exemplos: [] as any[] };
+    // 1) Itens pendentes de credito "PIX-RECEBIDO" (com documento do pagador).
+    const items = rowsOf(await db.execute(sql`
+      SELECT i.id, i.transaction_date::date::text AS d, round(i.amount::numeric, 2)::text AS amt,
+             i.description, s.financial_account_id AS acc, s.omie_instance_id AS inst
+      FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+      WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+        AND i.mirror_of IS NULL AND i.type = 'C'
+        AND regexp_replace(lower(COALESCE(i.description, '')), '[^a-z]', '', 'g') LIKE '%pixrecebido%'
+      ORDER BY i.transaction_date LIMIT 5000`));
+    out.candidatos = items.length;
+    if (!items.length) return out;
+    // 2) Cobrancas PIX pagas (webhook, status CONCLUIDA) com titulo ja quitado.
+    const charges = rowsOf(await db.execute(sql`
+      SELECT pc.id AS charge_id, pc.receivable_id, round(pc.amount_paid::numeric, 2)::text AS amt,
+             pc.paid_at::date::text AS d, pc.omie_instance_id AS inst,
+             regexp_replace(COALESCE(pc.debtor_document, ''), '[^0-9]', '', 'g') AS cdoc,
+             regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') AS rdoc,
+             r.title_number AS nf, round(r.amount::numeric, 2) AS ramt,
+             round(COALESCE(NULLIF(r.amount_paid, '')::numeric, 0), 2) AS rpaid
+      FROM pix_charges pc JOIN receivables r ON r.id = pc.receivable_id
+      WHERE pc.status = 'CONCLUIDA' AND pc.receivable_id IS NOT NULL AND pc.paid_at IS NOT NULL
+        AND r.deleted_at IS NULL`));
+    // Indexa por valor|documento (documento do pagador OU do cliente do titulo).
+    const byKey: Record<string, any[]> = {};
+    for (const c of charges) {
+      if (!(Number(c.rpaid) >= Number(c.ramt) - 0.005)) continue; // titulo precisa estar quitado
+      const docs = new Set<string>();
+      if (c.cdoc) docs.add(String(c.cdoc));
+      if (c.rdoc) docs.add(String(c.rdoc));
+      for (const dc of docs) (byKey[`${c.amt}|${dc}`] ||= []).push(c);
+    }
+    const usados = new Set<string>();
+    const aplicar: Array<{ item: any; charge: any }> = [];
+    for (const it of items) {
+      const doc = extractPayerDoc(it.description);
+      if (!doc) { out.semMatch++; continue; }
+      let cands = (byKey[`${it.amt}|${doc}`] || []).filter((c: any) => !usados.has(String(c.charge_id)));
+      if (!cands.length) { out.semMatch++; continue; }
+      if (cands.length > 1) {
+        const mesmaInst = cands.filter((c: any) => String(c.inst || "") === String(it.inst || ""));
+        let pool = mesmaInst.length ? mesmaInst : cands;
+        if (pool.length > 1) {
+          const mesmaData = pool.filter((c: any) => c.d === it.d);
+          if (mesmaData.length === 1) pool = mesmaData;
+          else { out.ambiguos++; continue; }
+        }
+        cands = pool;
+      }
+      const c = cands[0];
+      usados.add(String(c.charge_id));
+      aplicar.push({ item: it, charge: c });
+    }
+    out.exemplos = aplicar.slice(0, 8).map(({ item, charge }) => ({ data: item.d, valor: item.amt, nf: charge.nf || null }));
+    if (dryRun) { out.conciliados = aplicar.length; return out; }
+    for (const { item, charge } of aplicar) {
+      try {
+        await db.execute(sql`
+          INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
+          VALUES (gen_random_uuid(), ${item.id}, ${charge.receivable_id}, ${null}, ${item.amt}, ${"pix_webhook"}, ${"0.00"}, ${"0.00"}, ${"0.00"}, ${by}, now())`);
+        const upd: any = await db.execute(sql`
+          UPDATE bank_statement_items
+          SET reconciliation_status = 'reconciled', matched_receivable_id = ${charge.receivable_id}, matched_at = now(), matched_by = ${by},
+              match_confidence = 100, notes = ${"PIX ja baixado via webhook BB - vinculado automaticamente ao titulo " + String(charge.nf || "")}
+          WHERE id = ${item.id} AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')`);
+        if (Number((upd as any)?.rowCount ?? 1) > 0) out.conciliados++;
+      } catch (e: any) { out.erros.push(String(e?.message || e).slice(0, 120)); }
+    }
+    return out;
+  }
+
+  // Disparo manual (dryRun por padrao) - a importacao de OFX tambem roda isso.
+  app.post("/api/reconciliation/conciliar-pix-webhook", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      res.json({ dryRun, ...(await conciliarPixWebhook(by, dryRun)) });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
