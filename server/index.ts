@@ -646,12 +646,21 @@ run();
       const apply = !!(req.body && req.body.apply);
       const recalc = !!(req.body && req.body.recalc);
       const limit = Math.min(Math.max(Number((req.body && req.body.limit) || 1200), 1), 3000);
-      const missingOnly = recalc ? sql`` : sql` AND (c.latitude IS NULL OR c.longitude IS NULL)`;
-      const sel: any = await db.execute(sql`SELECT c.id, c.name, c.cnpj, c.cpf, c.address, c.neighborhood, c.city, c.state, c.zip_code FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${missingOnly} ORDER BY (c.latitude IS NULL OR c.longitude IS NULL) DESC, c.is_active DESC, c.updated_at ASC NULLS FIRST LIMIT ${limit}`);
+      // Escopo opcional: geocodificar SOMENTE os clientes selecionados (edição em massa).
+      const customerIds: string[] | null = Array.isArray(req.body?.customerIds)
+        ? (req.body.customerIds as any[]).map((x) => String(x)).filter(Boolean)
+        : null;
+      const hasSelection = !!(customerIds && customerIds.length);
+      const selectedFilter = hasSelection
+        ? sql` AND c.id = ANY(string_to_array(${customerIds!.join(',')}, ','))`
+        : sql``;
+      // Quando há seleção, recalcula todos os selecionados (ignora o filtro "só sem coordenada").
+      const missingOnly = (recalc || hasSelection) ? sql`` : sql` AND (c.latitude IS NULL OR c.longitude IS NULL)`;
+      const sel: any = await db.execute(sql`SELECT c.id, c.name, c.cnpj, c.cpf, c.address, c.neighborhood, c.city, c.state, c.zip_code FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${selectedFilter}${missingOnly} ORDER BY (c.latitude IS NULL OR c.longitude IS NULL) DESC, c.is_active DESC, c.updated_at ASC NULLS FIRST LIMIT ${limit}`);
       const cands = ((sel.rows || sel) as any[]);
       let eligibleTotal = cands.length;
       try {
-        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${missingOnly}`);
+        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${selectedFilter}${missingOnly}`);
         eligibleTotal = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
       } catch {}
       const remainingAfter = Math.max(0, eligibleTotal - cands.length);
