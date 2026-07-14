@@ -637,6 +637,78 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
+  // GEOCODIFICACAO EM LOTE - TODOS (14/jul/2026): preenche/recalcula lat/long de TODOS os clientes (exceto coordenadas travadas).
+  // PJ (com CNPJ) usa o endereco fiscal ja cadastrado (origem do CNPJ); PF usa o endereco de cadastro no Integra.
+  // Nominatim/OSM, verifica se a cidade retornada confere com a do cadastro antes de gravar. Dry-run por padrao; {apply:true} grava.
+  // {recalc:true} reprocessa quem ja tem coordenada; senao apenas os sem coordenada. Fire-and-forget (resumo em geocode_all_last, admin only).
+  app.post('/api/admin/customers/geocode-all', authenticateUser, requireRole(['admin']), async (req: Request, res: Response) => {
+    try {
+      const apply = !!(req.body && req.body.apply);
+      const recalc = !!(req.body && req.body.recalc);
+      const limit = Math.min(Math.max(Number((req.body && req.body.limit) || 1200), 1), 3000);
+      const missingOnly = recalc ? sql`` : sql` AND (c.latitude IS NULL OR c.longitude IS NULL)`;
+      const sel: any = await db.execute(sql`SELECT c.id, c.name, c.cnpj, c.cpf, c.address, c.neighborhood, c.city, c.state, c.zip_code FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${missingOnly} ORDER BY (c.latitude IS NULL OR c.longitude IS NULL) DESC, c.is_active DESC, c.updated_at ASC NULLS FIRST LIMIT ${limit}`);
+      const cands = ((sel.rows || sel) as any[]);
+      let eligibleTotal = cands.length;
+      try {
+        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM customers c WHERE (c.is_supplier IS NOT TRUE) AND (c.coordinates_locked IS NOT TRUE) AND COALESCE(TRIM(c.address), '') <> ''${missingOnly}`);
+        eligibleTotal = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
+      } catch {}
+      const remainingAfter = Math.max(0, eligibleTotal - cands.length);
+      res.json({ ok: true, started: true, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter });
+      (async () => {
+        const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+        const results: any[] = [];
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, pj = 0, pf = 0, processed = 0;
+        const saveSummary = async (running: boolean) => {
+          try {
+            const payload = JSON.stringify({ at: new Date().toISOString(), running, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter, processed, pj, pf, updated, dryOk, unverified, notFound, errors, results: results.slice(-400) });
+            const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_all_last'"));
+            if (((ex.rows || ex) as any[]).length > 0) {
+              await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_all_last'`);
+            } else {
+              await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('geocode_all_last', ${payload}, 'ultima geocodificacao em lote (todos)', 'geocode-all')`);
+            }
+          } catch (e) { console.error('geocode-all: erro ao salvar resumo', e); }
+        };
+        await saveSummary(true);
+        for (const c of cands) {
+          const isPJ = !!(c.cnpj && String(c.cnpj).replace(/\D/g, '').length >= 11);
+          if (isPJ) pj++; else pf++;
+          try {
+            const q = [c.address, c.neighborhood, c.city, c.state, 'Brasil'].filter(Boolean).join(', ');
+            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+            const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
+            const arr: any = resp.ok ? await resp.json() : [];
+            const hit = Array.isArray(arr) && arr.length ? arr[0] : null;
+            if (!hit) { notFound++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'nao_encontrado' }); }
+            else {
+              const cityToken = norm(c.city).split(' ')[0] || '';
+              const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
+              if (cityOk && apply) {
+                await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
+                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', display: String(hit.display_name).slice(0, 90) }); }
+            }
+          } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
+          processed++;
+          if (processed % 25 === 0) await saveSummary(true);
+          await new Promise((rs) => setTimeout(rs, 1200));
+        }
+        await saveSummary(false);
+      })().catch((e) => console.error('geocode-all: erro geral', e));
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
+  app.get('/api/admin/customers/geocode-all/status', authenticateUser, requireRole(['admin']), async (_req: Request, res: Response) => {
+    try {
+      const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'geocode_all_last'"));
+      const rows = (r.rows || r) as any[];
+      res.json(rows.length ? JSON.parse(rows[0].value) : { none: true });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
+  });
+
     // VIGIA 1A (03/jul/2026): Execucao de Rota do dia — planejados x check-ins x vendas x nao-vendas por vendedor
   app.get('/api/admin/routes/execution', async (req: Request, res: Response) => {
     try {
