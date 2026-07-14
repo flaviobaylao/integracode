@@ -140,11 +140,18 @@ export default function PurchaseRadar() {
       const res = await apiRequest("PATCH", `/api/purchases/${id}/classify`, data);
       return res;
     },
-    onSuccess: () => {
+    onSuccess: (_data: any, variables: any) => {
       toast({ title: "NF classificada" });
       setShowClassify(false);
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+      // "Compra para estoque" marcada -> abre em seguida o vinculo item->estoque, ja com a
+      // unidade da NF e o fator de conversao para a unidade do item de estoque.
+      if (variables?.isStockPurchase && selectedInvoice && !selectedInvoice.stockProcessed) {
+        const its = Array.isArray(selectedInvoice.items) ? selectedInvoice.items : [];
+        setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
+        setShowEntry(true);
+      }
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
@@ -177,6 +184,13 @@ export default function PurchaseRadar() {
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
+
+  // Conversao de unidade na entrada de estoque: o item de estoque tem sua unidade (kg/unidade);
+  // a NF vem em outra (caixa, fardo, etc.). O fator diz "quanto cada unidade da NF vale na
+  // unidade do estoque". Qtd no estoque = qtd da NF x fator; custo por unidade de estoque = custo NF / fator.
+  const rmUnit = (id: string) => String((rawMaterials as any[]).find((r: any) => r.id === id)?.unit || "");
+  const stockQtyOf = (m: any) => (Number(m.nfQty) || 0) * (Number(m.factor) || 0);
+  const stockCostOf = (m: any) => { const f = Number(m.factor) || 0; return f > 0 ? (Number(m.nfUnitCost) || 0) / f : (Number(m.nfUnitCost) || 0); };
 
   const createSupplier = useMutation({
     mutationFn: async (data: any) => {
@@ -817,7 +831,7 @@ export default function PurchaseRadar() {
                     className="bg-amber-600 hover:bg-amber-700"
                     onClick={() => {
                       const its = Array.isArray(selectedInvoice.items) ? selectedInvoice.items : [];
-                      setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", quantity: it.qCom || "", unitCost: it.vUnCom || "", label: it.xProd || "" })));
+                      setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
                       setShowEntry(true);
                     }}
                   >
@@ -1030,7 +1044,7 @@ export default function PurchaseRadar() {
           <DialogHeader>
             <DialogTitle>Dar entrada — Matéria-Prima</DialogTitle>
             <DialogDescription>
-              Para cada item da NF {selectedInvoice?.invoiceNumber}, escolha a matéria-prima que receberá a entrada, a quantidade e o custo unitário. Itens sem matéria-prima selecionada são ignorados.
+              Para cada item da NF {selectedInvoice?.invoiceNumber}, escolha o item de estoque e informe o fator de conversão da unidade da NF para a unidade do estoque. A quantidade no estoque é calculada automaticamente. Itens sem item de estoque selecionado são ignorados.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -1039,44 +1053,51 @@ export default function PurchaseRadar() {
                 <thead className="bg-muted">
                   <tr>
                     <th className="text-left p-2">Item da NF</th>
-                    <th className="text-left p-2">Matéria-Prima</th>
-                    <th className="text-right p-2">Quantidade</th>
-                    <th className="text-right p-2">Custo Unit.</th>
+                    <th className="text-left p-2">Item de estoque</th>
+                    <th className="text-center p-2">Fator (NF → estoque)</th>
+                    <th className="text-right p-2">Qtd no estoque</th>
+                    <th className="text-right p-2">Custo unit.</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {entryMappings.map((m: any, i: number) => (
+                  {entryMappings.map((m: any, i: number) => { const u = rmUnit(m.rawMaterialId); return (
                     <tr key={i} className="border-t align-top">
-                      <td className="p-2 max-w-[220px]">{m.label || `Item ${i + 1}`}</td>
-                      <td className="p-2 min-w-[220px]">
+                      <td className="p-2 max-w-[200px]">
+                        <div className="font-medium truncate" title={m.label}>{m.label || `Item ${i + 1}`}</div>
+                        <div className="text-xs text-muted-foreground">{m.nfQty || 0} {m.nfUnit || "un"} · {formatCurrency(m.nfUnitCost)}/{m.nfUnit || "un"}</div>
+                      </td>
+                      <td className="p-2 min-w-[200px]">
                         <Select value={m.rawMaterialId} onValueChange={(v) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, rawMaterialId: v } : x))}>
                           <SelectTrigger><SelectValue placeholder="Selecione (ou ignore)..." /></SelectTrigger>
                           <SelectContent>
                             {rawMaterials.map((rm: any) => (
-                              <SelectItem key={rm.id} value={rm.id}>{rm.name}{rm.unit ? ` (${rm.quantity} ${rm.unit})` : ""}</SelectItem>
+                              <SelectItem key={rm.id} value={rm.id}>{rm.name}{rm.unit ? ` (${rm.unit})` : ""}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </td>
-                      <td className="p-2 w-28">
-                        <Input type="number" step="0.001" value={m.quantity} onChange={(e) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))} className="text-right" />
+                      <td className="p-2 w-44">
+                        <div className="flex items-center gap-1 justify-center">
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">1 {m.nfUnit || "un"} =</span>
+                          <Input type="number" step="0.0001" value={m.factor} onChange={(e) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, factor: e.target.value } : x))} className="text-right w-20" />
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{u || "?"}</span>
+                        </div>
                       </td>
-                      <td className="p-2 w-28">
-                        <Input type="number" step="0.0001" value={m.unitCost} onChange={(e) => setEntryMappings((prev) => prev.map((x, j) => j === i ? { ...x, unitCost: e.target.value } : x))} className="text-right" />
-                      </td>
+                      <td className="p-2 text-right whitespace-nowrap font-medium">{stockQtyOf(m).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} {u}</td>
+                      <td className="p-2 text-right whitespace-nowrap">{formatCurrency(stockCostOf(m))}{u ? `/${u}` : ""}</td>
                     </tr>
-                  ))}
+                  ); })}
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-muted-foreground">A entrada soma à quantidade da matéria-prima e registra um movimento de "entrada_compra" (com custo unitário). Não afeta o estoque de produtos acabados.</p>
+            <p className="text-xs text-muted-foreground">A entrada soma a "Qtd no estoque" à quantidade do item selecionado (na unidade dele) e registra um movimento de "entrada_compra" com o custo unitário convertido. Não afeta o estoque de produtos acabados.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEntry(false)}>Cancelar</Button>
             <Button
               className="bg-amber-600 hover:bg-amber-700"
-              disabled={processRaw.isPending || !entryMappings.some((m: any) => m.rawMaterialId && Number(m.quantity) > 0)}
-              onClick={() => processRaw.mutate({ id: selectedInvoice?.id, itemMappings: entryMappings.filter((m: any) => m.rawMaterialId && Number(m.quantity) > 0) })}
+              disabled={processRaw.isPending || !entryMappings.some((m: any) => m.rawMaterialId && stockQtyOf(m) > 0)}
+              onClick={() => processRaw.mutate({ id: selectedInvoice?.id, itemMappings: entryMappings.filter((m: any) => m.rawMaterialId && stockQtyOf(m) > 0).map((m: any) => ({ rawMaterialId: m.rawMaterialId, quantity: stockQtyOf(m), unitCost: stockCostOf(m) })) })}
             >
               {processRaw.isPending ? "Registrando..." : "Confirmar entrada"}
             </Button>
