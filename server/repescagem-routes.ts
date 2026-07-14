@@ -40,11 +40,12 @@ function brTodayStr(): string {
 // Computa o conjunto de candidatos vermelhos: clientes ativos cuja
 // ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
 // e SEM pedido na data).
-async function computeRedCandidates(opts: { startDate: string; endDate: string }): Promise<any[]> {
-  try { return await __computeRedCandidatesRaw(opts); } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
+type SkipCiclo = { customerId: string; anchor: string };
+async function computeRedCandidates(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]): Promise<any[]> {
+  try { return await __computeRedCandidatesRaw(opts, skipOut); } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
 }
 
-async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: string }) {
+async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]) {
   const { startDate, endDate } = opts;
 
   // 1) Clientes ativos
@@ -201,6 +202,27 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     orderSet.add(`${p.customerId}_${p.dateStr}`);
   }
 
+  // Pedidos de VENDA (operação = venda) — usados APENAS para o gatilho "pular ciclo" da repescagem.
+  // Troca/Amostra/Devolução etc. NÃO disparam o pulo (mesma regra do "com pedido" da rota).
+  const vendaOrderDatesByCustomer = new Map<string, Set<string>>();
+  try {
+    const vendaPipeline = await db.select({
+      customerId: billingPipelineTable.customerId,
+      dateStr: sql<string>`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt}))::text`,
+    }).from(billingPipelineTable).where(
+      and(
+        sql`LOWER(COALESCE(NULLIF(${billingPipelineTable.operationType}::text, ''), 'venda')) = 'venda'`,
+        sql`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt})) >= ${startDate}`,
+        sql`DATE(COALESCE(${billingPipelineTable.scheduledBillingDate}::timestamp, ${billingPipelineTable.createdAt})) <= ${endDate}`,
+      )
+    );
+    for (const p of vendaPipeline) {
+      if (!p.customerId || !p.dateStr) continue;
+      if (!vendaOrderDatesByCustomer.has(p.customerId)) vendaOrderDatesByCustomer.set(p.customerId, new Set());
+      vendaOrderDatesByCustomer.get(p.customerId)!.add(p.dateStr);
+    }
+  } catch (e) { console.error('[computeRedCandidates] venda set:', (e as any)?.message); }
+
   const todayStr = brTodayStr();
   const candidates: Array<{
     customerId: string;
@@ -255,6 +277,18 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     // NOVO: se o cliente recebeu QUALQUER pedido, atendimento virtual,
     // check-in de rota ou visita concluída APÓS lastDate (inclusive),
     // ele já foi atendido na repescagem -> sai da lista.
+    // GATILHO "PULAR CICLO": cliente estava vermelho (visita de rota não realizada) e recebeu
+    // um PEDIDO (venda) numa data DIFERENTE do dia de rota (fora da rota / repescagem). Nesse caso
+    // o pedido "cobre" a próxima visita → pula 1 ciclo. Âncora = data da visita de rota (lastDate).
+    if (skipOut) {
+      const vendaDates = vendaOrderDatesByCustomer.get(c.id);
+      if (vendaDates) {
+        const scheduledSet = scheduledByCustomer.get(c.id) || new Set<string>();
+        const foraRotaComVenda = Array.from(vendaDates).some(d => d > lastDate && !scheduledSet.has(d));
+        if (foraRotaComVenda) skipOut.push({ customerId: c.id, anchor: lastDate });
+      }
+    }
+
     const allDatesAfter: string[] = [];
     for (const map of [orderDatesByCustomer, checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer]) {
       const set = map.get(c.id);
@@ -296,8 +330,24 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     const d = new Date(today); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
   })();
 
-  const candidates = await computeRedCandidates({ startDate, endDate });
+  const skipCands: SkipCiclo[] = [];
+  const candidates = await computeRedCandidates({ startDate, endDate }, skipCands);
   const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
+
+  // PULAR CICLO: clientes atendidos com PEDIDO (venda) FORA do dia de rota → reescreve agenda
+  // pendente pulando 1 ciclo. Idempotente (só reescreve se ainda não foi pulado).
+  if (skipCands.length > 0) {
+    try {
+      const { recalcularAgendaPulandoCiclo } = await import('./visitScheduleService');
+      const seen = new Set<string>();
+      for (const s of skipCands) {
+        if (seen.has(s.customerId)) continue;
+        seen.add(s.customerId);
+        try { await recalcularAgendaPulandoCiclo(s.customerId, new Date(`${s.anchor}T00:00:00`)); }
+        catch (e) { console.error('[PULAR-CICLO][reconcile] cliente', s.customerId, (e as any)?.message); }
+      }
+    } catch (e) { console.error('[PULAR-CICLO][reconcile] import:', (e as any)?.message); }
+  }
 
   // Atendentes habilitados. IMPORTANTE (Repescagem2): o fluxo antigo de
   // distribuição por menor carga é de ATENDIMENTO INTERNO. Vendedores externos
