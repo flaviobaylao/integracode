@@ -22,6 +22,7 @@ import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
+import GeocodeAllButton from "@/components/GeocodeAllButton";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
@@ -1032,9 +1033,10 @@ export default function ActiveCustomers() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <GeocodeAllButton />
           {isAdmin && (
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="border-orange-300 text-orange-600 hover:bg-orange-50"
               onClick={() => setShowPendingOmieDialog(true)}
               data-testid="button-pending-omie"
