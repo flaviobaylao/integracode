@@ -122,6 +122,8 @@ export default function CustomerEditModal({
     boletoDays: "" as any,
     collectionDiscount: "" as any,
     paymentInstallments: "" as any,
+    installmentSchedule: "" as any, // Cronograma de parcelas (ex.: "7/14/21")
+    installmentCustom: false as any, // UI: modo "Personalizado" ativo
     serviceStartDate: "", // Data de início do fornecimento (só admins alteram)
   });
 
@@ -203,7 +205,8 @@ export default function CustomerEditModal({
       ...formData,
       paymentMethod: (formData as any).paymentMethod || null,
       boletoDays: (formData as any).boletoDays === "" || (formData as any).boletoDays == null ? null : Number((formData as any).boletoDays),
-      paymentInstallments: (formData as any).paymentInstallments === "" || (formData as any).paymentInstallments == null ? null : Number((formData as any).paymentInstallments),
+      installmentSchedule: (() => { const n = String((formData as any).installmentSchedule || "").split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650); return n.length ? n.join('/') : null; })(),
+      paymentInstallments: (() => { const n = String((formData as any).installmentSchedule || "").split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650); if (n.length) return n.length; return (formData as any).paymentInstallments === "" || (formData as any).paymentInstallments == null ? null : Number((formData as any).paymentInstallments); })(),
       collectionDiscount: (formData as any).collectionDiscount === "" || (formData as any).collectionDiscount == null ? null : String((formData as any).collectionDiscount),
       omieInstanceId: (formData as any).omieInstanceId || null,
     };
@@ -344,6 +347,8 @@ export default function CustomerEditModal({
         boletoDays: (customer as any).boletoDays ?? "",
         collectionDiscount: (customer as any).collectionDiscount ?? "",
         paymentInstallments: (customer as any).paymentInstallments ?? "",
+        installmentSchedule: (customer as any).installmentSchedule || "",
+        installmentCustom: (() => { const s = String((customer as any).installmentSchedule || ""); return (!!s && !["7/14","7/14/21","14/21","21/28/35"].includes(s)) as any; })(),
         serviceStartDate: (customer as any).serviceStartDate ? new Date((customer as any).serviceStartDate).toISOString().split('T')[0] : "",
       });
     }
@@ -739,15 +744,37 @@ export default function CustomerEditModal({
                   <p className="text-xs text-gray-500 mt-1">Dias até o vencimento. Vazio usa o padrão (boleto 7, PIX 5).</p>
                 </div>
                 <div>
-                  <Label className="text-sm">Parcelamento (nº de parcelas)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={(formData as any).paymentInstallments}
-                    onChange={(e) => setFormData(prev => ({ ...prev, paymentInstallments: e.target.value } as any))}
-                    placeholder="1"
-                    data-testid="input-payment-installments"
-                  />
+                  <Label className="text-sm">Parcelamento</Label>
+                  <Select
+                    value={(() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","21/28/35"]; if ((formData as any).installmentCustom) return "__custom__"; if (!s) return "__none__"; return P.includes(s) ? s : "__custom__"; })()}
+                    onValueChange={(v) => setFormData(prev => {
+                      if (v === "__none__") return { ...prev, installmentSchedule: "", installmentCustom: false } as any;
+                      if (v === "__custom__") return { ...prev, installmentCustom: true } as any;
+                      return { ...prev, installmentSchedule: v, installmentCustom: false } as any;
+                    })}
+                  >
+                    <SelectTrigger data-testid="select-installment-schedule">
+                      <SelectValue placeholder="À vista / 1x" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">À vista / 1x (sem parcelamento)</SelectItem>
+                      <SelectItem value="7/14">7-14 dias (2x)</SelectItem>
+                      <SelectItem value="7/14/21">7-14-21 dias (3x)</SelectItem>
+                      <SelectItem value="14/21">14-21 dias (2x)</SelectItem>
+                      <SelectItem value="21/28/35">21-28-35 dias (3x)</SelectItem>
+                      <SelectItem value="__custom__">Personalizado…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {((formData as any).installmentCustom || (() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","21/28/35"]; return !!s && !P.includes(s); })()) && (
+                    <Input
+                      className="mt-2"
+                      value={(formData as any).installmentSchedule}
+                      onChange={(e) => setFormData(prev => ({ ...prev, installmentSchedule: e.target.value, installmentCustom: true } as any))}
+                      placeholder="Ex.: 7/14/21 (dias de cada parcela)"
+                      data-testid="input-installment-schedule-custom"
+                    />
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">Cada número = dias até o vencimento de cada parcela; o valor é dividido igualmente. Quando definido, o "Prazo (dias)" acima é ignorado.</p>
                 </div>
                 <div>
                   <Label className="text-sm">Desconto de Cobrança (%)</Label>
