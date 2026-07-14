@@ -6737,7 +6737,7 @@ export class DatabaseStorage implements IStorage {
           // cru para o modal de edição de Clientes Ativos exibir a forma de pagamento salva.
           const _pmMap = new Map<string, any>();
           try {
-            const _pmRows: any = await db.execute(sql`SELECT id, payment_method AS "paymentMethod", boleto_days AS "boletoDays", collection_discount AS "collectionDiscount", payment_installments AS "paymentInstallments" FROM customers WHERE id = ANY(${customerIds})`);
+            const _pmRows: any = await db.execute(sql`SELECT id, payment_method AS "paymentMethod", boleto_days AS "boletoDays", collection_discount AS "collectionDiscount", payment_installments AS "paymentInstallments" FROM customers WHERE id IN (${sql.join(customerIds.map((x) => sql`${x}`), sql`, `)})`);
             for (const _r of (((_pmRows as any).rows) || [])) _pmMap.set(String(_r.id), _r);
           } catch (e) { /* colunas garantidas no boot; ignora se ausentes */ }
           const sellerIds = Array.from(new Set(customersData.map(c => c.sellerId).filter(Boolean)));
