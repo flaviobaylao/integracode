@@ -16,6 +16,7 @@ import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from 'xlsx';
 import type { User } from "@shared/schema";
+import { generateMultiCobrancaPdf, type CobrancaData } from "@/lib/cobranca-generator";
 
 interface OverdueDebt {
   cliente: {
@@ -58,7 +59,7 @@ export default function OverdueDebtsManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDebt, setSelectedDebt] = useState<OverdueDebt | null>(null);
   const [selectedVendor, setSelectedVendor] = useState<string>("all");
-  const [downloadingBoleto, setDownloadingBoleto] = useState<number | null>(null);
+  const [downloadingBoleto, setDownloadingBoleto] = useState<string | null>(null);
   const [boletoModal, setBoletoModal] = useState<BoletoData | null>(null);
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
@@ -101,55 +102,49 @@ export default function OverdueDebtsManagement() {
     }
   };
 
-  // Função para baixar boleto
-  const handleDownloadBoleto = async (codigoLancamento: number, nomeCliente: string) => {
+  // Emite o DOCUMENTO de cobrança (boleto/PIX) do título — MESMO fluxo da aba Contas a
+  // Receber (usa o receivableId do título 2.0, não mais o código do Omie).
+  const handleDownloadBoleto = async (documento: any, nomeCliente: string) => {
+    const rid = documento?.receivableId;
+    if (!rid) {
+      toast({ title: "Sem título vinculado", description: "Este débito não tem título para gerar cobrança.", variant: "destructive" });
+      return;
+    }
     try {
-      setDownloadingBoleto(codigoLancamento);
-      
-      const response = await fetch(`/api/omie/boleto/${codigoLancamento}`, {
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        throw new Error('Boleto não encontrado ou não disponível');
+      setDownloadingBoleto(rid);
+      const load = async () => (await fetch(`/api/financial/receivables/${rid}/cobranca`, { credentials: 'include' })).json();
+      let c = await load();
+      if (c.hasCharge && c.dueDateChanged) {
+        const fmt = (d: any) => d ? new Date(d).toLocaleDateString('pt-BR') : '?';
+        if (window.confirm('O vencimento da cobrança mudou (' + fmt(c.chargeDueDate) + ' → ' + fmt(c.receivableDueDate) + ').\n\nGerar NOVA cobrança com o novo vencimento e CANCELAR a anterior?')) {
+          const rg = await fetch(`/api/financial/receivables/${rid}/regenerate-charge`, { method: 'POST', credentials: 'include' });
+          const jr = await rg.json();
+          if (!(jr.success || jr.ok)) { toast({ title: "Falha ao regerar cobrança", description: jr.error || jr.persistError || 'erro', variant: "destructive" }); return; }
+          c = await load();
+        }
       }
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
+      if (!c.hasCharge) {
+        if (!window.confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return;
+        const em = await fetch(`/api/financial/receivables/${rid}/emit-boleto`, { method: 'POST', credentials: 'include' });
+        const j = await em.json();
+        if (!(j.success || j.ok)) { toast({ title: "Falha ao emitir cobrança", description: j.error || j.persistError || 'erro', variant: "destructive" }); return; }
+        c = await load();
       }
-      
-      if (data.linkBoleto) {
-        // Abrir boleto em nova aba
-        window.open(data.linkBoleto, '_blank');
-        toast({
-          title: "Boleto encontrado",
-          description: "O boleto foi aberto em uma nova aba",
-        });
-      } else if (data.qrCodePix) {
-        // Mostrar modal com QR Code Pix
-        setBoletoModal({
-          ...data,
-          nomeCliente
-        });
-      } else {
-        throw new Error('Nenhum boleto ou QR Code disponível para este débito');
-      }
+      if (!c.hasCharge || (!c.boleto && !c.pix)) { toast({ title: "Cobrança não encontrada", variant: "destructive" }); return; }
+      const data: CobrancaData = { itemId: rid, customerName: c.customerName || nomeCliente, invoiceNumber: documento.numero_documento_fiscal || documento.numero_documento, saleValue: c.amount || documento.valor, boleto: c.boleto || null, pix: c.pix || null };
+      const n = await generateMultiCobrancaPdf([data]);
+      if (n === 0) toast({ title: "Cobrança sem boleto/PIX para gerar", variant: "destructive" });
     } catch (error: any) {
-      toast({
-        title: "Erro ao buscar boleto",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Erro ao gerar cobrança", description: error.message, variant: "destructive" });
     } finally {
       setDownloadingBoleto(null);
     }
   };
 
-  // Query para buscar débitos vencidos do banco (dados persistidos)
+  // Débitos vencidos = MESMA lista de "vencida" da Contas a Receber (fonte local 2.0),
+  // agrupada por cliente. Não usa mais a sincronização do Omie.
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
-    queryKey: ['/api/omie/overdue-debts/cached'],
+    queryKey: ['/api/financial/overdue-debts'],
     staleTime: 1000 * 60 * 2, // 2 minutos - dados considerados "frescos"
     gcTime: 1000 * 60 * 60, // 1 hora - mantém em cache
     refetchOnMount: 'always', // Sempre buscar ao montar o componente
@@ -517,25 +512,13 @@ export default function OverdueDebtsManagement() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Débitos Vencidos</h1>
           <p className="text-gray-600 mt-1">
-            Gerencie os débitos vencidos dos clientes no Omie ERP
+            Clientes com títulos vencidos — mesma listagem da aba Contas a Receber.
           </p>
-          {overdueDebts?.lastSyncAt && (
-            <p className="text-sm text-blue-600 mt-1 font-medium">
-              Última sincronização: {new Date(overdueDebts.lastSyncAt).toLocaleDateString('pt-BR', { 
-                day: '2-digit', 
-                month: '2-digit', 
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: 'America/Sao_Paulo'
-              })}
-            </p>
-          )}
         </div>
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <div className="flex gap-3 flex-wrap">
             {overdueDebts && filteredDebts.length > 0 && (
-              <Button 
+              <Button
                 onClick={exportToExcel}
                 variant="outline"
                 data-testid="button-export-excel"
@@ -544,40 +527,7 @@ export default function OverdueDebtsManagement() {
                 Exportar Excel
               </Button>
             )}
-            {savedReportInfo?.exists && (
-              <div className="flex items-center gap-3">
-                <Button 
-                  onClick={downloadSavedReport}
-                  variant="outline"
-                  data-testid="button-download-saved-report"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Baixar Planilha Salva
-                </Button>
-                <span className="text-sm text-gray-600">
-                  Última: {new Date(savedReportInfo.createdAt).toLocaleDateString('pt-BR', { 
-                    day: '2-digit', 
-                    month: '2-digit', 
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    timeZone: 'America/Sao_Paulo'
-                  })}
-                </span>
-              </div>
-            )}
           </div>
-          {canSync && (
-            <Button 
-              onClick={() => syncOverdueDebts.mutate()}
-              disabled={syncOverdueDebts.isPending}
-              className="bg-honest-orange hover:bg-honest-orange-dark"
-              data-testid="button-sync-overdue-debts"
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${syncOverdueDebts.isPending ? 'animate-spin' : ''}`} />
-              {syncOverdueDebts.isPending ? 'Sincronizando...' : 'Sincronizar Débitos'}
-            </Button>
-          )}
         </div>
       </div>
 
@@ -676,7 +626,7 @@ export default function OverdueDebtsManagement() {
         <Alert>
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            Clique em "Sincronizar Débitos" para carregar os débitos vencidos do Omie ERP.
+            Não foi possível carregar os débitos vencidos. Atualize a página para tentar novamente.
           </AlertDescription>
         </Alert>
       )}
@@ -776,12 +726,12 @@ export default function OverdueDebtsManagement() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleDownloadBoleto(documento.codigo_lancamento_omie, debt.cliente.nome_fantasia)}
-                                disabled={downloadingBoleto === documento.codigo_lancamento_omie}
+                                onClick={() => handleDownloadBoleto(documento, debt.cliente.nome_fantasia)}
+                                disabled={downloadingBoleto === documento.receivableId}
                                 data-testid={`button-download-boleto-${debtIndex}-${docIndex}`}
                                 className="flex items-center gap-1"
                               >
-                                {downloadingBoleto === documento.codigo_lancamento_omie ? (
+                                {downloadingBoleto === documento.receivableId ? (
                                   <RefreshCw className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <Download className="h-4 w-4" />
