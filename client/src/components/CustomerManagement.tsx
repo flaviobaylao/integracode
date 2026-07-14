@@ -99,6 +99,7 @@ export default function CustomerManagement() {
   const [selectedPersonType, setSelectedPersonType] = useState('');
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedNeighborhood, setSelectedNeighborhood] = useState('');
+  const [selectedCoords, setSelectedCoords] = useState(''); // "", "com", "sem"
   const [phoneFilter, setPhoneFilter] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -265,7 +266,9 @@ export default function CustomerManagement() {
     const matchesCity = !selectedCity || String(customer.city || '').trim() === selectedCity;
     const matchesNeighborhood = !selectedNeighborhood || String(customer.neighborhood || '').trim() === selectedNeighborhood;
     const matchesPhone = !phoneFilter || String(customer.phone || '').replace(/\D/g, '').includes(phoneFilter.replace(/\D/g, ''));
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone;
+    const hasCoords = !!(customer.latitude && customer.longitude);
+    const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone && matchesCoords;
   }) || [];
   if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
   const segmentFilterOptions = [
@@ -487,6 +490,16 @@ export default function CustomerManagement() {
                 <SelectItem value="all">Todos</SelectItem>
                 <SelectItem value="yes">Positivado</SelectItem>
                 <SelectItem value="no">Não Positivado</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedCoords} onValueChange={setSelectedCoords}>
+              <SelectTrigger className="w-[140px] h-9" data-testid="select-coords-filter">
+                <SelectValue placeholder="Coordenadas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="com">Com coordenada</SelectItem>
+                <SelectItem value="sem">Sem coordenada</SelectItem>
               </SelectContent>
             </Select>
 
