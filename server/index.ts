@@ -2559,12 +2559,34 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const docs = new Set(recs.map(docKey));
       if (docs.size > 1) return res.status(422).json({ error: "Os titulos devem ser do mesmo cliente (um boleto tem um unico pagador)." });
 
-      // Nenhum titulo pode ja ter cobranca ativa (boleto simples, unificado ou PIX)
-      for (const r of recs) {
-        const b: any = await db.execute(sql`SELECT 1 FROM boleto_charges WHERE receivable_id = ${r.id} AND COALESCE(status,'') NOT IN ('cancelado','cancelada') LIMIT 1`);
-        const j: any = await db.execute(sql`SELECT 1 FROM boleto_charge_receivables jr JOIN boleto_charges b2 ON b2.id = jr.boleto_charge_id WHERE jr.receivable_id = ${r.id} AND COALESCE(b2.status,'') NOT IN ('cancelado','cancelada') LIMIT 1`);
-        const p: any = await db.execute(sql`SELECT 1 FROM pix_charges WHERE receivable_id = ${r.id} LIMIT 1`);
-        if (b.rows?.length || j.rows?.length || p.rows?.length) return res.status(409).json({ error: `Titulo ${r.titleNumber || r.id} ja possui cobranca ativa. Cancele-a antes de unificar.` });
+      // Cancela AUTOMATICAMENTE qualquer cobranca anterior dos titulos que serao unidos
+      // (boleto simples, boleto unificado anterior e PIX). Antes bloqueava com 409; agora cancela
+      // no BB e marca 'cancelado' antes de gerar o boleto unico. Titulos ja liquidados/pagos nao
+      // chegam aqui (validados acima como a_vencer/vencida), entao nao ha risco de estornar pago.
+      const cancelamentos = { boletos: 0, combinados: 0, pix: 0, erros: [] as string[] };
+      {
+        const accCancelQ: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL LIMIT 1`);
+        const accCancelId = (accCancelQ as any).rows?.[0]?.id;
+        const cancelarChargeRow = async (boleto: any, tipo: 'boleto' | 'combinado') => {
+          if (/(liquid|pag|receb)/i.test(String(boleto.status || ''))) return; // nunca cancela cobranca liquidada
+          if (accCancelId) {
+            try {
+              const c = await cancelarBoleto(accCancelId, boleto);
+              if (!c.ok && !c.alreadyBaixado) { cancelamentos.erros.push((tipo === 'combinado' ? 'boleto unificado ' : 'boleto ') + (boleto.nosso_numero || boleto.id) + ': ' + (c.error || 'falha')); return; }
+            } catch (e: any) { cancelamentos.erros.push((tipo === 'combinado' ? 'boleto unificado ' : 'boleto ') + (boleto.nosso_numero || boleto.id) + ': ' + (e?.message || 'falha')); return; }
+          }
+          await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+          if (tipo === 'combinado') cancelamentos.combinados++; else cancelamentos.boletos++;
+        };
+        for (const r of recs) {
+          const bq: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${r.id} AND COALESCE(status,'') NOT IN ('cancelado','cancelada','liquidado','pago','recebido')`);
+          for (const boleto of ((bq as any).rows || [])) await cancelarChargeRow(boleto, 'boleto');
+          const jq: any = await db.execute(sql`SELECT b2.* FROM boleto_charge_receivables jr JOIN boleto_charges b2 ON b2.id = jr.boleto_charge_id WHERE jr.receivable_id = ${r.id} AND COALESCE(b2.status,'') NOT IN ('cancelado','cancelada','liquidado','pago','recebido')`);
+          for (const boleto of ((jq as any).rows || [])) await cancelarChargeRow(boleto, 'combinado');
+          const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${r.id} AND status = 'ATIVA'`);
+          cancelamentos.pix += ((pu?.rowCount ?? 0) as number);
+        }
+        if (cancelamentos.erros.length) return res.status(422).json({ error: 'Nao foi possivel cancelar a cobranca anterior de um dos titulos: ' + cancelamentos.erros.join('; ') });
       }
 
       const total = recs.reduce((s, r) => s + (parseFloat(r.amount) - parseFloat(r.amountPaid || '0')), 0);
@@ -2601,6 +2623,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
       result.viewUrl = `/api/boleto-view/${result.boletoChargeId}`;
       result.combined = { receivableIds: uniqIds, count: recs.length, total: total.toFixed(2), dueDate };
+      result.cancelamentos = cancelamentos;
       return res.json(result);
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
