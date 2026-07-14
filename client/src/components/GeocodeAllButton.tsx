@@ -37,11 +37,14 @@ interface GeocodeAllButtonProps {
   variant?: "default" | "outline" | "secondary" | "ghost";
   className?: string;
   label?: string;
+  // Se informado, geocodifica SOMENTE estes clientes (ex.: seleção da edição em massa).
+  customerIds?: string[];
 }
 
 // Botao ADMIN: busca/recalcula latitude e longitude de TODOS os clientes.
 // PJ -> endereco fiscal cadastrado (origem do CNPJ); PF -> endereco de cadastro. Nominatim/OSM em segundo plano.
-export default function GeocodeAllButton({ size = "sm", variant = "outline", className, label = "Buscar coordenadas" }: GeocodeAllButtonProps) {
+export default function GeocodeAllButton({ size = "sm", variant = "outline", className, label = "Buscar coordenadas", customerIds }: GeocodeAllButtonProps) {
+  const scoped = Array.isArray(customerIds) && customerIds.length > 0;
   const { user } = useAuth();
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -82,7 +85,7 @@ export default function GeocodeAllButton({ size = "sm", variant = "outline", cla
     setStarting(true);
     startedAtRef.current = Date.now();
     try {
-      const r = await apiRequest("POST", "/api/admin/customers/geocode-all", { apply: true, recalc: true });
+      const r = await apiRequest("POST", "/api/admin/customers/geocode-all", scoped ? { apply: true, recalc: true, customerIds } : { apply: true, recalc: true });
       const total = r?.candidates || 0;
       const mins = Math.max(1, Math.round((total * 1.3) / 60));
       setRunning(true);
@@ -126,7 +129,7 @@ export default function GeocodeAllButton({ size = "sm", variant = "outline", cla
           <AlertDialogHeader>
             <AlertDialogTitle>Buscar coordenadas dos clientes</AlertDialogTitle>
             <AlertDialogDescription>
-              Isso vai buscar e recalcular a latitude/longitude de <strong>todos os clientes</strong> (exceto os com coordenada travada).
+              Isso vai buscar e recalcular a latitude/longitude de <strong>{scoped ? `${customerIds!.length} cliente(s) selecionado(s)` : "todos os clientes"}</strong> (exceto os com coordenada travada).
               Clientes PJ usam o endereço fiscal cadastrado (origem do CNPJ) e clientes PF usam o endereço de cadastro no Integra.
               O processo roda em segundo plano e pode levar alguns minutos. Deseja continuar?
             </AlertDialogDescription>
