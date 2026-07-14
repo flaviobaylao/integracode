@@ -986,6 +986,57 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  // Débitos Vencidos = MESMA lista de "vencida" da Contas a Receber, agrupada por
+  // cliente. Fonte LOCAL (2.0), não mais o Omie ERP (que estava divergindo). Reusa
+  // getReceivables({status:'vencida'}) para bater EXATAMENTE com a aba Contas a Receber
+  // (mesma regra de vencido por dia-calendário no fuso Brasil).
+  app.get('/api/financial/overdue-debts', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const digits = (s: any) => String(s == null ? '' : s).replace(/\D/g, '');
+      const instanceId = (req.query.instanceId as string) || undefined;
+      const rows: any[] = await storage.getReceivables(instanceId ? ({ status: 'vencida', instanceId } as any) : ({ status: 'vencida' } as any));
+      const vencidas = rows.filter((r) => String(r.status) === 'vencida' && !r.deletedAt);
+      // Telefone do cliente (por id e por documento) para os botões de WhatsApp.
+      const phoneById = new Map<string, string>();
+      const phoneByDoc = new Map<string, string>();
+      try {
+        const custRows: any = await db.execute(sql`SELECT id, phone, cnpj, cpf FROM customers`);
+        for (const c of ((custRows as any).rows || [])) {
+          if (!c.phone) continue;
+          if (c.id) phoneById.set(String(c.id), String(c.phone));
+          const doc = digits(c.cnpj || c.cpf || '');
+          if (doc) phoneByDoc.set(doc, String(c.phone));
+        }
+      } catch {}
+      const hojeMs = Date.parse(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) + 'T00:00:00Z');
+      const isoBR = (d: any) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const fmtBR = (d: any) => { const [y, m, dd] = isoBR(d).split('-'); return `${dd}/${m}/${y}`; };
+      const diasAtraso = (d: any) => Math.max(0, Math.round((hojeMs - Date.parse(isoBR(d) + 'T00:00:00Z')) / 86400000));
+      const groups = new Map<string, any>();
+      for (const r of vencidas) {
+        const doc = digits(r.customerDocument || '');
+        const key = doc || String(r.customerName || '').trim().toLowerCase() || String(r.customerId || r.id);
+        const saldo = Math.max(0, Number(r.amount || 0) - Number(r.amountPaid || 0));
+        const seller = r.sellerName || 'Sem vendedor';
+        const tel = (r.customerId && phoneById.get(String(r.customerId))) || (doc && phoneByDoc.get(doc)) || '';
+        let g = groups.get(key);
+        if (!g) { g = { cliente: { codigo_cliente_omie: 0, nome_fantasia: r.customerName || '(sem nome)', cnpj_cpf: r.customerDocument || '', telefone: tel }, debitos: [], valorTotal: 0, diasMaximoAtraso: 0, vendedores: new Set<string>(), omieInstanceId: r.omieInstanceId || null }; groups.set(key, g); }
+        const dias = diasAtraso(r.dueDate);
+        g.debitos.push({ numero_documento: r.titleNumber || '', numero_documento_fiscal: r.titleNumber || '', codigo_lancamento_omie: 0, receivableId: r.id, valor: saldo, data_vencimento: fmtBR(r.dueDate), dias_atraso: dias, observacao: r.description || '', codigo_vendedor: seller });
+        g.valorTotal += saldo;
+        g.diasMaximoAtraso = Math.max(g.diasMaximoAtraso, dias);
+        g.vendedores.add(seller);
+        if (!g.cliente.telefone && tel) g.cliente.telefone = tel;
+      }
+      const debts = Array.from(groups.values()).map((g) => ({ ...g, vendedores: Array.from(g.vendedores) }));
+      debts.sort((a, b) => (b.diasMaximoAtraso - a.diasMaximoAtraso) || (b.valorTotal - a.valorTotal));
+      const totalAmount = debts.reduce((s, g) => s + g.valorTotal, 0);
+      res.json({ debts, totalAmount, totalClients: debts.length, lastSyncAt: null });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // ============================================================================
   // PAYABLES (Contas a Pagar)
   // ============================================================================
