@@ -434,6 +434,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS segmento_principal varchar`);
   } catch (e: any) { console.warn('⚠️ ALTER segmento_principal:', e?.message); }
 
+  // Garante a coluna de cronograma de parcelas do cliente (ex.: "7/14/21") — aditivo e idempotente
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule text`);
+  } catch (e: any) { console.warn('⚠️ ALTER installment_schedule:', e?.message); }
+
   // Auto-resolve default Omie instance ID for env-var-based service
   await resolveDefaultInstanceId(storage);
   
@@ -1705,8 +1710,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
+      // Cronograma de parcelas (coluna aditiva, fora do schema drizzle): grava via SQL bruto.
+      const __instSchedProvided = Object.prototype.hasOwnProperty.call(req.body, 'installmentSchedule');
+      const __normSched = (v: any): string | null => { const n = String(v == null ? '' : v).split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650); return n.length ? n.join('/') : null; };
+      delete cleanedData.installmentSchedule;
+      delete cleanedData.installmentCustom;
+
       // Update customer
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
+
+      if (__instSchedProvided) {
+        try {
+          await db.execute(sql`UPDATE customers SET installment_schedule = ${__normSched(req.body.installmentSchedule)} WHERE id = ${id}`);
+          (updatedCustomer as any).installmentSchedule = __normSched(req.body.installmentSchedule);
+        } catch (e: any) { console.warn('⚠️ [CUSTOMER-UPDATE] installment_schedule:', e?.message); }
+      }
       
       console.log('✅ Cliente atualizado:', {
         id: updatedCustomer.id,
@@ -1890,6 +1908,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Criar cliente no Integra
       const customer = await storage.createCustomer(data);
+
+      // Cronograma de parcelas (coluna aditiva): grava via SQL bruto no cliente recem-criado.
+      if (Object.prototype.hasOwnProperty.call(req.body, 'installmentSchedule')) {
+        try {
+          const __n = String(req.body.installmentSchedule == null ? '' : req.body.installmentSchedule).split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650);
+          await db.execute(sql`UPDATE customers SET installment_schedule = ${__n.length ? __n.join('/') : null} WHERE id = ${customer.id}`);
+          (customer as any).installmentSchedule = __n.length ? __n.join('/') : null;
+        } catch (e: any) { console.warn('⚠️ [CREATE CUSTOMER] installment_schedule:', e?.message); }
+      }
       
       // 🔍 LOG 4: Cliente criado no banco
       console.log('💾 [CREATE CUSTOMER] Cliente salvo no banco:', {
@@ -25221,6 +25248,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .finally(() => { __activeRouteSyncRunning = false; });
       }
       const activeCustomers = await storage.getActiveCustomersWithVisits();
+      // Anexa o cronograma de parcelas (coluna aditiva, fora do schema drizzle) por id do cliente.
+      try {
+        const __sched: any = await db.execute(sql`SELECT id, installment_schedule FROM customers WHERE installment_schedule IS NOT NULL`);
+        const __m = new Map((__sched.rows || []).map((row: any) => [String(row.id), row.installment_schedule]));
+        if (Array.isArray(activeCustomers)) { for (const c of activeCustomers as any[]) { (c as any).installmentSchedule = __m.get(String((c as any).id)) || null; } }
+      } catch (e: any) { console.warn('⚠️ [ACTIVE-CUSTOMERS] installment_schedule attach:', e?.message); }
       res.json(activeCustomers);
     } catch (error) {
       console.error('Erro ao listar clientes ativos:', error);
