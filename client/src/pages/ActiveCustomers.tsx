@@ -211,6 +211,7 @@ export default function ActiveCustomers() {
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
+  const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
   const [selectedPhone, setSelectedPhone] = useState<string>("");
   const [selectedCity, setSelectedCity] = useState<string>("");
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>("");
@@ -248,6 +249,7 @@ export default function ActiveCustomers() {
   const [bulkVirtualType, setBulkVirtualType] = useState("");
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkStartDate, setBulkStartDate] = useState("");
+  const [bulkGeocode, setBulkGeocode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -907,7 +909,10 @@ export default function ActiveCustomers() {
       const personType = (ac.customer as any)?.customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
       const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
       const matchesSegment = multiMatch(segmentMulti, ac.customer?.segmentoPrincipal || SEM_SEGMENTO);
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment;
+      // Filtro de coordenadas (com/sem lat-long no cadastro)
+      const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
+      const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -938,18 +943,34 @@ export default function ActiveCustomers() {
   const toggleSelectAllCustomers = () => { setSelectedCustomerIds((prev) => { if (selectableIds.length > 0 && selectableIds.every((id) => prev.has(id))) return new Set(); return new Set(selectableIds); }); };
   const bulkUpdateMutation = useMutation({
     mutationFn: async () => {
+      const ids = Array.from(selectedCustomerIds);
       const fields: any = {};
       if (bulkSeller) fields.sellerId = bulkSeller;
       if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
       if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
       if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
       if (bulkVirtualType) fields.virtualService = bulkVirtualType === 'virtual';
-      return await apiRequest('POST', '/api/customers/bulk-update', { ids: Array.from(selectedCustomerIds), fields });
+      let updated = 0;
+      if (Object.keys(fields).length > 0) {
+        const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
+        const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+        updated = j.updated ?? 0;
+      }
+      // Flag "Atualizar coordenadas": geocodifica SOMENTE os clientes selecionados (segundo plano).
+      let geocodeCount = 0;
+      if (bulkGeocode && ids.length > 0) {
+        const g: any = await apiRequest('POST', '/api/admin/customers/geocode-all', { apply: true, recalc: true, customerIds: ids });
+        const gj = await (g?.json ? g.json() : Promise.resolve({})).catch(() => ({}));
+        geocodeCount = gj.candidates ?? ids.length;
+      }
+      return { updated, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0 };
     },
-    onSuccess: async (r: any) => {
-      const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
-      toast({ title: "Clientes atualizados", description: `${j.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s).` });
-      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType("");
+    onSuccess: (res: any) => {
+      const parts: string[] = [];
+      if (res.hadFields) parts.push(`${res.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s)`);
+      if (res.geocoded) parts.push(`coordenadas de ${res.geocodeCount} cliente(s) sendo buscadas em segundo plano`);
+      toast({ title: "Concluído", description: parts.join(' · ') || 'Nada para alterar.' });
+      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false);
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
     },
@@ -1272,6 +1293,16 @@ export default function ActiveCustomers() {
                 <SelectContent>
                   <SelectItem value="sim">Positivado</SelectItem>
                   <SelectItem value="nao">Não Positivado</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={selectedCoords} onValueChange={setSelectedCoords}>
+                <SelectTrigger className="w-[140px] h-9" data-testid="select-coords-filter">
+                  <SelectValue placeholder="Coordenadas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="com">Com coordenada</SelectItem>
+                  <SelectItem value="sem">Sem coordenada</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -1702,17 +1733,21 @@ export default function ActiveCustomers() {
                   <label className="block text-xs font-medium mb-1">Data de Início do Fornecimento</label>
                   <input type="date" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} className="w-full border rounded px-2 py-1.5" />
                 </div>
-              </div>
-              <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
-                <GeocodeAllButton customerIds={Array.from(selectedCustomerIds)} label="Buscar coordenadas" />
-                <div className="flex gap-2">
-                  <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
-                  <button
-                    onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar as alterações a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
-                    disabled={bulkUpdateMutation.isPending}
-                    className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
-                  >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
+                <div className="pt-1 border-t">
+                  <label className="flex items-center gap-2 cursor-pointer mt-2">
+                    <input type="checkbox" checked={bulkGeocode} onChange={(e) => setBulkGeocode(e.target.checked)} data-testid="bulk-geocode-flag" />
+                    <span className="text-xs font-medium">Atualizar coordenadas dos clientes selecionados</span>
+                  </label>
+                  <p className="text-[11px] text-gray-400 mt-1">Ao aplicar, busca/recalcula latitude e longitude apenas dos {selectedCustomerIds.size} cliente(s) marcado(s), em segundo plano.</p>
                 </div>
+              </div>
+              <div className="px-5 py-3 border-t flex justify-end gap-2">
+                <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
+                <button
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  disabled={bulkUpdateMutation.isPending}
+                  className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
+                >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
               </div>
             </div>
           </div>
