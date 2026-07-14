@@ -291,6 +291,22 @@ export function registerReconciliation(app: Express) {
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
         WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
           AND i.mirror_of IS NULL
+          -- FASE 3.4p: NAO listar como pendente um lancamento cuja MESMA transacao economica
+          -- (mesma conta | data | valor | tipo | descricao normalizada) ja esta CONCILIADA em
+          -- outra linha/extrato. Corrige a "conciliacao que volta a pendente" causada por
+          -- duplicatas entre extratos sobrepostos que nao foram vinculadas como espelho.
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_statement_items j
+            JOIN bank_statements sj ON sj.id = j.statement_id
+            WHERE sj.financial_account_id = s.financial_account_id
+              AND j.id <> i.id
+              AND j.reconciliation_status = 'reconciled'
+              AND j.transaction_date::date = i.transaction_date::date
+              AND round(j.amount::numeric, 2) = round(i.amount::numeric, 2)
+              AND j.type = i.type
+              AND regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
+                = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
+          )
           AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
           AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
         ORDER BY i.transaction_date, i.id
