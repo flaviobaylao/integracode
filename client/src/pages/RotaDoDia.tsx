@@ -742,6 +742,21 @@ export default function RotaDoDia() {
     return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
   }, [route?.visits]);
 
+  // Concluídas VIRTUAIS = SOMENTE clientes virtuais da rota que foram atendidos (atendimento registrado OU pedido do dia).
+  // Antes usava virtualServiceCount (contagem de service-logs), que incluía atendimentos de clientes
+  // presenciais e inflava as "concluídas virtuais" (ex.: 16 em vez de 4). Restringe aos virtuais da rota.
+  const virtualConcludedIds = useMemo(() => {
+    const s = new Set<string>();
+    (route?.visits || []).forEach((v: any) => {
+      if (!(v.isVirtual || v.visitType === 'virtual')) return;
+      const cid = v.customerId;
+      if (!cid) return;
+      const hasOrder = !!(customerInfo?.orders?.[cid]?.length);
+      if (attendedCustomerIds.has(cid) || hasOrder) s.add(String(cid));
+    });
+    return s;
+  }, [route?.visits, attendedCustomerIds, customerInfo]);
+
   // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (CHECK-IN) + atendimentos virtuais realizados.
   // (Regra do check-out desligada: a visita é concluída no CHECK-IN.)
   // Visitas com Pedidos  = concluídas que tiveram pedido implantado
@@ -750,8 +765,8 @@ export default function RotaDoDia() {
   const orderStats = useMemo(() => {
     // Universo de concluídas por customerId
     const concluidas = new Set<string>();
-    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in' && cp.customerId) concluidas.add(cp.customerId); });
-    attendedCustomerIds.forEach((id: any) => { if (id) concluidas.add(String(id)); });
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in' && cp.customerId) concluidas.add(String(cp.customerId)); });
+    virtualConcludedIds.forEach((id) => concluidas.add(id));
     let comPedidos = 0;
     let valor = 0;
     let semPedido = 0;
@@ -765,7 +780,7 @@ export default function RotaDoDia() {
       }
     });
     return { comPedidos, semPedido, valor, totalConcluidas: concluidas.size };
-  }, [route?.checkpoints, customerInfo, attendedCustomerIds]);
+  }, [route?.checkpoints, customerInfo, virtualConcludedIds]);
 
   // Visitas presenciais (exclui virtuais)
   const presentialVisits = useMemo(
@@ -1149,7 +1164,7 @@ export default function RotaDoDia() {
                 const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
                 // Virtuais
                 const virtTotal = virtualVisitsCount || 0;
-                const virtConcl = virtualServiceCount || 0;
+                const virtConcl = virtualConcludedIds.size;
                 const virtPend = Math.max(0, virtTotal - virtConcl);
                 const virtPct = virtTotal > 0 ? Math.round((virtConcl / virtTotal) * 100) : 0;
                 return (
