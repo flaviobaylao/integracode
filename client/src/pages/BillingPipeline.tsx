@@ -55,6 +55,7 @@ const STAGES = [
   { key: 'impresso', label: 'Impresso', icon: Printer, color: 'bg-purple-500', badgeColor: 'bg-purple-100 text-purple-800' },
   { key: 'bsb', label: 'BSB', icon: MapPin, color: 'bg-pink-500', badgeColor: 'bg-pink-100 text-pink-800' },
   { key: 'aguardando_rota_bsb', label: 'Ag. Rota BSB', icon: Clock, color: 'bg-teal-600', badgeColor: 'bg-teal-100 text-teal-800' },
+  { key: 'em_rota_bsb', label: 'Em Rota BSB', icon: Truck, color: 'bg-sky-600', badgeColor: 'bg-sky-100 text-sky-800' },
   { key: 'outras_cidades', label: 'Outras Cidades', icon: MapPin, color: 'bg-violet-500', badgeColor: 'bg-violet-100 text-violet-800' },
   { key: 'aguardando_rota', label: 'Aguardando Rota', icon: Clock, color: 'bg-gray-500', badgeColor: 'bg-gray-100 text-gray-800' },
   { key: 'em_rota', label: 'Em Rota', icon: Truck, color: 'bg-indigo-500', badgeColor: 'bg-indigo-100 text-indigo-800' },
