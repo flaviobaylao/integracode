@@ -210,6 +210,12 @@ run();
     (async () => {
       try {
         await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
+        // Envio automatico de documentos por e-mail ao faturar NF (replicado do Integra 1.0)
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_email varchar`).catch(() => {});
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_xml boolean DEFAULT false`).catch(() => {});
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_danfe boolean DEFAULT false`).catch(() => {});
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_boleto boolean DEFAULT false`).catch(() => {});
+        await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_pedido boolean DEFAULT false`).catch(() => {});
                 const pgMod = await import('pg');
         const PgClient = (pgMod.default && pgMod.default.Client) || pgMod.Client;
         const client = new PgClient({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
