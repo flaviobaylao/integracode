@@ -698,7 +698,7 @@ export default function ActiveCustomers() {
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
-      // PRE GO-LIVE: ancora na ULTIMA VISITA AGENDADA no Integra 1.0 e gera as futuras no 2.0 (cadencia 7/14/28/56).
+      // Âncora = data do ÚLTIMO ATENDIMENTO do cliente (2.0); gera as próximas seguindo as regras base (semanal/quinzenal/mensal).
       const response = await fetch("/api/admin/visits/generate-from-1-0", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -715,7 +715,7 @@ export default function ActiveCustomers() {
       console.log('✅ Geração de agendamentos iniciada:', data);
       toast({ 
         title: "✅ Gerando agendamentos!", 
-        description: `Ancorado na última visita do Integra 1.0 (${data?.comAncora1_0 ?? 0} clientes). As próximas visitas estão sendo criadas em segundo plano.`
+        description: `Ancorado no último atendimento de cada cliente (${data?.comAncora ?? 0} clientes com histórico). As próximas visitas estão sendo criadas em segundo plano.`
       });
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] }), 8000);
     },
