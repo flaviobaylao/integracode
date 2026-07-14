@@ -1129,3 +1129,118 @@ export async function propagateRecurrenceChange(params: {
     throw error;
   }
 }
+
+/**
+ * REPESCAGEM → PULAR CICLO.
+ * Quando um cliente é atendido FORA do dia de rota COM pedido (venda), o pedido "cobre" a próxima
+ * visita do ciclo. Então pulamos 1 ocorrência da periodicidade e reescrevemos a agenda pendente
+ * do cliente a partir da data de retomada (semanal/quinzenal/mensal).
+ *
+ * anchorRouteDate = data da visita de rota PROGRAMADA daquele ciclo (o "vermelho" da repescagem),
+ * NÃO a data do pedido. Ex.: rota Ter 07/07, pedido fora 09/07 → semanal pula 14/07, retoma 21/07.
+ *
+ * Conservador e idempotente: reescreve apenas visitas/cards PENDENTES FUTUROS; se a agenda já
+ * começa em/depois da retomada, não faz nada.
+ */
+export async function recalcularAgendaPulandoCiclo(
+  customerId: string,
+  anchorRouteDate: Date
+): Promise<{ ok: boolean; resume?: string; skipped?: string; reason?: string }> {
+  try {
+    const { salesCards } = await import('../shared/schema');
+    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+
+    const [customer] = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
+    if (!customer) return { ok: false, reason: 'cliente não encontrado' };
+
+    let weekdays: string[] = [];
+    try {
+      weekdays = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : ((customer.weekdays as any) || []);
+    } catch { weekdays = []; }
+    if (!Array.isArray(weekdays) || weekdays.length === 0 || !customer.visitPeriodicity) {
+      return { ok: false, reason: 'sem weekdays/periodicidade' };
+    }
+
+    const periodicity = customer.visitPeriodicity as any;
+    const anchor = new Date(anchorRouteDate); anchor.setHours(0, 0, 0, 0);
+
+    // Pular 1 ciclo: a 1ª próxima visita (pulada, "coberta" pelo pedido) e a retomada (a seguinte).
+    const skipped = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: anchor }).nextDate;
+    const resume = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: skipped }).nextDate;
+
+    // Próximas 3 visitas a partir da retomada.
+    const dates: Date[] = [resume];
+    for (let i = 0; i < 2; i++) {
+      dates.push(calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: dates[dates.length - 1] }).nextDate);
+    }
+
+    const today = nowBrazil(); today.setHours(0, 0, 0, 0);
+
+    // IDEMPOTÊNCIA: se a próxima visita pendente já é >= retomada, a agenda já foi pulada. Nada a fazer.
+    const nextPending = await db.select().from(visitAgenda)
+      .where(and(
+        eq(visitAgenda.customerId, customerId),
+        eq(visitAgenda.visitStatus, 'pending'),
+        gte(visitAgenda.scheduledDate, today)
+      ))
+      .orderBy(sql`${visitAgenda.scheduledDate} ASC`)
+      .limit(1);
+    if (nextPending.length > 0 && new Date(nextPending[0].scheduledDate) >= resume) {
+      return { ok: true, resume: resume.toISOString().slice(0, 10), skipped: skipped.toISOString().slice(0, 10), reason: 'já alinhada (idempotente)' };
+    }
+
+    // Reescrever visit_agenda pendente futura: apagar e inserir as 3 novas datas.
+    await db.delete(visitAgenda).where(and(
+      eq(visitAgenda.customerId, customerId),
+      eq(visitAgenda.visitStatus, 'pending'),
+      gte(visitAgenda.scheduledDate, today)
+    ));
+    for (const d of dates) {
+      const dd = new Date(d); dd.setHours(8, 0, 0, 0);
+      await db.insert(visitAgenda).values({
+        customerId: customer.id,
+        sellerId: customer.sellerId,
+        scheduledDate: dd,
+        routeDay: getRouteDay(dd),
+        recurrenceType: periodicity,
+        isVirtual: customer.virtualService || false,
+        visitStatus: 'pending',
+        customerName: customer.name,
+        customerLatitude: customer.latitude || null,
+        customerLongitude: customer.longitude || null,
+        customerAddress: customer.address || null,
+      }).onConflictDoNothing();
+    }
+
+    // Alinhar sales_cards SEM quebrar cadeias: atualizar nextVisitDate do permanent card e
+    // REALINHAR (update de scheduled_date, não delete) os cards pendentes futuros nas novas datas.
+    const [perm] = await db.select().from(salesCards)
+      .where(and(eq(salesCards.customerId, customerId), eq(salesCards.isPermanent, true)))
+      .limit(1);
+    if (perm) {
+      await db.update(salesCards).set({ nextVisitDate: resume, updatedAt: nowBrazil() }).where(eq(salesCards.id, perm.id));
+    }
+    const futurePendingCards = await db.select().from(salesCards)
+      .where(and(
+        eq(salesCards.customerId, customerId),
+        eq(salesCards.status, 'pending'),
+        eq(salesCards.isPermanent, false),
+        gte(salesCards.scheduledDate, today)
+      ))
+      .orderBy(sql`${salesCards.scheduledDate} ASC`);
+    for (let i = 0; i < futurePendingCards.length && i < dates.length; i++) {
+      const dd = new Date(dates[i]); dd.setHours(8, 0, 0, 0);
+      await db.update(salesCards).set({
+        scheduledDate: dd,
+        routeDay: getRouteDay(dd),
+        updatedAt: nowBrazil(),
+      }).where(eq(salesCards.id, futurePendingCards[i].id));
+    }
+
+    console.log(`⏭️ [PULAR-CICLO] ${customer.name} (${periodicity}): âncora ${anchor.toISOString().slice(0, 10)} → pulou ${skipped.toISOString().slice(0, 10)} → retoma ${resume.toISOString().slice(0, 10)} | agenda: ${dates.map(d => d.toISOString().slice(0, 10)).join(', ')}`);
+    return { ok: true, resume: resume.toISOString().slice(0, 10), skipped: skipped.toISOString().slice(0, 10) };
+  } catch (e: any) {
+    console.error('[PULAR-CICLO] erro:', e?.message);
+    return { ok: false, reason: e?.message };
+  }
+}
