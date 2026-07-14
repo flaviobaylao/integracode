@@ -1196,7 +1196,7 @@ export function registerReconciliation(app: Express) {
     const out = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] as string[], exemplos: [] as any[] };
     // 1) Itens pendentes de credito "PIX-RECEBIDO" (com documento do pagador).
     const items = rowsOf(await db.execute(sql`
-      SELECT i.id, i.transaction_date::date::text AS d, round(i.amount::numeric, 2)::text AS amt,
+      SELECT i.id, i.transaction_date::date::text AS d, round(COALESCE(NULLIF(i.amount::text, '')::numeric, 0), 2)::text AS amt,
              i.description, s.financial_account_id AS acc, s.omie_instance_id AS inst
       FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
       WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
@@ -1207,12 +1207,12 @@ export function registerReconciliation(app: Express) {
     if (!items.length) return out;
     // 2) Cobrancas PIX pagas (webhook, status CONCLUIDA) com titulo ja quitado.
     const charges = rowsOf(await db.execute(sql`
-      SELECT pc.id AS charge_id, pc.receivable_id, round(pc.amount_paid::numeric, 2)::text AS amt,
+      SELECT pc.id AS charge_id, pc.receivable_id, round(COALESCE(NULLIF(pc.amount_paid::text, '')::numeric, 0), 2)::text AS amt,
              pc.paid_at::date::text AS d, pc.omie_instance_id AS inst,
              regexp_replace(COALESCE(pc.debtor_document, ''), '[^0-9]', '', 'g') AS cdoc,
              regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') AS rdoc,
-             r.title_number AS nf, round(r.amount::numeric, 2) AS ramt,
-             round(COALESCE(NULLIF(r.amount_paid, '')::numeric, 0), 2) AS rpaid
+             r.title_number AS nf, round(COALESCE(NULLIF(r.amount::text, '')::numeric, 0), 2) AS ramt,
+             round(COALESCE(NULLIF(r.amount_paid::text, '')::numeric, 0), 2) AS rpaid
       FROM pix_charges pc JOIN receivables r ON r.id = pc.receivable_id
       WHERE pc.status = 'CONCLUIDA' AND pc.receivable_id IS NOT NULL AND pc.paid_at IS NOT NULL
         AND r.deleted_at IS NULL`));
