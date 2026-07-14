@@ -288,16 +288,27 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const noClientFilters = sellerMulti.length === 0 && !customerSearch && valueMin === '' && valueMax === '';
   const [unifySel, setUnifySel] = useState<string[]>([]);
   const [unifyBusy, setUnifyBusy] = useState(false);
+  const [unifyDate, setUnifyDate] = useState('');
   const toggleUnify = (id: string) => setUnifySel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  // Pre-preenche o vencimento do boleto unificado com o vencimento MAIS PROXIMO dos titulos
+  // selecionados (editavel pelo usuario). Zera ao limpar a selecao.
+  useEffect(() => {
+    if (unifySel.length > 0 && !unifyDate) {
+      const ds = receivables.filter((r: any) => unifySel.includes(r.id)).map((r: any) => r.dueDate).filter(Boolean).map((d: any) => new Date(d)).sort((a: any, b: any) => a.getTime() - b.getTime());
+      if (ds[0]) { const d: Date = ds[0]; setUnifyDate(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)); }
+    }
+    if (unifySel.length === 0 && unifyDate) setUnifyDate('');
+  }, [unifySel]);
   const emitirCobrancaUnificada = async () => {
     if (unifySel.length < 2) { alert('Selecione ao menos 2 títulos do mesmo cliente.'); return; }
-    if (!confirm(`Gerar UM boleto único juntando ${unifySel.length} títulos?\n\nQuando esse boleto for pago, TODOS os títulos serão baixados automaticamente.`)) return;
+    if (!unifyDate) { alert('Escolha a data de vencimento do boleto.'); return; }
+    if (!confirm(`Gerar UM boleto único juntando ${unifySel.length} títulos, com vencimento em ${new Date(unifyDate + 'T12:00:00').toLocaleDateString('pt-BR')}?\n\nQuando esse boleto for pago, TODOS os títulos serão baixados automaticamente.`)) return;
     setUnifyBusy(true);
     try {
-      const res = await fetch('/api/financial/boleto/combined', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receivableIds: unifySel }) });
+      const res = await fetch('/api/financial/boleto/combined', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receivableIds: unifySel, dueDate: unifyDate }) });
       const j = await res.json();
       if (!res.ok || !(j.success || j.ok)) { alert('Não foi possível unir os títulos: ' + (j.error || j.persistError || 'erro')); return; }
-      setUnifySel([]);
+      setUnifySel([]); setUnifyDate('');
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       if (j.viewUrl) window.open(j.viewUrl, '_blank');
       alert('Boleto unificado gerado com sucesso.');
@@ -528,8 +539,11 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
       {(canBoleto || !readOnly) && unifySel.length > 0 && (
         <div className="flex items-center gap-3 mb-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
           <span className="text-sm font-medium text-blue-900">{unifySel.length} título(s) selecionado(s) — gere um único boleto que, ao ser pago, baixa todos.</span>
-          <Button size="sm" onClick={emitirCobrancaUnificada} disabled={unifyBusy || unifySel.length < 2} className="ml-auto">{unifyBusy ? 'Gerando…' : 'Unir em um boleto'}</Button>
-          <Button size="sm" variant="outline" onClick={() => setUnifySel([])}>Limpar</Button>
+          <label className="text-sm text-blue-900 flex items-center gap-1 ml-auto whitespace-nowrap">Vencimento:
+            <input type="date" value={unifyDate} onChange={(e) => setUnifyDate(e.target.value)} className="border rounded px-2 py-1 text-sm" />
+          </label>
+          <Button size="sm" onClick={emitirCobrancaUnificada} disabled={unifyBusy || unifySel.length < 2 || !unifyDate}>{unifyBusy ? 'Gerando…' : 'Unir em um boleto'}</Button>
+          <Button size="sm" variant="outline" onClick={() => { setUnifySel([]); setUnifyDate(''); }}>Limpar</Button>
         </div>
       )}
 
