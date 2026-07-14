@@ -438,50 +438,76 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
 
   try { await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado' WHERE id = ${charge.id}`); } catch (e: any) { /* tolerante */ }
 
-  let receivableStatus: string | undefined;
-  if (charge.receivable_id) {
+  // Titulos vinculados: boleto UNIFICADO (varios titulos via boleto_charge_receivables)
+  // ou boleto simples (um unico receivable_id). Damos baixa em TODOS os titulos do boleto.
+  let targets: Array<{ receivableId: string; alloc: number | null }> = [];
+  try {
+    const jr: any = await db.execute(sql`SELECT receivable_id, amount FROM boleto_charge_receivables WHERE boleto_charge_id = ${charge.id}`);
+    if (jr.rows && jr.rows.length > 0) {
+      targets = jr.rows.map((r: any) => ({ receivableId: r.receivable_id, alloc: r.amount != null ? parseFloat(r.amount) : null }));
+    }
+  } catch (e: any) { /* tabela pode nao existir em ambientes antigos — cai no fallback */ }
+  if (targets.length === 0 && charge.receivable_id) {
+    targets = [{ receivableId: charge.receivable_id, alloc: null }];
+  }
+
+  const account = await findFinancialAccountForConvenio(charge.numero_convenio);
+  const done: Array<{ receivableId: string; status?: string }> = [];
+  let remaining = amount;
+
+  for (const t of targets) {
     try {
-      const receivable: any = await storage.getReceivable(charge.receivable_id);
-      if (receivable) {
-        const account = await findFinancialAccountForConvenio(charge.numero_convenio);
-        const totalPaid = parseFloat(receivable.amountPaid || '0') + amount;
-        const totalAmount = parseFloat(receivable.amount);
-        receivableStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
-        await storage.updateReceivable(charge.receivable_id, {
-          amountPaid: totalPaid.toFixed(2),
-          status: receivableStatus as any,
+      const receivable: any = await storage.getReceivable(t.receivableId);
+      if (!receivable) continue;
+      const outstanding = parseFloat(receivable.amount) - parseFloat(receivable.amountPaid || '0');
+      // Valor a baixar neste titulo: a alocacao gravada na juncao (saldo do titulo no
+      // momento da geracao) e, no boleto simples, o valor pago inteiro. Limita ao que
+      // resta do valor pago (rateio) para nunca baixar mais do que entrou.
+      let pay = t.alloc != null ? t.alloc : (targets.length === 1 ? amount : outstanding);
+      if (pay > remaining) pay = remaining;
+      if (pay < 0) pay = 0;
+      const totalPaid = parseFloat(receivable.amountPaid || '0') + pay;
+      const receivableStatus = totalPaid >= parseFloat(receivable.amount) ? 'recebida' : 'a_vencer';
+      await storage.updateReceivable(t.receivableId, {
+        amountPaid: totalPaid.toFixed(2),
+        status: receivableStatus as any,
+        paymentMethod: 'boleto' as any,
+        financialAccountId: account?.id || receivable.financialAccountId || null,
+      } as any);
+      try {
+        await storage.createReceivablePayment({
+          receivableId: t.receivableId,
+          paidAt,
+          amount: pay.toFixed(2),
           paymentMethod: 'boleto' as any,
           financialAccountId: account?.id || receivable.financialAccountId || null,
+          reference: charge.nosso_numero || null,
+          notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}`,
+          createdBy: 'sistema',
         } as any);
-        try {
-          await storage.createReceivablePayment({
-            receivableId: charge.receivable_id,
-            paidAt,
-            amount: amount.toFixed(2),
-            paymentMethod: 'boleto' as any,
-            financialAccountId: account?.id || receivable.financialAccountId || null,
-            reference: charge.nosso_numero || null,
-            notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}`,
-            createdBy: 'sistema',
-          } as any);
-        } catch (e: any) { console.warn('[BB-BOLETO] createReceivablePayment falhou:', e?.message); }
-        if (account) {
-          try {
-            const cur = parseFloat(account.balance || '0'); const nb = cur + amount;
-            await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
-            await storage.createAccountMovement({
-              financialAccountId: account.id, type: 'credito', amount: amount.toFixed(2), balanceAfter: nb.toFixed(2),
-              description: `Boleto recebido BB - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}`,
-              sourceType: 'boleto_charge', sourceId: charge.id, reference: charge.nosso_numero || null,
-              omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema',
-            } as any);
-          } catch (e: any) { console.warn('[BB-BOLETO] movimento de conta falhou:', e?.message); }
-        }
-      }
-    } catch (e: any) { console.warn('[BB-BOLETO] baixa de recebivel falhou:', e?.message); }
+      } catch (e: any) { console.warn('[BB-BOLETO] createReceivablePayment falhou:', e?.message); }
+      remaining -= pay;
+      done.push({ receivableId: t.receivableId, status: receivableStatus });
+    } catch (e: any) { console.warn('[BB-BOLETO] baixa de recebivel falhou:', t.receivableId, e?.message); }
   }
-  console.log(`✅ [BB-BOLETO] Baixa (${source}): boleto ${charge.id} R$ ${amount.toFixed(2)} receivable=${charge.receivable_id || '-'} status=${receivableStatus || '-'}`);
-  return { ok: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || null, receivableStatus, amount, message: 'Boleto liquidado e recebivel baixado' };
+
+  // Credita a conta UMA vez pelo total recebido (nao por titulo), so se algum titulo foi baixado.
+  if (account && done.length > 0) {
+    try {
+      const cur = parseFloat(account.balance || '0'); const nb = cur + amount;
+      await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
+      await storage.createAccountMovement({
+        financialAccountId: account.id, type: 'credito', amount: amount.toFixed(2), balanceAfter: nb.toFixed(2),
+        description: `Boleto recebido BB - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}${targets.length > 1 ? ` (${targets.length} titulos)` : ''}`,
+        sourceType: 'boleto_charge', sourceId: charge.id, reference: charge.nosso_numero || null,
+        omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema',
+      } as any);
+    } catch (e: any) { console.warn('[BB-BOLETO] movimento de conta falhou:', e?.message); }
+  }
+
+  const receivableStatus = done[0]?.status;
+  console.log(`✅ [BB-BOLETO] Baixa (${source}): boleto ${charge.id} R$ ${amount.toFixed(2)} titulos=[${targets.map(t => t.receivableId).join(',') || '-'}] baixados=${done.length}`);
+  return { ok: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || targets[0]?.receivableId || null, receivableStatus, amount, message: `Boleto liquidado e ${done.length} titulo(s) baixado(s)` };
 }
 
 // Acha o boleto_charges a partir do payload do webhook BB (tolerante a nomes de campo).
