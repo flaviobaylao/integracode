@@ -1499,6 +1499,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
+      // Anexa o cronograma de parcelas (coluna aditiva, fora do schema drizzle) para o prefill do modal.
+      try {
+        const __s: any = await db.execute(sql`SELECT installment_schedule FROM customers WHERE id = ${id} LIMIT 1`);
+        (customer as any).installmentSchedule = __s?.rows?.[0]?.installment_schedule ?? null;
+      } catch (e: any) { console.warn('\u26a0\ufe0f [CUSTOMER-GET] installment_schedule:', e?.message); }
+
       res.json(customer);
     } catch (error) {
       console.error("Error fetching customer:", error);
