@@ -1725,6 +1725,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update customer
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
 
+      // CONDIÇÃO DE PAGAMENTO do cliente: payment_method / boleto_days / collection_discount /
+      // payment_installments EXISTEM no banco (customers) mas NÃO no schema drizzle de customers,
+      // então o updateCustomer (typed .set) DESCARTA silenciosamente esses campos — por isso a
+      // edição da "Forma de Pagamento" não salvava. Persistimos via SQL cru (as colunas são
+      // garantidas no boot por ALTER ... IF NOT EXISTS).
+      try {
+        const _pm: any[] = [];
+        if ('paymentMethod' in cleanedData) _pm.push(sql`payment_method = ${cleanedData.paymentMethod ?? null}`);
+        if ('boletoDays' in cleanedData) _pm.push(sql`boleto_days = ${cleanedData.boletoDays ?? null}`);
+        if ('collectionDiscount' in cleanedData) _pm.push(sql`collection_discount = ${cleanedData.collectionDiscount ?? null}`);
+        if ('paymentInstallments' in cleanedData) _pm.push(sql`payment_installments = ${cleanedData.paymentInstallments ?? null}`);
+        if (_pm.length) {
+          await db.execute(sql`UPDATE customers SET ${sql.join(_pm, sql`, `)} WHERE id = ${id}`);
+          Object.assign(updatedCustomer as any, {
+            paymentMethod: 'paymentMethod' in cleanedData ? cleanedData.paymentMethod ?? null : (updatedCustomer as any).paymentMethod,
+            boletoDays: 'boletoDays' in cleanedData ? cleanedData.boletoDays ?? null : (updatedCustomer as any).boletoDays,
+            collectionDiscount: 'collectionDiscount' in cleanedData ? cleanedData.collectionDiscount ?? null : (updatedCustomer as any).collectionDiscount,
+            paymentInstallments: 'paymentInstallments' in cleanedData ? cleanedData.paymentInstallments ?? null : (updatedCustomer as any).paymentInstallments,
+          });
+        }
+      } catch (pmErr: any) {
+        console.error('❌ [CUSTOMER-UPDATE] Falha ao salvar condição de pagamento:', pmErr?.message);
+        return res.status(500).json({ message: 'Falha ao salvar a forma de pagamento do cliente', error: pmErr?.message });
+      }
+
       if (__instSchedProvided) {
         try {
           await db.execute(sql`UPDATE customers SET installment_schedule = ${__normSched(req.body.installmentSchedule)} WHERE id = ${id}`);
