@@ -22,6 +22,7 @@ const STAGE_LABELS: Record<string, string> = {
   impresso: "Impresso",
   aguardando_rota: "Aguardando Rota",
   em_rota: "Em Rota",
+  em_rota_bsb: "Em Rota BSB",
   entregue: "Entregue",
 };
 
