@@ -368,7 +368,7 @@ run();
         if (r.customer_id && r.last_atend) lastAtendByCustomer.set(String(r.customer_id), new Date(r.last_atend));
       }
       // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
-      const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address
+      const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address, service_start_date
         FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
       const cust = (custR.rows || custR) as any[];
       const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
@@ -388,6 +388,11 @@ run();
           // ÂNCORA = data do último atendimento do cliente (2.0). Sem atendimento → agenda a partir de hoje.
           const anchor = lastAtendByCustomer.get(String(c.id)) || null;
           if (anchor) result.comAncora++; else result.semAncora++;
+          // Data de início do fornecimento: quando registrada, é a âncora de início da
+          // periodicidade — nenhuma visita antes dela (o núcleo aplica o piso).
+          const svcStart = c.service_start_date ? new Date(c.service_start_date) : null;
+          if (svcStart) svcStart.setHours(0, 0, 0, 0);
+          const startFuture = svcStart && svcStart.getTime() >= today.getTime();
           // Gera `count` próximas visitas seguindo as REGRAS BASE (calculateNextVisitDate):
           // semanal=+7, quinzenal=+14, mensal=1ª ocorrência do dia de rota no mês seguinte.
           // Avança a partir da âncora até cair em data futura (>= hoje), depois encadeia.
@@ -399,17 +404,21 @@ run();
             let next: Date;
             try {
               next = calculateNextVisitDate(cursor
-                ? { weekdays: weekdaysRaw, periodicity, lastCompletedDate: cursor }
-                : { weekdays: weekdaysRaw, periodicity, referenceDate: today }).nextDate;
+                ? { weekdays: weekdaysRaw, periodicity, lastCompletedDate: cursor, serviceStartDate: svcStart || undefined }
+                : { weekdays: weekdaysRaw, periodicity, referenceDate: today, serviceStartDate: svcStart || undefined }).nextDate;
             } catch (e) { break; }
             if (cursor && next.getTime() <= cursor.getTime()) break; // trava anti-loop
             cursor = next;
             if (next >= today) dates.push(next);
           }
           if (dates.length === 0) { result.semDiaValido++; continue; }
-          // limite de exclusao: se ancora futura, preserva ate ela (apaga > ancora); senao apaga tudo futuro (> ontem)
+          // limite de exclusao:
+          //  - início do fornecimento futuro → apaga TODAS as futuras (inclui as erradas antes do início) e recria a partir dele;
+          //  - senão, se âncora futura, preserva até ela (apaga > âncora); caso contrário apaga tudo futuro (> ontem).
           const aDate = anchor ? new Date(anchor) : null; if (aDate) aDate.setHours(23,59,59,0);
-          delThreshold[c.id] = (aDate && aDate >= today) ? aDate.toISOString() : new Date(today.getTime() - 86400000).toISOString();
+          delThreshold[c.id] = startFuture
+            ? new Date(today.getTime() - 86400000).toISOString()
+            : ((aDate && aDate >= today) ? aDate.toISOString() : new Date(today.getTime() - 86400000).toISOString());
           if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targetNums.map((n: number) => DOW[n]).join(','), ancora: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
           for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
         } catch (e) { result.erros++; }
