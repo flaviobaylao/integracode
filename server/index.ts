@@ -3685,6 +3685,17 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS docs_send_pedido boolean DEFAULT false`);
   } catch (e: any) { console.warn('[DOCS-EMAIL-MIGRATION] falha ao garantir colunas:', e?.message); }
 
+  // Garante as colunas de condicao de pagamento do cliente ANTES dos workers de sync e do listen.
+  // Elas ja eram gravadas por SQL cru (payment-terms), mas nao existiam no schema drizzle -> getCustomers
+  // nao as retornava e a "Forma de Pagamento" recarregava vazia. Idempotente (IF NOT EXISTS).
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method varchar`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS boleto_days integer`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule varchar`);
+  } catch (e: any) { console.warn('[PAYMENT-COLS-MIGRATION] falha ao garantir colunas:', e?.message); }
+
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
 
