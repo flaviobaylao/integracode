@@ -49,9 +49,10 @@ cron.schedule('50 7 * * *', async () => {
   await runPositivacaoAlertaCron();
 }, { timezone: 'America/Sao_Paulo' });
 
-// Alerta diário 08:00 (BRT), SOMENTE DIAS ÚTEIS: débitos vencidos dos clientes da carteira por vendedor (WhatsApp).
+// Alerta diário 08:30 (BRT), SOMENTE DIAS ÚTEIS: débitos vencidos por carteira (WhatsApp).
+// Vendedores recebem só a própria carteira; coordenadores/admins recebem a lista consolidada.
 // O guard de dia útil (Seg-Sex + feriados nacionais) fica dentro de runDebitosVencidosAlertaCron.
-cron.schedule('0 8 * * *', async () => {
+cron.schedule('30 8 * * *', async () => {
   await runDebitosVencidosAlertaCron();
 }, { timezone: 'America/Sao_Paulo' });
 
