@@ -60,7 +60,7 @@ export default function PersistentSectionSidebar() {
   const currentPath = location.split("?")[0].split("#")[0];
 
   return (
-    <nav className="hidden md:flex flex-col w-[64px] bg-white shadow-sm border-r border-gray-200 flex-shrink-0 sticky top-0 h-screen overflow-y-auto z-30">
+    <nav className="hidden md:flex flex-col w-[64px] bg-white shadow-sm border-r border-gray-200 flex-shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto z-30">
       <div className="flex-1 py-2 px-1.5 space-y-1">
         {sections.map((s) => {
           const href = s.label === "Geral" ? "/" : `/?secao=${encodeURIComponent(s.label)}`;
