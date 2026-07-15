@@ -6086,54 +6086,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Duplicate order from last order (billing/order_history) to create new sales card
   app.post('/api/sales-cards/duplicate-from-order', authenticateUser, async (req: any, res) => {
     try {
+      const user = req.currentUser;
       const { customerId, products, paymentMethod, orderType } = req.body;
-      
+
       if (!customerId) {
         return res.status(400).json({ message: "Customer ID is required" });
       }
-      
-      // Get the customer's existing sales card directly from db
+
+      // Forma de pagamento e' um enum (a_vista | boleto | pix). O ultimo pedido pode
+      // trazer texto livre ("Boleto", "A vista", "PIX", "Dinheiro"...), que quebra o
+      // cast do enum. Normalizamos; se nao reconhecer, mantemos o valor atual (undefined).
+      const normalizePayment = (pm: any): 'a_vista' | 'boleto' | 'pix' | undefined => {
+        const s = String(pm || '').toLowerCase().trim();
+        if (!s) return undefined;
+        if (s.includes('pix')) return 'pix';
+        if (s.includes('boleto')) return 'boleto';
+        if (['a_vista', 'boleto', 'pix'].includes(s)) return s as any;
+        return 'a_vista';
+      };
+      const pmEnum = normalizePayment(paymentMethod);
+
+      // Tipo de operacao tambem e' enum
+      const opType: 'venda' | 'troca' | 'amostra' | 'transferencia' =
+        ['venda', 'troca', 'amostra', 'transferencia'].includes(String(orderType)) ? (String(orderType) as any) : 'venda';
+
+      // Normalizar produtos do ultimo pedido para o shape do card
+      const items = (Array.isArray(products) ? products : []).map((p: any, i: number) => {
+        const quantity = Number(p?.quantity ?? p?.qty ?? 0) || 0;
+        const unitPrice = Number(p?.unitPrice ?? p?.unit_price ?? p?.price ?? 0) || 0;
+        const totalPrice = Number(p?.totalPrice ?? p?.total ?? (quantity * unitPrice)) || 0;
+        return {
+          id: String(p?.id ?? p?.productId ?? p?.omieCode ?? p?.code ?? `item-${i + 1}`),
+          name: String(p?.name ?? p?.description ?? 'Produto'),
+          quantity,
+          unitPrice,
+          totalPrice,
+        };
+      });
+      const saleValue = items.reduce((s: number, it: any) => s + (Number(it.totalPrice) || 0), 0);
+
+      // Card mais recente do cliente
       const existingCardResult = await db.execute(sql`
-        SELECT id FROM sales_cards 
-        WHERE customer_id = ${customerId} 
-        ORDER BY created_at DESC 
+        SELECT id FROM sales_cards
+        WHERE customer_id = ${customerId}
+        ORDER BY created_at DESC
         LIMIT 1
       `);
-      
+
       if (existingCardResult.rows && existingCardResult.rows.length > 0) {
         const existingCardId = (existingCardResult.rows[0] as any).id;
-        
-        // Update existing card with the products from last order
-        await db.execute(sql`
-          UPDATE sales_cards 
-          SET payment_method = ${paymentMethod || null},
-              updated_at = NOW()
-          WHERE id = ${existingCardId}
-        `);
-        
-        // Return the updated card
-        const updatedCard = await storage.getSalesCard(existingCardId);
-        return res.json({ 
-          card: updatedCard, 
-          products: products || [],
-          message: "Card existente atualizado. Produtos do último pedido copiados para referência." 
-        });
-      } else {
-        // Create a new sales card for today
-        const newCard = await storage.createSalesCard({
-          customerId,
+        const patch: any = {
+          products: items,
+          saleValue: saleValue ? String(saleValue) : null,
+          operationType: opType,
           status: 'pending',
-          visitType: 'presencial',
-          paymentMethod: paymentMethod || null
-        });
-        
-        const cardWithRelations = await storage.getSalesCard(newCard.id);
-        return res.json({ 
-          card: cardWithRelations, 
-          products: products || [],
-          message: "Novo card criado. Produtos do último pedido copiados para referência." 
+        };
+        if (pmEnum) patch.paymentMethod = pmEnum; // so' sobrescreve se reconhecido (evita quebrar o enum/NOT NULL)
+        await storage.updateSalesCard(existingCardId, patch);
+        const updatedCard = await storage.getSalesCard(existingCardId);
+        return res.json({
+          card: updatedCard,
+          products: items,
+          message: "Pedido duplicado no card do cliente."
         });
       }
+
+      // Sem card: cria um novo com todos os campos obrigatorios (route_day/recurrence_type sao NOT NULL)
+      const customer = await storage.getCustomer(customerId);
+      if (!customer) {
+        return res.status(404).json({ message: "Cliente nao encontrado" });
+      }
+      let sellerId = customer.sellerId || user?.id;
+      if (user?.role === 'vendedor') sellerId = user.id;
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + 1); // amanha
+
+      const newCard = await storage.createSalesCard({
+        customerId,
+        sellerId,
+        scheduledDate: targetDate,
+        status: 'pending',
+        source: 'duplicacao',
+        routeDay: 'Seg',
+        recurrenceType: 'semanal',
+        exclusiveVehicle: false,
+        vehicleTypes: [],
+      } as any);
+
+      const patch: any = { products: items, saleValue: saleValue ? String(saleValue) : null, operationType: opType };
+      if (pmEnum) patch.paymentMethod = pmEnum;
+      await storage.updateSalesCard(newCard.id, patch);
+
+      const cardWithRelations = await storage.getSalesCard(newCard.id);
+      return res.json({
+        card: cardWithRelations,
+        products: items,
+        message: "Novo card criado com os produtos do ultimo pedido."
+      });
     } catch (error: any) {
       console.error("Error duplicating from order:", error?.message || error);
       res.status(500).json({ message: "Failed to duplicate order", error: error?.message });
