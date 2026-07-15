@@ -2121,6 +2121,15 @@ export default function RotaDoDia() {
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
                           {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
                         </span>
+                        {typeof r.repescagemCount === 'number' && r.repescagemCount > 0 && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#9a3b3b] text-white"
+                            title={`Este cliente caiu em repescagem ${r.repescagemCount}x nos últimos ${r.repescagemWindowMonths} meses`}
+                            data-testid={`repescagem-count-${r.customerId}`}
+                          >
+                            {r.repescagemCount}x em repescagem ({r.repescagemWindowMonths}m)
+                          </span>
+                        )}
                         {r.customerId && customerInfo?.orders?.[r.customerId]?.map((order: any, orderIdx: number) => (
                           <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
                             <ShoppingCart className="h-3 w-3 mr-1" />
