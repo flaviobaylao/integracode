@@ -5731,10 +5731,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _custPh: any = await storage.getCustomer(cardBefore.customerId);
         const _effPhone = _reqPhone || String((_custPh && _custPh.phone) || '');
         const _phDigits = _effPhone.replace(/[^0-9]/g, '');
-        const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13;
+        // Anti-numero-falso: rejeita digitos repetidos, sequencias obvias, placeholder (00)00000-0000 e o proprio celular do vendedor logado
+        const _sellerDigits = String((user && (user as any).phone) || '').replace(/[^0-9]/g, '');
+        const _isFakePhone = (d: string) => !d || /^(\d)\1+$/.test(d) || '01234567890123456789'.includes(d) || '98765432109876543210'.includes(d) || d.includes('00000') || (!!_sellerDigits && _sellerDigits.length >= 10 && d === _sellerDigits);
+        const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13 && !_isFakePhone(_phDigits);
         if (!_phValid) {
-          console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- telefone ausente/invalido:', JSON.stringify(_effPhone));
-          return res.status(400).json({ message: 'Para finalizar a venda é obrigatório o telefone de contato do comprador (DDD + número). Preencha o campo "Telefone do comprador" no pedido.', code: 'CUSTOMER_PHONE_REQUIRED' });
+          console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- telefone ausente/invalido/falso:', JSON.stringify(_effPhone));
+          return res.status(400).json({ message: 'Para finalizar a venda é obrigatório um telefone de contato VÁLIDO do comprador (DDD + número real). Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos. Confira o campo "Telefone do comprador".', code: 'CUSTOMER_PHONE_REQUIRED' });
         }
         // Grava no cadastro do cliente quando veio um número novo válido pelo pedido
         if (_reqPhone && _phValid && _effPhone !== String((_custPh && _custPh.phone) || '')) {
@@ -7142,6 +7145,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching sellers stats:", error);
       res.status(500).json({ message: "Failed to fetch sellers stats" });
+    }
+  });
+
+  // 📞 QUALIDADE DE CADASTRO — cobertura de telefone valido por vendedor (carteira ativa). Gestao apenas.
+  app.get('/api/dashboard/phone-coverage', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: "Access denied. Admin/coordinator role required." });
+      }
+      res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
+      // Telefone valido = 10-13 digitos, NAO todos iguais e sem o placeholder '00000'. (espelha a trava, exceto casos por-vendedor)
+      const result: any = await db.execute(sql`
+        WITH base AS (
+          SELECT u.id AS seller_id, u.name AS seller_name, c.name AS customer_name,
+                 regexp_replace(COALESCE(c.phone, ''), '[^0-9]', '', 'g') AS digits
+          FROM users u
+          JOIN customers c ON c.seller_id = u.id
+          WHERE u.role = 'vendedor' AND u.is_active = true
+            AND c.is_active = true
+            AND COALESCE(c.is_lead, false) = false
+            AND COALESCE(c.is_supplier, false) = false
+        ), flagged AS (
+          SELECT seller_id, seller_name, customer_name,
+                 (length(digits) BETWEEN 10 AND 13
+                  AND length(replace(digits, left(digits, 1), '')) > 0
+                  AND position('00000' in digits) = 0) AS is_valid
+          FROM base
+        )
+        SELECT seller_id, seller_name,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE is_valid)::int AS valid,
+               COALESCE(json_agg(customer_name ORDER BY customer_name) FILTER (WHERE NOT is_valid), '[]'::json) AS missing_names
+        FROM flagged
+        GROUP BY seller_id, seller_name
+        ORDER BY seller_name
+      `);
+      const rows = (result.rows || result).map((r: any) => {
+        const total = Number(r.total) || 0;
+        const valid = Number(r.valid) || 0;
+        return {
+          sellerId: r.seller_id,
+          sellerName: r.seller_name,
+          total,
+          valid,
+          invalid: total - valid,
+          pct: total > 0 ? Math.round((valid / total) * 100) : 0,
+          missingNames: Array.isArray(r.missing_names) ? r.missing_names : []
+        };
+      });
+      res.json(rows);
+    } catch (error: any) {
+      console.error("Error fetching phone coverage:", error?.message);
+      res.status(500).json({ message: "Failed to fetch phone coverage" });
     }
   });
 
