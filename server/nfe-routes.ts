@@ -555,6 +555,22 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
+  // Download do XML da NF-e (prioriza autorizacao > retorno > envio). Mesma auth da aba Faturamento NF-e.
+  app.get('/api/fiscal-invoices/:id/xml', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
+    try {
+      const invoice: any = await storage.getFiscalInvoice(req.params.id);
+      if (!invoice) return res.status(404).json({ message: 'Nota fiscal não encontrada' });
+      const xml = invoice.xmlAutorizacao || invoice.xmlRetorno || invoice.xmlEnvio;
+      if (!xml) return res.status(404).json({ message: 'XML não disponível para esta NF-e' });
+      const base = String(invoice.accessKey || ('NFe_' + (invoice.invoiceNumber || invoice.id))).replace(/[^A-Za-z0-9_.-]/g, '');
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${base}.xml"`);
+      res.send(xml);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao baixar XML', error: error.message });
+    }
+  });
+
   app.post('/api/fiscal-invoices', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       const parsed = createInvoiceSchema.safeParse(req.body);
