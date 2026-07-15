@@ -1135,6 +1135,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
         id: customers.id,
         name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
         phone: customers.phone, city: customers.city, uf: customers.state,
+        address: customers.address, weekdays: customers.weekdays,
+        visitPeriodicity: customers.visitPeriodicity,
         virtualService: customers.virtualService,
       }).from(customers).where(inArray(customers.id, cids));
       const byId = new Map(cs.map(c => [c.id, c]));
@@ -1143,6 +1145,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
         return {
           assignmentId: r.id, customerId: r.customerId, customerName: c?.name || r.customerId,
           phone: c?.phone || null, city: c?.city || null, uf: c?.uf || null,
+          address: c?.address || null, weekdays: (c?.weekdays as any) || [],
+          visitPeriodicity: c?.visitPeriodicity || null,
           phase: r.phase, isVirtualClient: !!c?.virtualService,
         };
       }));
