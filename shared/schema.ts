@@ -281,6 +281,14 @@ export const customers = pgTable("customers", {
   // Fornecedor: cadastro que NÃO é cliente. Fica no cadastro, mas NÃO entra em rota de visitas.
   isSupplier: boolean("is_supplier").default(false),
 
+  // Condição de pagamento do cliente (sobrepõe forma/prazo da venda ao gerar cobrança).
+  // Colunas garantidas no boot por ALTER ... IF NOT EXISTS.
+  paymentMethod: varchar("payment_method"),
+  boletoDays: integer("boleto_days"),
+  collectionDiscount: decimal("collection_discount"),
+  paymentInstallments: integer("payment_installments"),
+  installmentSchedule: varchar("installment_schedule"),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
