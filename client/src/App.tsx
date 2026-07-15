@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import MobileNav from "@/components/mobile-nav";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import PersistentSectionSidebar from "@/components/PersistentSectionSidebar";
+import PersistentHeader from "@/components/PersistentHeader";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -118,9 +119,12 @@ function AppShell({ isAuthenticated, children }: { isAuthenticated: boolean; chi
     return <>{children}</>;
   }
   return (
-    <div className="flex items-stretch min-h-screen bg-gray-50">
-      <PersistentSectionSidebar />
-      <div className="flex-1 min-w-0">{children}</div>
+    <div className="min-h-screen bg-gray-50">
+      <PersistentHeader />
+      <div className="flex items-stretch">
+        <PersistentSectionSidebar />
+        <div className="flex-1 min-w-0">{children}</div>
+      </div>
     </div>
   );
 }
