@@ -375,6 +375,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         data: {
           status: 'completed',
           saleValue: totalValue.toFixed(2),
+          customerPhone: (customerPhone || '').trim(),
           referralCode: (referralCode || '').trim() || undefined,
           products: products,
           paymentMethod: paymentMethod,
@@ -419,6 +420,17 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         });
         return;
       }
+    }
+
+    // 🔒 TRAVA: telefone do comprador obrigatório para finalizar a venda
+    const _phoneDigits = (customerPhone || '').replace(/\D/g, '');
+    if (_phoneDigits.length < 10 || _phoneDigits.length > 13) {
+      toast({
+        title: "Telefone do comprador obrigatório",
+        description: "Informe o telefone de contato do cliente (DDD + número) no campo \"Telefone do comprador\" para finalizar a venda.",
+        variant: "destructive",
+      });
+      return;
     }
 
     try {
@@ -1210,6 +1222,23 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* 🔒 Telefone do comprador — obrigatório para finalizar a venda */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <Label className="font-semibold text-blue-900">Telefone do comprador *</Label>
+                <Input
+                  type="tel"
+                  inputMode="numeric"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="(DDD) 9XXXX-XXXX"
+                  data-testid="input-customer-phone"
+                  className="mt-1"
+                />
+                <p className="text-xs text-blue-700 mt-1">
+                  Obrigatório para finalizar. É o contato do cliente para confirmação de pedido e entrega.
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Método de Pagamento</Label>
