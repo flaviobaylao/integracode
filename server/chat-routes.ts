@@ -2053,6 +2053,25 @@ export function registerChatRoutes(app: Express): void {
         return res.json({ success: true, duplicate: true, debug: debugInfo });
       }
 
+      // 🔁 ANTI-ECO (webhook): o Umbler reenvia p/ cá as mensagens ENVIADAS por nós — às vezes 2x,
+      // uma como 'member' → 'system' e outra sem Source → 'customer', com externalIds diferentes,
+      // então o dedup por externalId acima não pega. Se já existe uma saída nossa (agent/system) com
+      // o MESMO conteúdo nos últimos 3 min, é eco → ignora (não duplica). NÃO afeta espelhamento:
+      // msg enviada de fora (número pessoal) não tem registro prévio nosso → passa e é espelhada.
+      if (finalMessageType === 'text' && finalContent && finalContent.trim()) {
+        const _incEco = finalContent.trim();
+        const _nowEco = Date.now();
+        const _isEco = existingMessages.some((m: any) =>
+          (m.senderType === 'agent' || m.senderType === 'system') &&
+          String(m.content || '').trim() === _incEco &&
+          (_nowEco - new Date(m.createdAt as any).getTime()) < 3 * 60 * 1000
+        );
+        if (_isEco) {
+          console.log(`🔁 [WEBHOOK-ANTI-ECO] Eco de mensagem enviada ignorado: ${normalizedPhone} | ${_incEco.substring(0, 40)}`);
+          return res.json({ success: true, echoIgnored: true, debug: debugInfo });
+        }
+      }
+
       // 3. Salvar Mensagem (com suporte a mídia)
       debugInfo.steps.push('9-save-message');
       
