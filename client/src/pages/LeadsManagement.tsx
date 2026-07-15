@@ -222,6 +222,31 @@ export default function LeadsManagement() {
       return;
     }
 
+    // 🔒 TRAVA: telefone válido é obrigatório para cadastrar um novo lead
+    if (!editingLead) {
+      const _leadDigits = (formData.phone || '').replace(/\D/g, '');
+      if (_leadDigits.length < 10 || _leadDigits.length > 13) {
+        toast({
+          title: "Telefone do lead obrigatório",
+          description: "Informe o telefone de contato (DDD + número) para cadastrar o lead.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const _leadFake = /^(\d)\1+$/.test(_leadDigits)
+        || '01234567890123456789'.includes(_leadDigits)
+        || '98765432109876543210'.includes(_leadDigits)
+        || _leadDigits.includes('00000');
+      if (_leadFake) {
+        toast({
+          title: "Telefone inválido",
+          description: "Informe um número real. Números repetidos, sequências ou placeholders não são aceitos.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     if (editingLead) {
       updateLeadMutation.mutate({
         id: editingLead.id,
@@ -802,12 +827,12 @@ export default function LeadsManagement() {
             </div>
 
             <div>
-              <Label htmlFor="phone">Telefone</Label>
+              <Label htmlFor="phone">Telefone *</Label>
               <Input
                 id="phone"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder="(85) 99999-9999"
+                placeholder="(DDD) 9XXXX-XXXX"
                 data-testid="input-phone"
               />
             </div>
