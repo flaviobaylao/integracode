@@ -206,6 +206,36 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     // 4. Garantir fallback para 'text' se messageType for undefined
     const finalMessageType = mediaInfo.messageType || 'text';
     const finalContent = messageText || (finalMessageType !== 'text' ? `[${finalMessageType}]` : '[Mensagem]');
+    // 🔁 ANTI-ECO: o Umbler reenvia ao webhook as mensagens ENVIADAS por nós — às vezes 2x
+    // (uma como 'member' → 'system' e outra sem Source → entraria como 'customer'), cada
+    // uma com externalId diferente, então o dedup por externalId não pega. Se já existe uma
+    // saída nossa (agent/system) com o MESMO conteúdo nos últimos 3 min nesta conversa,
+    // trata como eco e ignora (não duplica no chat). [fix duplicação ChatCenter]
+    if (finalMessageType === 'text' && messageText && messageText.trim()) {
+      try {
+        const recentOut = await db
+          .select({ content: chatMessages.content, createdAt: chatMessages.createdAt })
+          .from(chatMessages)
+          .where(and(
+            eq(chatMessages.conversationId, conversation.id),
+            inArray(chatMessages.senderType, ['agent', 'system'])
+          ))
+          .orderBy(desc(chatMessages.createdAt))
+          .limit(15);
+        const incNorm = messageText.trim();
+        const nowMs = Date.now();
+        const isEcho = recentOut.some((m: any) =>
+          String(m.content || '').trim() === incNorm &&
+          (nowMs - new Date(m.createdAt as any).getTime()) < 3 * 60 * 1000
+        );
+        if (isEcho) {
+          console.log(`🔁 [ANTI-ECO] Eco de mensagem enviada ignorado: ${normalizedPhone} | ${incNorm.substring(0, 40)}`);
+          return false;
+        }
+      } catch (echoErr: any) {
+        console.warn(`⚠️ [ANTI-ECO] Falha na checagem de eco (seguindo normal): ${echoErr?.message || echoErr}`);
+      }
+    }
     
     // 5. Se for mídia, fazer download e salvar no object storage
     let finalMediaUrl = mediaInfo.mediaUrl;
