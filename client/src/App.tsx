@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient, QueryClientProvider } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import MobileNav from "@/components/mobile-nav";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
+import PersistentSectionSidebar from "@/components/PersistentSectionSidebar";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -106,6 +107,24 @@ import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
 import SyncMonitor from "@/pages/SyncMonitor";
 
+// Casca que exibe a sidebar de seções persistente nas páginas de módulo
+// (rotas autenticadas que renderizam fora do Layout do Dashboard).
+// Não exibe em "/" (Home já tem sua própria sidebar) nem nas telas públicas.
+const NO_SIDEBAR_PATHS = ["/", "/login", "/set-password", "/admin-login", "/limpar-cache", "/pedido-rapido"];
+function AppShell({ isAuthenticated, children }: { isAuthenticated: boolean; children: React.ReactNode }) {
+  const [location] = useLocation();
+  const path = location.split("?")[0].split("#")[0];
+  if (!isAuthenticated || NO_SIDEBAR_PATHS.includes(path)) {
+    return <>{children}</>;
+  }
+  return (
+    <div className="flex items-stretch min-h-screen bg-gray-50">
+      <PersistentSectionSidebar />
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
 function Router() {
   const { isAuthenticated, isLoading, isError, error, refetch } = useAuth();
   const [isRetrying, setIsRetrying] = useState(false);
@@ -204,6 +223,7 @@ function Router() {
   }
 
   return (
+    <AppShell isAuthenticated={isAuthenticated}>
     <Switch>
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
@@ -311,6 +331,7 @@ function Router() {
       )}
       <Route component={NotFound} />
     </Switch>
+    </AppShell>
   );
 }
 
