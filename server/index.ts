@@ -726,7 +726,19 @@ run();
               const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
               const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
               const arr: any = resp.ok ? await resp.json() : [];
-              if (Array.isArray(arr) && arr.length) { hit = arr[0]; matchLevel = attempts[ai].level; break; }
+              const cand = Array.isArray(arr) && arr.length ? arr[0] : null;
+              if (cand) {
+                // Rua vaga faz o Nominatim devolver ponto errado na mesma cidade. Se o cliente tem CEP
+                // e o CEP do resultado nao bate (5 primeiros digitos), rejeita e tenta o proximo nivel.
+                if (attempts[ai].level === 'endereco' && cepRaw.length === 8) {
+                  const dc = ((String(cand.display_name).match(/\b\d{5}-?\d{3}\b/) || [''])[0]).replace(/\D/g, '');
+                  if (dc && dc.slice(0, 5) !== cepRaw.slice(0, 5)) {
+                    if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
+                    continue;
+                  }
+                }
+                hit = cand; matchLevel = attempts[ai].level; break;
+              }
               if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
             }
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'nao_encontrado' }); }
