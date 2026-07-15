@@ -1015,6 +1015,37 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  // BAIXA ADMINISTRATIVA (perdão/incobrável): fecha o título em 100% SEM entrada de
+  // dinheiro (NÃO conta como recebimento no caixa). Exige MOTIVO e registra QUEM
+  // executou (updated_by + auditoria financeira). Marca status 'cancelada' (estado
+  // "fechado / não recebível" já usado no sistema — some das listas de aberto/vencido
+  // e não entra em "recebido") e carimba o motivo em notes.
+  app.post('/api/financial/receivables/:id/write-off', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const user = actorOf(req);
+      const reason = String(req.body?.reason ?? '').trim();
+      if (!reason) return res.status(400).json({ message: 'Informe o MOTIVO da baixa administrativa.' });
+      const rec: any = await storage.getReceivable(req.params.id);
+      if (!rec) return res.status(404).json({ message: 'Recebível não encontrado' });
+      if (String(rec.status) === 'cancelada') return res.status(409).json({ message: 'Título já está cancelado/baixado.' });
+      if (String(rec.status) === 'recebida') return res.status(409).json({ message: 'Título já recebido — desfaça o recebimento antes de dar baixa administrativa.' });
+      const total = parseFloat(rec.amount || '0');
+      const jaPago = parseFloat(rec.amountPaid || '0');
+      const saldo = Math.max(0, total - jaPago);
+      const stamp = `[BAIXA ADMINISTRATIVA ${new Date().toISOString().slice(0, 10)} por ${user?.email || '?'}] ${reason}`;
+      const prevNotes = String(rec.notes || '');
+      await storage.updateReceivable(req.params.id, {
+        status: 'cancelada' as any,
+        notes: prevNotes ? (prevNotes + '\n' + stamp) : stamp,
+        updatedBy: user?.email || null,
+      } as any);
+      await logFinancialAudit({ req, action: 'status', entity: 'receivable', entityId: req.params.id, amount: saldo, note: 'baixa administrativa (100%): ' + reason });
+      res.json({ ok: true, saldoBaixado: saldo, status: 'cancelada' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Débitos Vencidos = MESMA lista de "vencida" da Contas a Receber, agrupada por
   // cliente. Fonte LOCAL (2.0), não mais o Omie ERP (que estava divergindo). Reusa
   // getReceivables({status:'vencida'}) para bater EXATAMENTE com a aba Contas a Receber
