@@ -433,6 +433,24 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     } catch (e: any) { alert('Erro ao gerar boleto: ' + (e?.message || e)); }
   };
 
+  // BAIXA ADMINISTRATIVA (100%): fecha o título SEM entrada de dinheiro (perdão /
+  // incobrável). Exige MOTIVO (obrigatório) e registra quem executou (backend grava
+  // updated_by + auditoria financeira). Não conta como recebimento no caixa.
+  const baixaAdministrativa = async (r: any) => {
+    const saldo = Math.max(0, (Number(r.amount || 0) - Number(r.amountPaid || 0)));
+    const motivo = window.prompt(`BAIXA ADMINISTRATIVA (100%) do título "${r.titleNumber || r.customerName}" — saldo ${formatCurrency(saldo)}.\n\nFecha o título SEM entrada de dinheiro (perdão / incobrável) e fica registrado com o seu usuário.\n\nDigite o MOTIVO (obrigatório):`);
+    if (motivo === null) return;
+    if (!motivo.trim()) { alert('O motivo é obrigatório para a baixa administrativa.'); return; }
+    if (!confirm(`Confirmar baixa administrativa de ${formatCurrency(saldo)} no título "${r.titleNumber || r.customerName}"?\n\nMotivo: ${motivo.trim()}\n\nEssa ação FECHA o título e NÃO conta como recebimento.`)) return;
+    try {
+      const rr = await fetch(`/api/financial/receivables/${r.id}/write-off`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ reason: motivo.trim() }) });
+      const j = await rr.json();
+      if (!(j.ok || j.success)) { alert('Falha na baixa: ' + (j.message || j.error || 'erro')); return; }
+      alert('Baixa administrativa registrada com sucesso.');
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+    } catch (e: any) { alert('Erro ao dar baixa: ' + (e?.message || e)); }
+  };
+
   // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
   const { data: dreAccounts = [] } = useQuery<any[]>({
     queryKey: ['/api/financial/chart-of-accounts', 'dre-recv'],
@@ -616,7 +634,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(r.amountPaid)}</TableCell>
-                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}</TableCell>
+                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}{String(r.notes || '').includes('BAIXA ADMINISTRATIVA') && (<Badge variant="outline" className="ml-1 border-rose-400 text-rose-700 px-1.5 py-0" title="Baixa administrativa (perdão/incobrável)">Baixa adm.</Badge>)}</TableCell>
                   <TableCell><LancamentoBadges item={r} /></TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
@@ -628,6 +646,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {r.deliveryPhotos?.length ? (<Button variant="ghost" size="icon" title="Comprovante de entrega (foto do entregador)" onClick={() => { setPhotosItem(r); setShowPhotos(true); }}><Camera className="h-4 w-4 text-emerald-600" /></Button>) : null}
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
+                      {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
