@@ -75,6 +75,12 @@ export interface ScheduleInput {
   periodicity: VisitPeriodicity;
   lastCompletedDate?: Date;
   referenceDate?: Date;
+  /**
+   * Data de início do fornecimento (customers.service_start_date). Quando presente,
+   * a periodicidade é ANCORADA nesta data: nenhuma visita é agendada antes dela e,
+   * se não houver "última visita" posterior ao início, o ciclo recomeça a partir dela.
+   */
+  serviceStartDate?: Date;
 }
 
 export interface ScheduleResult {
@@ -103,15 +109,29 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   }
 
   // Garantir que baseDate tenha horas zeradas
-  const baseDate = referenceDate ? new Date(referenceDate) : new Date();
+  let baseDate = referenceDate ? new Date(referenceDate) : new Date();
   baseDate.setHours(0, 0, 0, 0); // CORRIGIDO: Zerar horas para comparação consistente
-  
+
   const intervalDays = PERIODICITY_DAYS[periodicity];
+
+  // ÂNCORA DE INÍCIO DO FORNECIMENTO: quando o cliente tem data de início registrada,
+  // a periodicidade começa a partir dela — nunca antes. A base mínima passa a ser essa
+  // data e uma "última visita" anterior ao início é ignorada (o ciclo recomeça no início).
+  const startAnchor = input.serviceStartDate ? new Date(input.serviceStartDate) : null;
+  if (startAnchor) startAnchor.setHours(0, 0, 0, 0);
+  if (startAnchor && startAnchor.getTime() > baseDate.getTime()) {
+    baseDate = new Date(startAnchor);
+  }
+  let effectiveLast = lastCompletedDate;
+  if (startAnchor && effectiveLast) {
+    const el = new Date(effectiveLast); el.setHours(0, 0, 0, 0);
+    if (el.getTime() < startAnchor.getTime()) effectiveLast = undefined;
+  }
 
   // MENSAL = 1ª ocorrência do DIA DE ROTA no mês (base de calendário), NÃO "+28 dias".
   // Ex.: dia de rota terça → sempre a 1ª terça de cada mês (07/07 → 04/08 → 01/09 → 06/10).
   if (periodicity === 'mensal') {
-    if (!lastCompletedDate) {
+    if (!effectiveLast) {
       // Sem última visita: 1º dia-alvo do mês de referência; se já passou, do mês seguinte.
       let cand = firstTargetWeekdayOfMonth(baseDate.getFullYear(), baseDate.getMonth(), targetWeekdays);
       if (!cand || cand < baseDate) {
@@ -123,7 +143,7 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
       return { nextDate: cand, interval: intervalDays, reason: 'next_weekday' };
     }
     // Com última visita: 1º dia-alvo do mês SEGUINTE ao da última visita.
-    const last = new Date(lastCompletedDate);
+    const last = new Date(effectiveLast);
     const y = last.getMonth() === 11 ? last.getFullYear() + 1 : last.getFullYear();
     const m = last.getMonth() === 11 ? 0 : last.getMonth() + 1;
     const next = firstTargetWeekdayOfMonth(y, m, targetWeekdays);
@@ -132,7 +152,7 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   }
 
   // Se não há última visita, encontrar o próximo dia válido da semana
-  if (!lastCompletedDate) {
+  if (!effectiveLast) {
     const nextDate = findNextWeekday(baseDate, targetWeekdays);
     return {
       nextDate,
@@ -142,7 +162,7 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   }
 
   // Calcular data alvo baseada na periodicidade
-  const targetDate = new Date(lastCompletedDate);
+  const targetDate = new Date(effectiveLast);
   targetDate.setDate(targetDate.getDate() + intervalDays);
 
   // Ajustar para o dia da semana mais próximo
