@@ -420,6 +420,19 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
   };
 
+  // Troca a cobrança ATIVA (PIX ou boleto) por um BOLETO novo: cancela a atual no
+  // banco e registra um boleto. Resolve o caso "faturou em PIX mas deveria ser boleto".
+  const trocarParaBoleto = async (r: any) => {
+    if (!confirm(`Trocar a cobrança de "${r.titleNumber || r.customerName}" para BOLETO?\n\nA cobrança atual (PIX ou boleto) será CANCELADA no banco e um novo BOLETO será gerado.`)) return;
+    try {
+      const rg = await fetch(`/api/financial/receivables/${r.id}/regenerate-charge`, { method: 'POST', credentials: 'include' });
+      const jr = await rg.json();
+      if (!(jr.success || jr.ok)) { alert('Falha ao gerar boleto: ' + (jr.error || jr.persistError || 'erro')); return; }
+      alert('Boleto gerado com sucesso.' + (jr.canceladoAnterior ? '\n\nA cobrança anterior (PIX/boleto) foi cancelada no banco.' : ''));
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+    } catch (e: any) { alert('Erro ao gerar boleto: ' + (e?.message || e)); }
+  };
+
   // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
   const { data: dreAccounts = [] } = useQuery<any[]>({
     queryKey: ['/api/financial/chart-of-accounts', 'dre-recv'],
@@ -614,6 +627,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
                       {r.deliveryPhotos?.length ? (<Button variant="ghost" size="icon" title="Comprovante de entrega (foto do entregador)" onClick={() => { setPhotosItem(r); setShowPhotos(true); }}><Camera className="h-4 w-4 text-emerald-600" /></Button>) : null}
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
+                      {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
