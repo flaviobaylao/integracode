@@ -117,6 +117,7 @@ export default function CustomerEditModal({
     deliveryTimeSlots: [] as string[],
     deliverySaturdayTimeSlots: [] as string[],
     isConsumerClient: false, // Cliente Consumidor - destaque verde
+    virtualService: false, // Cliente Virtual (atendimento remoto) - so admins
     omieInstanceId: "",
     paymentMethod: "", // Condicao de pagamento do cliente (sobrepoe forma+prazo da venda)
     boletoDays: "" as any,
@@ -342,6 +343,7 @@ export default function CustomerEditModal({
         deliveryTimeSlots: Array.isArray(customer.deliveryTimeSlots) ? customer.deliveryTimeSlots : [],
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
         isConsumerClient: (customer as any).isConsumerClient || false,
+        virtualService: (customer as any).virtualService || false,
         omieInstanceId: (customer as any).omieInstanceId || "",
         paymentMethod: (customer as any).paymentMethod || "",
         boletoDays: (customer as any).boletoDays ?? "",
@@ -700,6 +702,29 @@ export default function CustomerEditModal({
               <p className="text-xs text-green-700">Marque esta opção para destacar o cliente com fundo verde na lista</p>
             </div>
           </div>
+
+          {/* Cliente Virtual (somente administradores) */}
+          {((user as any)?.role === 'admin') && (
+            <div className="flex items-center space-x-3 p-4 border border-blue-200 bg-blue-50 rounded-lg">
+              <Checkbox
+                id="is-virtual-client"
+                checked={formData.virtualService}
+                onCheckedChange={(checked) => {
+                  setFormData(prev => ({
+                    ...prev,
+                    virtualService: checked as boolean
+                  }));
+                }}
+                data-testid="checkbox-virtual-client"
+              />
+              <div>
+                <label htmlFor="is-virtual-client" className="text-sm font-medium cursor-pointer text-blue-900">
+                  Cliente Virtual
+                </label>
+                <p className="text-xs text-blue-700">Cliente atendido de forma virtual (remota). Nao entra nas rotas de visita presencial.</p>
+              </div>
+            </div>
+          )}
 
           {/* Configurações de Recebimento */}
           <div className="space-y-4 border-t pt-4">
