@@ -422,12 +422,27 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       }
     }
 
-    // 🔒 TRAVA: telefone do comprador obrigatório para finalizar a venda
+    // 🔒 TRAVA: telefone do comprador obrigatório e válido para finalizar a venda
     const _phoneDigits = (customerPhone || '').replace(/\D/g, '');
     if (_phoneDigits.length < 10 || _phoneDigits.length > 13) {
       toast({
         title: "Telefone do comprador obrigatório",
         description: "Informe o telefone de contato do cliente (DDD + número) no campo \"Telefone do comprador\" para finalizar a venda.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Anti-número-falso: repetidos, sequências óbvias, placeholder (00)00000-0000 e o próprio celular do vendedor
+    const _sellerDigits = String((user as any)?.phone || '').replace(/\D/g, '');
+    const _isFakePhone = /^(\d)\1+$/.test(_phoneDigits)
+      || '01234567890123456789'.includes(_phoneDigits)
+      || '98765432109876543210'.includes(_phoneDigits)
+      || _phoneDigits.includes('00000')
+      || (_sellerDigits.length >= 10 && _phoneDigits === _sellerDigits);
+    if (_isFakePhone) {
+      toast({
+        title: "Telefone inválido",
+        description: "Informe um número real do cliente. Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos.",
         variant: "destructive",
       });
       return;
