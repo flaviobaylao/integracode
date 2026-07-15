@@ -5723,6 +5723,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar card ANTES da atualização
       const cardBefore = await storage.getSalesCard(id);
 
+    // 🔒 TRAVA TELEFONE DO COMPRADOR: finalizar venda (status completed + valor) exige telefone válido do cliente no cadastro.
+    // Fonte da verdade no servidor — bloqueia mesmo que a validação do front seja contornada.
+    try {
+      if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
+        const _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
+        const _custPh: any = await storage.getCustomer(cardBefore.customerId);
+        const _effPhone = _reqPhone || String((_custPh && _custPh.phone) || '');
+        const _phDigits = _effPhone.replace(/[^0-9]/g, '');
+        const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13;
+        if (!_phValid) {
+          console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- telefone ausente/invalido:', JSON.stringify(_effPhone));
+          return res.status(400).json({ message: 'Para finalizar a venda é obrigatório o telefone de contato do comprador (DDD + número). Preencha o campo "Telefone do comprador" no pedido.', code: 'CUSTOMER_PHONE_REQUIRED' });
+        }
+        // Grava no cadastro do cliente quando veio um número novo válido pelo pedido
+        if (_reqPhone && _phValid && _effPhone !== String((_custPh && _custPh.phone) || '')) {
+          try { await storage.updateCustomer(cardBefore.customerId, { phone: _reqPhone }); console.log('🔒 [TRAVA-TELEFONE] telefone do cliente', cardBefore.customerId, 'atualizado ->', _reqPhone); } catch (_eup) {}
+        }
+      }
+    } catch (_etp) { console.warn('[TRAVA-TELEFONE] erro (ignorado):', (_etp as any)?.message); }
+
     // VIGIA 3E vendedor: desconto de indicacao no pedido do vendedor (espelha /api/public/orders). Inerte sem cupom/recompensa.
     try {
       const _rc = String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
