@@ -79,14 +79,16 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
     return generateVisitsForCustomerLegacy(customer);
   }
   
-  // Calcular a data base para gerar próximas visitas
-  let baseDate = customer.serviceStartDate ? normalizeToBrazilDate(new Date(customer.serviceStartDate)) : today;
-  
+  // Âncora de início do fornecimento: quando presente, a periodicidade começa a
+  // partir dela (o núcleo garante que nada seja agendado antes dessa data).
+  const serviceStart = customer.serviceStartDate ? normalizeToBrazilDate(new Date(customer.serviceStartDate)) : undefined;
+
   // Usar calculateNextVisitDate para encontrar a próxima data válida
   const firstVisitResult = calculateNextVisitDate({
     weekdays,
     periodicity: customer.visitPeriodicity || 'semanal',
-    referenceDate: baseDate > today ? baseDate : today
+    referenceDate: today,
+    serviceStartDate: serviceStart,
   });
   
   // Gerar a primeira visita
@@ -111,7 +113,8 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
     const nextVisitResult = calculateNextVisitDate({
       weekdays,
       periodicity: customer.visitPeriodicity || 'semanal',
-      lastCompletedDate: lastDate
+      lastCompletedDate: lastDate,
+      serviceStartDate: serviceStart,
     });
     
     await db.insert(visitAgenda).values({
@@ -330,7 +333,8 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
       name: customers.name,
       sellerId: customers.sellerId,
       visitPeriodicity: customers.visitPeriodicity,
-      weekdays: customers.weekdays
+      weekdays: customers.weekdays,
+      serviceStartDate: customers.serviceStartDate
     })
     .from(customers)
     .where(
@@ -374,12 +378,15 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
         // Calcular todas as datas corretas para este cliente nos próximos 2 meses
         const correctDates: Date[] = [];
         
-        // PRIMEIRA visita: próximo dia da semana (sem considerar periodicidade)
+        const svcStart = customer.serviceStartDate ? new Date(customer.serviceStartDate) : undefined;
+        // PRIMEIRA visita: próximo dia da semana (sem considerar periodicidade),
+        // respeitando a data de início do fornecimento como âncora quando houver.
         const firstVisit = calculateNextVisitDate({
           weekdays: parsedWeekdays as any[],
           periodicity: customer.visitPeriodicity as any,
           lastCompletedDate: undefined, // Sem última visita = próximo dia da semana
-          referenceDate: today // Usar hoje como referência (inclui hoje se for dia válido)
+          referenceDate: today, // Usar hoje como referência (inclui hoje se for dia válido)
+          serviceStartDate: svcStart,
         });
         
         if (firstVisit.nextDate <= targetDate) {
@@ -392,9 +399,10 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           const result = calculateNextVisitDate({
             weekdays: parsedWeekdays as any[],
             periodicity: customer.visitPeriodicity as any,
-            lastCompletedDate: currentDate
+            lastCompletedDate: currentDate,
+            serviceStartDate: svcStart,
           });
-          
+
           if (result.nextDate > targetDate) break;
           
           // Evitar duplicar a primeira visita
