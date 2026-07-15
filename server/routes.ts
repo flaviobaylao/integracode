@@ -18849,18 +18849,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isVirtual: customers.virtualService,
             weekdays: customers.weekdays, // Dias da semana de cadastro do cliente
             visitPeriodicity: customers.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
-            omieStatus: customers.omieStatus // Status do cliente para filtragem
+            omieStatus: customers.omieStatus, // Status do cliente para filtragem
+            isActive: customers.isActive // "Inativo" no cadastro (isActive=false) não entra na rota
           })
             .from(customers)
             .where(eq(customers.id, customerId))
             .limit(1);
-          
+
           return customer;
         })
       );
-      
-      // Filtrar apenas clientes ativos
-      const visits: any[] = allVisits.filter(v => v && v.omieStatus === 'ativo');
+
+      // Filtrar apenas clientes ativos (omieStatus 'ativo' E não desativados no cadastro)
+      const visits: any[] = allVisits.filter(v => v && v.omieStatus === 'ativo' && v.isActive !== false);
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para hoje
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
@@ -19313,9 +19314,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .from(customers)
           .where(and(
             inArray(customers.id, customerIds),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.omieStatus, 'ativo'),
+            eq(customers.isActive, true) // cliente "Inativo" no cadastro (isActive=false) NÃO entra na rota do dia
           ));
-        
+
         const inactiveCount = customerIds.length - customersData.length;
         if (inactiveCount > 0) {
           console.log(`⚠️ [FILTER] ${inactiveCount} cliente(s) inativo(s) removido(s) da rota`);
