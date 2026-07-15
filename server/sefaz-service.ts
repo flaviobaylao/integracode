@@ -1069,6 +1069,18 @@ function buildDocumento(
       }
     }
 
+    // Benefício fiscal (GO) — cBenef obrigatório com CST de benefício:
+    // quando o ICMS sai com CST 20 (redução de base = benefício fiscal), a
+    // SEFAZ-GO REJEITA a NF-e se o código do benefício (cBenef) não vier
+    // informado ("CST com benefício fiscal e não informado o código de
+    // benefício fiscal"). Em saída INTERNA de GO com CST 20, aplica o cBenef
+    // GO821005 (RCTE, redução 42,105% / alíq. 19%) quando nenhum cBenef foi
+    // informado no item/cenário. NÃO vale para operação interestadual (o cBenef
+    // interno já é descartado acima) nem para CST 00 / CSOSN (sem benefício).
+    if (!cBenef && !isInterstateOp && _issuerUfNorm === 'GO' && imposto.ICMS && imposto.ICMS.ICMS20) {
+      cBenef = 'GO821005';
+    }
+
     // PIS — Regime Normal (CRT 3) precisa de vBC, pPIS e vPIS preenchidos.
     // Default da alíquota varia conforme o regime de apuração:
     //  - Lucro Real (não-cumulativo): 1,65%
