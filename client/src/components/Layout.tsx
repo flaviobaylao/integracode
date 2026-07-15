@@ -487,6 +487,22 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
   };
 
+  // Atalhos favoritos do cabeçalho persistente: quando chega em "/?ir=<id>",
+  // abre o item correspondente (reaproveita toda a lógica de handleMenuItemClick)
+  // e limpa o parâmetro da URL.
+  useEffect(() => {
+    try {
+      const ir = new URLSearchParams(window.location.search).get('ir');
+      if (ir) {
+        handleMenuItemClick(ir);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('ir');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      }
+    } catch { /* noop */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSectionClick = (groupLabel: string) => {
     const group = visibleGroups.find(g => g.groupLabel === groupLabel);
     if (!group) return;
