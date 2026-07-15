@@ -195,6 +195,9 @@ export default function BillingPipeline() {
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
+  // Filtro de datas (por data de criação do pedido). Vazios = sem filtro; só executa quando preenchidos.
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
@@ -759,9 +762,32 @@ export default function BillingPipeline() {
             onClear={() => setInstanceFilter(new Set())}
             testid="select-instance-pipeline"
           />
-          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || search) && (
+          {/* Filtro de datas (de/até por data de criação do pedido). Vazios = sem filtro. */}
+          <div className="flex items-center gap-1 text-sm">
+            <span className="text-gray-500 text-xs">De</span>
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-9 px-2 border rounded-md text-sm"
+              data-testid="input-date-from-pipeline"
+              aria-label="Data inicial"
+            />
+            <span className="text-gray-500 text-xs">Até</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-9 px-2 border rounded-md text-sm"
+              data-testid="input-date-to-pipeline"
+              aria-label="Data final"
+            />
+          </div>
+          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || search || dateFrom || dateTo) && (
             <button
-              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); }}
+              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); setDateFrom(''); setDateTo(''); }}
               className="text-gray-400 hover:text-gray-600 text-sm"
               data-testid="clear-all-filters-pipeline"
             >Limpar filtros ×</button>
@@ -882,7 +908,19 @@ export default function BillingPipeline() {
               const matchesOp = opFilter.size === 0 || (cat != null && opFilter.has(cat));
               // (4) Instância — múltipla seleção
               const matchesInstance = instanceFilter.size === 0 || (!!i.omieInstanceName && instanceFilter.has(i.omieInstanceName));
-              return matchesText && matchesSeller && matchesOp && matchesInstance;
+              // (5) Datas de/até — por data de criação (America/Sao_Paulo). Só filtra quando preenchido.
+              let matchesDate = true;
+              if (dateFrom || dateTo) {
+                const dISO = i.createdAt
+                  ? new Date(i.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+                  : '';
+                if (!dISO) matchesDate = false;
+                else {
+                  if (dateFrom && dISO < dateFrom) matchesDate = false;
+                  if (dateTo && dISO > dateTo) matchesDate = false;
+                }
+              }
+              return matchesText && matchesSeller && matchesOp && matchesInstance && matchesDate;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             // Classificação por data de criação (A-Z = mais antigos primeiro / Z-A = mais recentes primeiro).
