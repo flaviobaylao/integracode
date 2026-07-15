@@ -1632,7 +1632,7 @@ export default function RotaDoDia() {
                             )}
 
                             <div className="space-y-2">
-                              <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="grid grid-cols-1 gap-2 text-xs">
                                 <div>
                                   <span className="text-gray-500">Check-in: </span>
                                   {checkInCheckpoint ? (
@@ -1645,33 +1645,6 @@ export default function RotaDoDia() {
                                         <div className="text-gray-400 text-xs mt-1">
                                           <div>Lat: {parseFloat(checkInCheckpoint.latitude.toString()).toFixed(6)}</div>
                                           <div>Lon: {parseFloat(checkInCheckpoint.longitude.toString()).toFixed(6)}</div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-gray-400">—</span>
-                                  )}
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Check-out: </span>
-                                  {checkOutCheckpoint ? (
-                                    <div>
-                                      <div className="inline-flex items-center gap-2">
-                                        <span className={`font-medium ${checkOutOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkout-time-${visit.customerId}`}>
-                                          {formatInTimeZone(checkOutCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
-                                          {checkOutOffsite && ` ⚠️ ${formatDistance(checkOutDistance!)}`}
-                                        </span>
-                                        {visit.isAutoCheckout && (
-                                          <Badge variant="secondary" className="text-xs" data-testid={`badge-auto-checkout-${visit.customerId}`}>
-                                            <Clock className="h-3 w-3 mr-1" />
-                                            Check-out automático
-                                          </Badge>
-                                        )}
-                                      </div>
-                                      {checkOutCheckpoint.latitude && checkOutCheckpoint.longitude && (
-                                        <div className="text-gray-400 text-xs mt-1">
-                                          <div>Lat: {parseFloat(checkOutCheckpoint.latitude.toString()).toFixed(6)}</div>
-                                          <div>Lon: {parseFloat(checkOutCheckpoint.longitude.toString()).toFixed(6)}</div>
                                         </div>
                                       )}
                                     </div>
