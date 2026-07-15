@@ -1140,13 +1140,35 @@ export function registerRepescagemRoutes(app: Express, opts: {
         virtualService: customers.virtualService,
       }).from(customers).where(inArray(customers.id, cids));
       const byId = new Map(cs.map(c => [c.id, c]));
+
+      // Quantas vezes o cliente caiu em repescagem (distinct last_red_date).
+      // Janela por periodicidade: mensal = últimos 3 meses; semanal/quinzenal = últimos 2 meses.
+      const baseDay = brTodayStr();
+      const dW3 = new Date(baseDay + 'T00:00:00'); dW3.setMonth(dW3.getMonth() - 3); const win3 = dW3.toISOString().slice(0, 10);
+      const dW2 = new Date(baseDay + 'T00:00:00'); dW2.setMonth(dW2.getMonth() - 2); const win2 = dW2.toISOString().slice(0, 10);
+      const redRows = await db.select({ customerId: repescagemAssignments.customerId, lastRedDate: repescagemAssignments.lastRedDate })
+        .from(repescagemAssignments)
+        .where(and(inArray(repescagemAssignments.customerId, cids), gte(repescagemAssignments.lastRedDate, win3)));
+      const redByCustomer = new Map<string, string[]>();
+      for (const rr of redRows) {
+        if (!redByCustomer.has(rr.customerId)) redByCustomer.set(rr.customerId, []);
+        redByCustomer.get(rr.customerId)!.push(rr.lastRedDate);
+      }
+      const countReds = (customerId: string, periodicity: string | null): number => {
+        const win = periodicity === 'mensal' ? win3 : win2;
+        return new Set((redByCustomer.get(customerId) || []).filter(d => d >= win)).size;
+      };
+
       res.json(rows.map(r => {
         const c = byId.get(r.customerId);
+        const per = c?.visitPeriodicity || null;
         return {
           assignmentId: r.id, customerId: r.customerId, customerName: c?.name || r.customerId,
           phone: c?.phone || null, city: c?.city || null, uf: c?.uf || null,
           address: c?.address || null, weekdays: (c?.weekdays as any) || [],
-          visitPeriodicity: c?.visitPeriodicity || null,
+          visitPeriodicity: per,
+          repescagemCount: countReds(r.customerId, per),
+          repescagemWindowMonths: per === 'mensal' ? 3 : 2,
           phase: r.phase, isVirtualClient: !!c?.virtualService,
         };
       }));
