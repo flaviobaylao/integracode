@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect, useRef, useMemo, Component } from "react";
+import { useState, useEffect, useRef, useMemo, Component, Fragment } from "react";
 import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1931,9 +1931,30 @@ function ChatCenterInner() {
                         ) : messages.length === 0 ? (
                           <div className="text-center py-8 text-gray-500">Nenhuma mensagem ainda</div>
                         ) : (
-                          displayMessages.map((msg: any) => (
+                          displayMessages.map((msg: any, idx: number) => {
+                            // Separador de data: antes da primeira mensagem de cada dia.
+                            const curDay = msg.createdAt ? format(new Date(msg.createdAt), 'yyyy-MM-dd') : '';
+                            const prevMsg = idx > 0 ? displayMessages[idx - 1] : null;
+                            const prevDay = prevMsg?.createdAt ? format(new Date(prevMsg.createdAt), 'yyyy-MM-dd') : '';
+                            const showDateSep = !!curDay && curDay !== prevDay;
+                            let dateSepLabel = '';
+                            if (showDateSep) {
+                              const dt = new Date(msg.createdAt);
+                              const todayK = format(new Date(), 'yyyy-MM-dd');
+                              const yd = new Date(); yd.setDate(yd.getDate() - 1);
+                              const yestK = format(yd, 'yyyy-MM-dd');
+                              dateSepLabel = curDay === todayK ? 'Hoje' : curDay === yestK ? 'Ontem' : format(dt, "d 'de' MMMM 'de' yyyy", { locale: ptBR });
+                            }
+                            return (
+                            <Fragment key={msg.id}>
+                            {showDateSep && (
+                              <div className="flex justify-center my-3" data-testid={`date-sep-${curDay}`}>
+                                <span className="text-xs font-medium text-gray-600 bg-gray-200 dark:bg-gray-700 dark:text-gray-200 px-3 py-1 rounded-full shadow-sm">
+                                  {dateSepLabel}
+                                </span>
+                              </div>
+                            )}
                             <div
-                              key={msg.id}
                               className={`flex ${msg.senderType === "agent" ? "justify-end" : "justify-start"} ${(!msg.isRead && msg.senderType === "customer") ? "mb-3 p-2 bg-blue-50 rounded border-l-4 border-blue-500" : ""}`}
                               data-testid={`message-${msg.id}`}
                             >
@@ -2012,7 +2033,9 @@ function ChatCenterInner() {
                                 </div>
                               </div>
                             </div>
-                          ))
+                            </Fragment>
+                            );
+                          })
                         )}
                         {/* Âncora para scroll automático */}
                         <div ref={messagesEndRef} />
