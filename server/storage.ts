@@ -6059,9 +6059,12 @@ export class DatabaseStorage implements IStorage {
   // Retorna objeto com conversas fechadas para envio de mensagem de finalização
   async closeInactiveConversations(): Promise<{ count: number; conversations: Array<{ id: string; customerPhone: string; customerName: string }> }> {
     try {
-      // Buscar configurações de timeout
+      // Buscar configurações de timeout.
+      // Regra: uma conversa em andamento só é finalizada automaticamente após 60 min
+      // sem atividade das partes (piso mínimo). A finalização manual pelo vendedor é
+      // sempre permitida (botão "Finalizar"), independentemente deste tempo.
       const aiSettings = await this.getChatAiSettings();
-      const timeoutMinutes = aiSettings?.inactivityTimeoutMinutes ?? 30;
+      const timeoutMinutes = Math.max(60, aiSettings?.inactivityTimeoutMinutes ?? 60);
       const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
       
       // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
