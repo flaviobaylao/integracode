@@ -517,7 +517,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       const limit = Number(req.body?.limit) > 0 ? Number(req.body.limit) : 0;
       const user = req.currentUser || req.user;
       const cand: any = await db.execute(sql`
-        SELECT bp.id
+        SELECT bp.id, bp.customer_name, bp.invoice_number, bp.sale_value, bp.omie_instance_name, bp.updated_at, bp.created_at
         FROM billing_pipeline bp
         WHERE COALESCE(bp.operation_type, 'venda') = 'venda'
           AND bp.invoice_number IS NOT NULL
@@ -527,8 +527,9 @@ export function registerBillingPipelineRoutes(app: Express) {
           ${onlyId ? sql`AND bp.id = ${onlyId}` : sql``}
         ORDER BY bp.updated_at DESC NULLS LAST
         ${limit ? sql`LIMIT ${limit}` : sql``}`);
-      const ids: string[] = (cand?.rows ?? cand ?? []).map((r: any) => String(r.id));
-      if (dryRun) return res.json({ ok: true, dryRun: true, candidatos: ids.length, ids: ids.slice(0, 30) });
+      const rows0: any[] = (cand?.rows ?? cand ?? []);
+      const ids: string[] = rows0.map((r: any) => String(r.id));
+      if (dryRun) return res.json({ ok: true, dryRun: true, candidatos: ids.length, detalhes: rows0.slice(0, 300).map((r: any) => ({ id: String(r.id), cliente: String(r.customer_name || ''), nf: r.invoice_number, valor: r.sale_value, instancia: r.omie_instance_name, faturadoEm: r.updated_at || r.created_at })) });
       let criados = 0; const erros: any[] = []; const exemplos: any[] = [];
       for (const id of ids) {
         try {
