@@ -79,22 +79,37 @@ function monthLabel(d = new Date()): string {
 const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
 // Mini gráfico de barras (somente barras, sem eixos/valores) para os boxes do topo.
-function MiniBars({ values, highlight, color = "#10b981", height = 40 }: { values: number[]; highlight?: number; color?: string; height?: number }) {
+function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, labelEvery = 1 }: { values: number[]; highlight?: number; color?: string; height?: number; labels?: string[]; labelEvery?: number }) {
   const nums = values.map((v) => Number(v) || 0);
   const max = Math.max(1, ...nums);
   return (
-    <div className="mt-2 flex items-end gap-[2px]" style={{ height }} aria-hidden="true">
-      {nums.map((val, i) => {
-        const h = Math.max(2, Math.round((val / max) * height));
-        const isHi = highlight === i;
-        return (
-          <div
-            key={i}
-            className="flex-1 rounded-sm"
-            style={{ height: h, minWidth: 2, backgroundColor: isHi ? "#059669" : val > 0 ? color : "#e5e7eb" }}
-          />
-        );
-      })}
+    <div className="mt-2">
+      <div className="flex items-end gap-[2px]" style={{ height }} aria-hidden="true">
+        {nums.map((val, i) => {
+          const h = Math.max(2, Math.round((val / max) * height));
+          const isHi = highlight === i;
+          return (
+            <div
+              key={i}
+              className="flex-1 rounded-sm"
+              style={{ height: h, minWidth: 2, backgroundColor: isHi ? "#059669" : val > 0 ? color : "#e5e7eb" }}
+            />
+          );
+        })}
+      </div>
+      {labels && labels.length === nums.length && (
+        <div className="flex gap-[2px] mt-0.5">
+          {labels.map((lb, i) => (
+            <div
+              key={i}
+              className={`flex-1 text-center text-[7px] leading-none overflow-hidden whitespace-nowrap ${highlight === i ? "text-gray-700 font-semibold" : "text-gray-400"}`}
+              style={{ minWidth: 2 }}
+            >
+              {(labelEvery <= 1 || i % labelEvery === 0 || i === labels.length - 1) ? lb : ""}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -192,6 +207,22 @@ export default function Dashboard() {
     return { arr, curIdx: curMonth - 1 };
   }, [series.monthly, bounds.today]);
 
+  // Rótulos dos eixos dos mini gráficos.
+  const MONTH_ABBR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const yy = bounds.today.slice(2, 4);
+  const mm = Number(bounds.today.slice(5, 7));
+  const dayLabels = useMemo(() => monthDailyBars.arr.map((_, i) => String(i + 1)), [monthDailyBars.arr]);
+  const weekLabels = useMemo(() => {
+    const ld = monthDailyBars.arr.length || 31;
+    return weekBars.arr.map((_, i) => {
+      const s = i * 7 + 1;
+      if (s > ld) return '';
+      const e = Math.min(i * 7 + 7, ld);
+      return `${s}-${e}/${mm}`;
+    });
+  }, [weekBars.arr, monthDailyBars.arr, mm]);
+  const monthLabels = useMemo(() => yearMonthBars.arr.map((_, i) => `${MONTH_ABBR[i] || ''}/${yy}`), [yearMonthBars.arr, yy]);
+
   const blocked: any[] = ov.blocked || [];
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
@@ -213,34 +244,21 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
-            <MiniBars values={monthDailyBars.arr} highlight={monthDailyBars.todayIdx} />
+            <MiniBars values={monthDailyBars.arr} highlight={monthDailyBars.todayIdx} labels={dayLabels} labelEvery={5} />
             <div className="text-[10px] text-gray-400 mt-1">Dias do mês</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
           <CardContent>
-            <div className="flex items-end justify-between gap-2">
-              <div>
-                <div className="text-[11px] text-gray-500">Hoje</div>
-                <div className="text-lg font-bold text-emerald-600">{brl(dailyTodaySales)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[11px] text-gray-500">Mesmo dia sem. passada</div>
-                <div className="text-sm font-semibold text-gray-500">{brl(dailyLastWeek)}</div>
-              </div>
-            </div>
-            {dailyPct !== null && (
-              <div className="text-xs mt-0.5"><span className={dailyPct >= 0 ? "text-green-600" : "text-red-600"}>{dailyPct >= 0 ? "+" : ""}{dailyPct}% vs mesmo dia sem. passada</span></div>
-            )}
             {(() => {
               const pair = [
                 { label: "Sem. passada", v: dailyLastWeek, color: "#9ca3af" },
