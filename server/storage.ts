@@ -5271,19 +5271,25 @@ export class DatabaseStorage implements IStorage {
       return undefined;
     }
     // FASE 3.4r - Fonte de verdade dos débitos vencidos passou a ser a aba Contas a
-    // Receber (tabela `receivables`, status 'vencida' e em aberto), NAO mais a tabela
-    // `overdueDebts` (sync do Omie, defasada) — que estava soltando no bloqueio E na
-    // liberação automática clientes que de fato tinham débito vencido. Mesma regra da
-    // tela "Débitos Vencidos" (GET /api/financial/overdue-debts): status = 'vencida'.
+    // Receber (tabela `receivables`), NAO mais a tabela `overdueDebts` (sync do Omie,
+    // defasada) — que estava soltando no bloqueio E na liberação automática clientes
+    // que de fato tinham débito vencido. Replica EXATAMENTE a regra de "vencida" do
+    // getReceivables({status:'vencida'}) / aba Contas a Receber: status = 'vencida' OU
+    // (status = 'a_vencer' E vencimento < hoje no fuso Brasil) — porque a coluna status
+    // demora a virar 'vencida' (fica 'a_vencer' até um job atualizar), e a aba já conta
+    // esses como vencidos por dia-calendário. Só em aberto (amount - amount_paid > 0).
     const result: any = await db.execute(sql`
       SELECT MAX(customer_name) AS client_name,
              SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
-             MAX((CURRENT_DATE - due_date::date)) AS max_dias,
+             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)) AS max_dias,
              COUNT(*)::int AS n
       FROM receivables
       WHERE deleted_at IS NULL
-        AND status = 'vencida'
         AND (amount - COALESCE(amount_paid, 0)) > 0
+        AND (
+          status = 'vencida'
+          OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+        )
         AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
     const n = Number(row.n || 0);
