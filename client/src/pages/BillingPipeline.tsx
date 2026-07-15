@@ -40,6 +40,7 @@ interface BillingPipelineItem {
   notes: string | null;
   omieInstanceId: string | null;
   omieInstanceName: string | null;
+  scheduledBillingDate: string | null;
   stageHistory: Array<{ stage: string; changedAt: string; changedBy: string }>;
   createdBy: string | null;
   createdAt: string;
@@ -335,6 +336,7 @@ export default function BillingPipeline() {
       sellerId: detailItem.sellerId ?? '',
       sellerName: detailItem.sellerName ?? '',
       invoiceNumber: detailItem.invoiceNumber ?? '',
+      scheduledBillingDate: detailItem.scheduledBillingDate ? String(detailItem.scheduledBillingDate).slice(0, 10) : '',
       notes: detailItem.notes ?? '',
       products: (detailItem.products || []).map((pp: any) => ({ ...pp })),
     });
@@ -1089,8 +1091,10 @@ export default function BillingPipeline() {
                     ) : (<p className="text-sm">{detailItem.sellerName || '-'}</p>)}
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância Omie</label>
-                    <p className="text-sm">{detailItem.omieInstanceName || '-'}</p>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Faturar em</label>
+                    {editMode ? (
+                      <input type="date" value={editData?.scheduledBillingDate ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, scheduledBillingDate: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm" data-testid="input-faturar-em" />
+                    ) : (<p className="text-sm">{detailItem.scheduledBillingDate ? new Date(detailItem.scheduledBillingDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'}</p>)}
                   </div>
                   {(detailItem.invoiceNumber || editMode) && (
                     <div>
