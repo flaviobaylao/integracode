@@ -218,8 +218,12 @@ export default function RotaDoDia() {
   const routeId = response?.route?.id;
   const routeCustomerIds = useMemo(() => {
     const vs = (response?.route?.visits || []) as any[];
-    return Array.from(new Set(vs.map(v => v.customerId || v.entityId).filter(Boolean)));
-  }, [response?.route?.visits]);
+    const ids = vs.map(v => v.customerId || v.entityId).filter(Boolean);
+    // Inclui os clientes de repescagem para que o customer-info (periodicidade,
+    // último faturamento, débitos) também cubra os cards de repescagem.
+    const repIds = (Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => r.customerId).filter(Boolean);
+    return Array.from(new Set([...ids, ...repIds]));
+  }, [response?.route?.visits, repescagemOverlay]);
   const { data: customerInfo, refetch: refetchCustomerInfo, isFetching: isFetchingCustomerInfo } = useQuery<CustomerInfoResponse>({
     queryKey: ['/api/daily-routes', routeId, 'customer-info', selectedDate, routeCustomerIds.length],
     queryFn: async () => {
@@ -2107,16 +2111,52 @@ export default function RotaDoDia() {
                 {repescagemOverlay.map((r: any) => (
                   <div
                     key={r.assignmentId}
-                    className="flex items-center justify-between p-2 rounded-lg border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]"
+                    className="flex items-start justify-between p-2 rounded-lg border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]"
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
                         <span className="font-medium truncate">{r.customerName}</span>
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                          {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
+                        </span>
+                        {r.customerId && customerInfo?.orders?.[r.customerId]?.map((order: any, orderIdx: number) => (
+                          <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                            <ShoppingCart className="h-3 w-3 mr-1" />
+                            {order.omieOrderId || order.cardNumber || 'Pedido'}
+                          </Badge>
+                        ))}
+                        {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
+                          <Badge variant="destructive" className="text-xs">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            R$ {customerInfo.debts[r.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-xs text-gray-600 dark:text-gray-400">
-                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'} • {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
+                      <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
+                        <MapPin className="h-3 w-3" />
+                        {r.address || 'Endereço não informado'}
+                      </p>
+                      {r.customerId && (
+                        <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
+                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
+                          {' • '}
+                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                          {' • '}
+                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      )}
+                      {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-1 font-medium">
+                          <Calendar className="h-3 w-3" />
+                          {formatWeekdaysLocal(r.weekdays)}
+                          {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
+                          {formatPeriodicity(r.visitPeriodicity)}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
                       </p>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
