@@ -24772,11 +24772,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const leadData = req.body;
-      
+
+      // 🔒 TRAVA TELEFONE NO LEAD: cadastro de lead exige telefone valido (mesmas regras da venda: anti-numero-falso).
+      const _leadDigits = String((leadData && leadData.phone) || '').replace(/[^0-9]/g, '');
+      const _leadSellerDigits = String((user && (user as any).phone) || '').replace(/[^0-9]/g, '');
+      const _leadIsFake = (d: string) => !d || /^(\d)\1+$/.test(d) || '01234567890123456789'.includes(d) || '98765432109876543210'.includes(d) || d.includes('00000') || (!!_leadSellerDigits && _leadSellerDigits.length >= 10 && d === _leadSellerDigits);
+      if (_leadDigits.length < 10 || _leadDigits.length > 13 || _leadIsFake(_leadDigits)) {
+        console.log('🔒 [TRAVA-TELEFONE-LEAD] Bloqueado cadastro de lead - telefone ausente/invalido/falso:', JSON.stringify((leadData && leadData.phone) || ''));
+        return res.status(400).json({ message: 'Para cadastrar o lead é obrigatório um telefone de contato VÁLIDO (DDD + número real). Números repetidos, sequências ou o seu próprio telefone não são aceitos.', code: 'LEAD_PHONE_REQUIRED' });
+      }
+
       if ((user.role === 'vendedor' || user.role === 'telemarketing') && !leadData.assignedTo) {
         leadData.assignedTo = user.id;
       }
-      
+
       // Adicionar o createdBy
       const lead = await storage.createLead({
         ...leadData,
