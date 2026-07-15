@@ -19,7 +19,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   FileText, Plus, Send, XCircle, Trash2, Eye, RefreshCw,
   CheckCircle2, Clock, AlertTriangle, ShieldCheck, Award,
-  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer, RotateCcw
+  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer, RotateCcw, Download
 } from 'lucide-react';
 import { generateDanfePdf } from '@/lib/danfe-generator';
 
@@ -573,6 +573,31 @@ export default function FiscalInvoices() {
     setShowDetailDialog(true);
   }
 
+  async function downloadXml(id: string) {
+    try {
+      const res = await fetch(`/api/fiscal-invoices/${id}/xml`, { credentials: 'include' });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        toast({ title: 'XML indisponível', description: j.message || 'Não foi possível baixar o XML desta NF-e.', variant: 'destructive' });
+        return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = /filename="?([^"]+)"?/.exec(cd);
+      const filename = (m && m[1]) || `nfe_${id}.xml`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast({ title: 'Erro', description: 'Falha ao baixar o XML.', variant: 'destructive' });
+    }
+  }
+
   function isWithin24h(inv: any): boolean {
     const authDate = inv.authorizationDate || inv.emissionDate || inv.createdAt;
     if (!authDate) return true;
@@ -797,6 +822,11 @@ export default function FiscalInvoices() {
                                 } catch { toast({ title: 'Erro', description: 'Não foi possível gerar o DANFE', variant: 'destructive' }); }
                               }}>
                                 <Printer className="h-4 w-4 text-green-600" />
+                              </Button>
+                            )}
+                            {inv.status === 'authorized' && (
+                              <Button variant="ghost" size="icon" title="Baixar XML da NF-e" onClick={() => downloadXml(inv.id)}>
+                                <Download className="h-4 w-4 text-slate-600" />
                               </Button>
                             )}
                             {inv.status === 'authorized' && isWithin24h(inv) && (
@@ -1388,6 +1418,11 @@ export default function FiscalInvoices() {
                 {invoiceDetail.status === 'authorized' && (
                   <Button variant="outline" onClick={() => generateDanfePdf(invoiceDetail)} className="border-green-300 text-green-700 hover:bg-green-50">
                     <Printer className="h-4 w-4 mr-2" /> Gerar DANFE
+                  </Button>
+                )}
+                {invoiceDetail.status === 'authorized' && (
+                  <Button variant="outline" onClick={() => downloadXml(invoiceDetail.id)} className="border-slate-300 text-slate-700 hover:bg-slate-50">
+                    <Download className="h-4 w-4 mr-2" /> Baixar XML
                   </Button>
                 )}
                 {(invoiceDetail.status === 'draft' || invoiceDetail.status === 'rejected') && (
