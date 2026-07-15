@@ -4,6 +4,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { storage } from './storage';
 import type { FinancialAccount } from '@shared/schema';
+import { nowBrazil } from './brazilTimezone';
 
 // ============================================================================
 // BB Boleto (API Cobranca v2) — registro de boleto hibrido (boleto + PIX).
@@ -208,13 +209,21 @@ export async function registrarBoleto(
   const doc = digits(params.debtorDocument);
   const tipoInscricao = doc.length === 14 ? 2 : 1; // 1=CPF, 2=CNPJ
 
+  // BB rejeita dataEmissao > dataVencimento. Para titulos vencidos, o vencimento
+  // e reajustado para hoje (fuso BR) para permitir a (re)emissao do boleto/PIX;
+  // o valor original e mantido e juros/multa passam a contar do novo vencimento.
+  const hojeBR = nowBrazil();
+  const dueMs = Date.UTC(params.dueDate.getFullYear(), params.dueDate.getMonth(), params.dueDate.getDate());
+  const hojeMs = Date.UTC(hojeBR.getFullYear(), hojeBR.getMonth(), hojeBR.getDate());
+  const effectiveDueDate = dueMs < hojeMs ? hojeBR : params.dueDate;
+
   const body: any = {
     numeroConvenio: parseInt(numeroConvenio, 10),
     numeroCarteira,
     numeroVariacaoCarteira,
     codigoModalidade: 1,
-    dataEmissao: formatBBDate(new Date()),
-    dataVencimento: formatBBDate(params.dueDate),
+    dataEmissao: formatBBDate(hojeBR),
+    dataVencimento: formatBBDate(effectiveDueDate),
     valorOriginal: Number(params.amount.toFixed(2)),
     valorAbatimento: 0,
     quantidadeDiasProtesto: 0,
@@ -248,7 +257,7 @@ export async function registrarBoleto(
     body.jurosMora = { tipo: 0 };
   }
   if (account.bbMultaPercentual && parseFloat(account.bbMultaPercentual) > 0) {
-    const multaDate = new Date(params.dueDate); multaDate.setDate(multaDate.getDate() + 1); // BB exige data da multa POSTERIOR ao vencimento
+    const multaDate = new Date(effectiveDueDate); multaDate.setDate(multaDate.getDate() + 1); // BB exige data da multa POSTERIOR ao vencimento (usa vencimento efetivo)
     body.multa = { tipo: 2, porcentagem: parseFloat(account.bbMultaPercentual), data: formatBBDate(multaDate) };
   }
 
