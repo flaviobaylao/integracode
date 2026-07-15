@@ -700,20 +700,44 @@ run();
           const isPJ = !!(c.cnpj && String(c.cnpj).replace(/\D/g, '').length >= 11);
           if (isPJ) pj++; else pf++;
           try {
-            const q = [c.address, c.neighborhood, c.city, c.state, 'Brasil'].filter(Boolean).join(', ');
-            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
-            const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
-            const arr: any = resp.ok ? await resp.json() : [];
-            const hit = Array.isArray(arr) && arr.length ? arr[0] : null;
+            // Limpa ruído do endereço p/ melhorar a resolução no Nominatim:
+            // remove "nº"/"n°", "S/N"/"SN", conteúdo entre parênteses e ";" viram vírgula.
+            const cleanAddr = (s: any) => String(s || '')
+              .replace(/;/g, ', ')
+              .replace(/n[º°]/gi, ' ')
+              .replace(/\bs\s*\/\s*n\b/gi, ' ')
+              .replace(/\bsn\b/gi, ' ')
+              .replace(/\([^)]*\)/g, ' ')
+              .replace(/\s+/g, ' ').replace(/(\s*,\s*)+/g, ', ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+            const cepRaw = String(c.zip_code || '').replace(/\D/g, '');
+            const cepFmt = cepRaw.length === 8 ? (cepRaw.slice(0, 5) + '-' + cepRaw.slice(5)) : '';
+            const addrC = cleanAddr(c.address);
+            const cityC = cleanAddr(c.city);
+            // Tentativas em ordem decrescente de precisão. Primeiro endereço+CEP; se falhar,
+            // CEP sozinho; por fim bairro+cidade (coordenada aproximada, melhor que "sem coordenada").
+            const attempts: { parts: any[]; level: string }[] = [];
+            if (addrC) attempts.push({ parts: [addrC, c.neighborhood, cityC, c.state, cepFmt, 'Brasil'], level: 'endereco' });
+            if (cepFmt) attempts.push({ parts: [cepFmt, cityC, 'Brasil'], level: 'cep' });
+            if (c.neighborhood) attempts.push({ parts: [c.neighborhood, cityC, c.state, 'Brasil'], level: 'bairro' });
+            let hit: any = null; let matchLevel = '';
+            for (let ai = 0; ai < attempts.length; ai++) {
+              const q = attempts[ai].parts.filter(Boolean).join(', ');
+              if (!q) continue;
+              const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+              const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
+              const arr: any = resp.ok ? await resp.json() : [];
+              if (Array.isArray(arr) && arr.length) { hit = arr[0]; matchLevel = attempts[ai].level; break; }
+              if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
+            }
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'nao_encontrado' }); }
             else {
               const cityToken = norm(c.city).split(' ')[0] || '';
               const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
               if (cityOk && apply) {
                 await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
-                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', lat: hit.lat, lon: hit.lon });
-              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
-              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', display: String(hit.display_name).slice(0, 90) }); }
+                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', nivel: matchLevel, lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', nivel: matchLevel, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', nivel: matchLevel, display: String(hit.display_name).slice(0, 90) }); }
             }
           } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
           processed++;
