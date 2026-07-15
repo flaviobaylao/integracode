@@ -50,6 +50,29 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     });
   };
 
+  // (15/jul) Atalhos favoritos: estrela nos cards + barra de até 7 ícones no cabeçalho
+  const FAVORITES_KEY = "integra_favorites";
+  const MAX_FAVORITES = 7;
+  const [favorites, setFavorites] = useState<string[]>([]);
+  useEffect(() => {
+    try { setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
+  }, []);
+  const toggleFavorite = (itemId: string) => {
+    setFavorites((prev) => {
+      let next: string[];
+      if (prev.includes(itemId)) {
+        next = prev.filter((x) => x !== itemId);
+      } else if (prev.length >= MAX_FAVORITES) {
+        toast({ title: "Limite de atalhos", description: `Você pode favoritar até ${MAX_FAVORITES} atalhos. Remova um para adicionar outro.`, variant: "destructive" });
+        return prev;
+      } else {
+        next = [...prev, itemId];
+      }
+      try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  };
+
   useEffect(() => {
     const handleSessionExpired = (event: CustomEvent) => {
       toast({
@@ -326,6 +349,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     },
   ];
 
+  // Índice id -> {label, icon, hexColor} para renderizar os atalhos favoritos no cabeçalho
+  const itemIndex = new Map<string, { label: string; icon: string; hexColor: string }>();
+  for (const g of menuGroups) {
+    for (const it of g.items) {
+      if (!itemIndex.has(it.id)) itemIndex.set(it.id, { label: it.label, icon: it.icon, hexColor: g.hexColor });
+    }
+  }
+
   const getRoleLabel = (role: string) => {
     const roleLabels = {
       admin: 'Administrador',
@@ -541,6 +572,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   {item.badge}
                 </Badge>
               )}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleFavorite(item.id); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggleFavorite(item.id); } }}
+                title={favorites.includes(item.id) ? 'Remover dos atalhos favoritos' : 'Adicionar aos atalhos favoritos'}
+                data-testid={`fav-star-${item.id}`}
+                className="absolute top-2 left-2 w-6 h-6 flex items-center justify-center rounded-md hover:bg-gray-100 cursor-pointer z-10"
+              >
+                <i className="fas fa-star text-sm" style={{ color: favorites.includes(item.id) ? '#f59e0b' : '#d1d5db' }}></i>
+              </span>
             </button>
           ))}
         </div>
@@ -663,6 +705,26 @@ export default function Layout({ children, activeView, setActiveView, user }: La
               <p className="text-xs md:text-sm text-gray-600">Rota: {user.route}</p>
             )}
           </div>
+        </div>
+
+        {/* Atalhos favoritos (até 7) */}
+        <div className="hidden md:flex flex-1 items-center justify-center gap-2 px-4">
+          {favorites.map((favId) => {
+            const info = itemIndex.get(favId);
+            if (!info) return null;
+            return (
+              <button
+                key={favId}
+                onClick={() => handleMenuItemClick(favId)}
+                title={info.label}
+                data-testid={`fav-shortcut-${favId}`}
+                className="relative w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110 shadow-sm"
+                style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
+              >
+                <i className={`${info.icon} text-base`}></i>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center space-x-4">
