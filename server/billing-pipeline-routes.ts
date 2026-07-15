@@ -521,7 +521,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         FROM billing_pipeline bp
         WHERE COALESCE(bp.operation_type, 'venda') = 'venda'
           AND bp.invoice_number IS NOT NULL
-          AND COALESCE(NULLIF(bp.sale_value, '')::numeric, 0) > 0
+          AND COALESCE(bp.sale_value, 0) > 0
           AND NOT EXISTS (SELECT 1 FROM receivables r WHERE r.billing_pipeline_id = bp.id)
           AND NOT EXISTS (SELECT 1 FROM receivables r WHERE bp.sales_card_id IS NOT NULL AND r.sales_card_id = bp.sales_card_id)
           ${onlyId ? sql`AND bp.id = ${onlyId}` : sql``}
