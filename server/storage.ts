@@ -5270,19 +5270,39 @@ export class DatabaseStorage implements IStorage {
       console.log(`ℹ️ [STORAGE] Documento sem dígitos suficientes para busca de débito: "${document}"`);
       return undefined;
     }
-    const allDebts = await db.select().from(overdueDebts);
-    const debt = allDebts.find(d => {
-      const normalizedDbDocument = String((d as any).clientDocument || '').replace(/\D/g, '');
-      return normalizedDbDocument.length >= 11 && normalizedDbDocument === normalizedSearchDocument;
-    });
-
-    if (debt) {
-      console.log(`✅ [STORAGE] Débito encontrado: ${debt.clientName} - R$ ${debt.totalAmount} (doc ${normalizedSearchDocument})`);
-    } else {
-      console.log(`ℹ️ [STORAGE] Nenhum débito encontrado para: ${normalizedSearchDocument}`);
+    // FASE 3.4r - Fonte de verdade dos débitos vencidos passou a ser a aba Contas a
+    // Receber (tabela `receivables`, status 'vencida' e em aberto), NAO mais a tabela
+    // `overdueDebts` (sync do Omie, defasada) — que estava soltando no bloqueio E na
+    // liberação automática clientes que de fato tinham débito vencido. Mesma regra da
+    // tela "Débitos Vencidos" (GET /api/financial/overdue-debts): status = 'vencida'.
+    const result: any = await db.execute(sql`
+      SELECT MAX(customer_name) AS client_name,
+             SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
+             MAX((CURRENT_DATE - due_date::date)) AS max_dias,
+             COUNT(*)::int AS n
+      FROM receivables
+      WHERE deleted_at IS NULL
+        AND status = 'vencida'
+        AND (amount - COALESCE(amount_paid, 0)) > 0
+        AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
+    const row: any = (result.rows || [])[0] || {};
+    const n = Number(row.n || 0);
+    if (n > 0) {
+      const totalAmount = Number(row.saldo || 0).toFixed(2);
+      const maxDaysOverdue = Number(row.max_dias || 0);
+      console.log(`✅ [STORAGE] Débito vencido (Contas a Receber): ${row.client_name} - R$ ${totalAmount} (${n} título(s), ${maxDaysOverdue}d, doc ${normalizedSearchDocument})`);
+      return {
+        clientName: row.client_name || '',
+        clientDocument: normalizedSearchDocument,
+        totalAmount,
+        maxDaysOverdue,
+        titlesCount: n,
+        source: 'receivables',
+        debts: [],
+      };
     }
-
-    return debt;
+    console.log(`ℹ️ [STORAGE] Nenhum débito vencido (Contas a Receber) para: ${normalizedSearchDocument}`);
+    return undefined;
   }
 
   async syncOverdueDebts(debts: any[], forceEmpty: boolean = false, omieInstanceId?: string | null): Promise<void> {
