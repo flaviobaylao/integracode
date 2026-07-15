@@ -1553,23 +1553,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📝 [CUSTOMER-UPDATE] Usuário: ${user?.email} (${user?.role})`);
       console.log(`📝 [CUSTOMER-UPDATE] Campos enviados:`, Object.keys(req.body));
       
-      // Telemarketing can only update phone and contact fields
-      const telemarketingAllowedFields = ['phone', 'contact'];
-      
-      if (user.role === 'telemarketing') {
-        // Filter request body to only allow phone and contact fields
+      // 📞 Registro de TELEFONE liberado a TODOS os usuários (sem restrição de papel).
+      // Gestores (admin/coordinator/administrative) editam tudo; os demais papéis (vendedor, telemarketing,
+      // motorista, etc.) podem atualizar o cliente desde que APENAS telefone/contato — nenhum outro dado.
+      const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const phoneContactAllowedFields = ['phone', 'contact'];
+      if (!_isManager) {
         const requestedFields = Object.keys(req.body);
-        const disallowedFields = requestedFields.filter(field => !telemarketingAllowedFields.includes(field));
-        
+        const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
         if (disallowedFields.length > 0) {
-          return res.status(403).json({ 
-            message: "Telemarketing só pode editar campos de telefone e contato.",
-            disallowedFields 
+          return res.status(403).json({
+            message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+            disallowedFields
           });
         }
-      } else if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        // Other roles (vendedor, motorista) cannot update customer data
-        return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
       }
       
       // Se o ID comeca com "billing-", e um card do PIPELINE cujo cliente nao resolveu (id sintetico
@@ -2174,23 +2171,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const user = req.currentUser;
       
-      // Telemarketing can only update phone and contact fields
-      const telemarketingAllowedFields = ['phone', 'contact'];
-      
-      if (user.role === 'telemarketing') {
-        // Filter request body to only allow phone and contact fields
+      // 📞 Registro de TELEFONE liberado a TODOS os usuários (sem restrição de papel).
+      // Gestores (admin/coordinator/administrative) editam tudo; os demais papéis (vendedor, telemarketing,
+      // motorista, etc.) podem atualizar o cliente desde que APENAS telefone/contato — nenhum outro dado.
+      const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const phoneContactAllowedFields = ['phone', 'contact'];
+      if (!_isManager) {
         const requestedFields = Object.keys(req.body);
-        const disallowedFields = requestedFields.filter(field => !telemarketingAllowedFields.includes(field));
-        
+        const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
         if (disallowedFields.length > 0) {
-          return res.status(403).json({ 
-            message: "Telemarketing só pode editar campos de telefone e contato.",
-            disallowedFields 
+          return res.status(403).json({
+            message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+            disallowedFields
           });
         }
-      } else if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        // Other roles (vendedor, motorista) cannot update customer data
-        return res.status(403).json({ message: "Acesso negado. Você não tem permissão para editar dados de clientes." });
       }
 
       // 🔒 ALTERAÇÃO de Dias/Periodicidade de visita: só Cinthia/Flávio podem mudar um valor já preenchido (inclusão liberada a todos)
