@@ -503,6 +503,53 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
   });
 
+  // REPARO: pedidos FATURADOS (NF emitida) que NAO geraram conta a receber. Causa: no
+  // fluxo de faturamento a criacao do titulo roda em try/catch que ENGOLE o erro (a NF ja
+  // saiu, o pedido vira 'faturado', mas o receivable nao e criado e ninguem e avisado).
+  // Este endpoint acha esses orfaos (venda, com invoice_number, valor > 0, SEM nenhum
+  // receivable pelo billing_pipeline_id nem pelo sales_card_id) e cria a conta a receber +
+  // EMITE a cobranca (boleto/PIX) via createReceivableFromPipelineItem. dryRun por padrao.
+  // Body: { dryRun?: boolean=true, id?: string (um pedido so), limit?: number }.
+  app.post('/api/admin/pipeline/backfill-missing-receivables', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false; // default TRUE (so conta)
+      const onlyId = req.body?.id ? String(req.body.id) : null;
+      const limit = Number(req.body?.limit) > 0 ? Number(req.body.limit) : 0;
+      const user = req.currentUser || req.user;
+      const cand: any = await db.execute(sql`
+        SELECT bp.id
+        FROM billing_pipeline bp
+        WHERE COALESCE(bp.operation_type, 'venda') = 'venda'
+          AND bp.invoice_number IS NOT NULL
+          AND COALESCE(NULLIF(bp.sale_value, '')::numeric, 0) > 0
+          AND NOT EXISTS (SELECT 1 FROM receivables r WHERE r.billing_pipeline_id = bp.id)
+          AND NOT EXISTS (SELECT 1 FROM receivables r WHERE bp.sales_card_id IS NOT NULL AND r.sales_card_id = bp.sales_card_id)
+          ${onlyId ? sql`AND bp.id = ${onlyId}` : sql``}
+        ORDER BY bp.updated_at DESC NULLS LAST
+        ${limit ? sql`LIMIT ${limit}` : sql``}`);
+      const ids: string[] = (cand?.rows ?? cand ?? []).map((r: any) => String(r.id));
+      if (dryRun) return res.json({ ok: true, dryRun: true, candidatos: ids.length, ids: ids.slice(0, 30) });
+      let criados = 0; const erros: any[] = []; const exemplos: any[] = [];
+      for (const id of ids) {
+        try {
+          const item = await storage.getBillingPipelineItem(id);
+          if (!item) { erros.push({ id, err: 'item nao encontrado' }); continue; }
+          // Resolve a NF-e do item A PROVA DE COLISAO (mesmo criterio do retry-invoice):
+          // por sales_card_id COMPLETO, preferindo a autorizada; NUNCA so por numero.
+          let fiscalInvoiceId: string | null = null;
+          if (item.salesCardId) {
+            const nfq: any = await db.execute(sql`SELECT id FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status NOT IN ('cancelled', 'cancelada') ORDER BY (status = 'authorized') DESC, created_at DESC LIMIT 1`);
+            fiscalInvoiceId = (nfq?.rows ?? nfq ?? [])[0]?.id || null;
+          }
+          const rcv: any = await createReceivableFromPipelineItem(item, fiscalInvoiceId, user);
+          if (rcv) { criados++; if (exemplos.length < 10) exemplos.push({ nf: rcv.titleNumber, valor: rcv.amount, cliente: String(item.customerName || '').slice(0, 28) }); }
+          else erros.push({ id, err: 'nao gerou titulo (operationType != venda ou valor <= 0)' });
+        } catch (e: any) { erros.push({ id, err: String(e?.message || e).slice(0, 140) }); }
+      }
+      res.json({ ok: true, dryRun: false, candidatos: ids.length, criados, erros: erros.slice(0, 20), exemplos });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
   // BLOQUEIO MANUAL de um pedido do pipeline (somente os 3 admins). Move o item para
   // blocked_orders (motivo 'manual') e o remove do funil. So sai de la por liberacao manual.
   app.post('/api/billing-pipeline/:id/block', authenticateUser, isThreeAdmins, async (req: any, res) => {
