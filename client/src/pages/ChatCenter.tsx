@@ -299,8 +299,8 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
         </div>
       )}
       <div className="flex items-center gap-2 mt-2">
-        <Badge className={`text-[10px] ${getStatusColor(conv.status)}`}>
-          {conv.status === 'new' ? 'Nova' : 
+        <Badge className={`text-[10px] ${getStatusColor(conv.status)} ${conv.status === 'in-progress' ? 'animate-pulse' : ''}`}>
+          {conv.status === 'new' ? 'Nova' :
            conv.status === 'assigned' ? 'Atribuída' :
            conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
         </Badge>
