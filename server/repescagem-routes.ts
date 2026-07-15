@@ -637,27 +637,39 @@ function repShuffleKey(s: string): number {
 // Coordenadas das paradas (customers + leads) da rota do vendedor no dia.
 async function repGetRouteAnchors(sellerId: string, dayStr: string): Promise<Array<{ lat: number; lng: number }>> {
   const r = await db.execute(sql`
-    SELECT visit_stops FROM daily_routes
+    SELECT optimized_order, visit_stops FROM daily_routes
     WHERE seller_id = ${sellerId} AND DATE(route_date) = ${dayStr}::date
     ORDER BY updated_at DESC NULLS LAST LIMIT 1`);
   const rows = r.rows as any[];
   if (rows.length === 0) return [];
   const vs = rows[0].visit_stops || {};
-  const custIds: string[] = []; const leadIds: string[] = [];
+  const oo: string[] = Array.isArray(rows[0].optimized_order) ? rows[0].optimized_order : [];
+  const custIds = new Set<string>(); const leadIds = new Set<string>();
+  // 1) visit_stops (formato documentado: stopId -> {entityType, entityId})
   for (const k of Object.keys(vs)) {
     const s = vs[k]; if (!s || !s.entityId) continue;
-    if (s.entityType === 'customer') custIds.push(s.entityId);
-    else if (s.entityType === 'lead') leadIds.push(s.entityId);
+    if (s.entityType === 'lead') leadIds.add(s.entityId);
+    else custIds.add(s.entityId);
+  }
+  // 2) optimized_order (fallback quando visit_stops está vazio): as paradas
+  //    reais das rotas ficam aqui, como IDs diretos (às vezes com prefixo
+  //    "customer:"/"lead:"). Sem isso, a Fase A ficava sem âncoras e os
+  //    vendedores externos nunca recebiam clientes por perímetro.
+  for (const raw of oo) {
+    if (typeof raw !== 'string' || !raw) continue;
+    if (raw.startsWith('lead:')) { leadIds.add(raw.slice(5)); continue; }
+    if (raw.startsWith('customer:')) { custIds.add(raw.slice(9)); continue; }
+    custIds.add(raw); leadIds.add(raw); // sem prefixo: tenta como cliente e como lead
   }
   const out: Array<{ lat: number; lng: number }> = [];
-  if (custIds.length) {
+  if (custIds.size) {
     const cr = await db.select({ lat: customers.latitude, lng: customers.longitude })
-      .from(customers).where(inArray(customers.id, custIds));
+      .from(customers).where(inArray(customers.id, Array.from(custIds)));
     for (const c of cr) if (c.lat != null && c.lng != null) out.push({ lat: Number(c.lat), lng: Number(c.lng) });
   }
-  if (leadIds.length) {
+  if (leadIds.size) {
     const lr = await db.select({ lat: leads.latitude, lng: leads.longitude })
-      .from(leads).where(inArray(leads.id, leadIds));
+      .from(leads).where(inArray(leads.id, Array.from(leadIds)));
     for (const l of lr) if (l.lat != null && l.lng != null) out.push({ lat: Number(l.lat), lng: Number(l.lng) });
   }
   return out;
