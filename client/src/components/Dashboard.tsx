@@ -117,6 +117,17 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
 export default function Dashboard() {
   // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
   const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 15000, refetchOnWindowFocus: true, staleTime: 0 });
+  const { data: phoneCoverage } = useQuery<any[]>({ queryKey: ["/api/dashboard/phone-coverage"], refetchInterval: 60000, refetchOnWindowFocus: true, staleTime: 0 });
+  const phoneCov = useMemo(() => {
+    const arr = Array.isArray(phoneCoverage) ? [...phoneCoverage] : [];
+    arr.sort((a: any, b: any) => (a.pct - b.pct) || (b.invalid - a.invalid));
+    return arr;
+  }, [phoneCoverage]);
+  const covTotals = useMemo(() => {
+    const t = phoneCov.reduce((acc: any, x: any) => { acc.total += x.total || 0; acc.valid += x.valid || 0; return acc; }, { total: 0, valid: 0 });
+    const invalid = t.total - t.valid;
+    return { total: t.total, valid: t.valid, invalid, pct: t.total > 0 ? Math.round((t.valid / t.total) * 100) : 0 };
+  }, [phoneCov]);
   const bounds = useMemo(() => monthBounds(), []);
   const [start, setStart] = useState<string>(bounds.today);
   const [end, setEnd] = useState<string>(bounds.today);
@@ -339,6 +350,55 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {phoneCov.length > 0 && (
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">Qualidade de Cadastro - Telefone</CardTitle>
+              <div className="text-xs text-gray-500">% da carteira ativa de cada vendedor com telefone válido. Clique em "Sem telefone" para ver os clientes.</div>
+            </div>
+            <div className="text-sm text-gray-600">Geral: <span className={"font-semibold " + (covTotals.pct >= 90 ? "text-green-700" : covTotals.pct >= 60 ? "text-amber-600" : "text-red-700")}>{covTotals.pct}%</span> ({covTotals.valid}/{covTotals.total})</div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-auto max-h-[60vh]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-gray-500">
+                  <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white">Vendedor</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Carteira ativa</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Com telefone</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Sem telefone</th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">% válido</th>
+                </tr>
+              </thead>
+              <tbody>
+                {phoneCov.map((x: any) => (
+                  <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{x.total}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-green-700">{x.valid}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-red-700">{x.invalid > 0 ? (<button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Sem telefone válido - " + x.sellerName, names: x.missingNames || [] })}>{x.invalid}</button>) : (x.invalid)}</td>
+                    <td className={"py-2 pl-3 text-right tabular-nums font-semibold " + (x.pct >= 90 ? "text-green-700" : x.pct >= 60 ? "text-amber-600" : "text-red-700")}>{x.pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-gray-300 font-semibold text-gray-800">
+                  <td className="py-2 pr-4">Total</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{covTotals.total}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{covTotals.valid}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{covTotals.invalid}</td>
+                  <td className="py-2 pl-3 text-right tabular-nums">{covTotals.pct}%</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      )}
 
       <Card>
         <CardHeader>
