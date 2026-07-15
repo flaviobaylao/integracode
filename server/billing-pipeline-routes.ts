@@ -1018,7 +1018,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Update item details (notes, invoice number, etc.)
   app.patch('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
-      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument } = req.body;
+      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
       const updates: any = {};
       if (notes !== undefined) updates.notes = notes;
       if (invoiceNumber !== undefined) updates.invoiceNumber = invoiceNumber;
@@ -1044,6 +1044,27 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
       if (customerName !== undefined) updates.customerName = customerName;
       if (customerDocument !== undefined) updates.customerDocument = customerDocument;
+
+      // "Faturar em" (scheduled_billing_date): data em que o pedido deve seguir para a etapa
+      // "Pedido". Editavel no pipeline. Reavalia a etapa entre 'agendado'/'pedido':
+      //  - data futura           -> volta/permanece em 'agendado' (aguarda a data)
+      //  - data <= hoje ou vazia  -> segue para 'pedido' agora
+      // (nao mexe em pedidos ja adiante no funil: a_faturar, faturado, etc.)
+      if (scheduledBillingDate !== undefined) {
+        const s = String(scheduledBillingDate || '').slice(0, 10);
+        const valid = /^\d{4}-\d{2}-\d{2}$/.test(s);
+        const todayBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        updates.scheduledBillingDate = valid ? new Date(`${s}T12:00:00-03:00`) : null;
+        const current = await storage.getBillingPipelineItem(req.params.id);
+        if (current && (current.stage === 'agendado' || current.stage === 'pedido')) {
+          const newStage = (valid && s > todayBR) ? 'agendado' : 'pedido';
+          if (newStage !== current.stage) {
+            updates.stage = newStage as any;
+            const hist = Array.isArray((current as any).stageHistory) ? (current as any).stageHistory : [];
+            updates.stageHistory = [...hist, { stage: newStage, changedAt: new Date().toISOString(), changedBy: (req.currentUser?.email || 'pipeline-edit') }] as any;
+          }
+        }
+      }
 
       const updated = await storage.updateBillingPipelineItem(req.params.id, updates);
       res.json(updated);
