@@ -956,6 +956,17 @@ export function registerRepescagemRoutes(app: Express, opts: {
 }) {
   const { authenticateUser, requireRole } = opts;
 
+  // Correção de drift (15/jul/2026): a tabela em produção ficou sem o DEFAULT gen_random_uuid()
+  // na coluna id, então os INSERTs do sorteio (runDailyDraw) falhavam com "null value in column id"
+  // — e o erro era engolido pelo maybeAutoDraw, deixando a repescagem nunca entrar nas rotas.
+  // Restaura o default (idempotente) no boot.
+  (async () => {
+    try {
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignments ALTER COLUMN id SET DEFAULT gen_random_uuid()"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_assignment_history ALTER COLUMN id SET DEFAULT gen_random_uuid()"));
+    } catch (e: any) { console.warn('[REPESCAGEM2] ALTER id default:', e?.message); }
+  })();
+
   // Repescagem2: sorteio diário — disparo manual (admin) e inspeção.
   app.post('/api/repescagem/draw', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
