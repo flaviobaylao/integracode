@@ -603,15 +603,16 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
 
 // ============================================================================
 // Repescagem2 — Fase 2: sorteio diário e alocação
-// Fase A (externos): até 3 clientes por vendedor, dentro de 1,5 km de qualquer
-//   parada da rota do dia, SEMPRE de outra carteira e com coordenada.
+// Fase A (externos): até 3 clientes por vendedor, dentro de 3 km de qualquer
+//   parada da rota do dia, com coordenada. Prioriza OUTRA carteira; usa a própria
+//   como preenchimento quando não houver de outras.
 // Fase B (telemarketing): o restante (inclui sem-coordenada) via aleatório
 //   ponderado (inverso à carga). Persistência em repescagem_assignments com
 //   draw_date + phase + status 'in_route'. Idempotente por dia.
 // Observação: esta fase NÃO injeta na rota nem trava paradas (isso é a Fase 3);
 // é validável por API/log. Não interfere na lista antiga (status 'pending').
 // ============================================================================
-const REPESCAGEM_PERIMETER_KM = 1.5;
+const REPESCAGEM_PERIMETER_KM = 3;
 const EXTERNAL_MAX_PER_SELLER = 3;
 let __drawRunning = false;
 let __lastDrawCheckMs = 0;
@@ -662,6 +663,70 @@ async function repGetRouteAnchors(sellerId: string, dayStr: string): Promise<Arr
   return out;
 }
 
+// Geocodifica em SEGUNDO PLANO candidatos da repescagem sem coordenada (mas com endereço),
+// para que os vendedores externos voltem a recebê-los por perímetro nos próximos sorteios.
+// Throttled (1x/30min), limitado por rodada, usa CEP + limpeza + fallback + verificação de CEP.
+let __lastGeoRepMs = 0;
+let __geoRepRunning = false;
+async function geocodeMissingCandidates(customerIds: string[]): Promise<void> {
+  const nowMs = Date.now();
+  if (__geoRepRunning || (nowMs - __lastGeoRepMs) < 1800000) return;
+  if (!customerIds.length) return;
+  __lastGeoRepMs = nowMs; __geoRepRunning = true;
+  try {
+    const rows = await db.select({
+      id: customers.id, address: customers.address, neighborhood: customers.neighborhood,
+      city: customers.city, state: customers.state, zipCode: customers.zipCode,
+    }).from(customers).where(and(
+      inArray(customers.id, customerIds.slice(0, 500)),
+      sql`(${customers.latitude} IS NULL OR ${customers.longitude} IS NULL)`,
+      sql`(${customers.coordinatesLocked} IS NOT TRUE)`,
+      sql`COALESCE(TRIM(${customers.address}), '') <> ''`,
+    ));
+    const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+    const clean = (s: any) => String(s || '')
+      .replace(/;/g, ', ').replace(/n[º°]/gi, ' ').replace(/\bs\s*\/\s*n\b/gi, ' ').replace(/\bsn\b/gi, ' ')
+      .replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').replace(/(\s*,\s*)+/g, ', ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+    let done = 0;
+    for (const c of rows.slice(0, 40)) {
+      try {
+        const cep = String(c.zipCode || '').replace(/\D/g, '');
+        const cepFmt = cep.length === 8 ? (cep.slice(0, 5) + '-' + cep.slice(5)) : '';
+        const addrC = clean(c.address); const cityC = clean(c.city);
+        const attempts: { parts: any[]; level: string }[] = [];
+        if (addrC) attempts.push({ parts: [addrC, c.neighborhood, cityC, c.state, cepFmt, 'Brasil'], level: 'endereco' });
+        if (cepFmt) attempts.push({ parts: [cepFmt, cityC, 'Brasil'], level: 'cep' });
+        if (c.neighborhood) attempts.push({ parts: [c.neighborhood, cityC, c.state, 'Brasil'], level: 'bairro' });
+        let hit: any = null;
+        for (let ai = 0; ai < attempts.length; ai++) {
+          const q = attempts[ai].parts.filter(Boolean).join(', ');
+          if (!q) continue;
+          const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+          const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-repescagem-geo/1.0 (flaviobaylao@gmail.com)' } });
+          const arr: any = resp.ok ? await resp.json() : [];
+          const cand = Array.isArray(arr) && arr.length ? arr[0] : null;
+          if (cand) {
+            if (attempts[ai].level === 'endereco' && cep.length === 8) {
+              const dc = ((String(cand.display_name).match(/\b\d{5}-?\d{3}\b/) || [''])[0]).replace(/\D/g, '');
+              if (dc && dc.slice(0, 5) !== cep.slice(0, 5)) { if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, 1100)); continue; }
+            }
+            hit = cand; break;
+          }
+          if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, 1100));
+        }
+        if (hit) {
+          const cityToken = norm(c.city).split(' ')[0] || '';
+          const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
+          if (cityOk) { await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`); done++; }
+        }
+      } catch { /* ignora cliente individual */ }
+      await new Promise(rs => setTimeout(rs, 1200));
+    }
+    if (done) console.log(`[REPESCAGEM2-GEO] geocodificados ${done} candidato(s) sem coordenada`);
+  } catch (e: any) { console.warn('[REPESCAGEM2-GEO] falha:', e?.message); }
+  finally { __geoRepRunning = false; }
+}
+
 async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promise<any> {
   const drawDate = opts.drawDate;
 
@@ -709,7 +774,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   const allocated = new Set<string>();
   const rows: any[] = [];
 
-  // ---- Fase A: externos (perímetro 1,5 km, outra carteira, até 3) ----
+  // ---- Fase A: externos (perímetro 3 km, prioriza outra carteira, até 3) ----
   for (const sellerId of externalSellers) {
     const anchors = await repGetRouteAnchors(sellerId, drawDate);
     if (anchors.length === 0) continue;
@@ -717,10 +782,15 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
       if (allocated.has(c.customerId)) return false;
       const info = coordById.get(c.customerId);
       if (!info || info.lat == null || info.lng == null) return false;
-      if (info.sellerId && info.sellerId === sellerId) return false; // nunca da própria carteira
       return anchors.some(a => repHaversineKm(info.lat as number, info.lng as number, a.lat, a.lng) <= REPESCAGEM_PERIMETER_KM);
     });
-    pool.sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
+    // Prioriza clientes de OUTRA carteira; a própria carteira só como preenchimento.
+    pool.sort((a: any, b: any) => {
+      const aOwn = coordById.get(a.customerId)?.sellerId === sellerId ? 1 : 0;
+      const bOwn = coordById.get(b.customerId)?.sellerId === sellerId ? 1 : 0;
+      if (aOwn !== bOwn) return aOwn - bOwn;
+      return repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate);
+    });
     for (const c of pool.slice(0, EXTERNAL_MAX_PER_SELLER)) {
       allocated.add(c.customerId);
       rows.push({ customerId: c.customerId, lastRedDate: c.lastRedDate, assignedUserId: sellerId,
@@ -763,7 +833,11 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     inserted++;
   }
 
-  const withoutCoords = candidates.filter((c: any) => { const i = coordById.get(c.customerId); return !i || i.lat == null; }).length;
+  const missingCoordIds = candidates.filter((c: any) => { const i = coordById.get(c.customerId); return !i || i.lat == null; }).map((c: any) => c.customerId);
+  const withoutCoords = missingCoordIds.length;
+  // Prioriza a geocodificação dos candidatos sem coordenada (segundo plano) — próximos
+  // sorteios passam a colocá-los no perímetro dos vendedores externos.
+  if (missingCoordIds.length) geocodeMissingCandidates(missingCoordIds).catch(() => {});
   return {
     drawDate, externalSellers: externalSellers.length, telemarketers: telemarketers.length,
     candidates: candidates.length, withoutCoords,
@@ -1021,6 +1095,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (!sellerId || !date) return res.status(400).json({ message: 'sellerId e date obrigatórios' });
       if (user.role === 'vendedor' && sellerId !== user.id) return res.status(403).json({ message: 'Acesso negado' });
 
+      // Garante que o sorteio do dia já rodou (antes só disparava ao abrir a página de Repescagem).
+      // Sem isto, se ninguém abrisse a página de Repescagem, a rota do dia não recebia repescagem.
+      maybeAutoDraw();
       // Fecha os atendidos do dia (throttled) para que saiam da lista de cards.
       maybeAutoCloseRepescagem();
 
