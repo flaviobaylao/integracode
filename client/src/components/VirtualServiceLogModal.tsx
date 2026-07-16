@@ -64,7 +64,7 @@ export default function VirtualServiceLogModal({
   const [isCreating, setIsCreating] = useState(false);
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
-  const effectiveDefaultType = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'venda');
+  const effectiveDefaultType = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'nao_venda');
   const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [nextContactDate, setNextContactDate] = useState<string>("");
@@ -75,7 +75,7 @@ export default function VirtualServiceLogModal({
   // Reset serviceType when modal opens with a new defaultServiceType
   useEffect(() => {
     if (open) {
-      const newDefault = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'venda');
+      const newDefault = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'nao_venda');
       setServiceType(newDefault);
     }
   }, [open, defaultServiceType, entityType]);
@@ -321,7 +321,7 @@ export default function VirtualServiceLogModal({
                     {(Object.keys(serviceTypeLabels) as ServiceType[])
                       .filter((type) => {
                         if (entityType === 'lead') return type === 'prospecao';
-                        return type !== 'prospecao';
+                        return type === 'nao_venda';
                       })
                       .map((type) => {
                       const config = serviceTypeLabels[type];
