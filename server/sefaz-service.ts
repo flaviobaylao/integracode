@@ -986,8 +986,18 @@ function buildDocumento(
         const isGoServ = _issuerUfNorm === 'GO' && !isInterstateOp;
         const defaultRedBc = isGoServ ? '42.105' : '0';
         const defaultAliqIcms = isGoServ ? '19' : (isInterstateOp ? defaultGoIcmsAliq() : '0');
-        const redBc = parseFloat(item.redBcIcms?.toString() || scenario?.redBcIcms?.toString() || defaultRedBc);
-        const aliqIcms20 = parseFloat(item.aliqIcms?.toString() || scenario?.aliqIcms?.toString() || defaultAliqIcms);
+        let redBc = parseFloat(item.redBcIcms?.toString() || scenario?.redBcIcms?.toString() || defaultRedBc);
+        let aliqIcms20 = parseFloat(item.aliqIcms?.toString() || scenario?.aliqIcms?.toString() || defaultAliqIcms);
+        // SERV (instância PURO SERVICOS, GO, Regime Normal) — venda interna com
+        // CST 20: o benefício GO821005 do RCTE exige redução de base 42,105%
+        // (base = 57,895% do valor) e alíquota 19%, resultando em alíquota
+        // EFETIVA de 11%. Itens/cenários gravados com aliqIcms/redBcIcms = 0
+        // (herdados da venda e repersistidos a cada emissão) zeravam o ICMS.
+        // Quando o valor resolvido não é positivo, força o padrão do benefício.
+        if (isGoServ) {
+          if (!(aliqIcms20 > 0)) aliqIcms20 = 19;
+          if (!(redBc > 0)) redBc = 42.105;
+        }
         const baseCalc = parseFloat(totPrc) * (1 - redBc / 100);
         const valorIcms20 = baseCalc * (aliqIcms20 / 100);
         const vDesonerado2 = parseFloat(item.valorIcmsDesonerado?.toString() || scenario?.valorIcmsDesonerado?.toString() || '0');
@@ -1045,8 +1055,15 @@ function buildDocumento(
           // Defaults internos GO só valem em operação interna; em interestadual
           // usar redBC 0 e alíquota interestadual padrão (7/12% conforme UF destino).
           const isGoFb = _issuerUfNorm === 'GO' && !isInterstateOp;
-          const redBcFb = parseFloat(item.redBcIcms?.toString() || scenario?.redBcIcms?.toString() || (isGoFb ? '42.105' : '0'));
-          const aliqFb = parseFloat(item.aliqIcms?.toString() || scenario?.aliqIcms?.toString() || (isGoFb ? '19' : (isInterstateOp ? defaultGoIcmsAliq() : '0')));
+          let redBcFb = parseFloat(item.redBcIcms?.toString() || scenario?.redBcIcms?.toString() || (isGoFb ? '42.105' : '0'));
+          let aliqFb = parseFloat(item.aliqIcms?.toString() || scenario?.aliqIcms?.toString() || (isGoFb ? '19' : (isInterstateOp ? defaultGoIcmsAliq() : '0')));
+          // SERV interna (CST 20): mesma regra do ramo principal — força
+          // redução 42,105% e alíquota 19% (efetiva 11%) quando o valor
+          // resolvido não é positivo, evitando ICMS zerado.
+          if (isGoFb) {
+            if (!(aliqFb > 0)) aliqFb = 19;
+            if (!(redBcFb > 0)) redBcFb = 42.105;
+          }
           const baseCalcFb = parseFloat(totPrc) * (1 - redBcFb / 100);
           const valorIcmsFb = baseCalcFb * (aliqFb / 100);
           imposto.ICMS.ICMS20 = {
