@@ -11470,7 +11470,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (order.status !== 'blocked') { errors.push(`Pedido ja processado (status: ${order.status})`); continue; }
           salesCard = await storage.getSalesCard(order.salesCardId);
           if (!salesCard) { errors.push(`Sales card ${order.salesCardId} nao encontrado`); continue; }
-          try { await autoSendToBillingPipeline(salesCard, req.currentUser.email || 'system', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro (ignorado):', e?.message); }
+          // O card recorrente pode ter "virado" e estar VAZIO (sem valor/produtos) no momento da
+          // liberacao — nesse caso o autoSend pulava por "sem venda" e o pedido SUMIA. A fonte
+          // imutavel do pedido e o snapshot em blocked_orders (total_amount + products), gravado no
+          // bloqueio. Montamos um card sintetico com esse snapshot para o pedido SEMPRE entrar.
+          const snapVal = parseFloat(String((order as any).totalAmount ?? '0')) || 0;
+          const cardVal = parseFloat(String((salesCard as any).saleValue ?? '0')) || 0;
+          const cardForPipeline: any = {
+            ...salesCard,
+            saleValue: cardVal > 0 ? salesCard.saleValue : (snapVal > 0 ? String(snapVal) : salesCard.saleValue),
+            products: (Array.isArray((salesCard as any).products) && (salesCard as any).products.length) ? (salesCard as any).products : ((order as any).products || (salesCard as any).products),
+            operationType: (salesCard as any).operationType || (order as any).operationType || 'venda',
+            paymentMethod: (salesCard as any).paymentMethod || (order as any).paymentMethod || null,
+          };
+          let pipelineItem: any = null;
+          try { pipelineItem = await autoSendToBillingPipeline(cardForPipeline, req.currentUser.email || 'system', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
+          // Idempotencia: se ja existe item no funil para este card, conta como "entrou".
+          if (!pipelineItem) {
+            try { const existing = await storage.getBillingPipelineItems(); if (existing.find((i: any) => i.salesCardId === order.salesCardId)) pipelineItem = { existing: true }; } catch {}
+          }
+          // SO marca liberado se o pedido REALMENTE entrou no funil. Se nao entrou, mantem em
+          // Bloqueados e reporta — o pedido NUNCA some silenciosamente.
+          if (!pipelineItem) {
+            const nm = salesCard?.customer?.fantasyName || salesCard?.customer?.name || order.salesCardId;
+            errors.push(`${nm}: nao entrou no funil (mantido em Bloqueados)`);
+            continue;
+          }
           await db.update(blockedOrders).set({ status: 'released', releasedAt: nowBrazil(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
           try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` }); } catch {}
           released++;
