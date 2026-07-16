@@ -165,13 +165,11 @@ export default function LeadReturnsPanel({ sellerId, date }: { sellerId: string;
   );
 
   return (
-    <Card className="border-amber-300 mb-4">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2 text-amber-700">
-          <Target className="w-5 h-5" /> Retornos de Lead ({(hoje.length + atrasados.length)})
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <div className="my-6 border-t-2 border-amber-300 dark:border-amber-700 pt-4">
+      <h3 className="text-lg font-bold text-amber-700 dark:text-amber-400 mb-3 flex items-center gap-2">
+        <Target className="w-5 h-5" /> Retornos de Lead ({(hoje.length + atrasados.length)})
+      </h3>
+      <div className="space-y-3">
         {atrasados.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-semibold text-red-700 uppercase">Atrasados — cobrar hoje ({atrasados.length})</p>
@@ -184,7 +182,7 @@ export default function LeadReturnsPanel({ sellerId, date }: { sellerId: string;
             {hoje.map(renderLead)}
           </div>
         )}
-      </CardContent>
+      </div>
 
       {/* Dialog: Não converter */}
       <Dialog open={!!naoConverterLead} onOpenChange={(o) => { if (!o) setNaoConverterLead(null); }}>
@@ -292,6 +290,6 @@ export default function LeadReturnsPanel({ sellerId, date }: { sellerId: string;
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }
