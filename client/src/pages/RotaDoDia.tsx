@@ -1752,6 +1752,17 @@ export default function RotaDoDia() {
                           )}
                         </div>
                       </div>
+
+                      {/* ➕ Rodapé: visita adicionada manualmente à rota */}
+                      {(visit as any).addedManually && (
+                        <div
+                          className="mt-2 pt-2 border-t border-dashed border-gray-300 dark:border-gray-600 text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1"
+                          data-testid={`manual-added-${visit.customerId}`}
+                        >
+                          <Plus className="h-3 w-3" />
+                          Adicionado manualmente
+                        </div>
+                      )}
                     </div>
                   );
                 })}
