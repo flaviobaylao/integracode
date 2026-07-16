@@ -142,24 +142,45 @@ export default function VirtualServiceLogModal({
     },
   });
 
-  const uploadImageFile = async (file: File) => {
-    const formData = new FormData();
-    formData.append("image", file);
-    
-    const response = await fetch("/api/upload-image", {
-      method: "POST",
-      body: formData,
-      credentials: "include",
+  // Comprime a imagem no cliente e a guarda como data URL (base64) embutida no
+  // próprio registro (campo images). O Object Storage (Replit) não está disponível
+  // neste ambiente (Railway), então evitamos o upload externo. Redimensiona p/ 1280px
+  // e usa JPEG q=0.72 com fundo branco, mantendo o tamanho enxuto no banco.
+  const fileToCompressedDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Não foi possível ler o arquivo"));
+      reader.onload = () => {
+        const el = document.createElement("img");
+        el.onerror = () => reject(new Error("Arquivo de imagem inválido"));
+        el.onload = () => {
+          const maxDim = 1280;
+          let w = el.naturalWidth || el.width;
+          let h = el.naturalHeight || el.height;
+          if (!w || !h) return reject(new Error("Dimensões de imagem inválidas"));
+          if (w > maxDim || h > maxDim) {
+            const scale = Math.min(maxDim / w, maxDim / h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return reject(new Error("Canvas não suportado"));
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(el, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.72));
+        };
+        el.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
     });
-    
-    if (!response.ok) {
-      throw new Error("Falha ao enviar imagem");
-    }
-    
-    const result = await response.json();
-    if (result.url) {
-      setImages(prev => [...prev, result.url]);
-    }
+
+  const uploadImageFile = async (file: File) => {
+    const dataUrl = await fileToCompressedDataUrl(file);
+    setImages(prev => [...prev, dataUrl]);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
