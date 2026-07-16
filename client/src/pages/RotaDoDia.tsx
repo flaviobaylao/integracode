@@ -1575,6 +1575,7 @@ export default function RotaDoDia() {
                                 >
                                   <ShoppingCart className="h-3 w-3 mr-1" />
                                   {order.omieOrderId || order.cardNumber || 'Pedido'}
+                                  {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
                                 </Badge>
                               ))}
                               {/* Mostrar débito vencido */}
