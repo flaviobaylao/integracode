@@ -33,8 +33,11 @@ async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; 
 // bloquear é feito pela tabela blocked_orders via POST /:id/block, não por mudança de stage.
 const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue'] as const;
 
-let internalBillingModeActive = false;
-let internalBillingActivatedBy: string | null = null;
+// Faturamento interno e a UNICA via (Omie descontinuado). O motor ja forca isso via
+// isInternalBillingModeActive()===true; aqui o default do indicador tambem fica ON para
+// nao exibir "desativado" apos restart (o toggle da tela e apenas informativo).
+let internalBillingModeActive = true;
+let internalBillingActivatedBy: string | null = 'sistema (interno e a unica via)';
 
 export function isInternalBillingModeActive() {
   // Faturamento e SEMPRE pelo pipeline interno (Omie descontinuado para faturamento).
@@ -697,6 +700,32 @@ export function registerBillingPipelineRoutes(app: Express) {
       const item = await autoSendToBillingPipeline(card as any, req.currentUser?.email || 'system');
       res.json({ ok: true, created: !!item, item: item || null });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // RECUPERACAO: recoloca no funil um pedido que foi LIBERADO mas nao entrou (ex.: o card
+  // recorrente ja tinha virado para o proximo ciclo e estava VAZIO no momento da liberacao,
+  // entao autoSend pulou por 'sem venda' e o pedido sumiu). Le o SNAPSHOT imutavel do bloqueio
+  // (valor + produtos, gravados em blocked_orders no momento do bloqueio) e reconstroi o item
+  // do funil via autoSend (dedup por sales_card_id, skipDebtCheck). Body: { salesCardId }.
+  app.post('/api/admin/pipeline/restore-from-blocked', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const salesCardId = String(req.body?.salesCardId || '');
+      if (!salesCardId) return res.status(400).json({ ok: false, error: 'salesCardId obrigatorio' });
+      const existing = await storage.getBillingPipelineItems();
+      if (existing.find((i: any) => i.salesCardId === salesCardId)) return res.json({ ok: true, created: false, reason: 'ja_no_pipeline' });
+      const bq: any = await db.execute(sql`SELECT total_amount, products, operation_type, payment_method FROM blocked_orders WHERE sales_card_id = ${salesCardId} ORDER BY created_at DESC LIMIT 1`);
+      const b = (bq?.rows ?? bq ?? [])[0];
+      if (!b) return res.status(404).json({ ok: false, error: 'sem registro de bloqueio para este card' });
+      const val = parseFloat(String(b.total_amount ?? '0')) || 0;
+      if (val <= 0) return res.status(422).json({ ok: false, error: 'snapshot do bloqueio sem valor (nada a restaurar)' });
+      const card: any = await storage.getSalesCard(salesCardId);
+      if (!card) return res.status(404).json({ ok: false, error: 'sales card nao encontrado' });
+      const cardProds = (Array.isArray(card.products) && card.products.length) ? card.products : (b.products || null);
+      const synthetic: any = { ...card, saleValue: String(val), products: cardProds, operationType: card.operationType || b.operation_type || 'venda', paymentMethod: card.paymentMethod || b.payment_method || null };
+      const item: any = await autoSendToBillingPipeline(synthetic, req.currentUser?.email || 'restore', { skipDebtCheck: true });
+      if (!item) return res.status(422).json({ ok: false, error: 'autoSend nao criou item (verifique regras/valor)' });
+      res.json({ ok: true, created: true, orderNumber: item.orderNumber, saleValue: item.saleValue, cliente: String(item.customerName || '').slice(0, 30) });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
   });
 
   // Forcar criacao de card 'faturado' p/ NFs ESPECIFICAS (sem dedup cliente+valor).
