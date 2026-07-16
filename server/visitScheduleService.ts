@@ -23,7 +23,13 @@ function getNextVisitDate(lastDate: Date, periodicity: string): Date {
     default:
       nextDate.setDate(nextDate.getDate() + 7); // Default semanal
   }
-  
+
+  // 🗓️ DIAS ÚTEIS (seg–sex): nunca agendar sábado/domingo. Se a data cair no fim
+  // de semana, avança para a próxima segunda-feira, preservando a periodicidade.
+  while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+    nextDate.setDate(nextDate.getDate() + 1);
+  }
+
   return nextDate;
 }
 
