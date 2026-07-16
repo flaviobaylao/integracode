@@ -11,6 +11,7 @@ import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimi
 import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { registerOmieNfeImportRoutes } from "./omie-nfe-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
@@ -565,6 +566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register Object Storage routes for file uploads
   registerObjectStorageRoutes(app);
+  registerOmieNfeImportRoutes(app);
   console.log('✅ Object Storage routes registered');
 
   app.get('/api/reports/data-sources', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
