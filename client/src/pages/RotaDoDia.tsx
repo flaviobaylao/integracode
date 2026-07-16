@@ -2152,6 +2152,7 @@ export default function RotaDoDia() {
                           <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
                             <ShoppingCart className="h-3 w-3 mr-1" />
                             {order.omieOrderId || order.cardNumber || 'Pedido'}
+                            {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
                           </Badge>
                         ))}
                         {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
