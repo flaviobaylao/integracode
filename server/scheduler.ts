@@ -585,6 +585,16 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
     timezone: "America/Sao_Paulo"
   });
   console.log('✅ [SCHEDULER] Liberacao automatica de pedidos bloqueados (debito regularizado) ativada - hora em hora as hh:15');
+  // Reforco (pedido do Flavio): 2 liberacoes EXTRAS no minuto cheio — 10:00 e 14:00 BRT —
+  // alem das horarias hh:15. A rotina e idempotente (so re-checa debito e libera regularizados).
+  cron.schedule('0 10,14 * * *', () => {
+    const now = nowBrazil();
+    const horario = `${now.getHours().toString().padStart(2, '0')}:00h`;
+    autoReleaseRegularizedDebtOrders(horario);
+  }, {
+    timezone: "America/Sao_Paulo"
+  });
+  console.log('✅ [SCHEDULER] Liberacao automatica EXTRA ativada - 10:00 e 14:00 (alem das hh:15)');
 } else {
   console.log('⚠️ [SCHEDULER] Liberacao automatica de bloqueados DESATIVADA (ambiente de desenvolvimento)');
 }
