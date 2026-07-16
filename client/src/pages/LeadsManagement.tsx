@@ -96,6 +96,13 @@ export default function LeadsManagement() {
     return sortSellersByType((allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive));
   }, [allUsers]);
 
+  // Nome do vendedor por id (para a coluna Vendedor)
+  const sellerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    (allUsers || []).forEach((u: any) => m.set(u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id));
+    return (id: string | null | undefined) => (id ? (m.get(id) || '—') : '—');
+  }, [allUsers]);
+
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
       return await apiRequest('POST', '/api/leads', {
@@ -191,7 +198,16 @@ export default function LeadsManagement() {
       setConverterLead(null); setCust({});
       invalidateLeads();
     },
-    onError: (e: any) => toast({ title: "Erro ao converter", description: e?.message || "Verifique os dados", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erro ao converter", description: e?.error || e?.message || "Verifique os dados", variant: "destructive" }),
+  });
+
+  const resgatarMut = useMutation({
+    mutationFn: async (leadId: string) => apiRequest('POST', `/api/leads/${leadId}/desfecho`, { acao: 'resgatar' }),
+    onSuccess: () => {
+      toast({ title: "Lead resgatado", description: "Voltou para a lista como novo." });
+      invalidateLeads();
+    },
+    onError: (e: any) => toast({ title: "Erro ao resgatar", description: e?.error || e?.message || "Erro", variant: "destructive" }),
   });
 
   const naoConverterMut = useMutation({
@@ -700,51 +716,55 @@ export default function LeadsManagement() {
           <CardTitle>Leads ({filteredLeads.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[70vh] rounded-md border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
-                  <SortableTh label="Temp." colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Nome" colKey="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Último Atendimento" colKey="lastService" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  {canAct && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
+                  <SortableTh label="Temp." colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Nome" colKey="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Vendedor</th>
+                  <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Último Atendimento" colKey="lastService" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  {canAct && <th className="text-right py-3 px-4 font-semibold sticky top-0 right-0 z-20 bg-white dark:bg-gray-950">Ações</th>}
                 </tr>
               </thead>
               <tbody>
                 {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={canAct ? 10 : 9} className="text-center py-8 text-gray-500">
+                    <td colSpan={canAct ? 11 : 10} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
                 ) : (
-                  displayLeads.map((lead) => (
-                    <tr 
-                      key={lead.id} 
-                      className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer" 
+                  displayLeads.map((lead) => {
+                    const descartado = lead.status === 'discarded';
+                    return (
+                    <tr
+                      key={lead.id}
+                      className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${descartado ? 'bg-gray-50/60 dark:bg-gray-900/40 text-gray-400 dark:text-gray-500' : ''}`}
                       data-testid={`lead-row-${lead.id}`}
                       onClick={() => setSelectedLeadForService(lead)}
                     >
                       <td className="py-3 px-4">
                         {lead.temperature ? (
-                          <div 
-                            className={`w-4 h-4 rounded-full ${temperatureColors[lead.temperature]}`}
+                          <div
+                            className={`w-4 h-4 rounded-full ${descartado ? 'bg-gray-300' : temperatureColors[lead.temperature]}`}
                             title={temperatureLabels[lead.temperature]}
                           />
                         ) : (
                           <div className="w-4 h-4 rounded-full bg-gray-300" title="Sem temperatura" />
                         )}
                       </td>
-                      <td className="py-3 px-4 font-medium">{lead.fantasyName}</td>
+                      <td className={`py-3 px-4 font-medium ${descartado ? 'text-gray-400 dark:text-gray-500' : ''}`}>{lead.fantasyName}</td>
                       <td className="py-3 px-4">{lead.contact || '—'}</td>
-                      <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
-                      <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
+                      <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className={descartado ? 'text-gray-400' : 'text-blue-600 hover:underline'} onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">{sellerNameById(lead.assignedTo)}</td>
+                      <td className="py-3 px-4 text-xs text-gray-500 dark:text-gray-400">
                         <div className="flex flex-col gap-1">
                           <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
                           <div>Lon: {parseFloat(lead.longitude.toString()).toFixed(6)}</div>
@@ -752,18 +772,21 @@ export default function LeadsManagement() {
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex flex-col gap-1 items-start">
-                        <Badge className={statusColors[lead.status]}>
-                          {statusLabels[lead.status]}
-                        </Badge>
-                        {Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted' && (
-                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>
-                        )}
-                        {lead.status === 'discarded' && (lead as any).nonConversionReason && (
-                          <span className="text-[11px] text-muted-foreground">Motivo: {(lead as any).nonConversionReason}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-xs">
+                          <Badge className={statusColors[lead.status]}>
+                            {statusLabels[lead.status]}
+                          </Badge>
+                          {Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted' && (
+                            <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>
+                          )}
+                          {descartado && (lead as any).nonConversionReason && (
+                            <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 font-semibold">Motivo: {(lead as any).nonConversionReason}</Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">
+                        {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
                         {lastServiceLogs[lead.id] ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="font-medium">
@@ -775,66 +798,80 @@ export default function LeadsManagement() {
                           </div>
                         ) : '—'}
                       </td>
-                      <td className="py-3 px-4 text-xs">
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">
                         {(lead as any).nextContactDate ? (
-                          <span className={`font-medium ${new Date((lead as any).nextContactDate) < nowBrazil() ? 'text-red-600' : 'text-green-600'}`}>
+                          <span className={`font-medium ${descartado ? 'text-gray-400' : (new Date((lead as any).nextContactDate) < nowBrazil() ? 'text-red-600' : 'text-green-600')}`}>
                             {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="py-3 px-4 text-xs">
-                        {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
-                      </td>
                       {canAct && (
-                        <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex flex-wrap gap-2 items-center">
-                          <Button
-                            size="sm"
-                            className="bg-green-600 hover:bg-green-700 text-white"
-                            onClick={() => openConverter(lead)}
-                            title="Converter em cliente (cadastro + 1º pedido)"
-                            data-testid={`button-converter-lead-${lead.id}`}
-                          >
-                            <CheckCircle className="h-4 w-4 mr-1" /> Converter
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }}
-                            title="Não convertido (justificativa obrigatória)"
-                            data-testid={`button-naoconvertido-lead-${lead.id}`}
-                          >
-                            <XCircle className="h-4 w-4 mr-1" /> Não Convertido
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-amber-400 text-amber-700"
-                            disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin}
-                            title={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin ? "Prorrogação já utilizada — somente admin pode reagendar" : "Prorrogar (revisita, máx. 15 dias)"}
-                            onClick={() => openProrrogar(lead)}
-                            data-testid={`button-prorrogar-lead-${lead.id}`}
-                          >
-                            <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
-                          </Button>
-                          {isAdmin && (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de Visitas" data-testid={`button-history-lead-${lead.id}`}>
-                              <History className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => handleEdit(lead)} title="Editar" data-testid={`button-edit-lead-${lead.id}`}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(lead.id)} title="Excluir" data-testid={`button-delete-lead-${lead.id}`}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
+                        <td className="py-3 px-4 sticky right-0 bg-white dark:bg-gray-950" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-nowrap gap-2 items-center justify-end">
+                            {descartado ? (
+                              <Button
+                                size="sm"
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                                disabled={resgatarMut.isPending}
+                                onClick={() => { if (confirm('Resgatar este lead? Ele volta para a lista como novo, com os mesmos dados.')) resgatarMut.mutate(lead.id); }}
+                                title="Resgatar (volta para a lista como novo)"
+                                data-testid={`button-resgatar-lead-${lead.id}`}
+                              >
+                                <History className="h-4 w-4 mr-1" /> Resgatar
+                              </Button>
+                            ) : (
+                              <>
+                                <Button
+                                  size="sm"
+                                  className="bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
+                                  onClick={() => openConverter(lead)}
+                                  title="Converter em cliente (cadastro + 1º pedido)"
+                                  data-testid={`button-converter-lead-${lead.id}`}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" /> Converter
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="whitespace-nowrap"
+                                  onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }}
+                                  title="Não convertido (justificativa obrigatória)"
+                                  data-testid={`button-naoconvertido-lead-${lead.id}`}
+                                >
+                                  <XCircle className="h-4 w-4 mr-1" /> Não Convertido
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-amber-400 text-amber-700 whitespace-nowrap"
+                                  disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin}
+                                  title={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin ? "Prorrogação já utilizada — somente admin pode reagendar" : "Prorrogar (revisita, máx. 15 dias)"}
+                                  onClick={() => openProrrogar(lead)}
+                                  data-testid={`button-prorrogar-lead-${lead.id}`}
+                                >
+                                  <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
+                                </Button>
+                              </>
+                            )}
+                            {isAdmin && (
+                              <>
+                                <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => handleEdit(lead)} title="Editar lead" data-testid={`button-edit-lead-${lead.id}`}>
+                                  <Edit className="h-4 w-4 mr-1" /> Editar
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de Visitas" data-testid={`button-history-lead-${lead.id}`}>
+                                <History className="h-4 w-4" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(lead.id)} title="Excluir" data-testid={`button-delete-lead-${lead.id}`}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </td>
                       )}
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
