@@ -1672,6 +1672,13 @@ export async function generateBoletoForReceivable(receivable: any, item: any): P
     if (!account) return { ok: false, skipped: true }; // nenhuma conta com boleto BB habilitado -> no-op silencioso
     let customer: any = null;
     try { if (item.customerId) customer = await storage.getCustomer(item.customerId); } catch {}
+    // Desconto de cobranca (%) do cadastro do cliente -> desconto ate o vencimento no boleto.
+    // customers.collection_discount nao esta no schema drizzle; busca via SQL cru.
+    let descontoPct = 0;
+    try {
+      const cid = receivable.customerId || item.customerId;
+      if (cid) { const dq: any = await db.execute(sql`SELECT collection_discount FROM customers WHERE id = ${cid} LIMIT 1`); descontoPct = parseFloat(String((dq?.rows ?? dq ?? [])[0]?.collection_discount ?? '0')) || 0; }
+    } catch {}
     const r = await registrarBoleto(account.id, {
       amount: parseFloat(receivable.amount),
       dueDate: receivable.dueDate ? new Date(receivable.dueDate) : new Date(Date.now() + 30 * 864e5),
@@ -1686,6 +1693,7 @@ export async function generateBoletoForReceivable(receivable: any, item: any): P
       fiscalInvoiceId: receivable.fiscalInvoiceId,
       customerId: receivable.customerId,
       billingPipelineId: item.id,
+      descontoPct,
     });
     if (r.success) console.log(`[BB-BOLETO] hook: boleto gerado p/ receivable ${receivable.id} (${r.sandbox ? 'homolog' : 'PRODUCAO'})`);
     else console.warn(`[BB-BOLETO] hook: nao gerou boleto (${r.error})`);
