@@ -11,6 +11,7 @@ interface RouteMapProps {
     customerName: string;
     customerLatitude: string | null;
     customerLongitude: string | null;
+    visitType?: string;
     actualCheckIn?: string | null;
     actualCheckOut?: string | null;
     checkInPhotoUrl?: string | null;
@@ -18,6 +19,7 @@ interface RouteMapProps {
     checkInLongitude?: string | null;
   }>;
   virtualVisits?: Array<{ id: string; customerName: string; customerLatitude: string | null; customerLongitude: string | null }>;
+  repescagemPoints?: Array<{ id: string; customerName: string; latitude: string | null; longitude: string | null }>;
   optimizedOrder: string[];
   checkpoints?: Array<{
     visitId: string;
@@ -35,7 +37,7 @@ interface RouteMapProps {
   }) => void;
 }
 
-export default function RouteMap({ homeLocation, visits, virtualVisits = [], optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
+export default function RouteMap({ homeLocation, visits, virtualVisits = [], repescagemPoints = [], optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
@@ -110,6 +112,11 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], opt
       [homeLocation.latitude, homeLocation.longitude]
     ];
 
+    // Todos os pontos plotados (para enquadrar o mapa com presenciais, leads e repescagem).
+    const allPoints: [number, number][] = [
+      [homeLocation.latitude, homeLocation.longitude]
+    ];
+
     // Adicionar marcadores para cada visita na ordem otimizada
     optimizedOrder.forEach((visitId, index) => {
       const visit = visits.find(v => v.id === visitId);
@@ -120,19 +127,24 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], opt
 
       // Adicionar coordenada à rota
       routeCoordinates.push([lat, lon]);
+      allPoints.push([lat, lon]);
+
+      const isLead = visit.visitType === 'lead';
 
       // Determinar status da visita
-      const status = visit.actualCheckOut 
-        ? 'completed' 
-        : visit.actualCheckIn 
-        ? 'in_progress' 
+      const status = visit.actualCheckOut
+        ? 'completed'
+        : visit.actualCheckIn
+        ? 'in_progress'
         : 'pending';
 
-      // Cor baseada no status
-      const color = status === 'completed' 
-        ? 'bg-green-600' 
-        : status === 'in_progress' 
-        ? 'bg-blue-600' 
+      // Cor baseada no status (leads em âmbar para se distinguir dos clientes)
+      const color = isLead
+        ? 'bg-amber-500'
+        : status === 'completed'
+        ? 'bg-green-600'
+        : status === 'in_progress'
+        ? 'bg-blue-600'
         : 'bg-gray-400';
 
       // Criar ícone numerado
@@ -160,7 +172,7 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], opt
       L.marker([lat, lon], { icon: visitIcon })
         .addTo(map)
         .bindPopup(`
-          <strong>${index + 1}. ${visit.customerName}</strong><br>
+          <strong>${index + 1}. ${visit.customerName}</strong>${isLead ? ' <em>(Lead)</em>' : ''}<br>
           Status: ${statusText}
         `);
     });
@@ -183,20 +195,41 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], opt
         .bindPopup(`<strong>${visit.customerName}</strong><br>🟣 Cliente virtual (atendimento remoto)`);
     });
 
+    // Marcadores de REPESCAGEM (âmbar "R") — pelas coordenadas do cliente; NÃO entram no traçado.
+    (repescagemPoints || []).forEach((p) => {
+      if (!p.latitude || !p.longitude) return;
+      const rlat = parseFloat(p.latitude);
+      const rlon = parseFloat(p.longitude);
+      if (isNaN(rlat) || isNaN(rlon)) return;
+      allPoints.push([rlat, rlon]);
+      const rIconHtml = renderToStaticMarkup(
+        <div className="bg-amber-500 rounded-full shadow-lg flex items-center justify-center border-2 border-white"
+             style={{ width: '28px', height: '28px' }}>
+          <span className="text-white font-bold text-xs">R</span>
+        </div>
+      );
+      const rIcon = L.divIcon({ html: rIconHtml, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+      L.marker([rlat, rlon], { icon: rIcon })
+        .addTo(map)
+        .bindPopup(`<strong>${p.customerName}</strong><br>🟡 Repescagem`);
+    });
+
     // Voltar para casa
     routeCoordinates.push([homeLocation.latitude, homeLocation.longitude]);
 
     // Desenhar linha da rota otimizada
     if (routeCoordinates.length > 1) {
-      const routeLine = L.polyline(routeCoordinates, {
+      L.polyline(routeCoordinates, {
         color: '#3b82f6',
         weight: 3,
         opacity: 0.7,
         dashArray: '10, 5',
       }).addTo(map);
+    }
 
-      // Ajustar zoom para mostrar toda a rota
-      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+    // Ajustar zoom para mostrar TODOS os pontos (presenciais, leads e repescagem)
+    if (allPoints.length > 1) {
+      map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
     }
 
     // Adicionar marcadores de checkpoints reais (se houver)
@@ -283,7 +316,7 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], opt
       }).addTo(map);
     }
 
-  }, [homeLocation, visits, virtualVisits, optimizedOrder, checkpoints, hasValidCoordinates]);
+  }, [homeLocation, visits, virtualVisits, repescagemPoints, optimizedOrder, checkpoints, hasValidCoordinates]);
 
   if (!hasValidCoordinates) {
     return (
