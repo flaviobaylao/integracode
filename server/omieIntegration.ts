@@ -3609,6 +3609,10 @@ export class OmieService {
                   // FIX (01/jul): PRESERVAR o vendedor existente (fonte de verdade = 1.0/seller-by-doc).
                   // Antes: resolvedSellerId(Omie) sobrescrevia e revertia o vendedor correto. Agora só preenche se vazio.
                   const finalSellerId = (existingCustomer.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : resolvedSellerId;
+                  // PRESERVAR campos geridos localmente no 2.0 (regra do Flavio): nome fantasia e email
+                  // NAO devem ser sobrescritos pelo sync do Omie — so preenche se estiver vazio no 2.0.
+                  const finalFantasyName = (existingCustomer.fantasyName && String(existingCustomer.fantasyName).trim() !== '') ? existingCustomer.fantasyName : converted.fantasyName;
+                  const finalEmail = (existingCustomer.email && String(existingCustomer.email).trim() !== '') ? existingCustomer.email : converted.email;
 
                   await this.storage.updateCustomer(existingCustomer.id, {
                     name: converted.name,
@@ -3616,9 +3620,9 @@ export class OmieService {
                     cpf: converted.cpf,
                     cnpj: converted.cnpj,
                     companyName: converted.companyName,
-                    fantasyName: converted.fantasyName,
+                    fantasyName: finalFantasyName,
                     phone: finalPhone,
-                    email: converted.email,
+                    email: finalEmail,
                     address: converted.address,
                     city: converted.city,
                     state: converted.state,
