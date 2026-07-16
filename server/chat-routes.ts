@@ -3709,6 +3709,38 @@ export function registerChatRoutes(app: Express): void {
   });
 
   // GET /api/chat/conversations/messages/:conversationId - Mensagens de uma conversa
+
+  // GET /api/chat/conversation-for-customer/:customerId - conversa da Central (texto) p/ anexar no Registro de Atendimento
+  app.get("/api/chat/conversation-for-customer/:customerId", async (req: any, res: any) => {
+    try {
+      const { customerId } = req.params;
+      const customer = await storage.getCustomer(customerId);
+      const rawPhone = (customer as any)?.phone || "";
+      if (!rawPhone) {
+        return res.json({ found: false, reason: "Cliente sem telefone cadastrado" });
+      }
+      const normalized = normalizePhoneNumber(String(rawPhone));
+      const variants = getPhoneVariants(normalized);
+      let conversation: any = null;
+      for (const v of variants) {
+        conversation = await storage.getChatConversationByPhone(v);
+        if (conversation) break;
+      }
+      if (!conversation) {
+        return res.json({ found: false, reason: "Sem conversa vinculada na Central de Atendimento" });
+      }
+      const msgs = await storage.getChatMessages(conversation.id);
+      const messages = (msgs || []).map((m: any) => ({
+        senderType: m.senderType,
+        content: m.content,
+        createdAt: m.createdAt,
+      }));
+      return res.json({ found: true, conversationId: conversation.id, customerName: conversation.customerName, phone: normalized, messages });
+    } catch (error: any) {
+      console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
+      return res.status(500).json({ found: false, error: error?.message || "erro" });
+    }
+  });
   app.get("/api/chat/conversations/:conversationId/messages", async (req, res) => {
     try {
       const { conversationId } = req.params;
