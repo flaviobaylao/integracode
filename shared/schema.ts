@@ -1668,20 +1668,30 @@ export const leads = pgTable("leads", {
   lastCheckInAt: timestamp("last_check_in_at"),
   lastCheckOutAt: timestamp("last_check_out_at"),
   
-  // Data do próximo contato (definida no registro de atendimento, padrão: 7 dias após último atendimento)
+  // Data do próximo contato / RETORNO (auto: cadastro + 15 dias, encaixada na rota; travada p/ o vendedor)
   nextContactDate: timestamp("next_contact_date"),
-  
+
+  // Fluxo de retorno de lead (15 dias)
+  originalReturnDate: timestamp("original_return_date"), // 1a data de retorno calculada (auditoria; nao muda na prorrogacao)
+  postponementCount: integer("postponement_count").notNull().default(0), // nº de prorrogacoes ja feitas (TRAVA em 1)
+  nonConversionReason: varchar("non_conversion_reason"), // motivo padronizado do descarte (nao-conversao)
+  returnOverdue: boolean("return_overdue").notNull().default(false), // marcado pelo cron quando a data passou sem retorno
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertLeadSchema = createInsertSchema(leads).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertLeadSchema = createInsertSchema(leads).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   lastCheckInAt: true,
   lastCheckOutAt: true,
-  nextContactDate: true
+  nextContactDate: true,
+  originalReturnDate: true,
+  postponementCount: true,
+  nonConversionReason: true,
+  returnOverdue: true
 }).extend({
   latitude: z.string().or(z.number()),
   longitude: z.string().or(z.number()),
