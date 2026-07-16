@@ -6599,6 +6599,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Reconciliacao em massa: remove da lista de Clientes Ativos (active_customers) todos os
   // clientes que ja estao inativos em customers (is_active=false). Corrige o descompasso
   // historico em que a inativacao marcava customers.isActive=false mas nao removia da lista.
+  // Remove da lista de Clientes Ativos os registros marcados como "nao encontrado no sistema"
+  // (active_customers.match_status = 'unmatched'). Remocao reversivel (is_active=false): sai da
+  // lista sem apagar a linha; nao afeta o cadastro de clientes.
+  app.post('/api/admin/remove-unmatched-active-customers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const result: any = await db.execute(sql`
+        UPDATE active_customers
+        SET is_active = false, deactivated_at = now(), updated_at = now()
+        WHERE is_active = true AND match_status = 'unmatched'
+        RETURNING id
+      `);
+      const removed = result?.rowCount ?? (result?.rows?.length ?? 0);
+      console.log(`\u2705 [REMOVE-UNMATCHED] ${removed} registro(s) 'nao encontrado no sistema' removido(s) da lista de ativos.`);
+      res.json({ message: 'Remocao concluida', removed });
+    } catch (error: any) {
+      console.error('\u274c [REMOVE-UNMATCHED] erro:', error?.message || error);
+      res.status(500).json({ message: error?.message || 'Erro ao remover nao encontrados' });
+    }
+  });
+
   app.post('/api/admin/reconcile-inactive-active-customers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const result: any = await db.execute(sql`
