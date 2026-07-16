@@ -6596,6 +6596,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Run migration to permanent cards (admin only)
+  // Reconciliacao em massa: remove da lista de Clientes Ativos (active_customers) todos os
+  // clientes que ja estao inativos em customers (is_active=false). Corrige o descompasso
+  // historico em que a inativacao marcava customers.isActive=false mas nao removia da lista.
+  app.post('/api/admin/reconcile-inactive-active-customers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const result: any = await db.execute(sql`
+        UPDATE active_customers
+        SET is_active = false, deactivated_at = now(), updated_at = now()
+        WHERE is_active = true
+          AND customer_id IN (SELECT id FROM customers WHERE is_active = false)
+        RETURNING id
+      `);
+      const reconciled = result?.rowCount ?? (result?.rows?.length ?? 0);
+      console.log(`\u2705 [RECONCILE-INACTIVE] ${reconciled} cliente(s) removido(s) da lista de ativos (ja inativos em customers).`);
+      res.json({ message: 'Reconciliacao concluida', reconciled });
+    } catch (error: any) {
+      console.error('\u274c [RECONCILE-INACTIVE] erro:', error?.message || error);
+      res.status(500).json({ message: error?.message || 'Erro na reconciliacao' });
+    }
+  });
+
   app.post('/api/admin/migrate-to-permanent-cards', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const { dryRun = true } = req.body;
