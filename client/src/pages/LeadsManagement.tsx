@@ -426,12 +426,12 @@ export default function LeadsManagement() {
     very_hot: "bg-red-500"
   };
 
-  // Filtrar leads
-  const filteredLeads = useMemo(() => {
-    return leads.filter(lead => {
-      // Convertidos saem da lista (contam apenas nas caixas por vendedor)
-      if (lead.status === 'converted') return false;
-
+  // Base para estatísticas e lista: aplica TODOS os filtros (nome, vendedor,
+  // datas de criação e de próximo contato), MAS mantém todos os status.
+  // As caixas de "Desempenho por vendedor" usam esta base, então respeitam o
+  // filtro por período (em branco = tudo, incluindo cadastros antigos).
+  const statsBaseLeads = useMemo(() => {
+    return (leads as any[]).filter(lead => {
       // Filtro por nome
       if (filterName && !lead.fantasyName.toLowerCase().includes(filterName.toLowerCase())) {
         return false;
@@ -476,6 +476,11 @@ export default function LeadsManagement() {
     });
   }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
+  // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
+  const filteredLeads = useMemo(() => {
+    return statsBaseLeads.filter((lead: any) => lead.status !== 'converted');
+  }, [statsBaseLeads]);
+
   const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const sortedLeads = sortRows(filteredLeads, (lead: any, key: string) => {
     switch (key) {
@@ -507,7 +512,7 @@ export default function LeadsManagement() {
   const sellerStats = useMemo(() => {
     const nameById = new Map((allUsers || []).map((u: any) => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id]));
     const byId: Record<string, { id: string; name: string; convertidos: number; naoConvertidos: number; prorrogados: number }> = {};
-    for (const l of (leads as any[])) {
+    for (const l of (statsBaseLeads as any[])) {
       const sid = l.assignedTo || 'sem_vendedor';
       if (!byId[sid]) byId[sid] = { id: sid, name: sid === 'sem_vendedor' ? 'Sem vendedor' : (nameById.get(sid) || 'Vendedor'), convertidos: 0, naoConvertidos: 0, prorrogados: 0 };
       if (l.status === 'converted') byId[sid].convertidos++;
@@ -515,7 +520,7 @@ export default function LeadsManagement() {
       else if (Number(l.postponementCount || 0) >= 1) byId[sid].prorrogados++;
     }
     return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name));
-  }, [leads, allUsers]);
+  }, [statsBaseLeads, allUsers]);
 
   if (isLoading) {
     return (
