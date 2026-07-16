@@ -1360,10 +1360,12 @@ export default function RotaDoDia() {
                     customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
                     customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
                   }))}
-                  virtualVisits={((route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual')).map((visit: any) => ({
-                    ...visit,
-                    customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
-                    customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
+                  virtualVisits={[]}
+                  repescagemPoints={(Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => ({
+                    id: r.assignmentId,
+                    customerName: r.customerName,
+                    latitude: r.latitude != null ? String(r.latitude) : null,
+                    longitude: r.longitude != null ? String(r.longitude) : null,
                   }))}
                   optimizedOrder={route.optimizedOrder || []}
                   checkpoints={route.checkpoints || []}
