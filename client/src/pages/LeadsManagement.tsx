@@ -41,6 +41,8 @@ export default function LeadsManagement() {
   const [obsNao, setObsNao] = useState<string>("");
   const [prorrogarLead, setProrrogarLead] = useState<Lead | null>(null);
   const [novaDataProrrogar, setNovaDataProrrogar] = useState<string>("");
+  // Ver justificativa de um lead não convertido (somente leitura)
+  const [justificativaLead, setJustificativaLead] = useState<Lead | null>(null);
   const [formData, setFormData] = useState({
     fantasyName: "",
     latitude: "",
@@ -89,6 +91,12 @@ export default function LeadsManagement() {
   // Fetch last service logs for leads
   const { data: lastServiceLogs = {} } = useQuery<Record<string, { date: string; attendant: string; serviceType: string }>>({
     queryKey: ['/api/service-logs/last/lead'],
+  });
+
+  // Visitas do lead selecionado para ver a justificativa de não-conversão
+  const { data: justVisits = [], isLoading: justLoading } = useQuery<any[]>({
+    queryKey: ['/api/leads', justificativaLead?.id, 'visits'],
+    enabled: !!justificativaLead,
   });
 
   // Filter vendors from users
@@ -718,7 +726,7 @@ export default function LeadsManagement() {
       {/* Leads List Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Leads ({filteredLeads.length})</CardTitle>
+          <CardTitle>Leads ({filteredLeads.filter((l: any) => l.status !== 'discarded').length})</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-auto max-h-[70vh] rounded-md border">
@@ -753,7 +761,7 @@ export default function LeadsManagement() {
                       key={lead.id}
                       className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${descartado ? 'bg-gray-50/60 dark:bg-gray-900/40 text-gray-400 dark:text-gray-500' : ''}`}
                       data-testid={`lead-row-${lead.id}`}
-                      onClick={() => setSelectedLeadForService(lead)}
+                      onClick={() => descartado ? setJustificativaLead(lead) : setSelectedLeadForService(lead)}
                     >
                       <td className="py-3 px-4">
                         {lead.temperature ? (
@@ -784,7 +792,15 @@ export default function LeadsManagement() {
                             <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>
                           )}
                           {descartado && (lead as any).nonConversionReason && (
-                            <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 font-semibold">Motivo: {(lead as any).nonConversionReason}</Badge>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setJustificativaLead(lead); }}
+                              title="Ver justificativa da não-conversão"
+                              className="text-left"
+                            >
+                              <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 font-semibold cursor-pointer hover:bg-red-200 dark:hover:bg-red-800">Motivo: {(lead as any).nonConversionReason}</Badge>
+                              <span className="block text-[10px] text-blue-600 dark:text-blue-400 underline mt-0.5">ver justificativa</span>
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1147,6 +1163,55 @@ export default function LeadsManagement() {
             <Button variant="destructive" disabled={!motivoNao || !obsNao.trim() || naoConverterMut.isPending} onClick={() => naoConverterMut.mutate()}>
               Confirmar não-conversão
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Ver justificativa da não-conversão (somente leitura) */}
+      <Dialog open={!!justificativaLead} onOpenChange={(o) => { if (!o) setJustificativaLead(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Justificativa da não-conversão</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{justificativaLead?.fantasyName}</p>
+            <div>
+              <Label>Motivo</Label>
+              <div className="mt-1">
+                <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 font-semibold">
+                  {(justificativaLead as any)?.nonConversionReason || '—'}
+                </Badge>
+              </div>
+            </div>
+            <div>
+              <Label>Justificativa / observação</Label>
+              {justLoading ? (
+                <p className="text-sm text-muted-foreground mt-1">Carregando…</p>
+              ) : (() => {
+                const nv = (justVisits as any[])
+                  .filter((v: any) => typeof v?.observation === 'string' && v.observation.includes('NÃO CONVERTIDO'))
+                  .sort((a: any, b: any) => new Date(b?.visitDate || b?.createdAt || 0).getTime() - new Date(a?.visitDate || a?.createdAt || 0).getTime());
+                const last = nv[0];
+                if (!last) {
+                  return <p className="text-sm text-muted-foreground mt-1">Nenhuma justificativa registrada.</p>;
+                }
+                const obs = String(last.observation);
+                const detail = obs.includes(' - ') ? obs.slice(obs.indexOf(' - ') + 3) : obs;
+                const when = last.visitDate || last.createdAt;
+                return (
+                  <div className="mt-1 space-y-1">
+                    <p className="text-sm whitespace-pre-wrap rounded-md border p-3 bg-gray-50 dark:bg-gray-900">{detail}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Registrado por {last.userName || '—'}
+                      {when ? ` em ${formatInTimeZone(new Date(when), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}` : ''}
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setJustificativaLead(null)}>Fechar</Button>
           </div>
         </DialogContent>
       </Dialog>
