@@ -25832,7 +25832,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
         // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias.
         try {
-          const _custs = await __sellerCustomers(String((lead as any).assignedTo || '')));
+          const _custs = await __sellerCustomers(String((lead as any).assignedTo || ''));
           const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
           _ret = __snapToWeekday(_ret, _wd, 3, null, null);
         } catch (_snapErr) { /* mantém _ret */ }
