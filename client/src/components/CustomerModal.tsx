@@ -23,6 +23,10 @@ interface CustomerModalProps {
   isOpen: boolean;
   onClose: () => void;
   customer?: Customer | null;
+  // Prefill ao abrir para NOVO cadastro (ex.: conversão de lead).
+  initialData?: any;
+  // Chamado após criar um cliente NOVO com sucesso (recebe o cliente criado).
+  onCreated?: (created: any) => void;
 }
 
 interface CNPJData {
@@ -103,7 +107,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
   return Array.from(new Set(normalized));
 }
 
-export default function CustomerModal({ isOpen, onClose, customer }: CustomerModalProps) {
+export default function CustomerModal({ isOpen, onClose, customer, initialData, onCreated }: CustomerModalProps) {
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
@@ -268,8 +272,20 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         deliveryTimeSlots: [],
         deliverySaturdayTimeSlots: [],
       });
+      // Prefill para NOVO cadastro (ex.: conversão de lead): preenche o que já sabemos.
+      if (initialData) {
+        const _t = initialData.customerType || 'pessoa_fisica';
+        setCustomerType(_t);
+        form.setValue('customerType', _t);
+        if (initialData.name) form.setValue('name', initialData.name);
+        if (initialData.phone) form.setValue('phone', initialData.phone);
+        if (initialData.sellerId) form.setValue('sellerId', initialData.sellerId);
+        if (initialData.address) form.setValue('address', initialData.address);
+        if (initialData.latitude != null && initialData.latitude !== '') form.setValue('latitude', String(initialData.latitude));
+        if (initialData.longitude != null && initialData.longitude !== '') form.setValue('longitude', String(initialData.longitude));
+      }
     }
-  }, [customer, form]);
+  }, [customer, form, initialData]);
 
   const captureLocation = () => {
     setIsCapturingLocation(true);
@@ -455,6 +471,8 @@ export default function CustomerModal({ isOpen, onClose, customer }: CustomerMod
         title: "Sucesso",
         description,
       });
+      // Novo cliente criado a partir de um lead: avisa quem abriu (para marcar o lead convertido).
+      if (!customer && onCreated) { try { onCreated(response); } catch (_e) {} }
       onClose();
     },
     onError: (error) => {
