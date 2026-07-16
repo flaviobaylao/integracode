@@ -1057,19 +1057,7 @@ export default function ActiveCustomers() {
           <GeocodeAllButton />
           {isAdmin && (
             <Button
-              variant="outline"
-              className="border-orange-300 text-orange-600 hover:bg-orange-50"
-              onClick={() => setShowPendingOmieDialog(true)}
-              data-testid="button-pending-omie"
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Pendentes Omie
-            </Button>
-          )}
-          {isAdmin && (
-            <Button
-              variant="outline"
-              className="border-blue-600 text-blue-600 hover:bg-blue-50"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
               onClick={() => startReceitaSyncMutation.mutate()}
               disabled={receitaSync?.status === 'running' || startReceitaSyncMutation.isPending}
               title="Atualiza cadastro (razão social, endereço, cidade, UF, CEP e inscrição estadual) dos clientes ativos com dados faltantes, usando os dados oficiais do CNPJ (Receita/SEFAZ/CNPJ.ws). Contatos não são alterados."
@@ -1083,49 +1071,31 @@ export default function ActiveCustomers() {
               Atualizar Cadastros (SEFAZ)
             </Button>
           )}
-          <Button 
-            variant="outline" 
-            className="border-purple-600 text-purple-600 hover:bg-purple-50"
+          <Button
+            className="bg-purple-600 hover:bg-purple-700 text-white"
             onClick={handleNewLead}
             data-testid="button-new-lead"
           >
             <Plus className="h-4 w-4 mr-2" />
             Novo Lead
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            className="bg-slate-600 hover:bg-slate-700 text-white"
             onClick={handleDownloadTemplate}
             data-testid="button-download-template"
           >
             <Download className="h-4 w-4 mr-2" />
             Template
           </Button>
-          <Button 
-            variant="outline"
-            className="border-green-600 text-green-600 hover:bg-green-50"
+          <Button
+            className="bg-green-600 hover:bg-green-700 text-white"
             onClick={handleExportContacts}
             data-testid="button-export-contacts"
           >
             <FileSpreadsheet className="h-4 w-4 mr-2" />
             Exportar Contatos
           </Button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".xlsx,.xls"
-            className="hidden"
-            data-testid="input-file-upload"
-          />
-          <Button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadMutation.isPending}
-            data-testid="button-upload-file"
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            {uploadMutation.isPending ? "Enviando..." : "Enviar Planilha"}
-          </Button>
-          <Button 
+          <Button
             onClick={() => generateVisitsMutation.mutate()}
             disabled={generateVisitsMutation.isPending}
             className="bg-blue-600 hover:bg-blue-700"
