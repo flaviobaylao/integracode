@@ -32,6 +32,15 @@ import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient"
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
+// Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
+// (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
+const HIDDEN_ROUTE_SELLER_IDS = new Set<string>([
+  'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
+  'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
+  'omie-vendor-4253571754',               // Fabio H
+  'omie-vendor-4324270246',               // Lorenna Pina
+]);
+
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
   if (!weekdaysJson) return '';
@@ -1068,7 +1077,7 @@ export default function RotaDoDia() {
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing')).sort(compareSellersByType).map((seller) => (
+                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !HIDDEN_ROUTE_SELLER_IDS.has(s.id)).sort(compareSellersByType).map((seller) => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName}
                     </SelectItem>
