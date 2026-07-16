@@ -178,7 +178,7 @@ async function runSync(startedBy: string | null) {
         if (r.ok && r.data) {
           const d = r.data;
           if (d.razaoSocial) upd.companyName = String(d.razaoSocial).trim().slice(0, 120);
-          if (d.fantasia) upd.fantasyName = String(d.fantasia).trim().slice(0, 120);
+          // NOME FANTASIA: NAO sobrescrever (gerido localmente no 2.0, regra do Flavio). Antes: upd.fantasyName = d.fantasia
           const addr = ([d.logradouro, d.numero].filter(Boolean).join(", ") + (d.complemento ? ` ${d.complemento}` : "")).trim();
           if (addr.length > 3) upd.address = addr.slice(0, 200);
           if (d.bairro) upd.neighborhood = String(d.bairro).trim().slice(0, 80);
