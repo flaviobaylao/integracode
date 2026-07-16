@@ -2200,15 +2200,26 @@ export default function RotaDoDia() {
                           <MessageCircle className="h-4 w-4" />
                         </Button>
                       )}
-                      {r.phase === 'telemarketing' && (
+                      {r.customerId && (
                         <Button
                           size="icon" variant="ghost"
-                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
                           onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
                           title="Registrar Pedido/Atendimento"
                           data-testid={`button-repescagem-registro-${r.customerId}`}
                         >
                           <FileText className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.latitude && r.longitude && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                          onClick={(e) => { e.stopPropagation(); window.open(`https://waze.com/ul?ll=${r.latitude},${r.longitude}&navigate=yes`, '_blank'); }}
+                          title="Abrir no Waze"
+                          data-testid={`button-repescagem-waze-${r.customerId}`}
+                        >
+                          <Navigation className="h-4 w-4" />
                         </Button>
                       )}
                       {isAdmin && (
