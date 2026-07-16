@@ -43,7 +43,7 @@ interface GeocodeAllButtonProps {
 
 // Botao ADMIN: busca/recalcula latitude e longitude de TODOS os clientes.
 // PJ -> endereco fiscal cadastrado (origem do CNPJ); PF -> endereco de cadastro. Nominatim/OSM em segundo plano.
-export default function GeocodeAllButton({ size = "sm", variant = "outline", className, label = "Buscar coordenadas", customerIds }: GeocodeAllButtonProps) {
+export default function GeocodeAllButton({ size = "sm", variant = "default", className = "bg-teal-600 hover:bg-teal-700 text-white", label = "Buscar coordenadas", customerIds }: GeocodeAllButtonProps) {
   const scoped = Array.isArray(customerIds) && customerIds.length > 0;
   const { user } = useAuth();
   const { toast } = useToast();
