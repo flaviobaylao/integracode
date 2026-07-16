@@ -1920,6 +1920,12 @@ export class DatabaseStorage implements IStorage {
         throw new Error(`Tipo de recorrência inválido: ${recurrenceType}`);
     }
 
+    // 🗓️ DIAS ÚTEIS (seg–sex): nunca agendar sábado/domingo. Se a data cair no fim
+    // de semana, avança para a próxima segunda-feira, preservando a periodicidade.
+    while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+      nextDate.setDate(nextDate.getDate() + 1);
+    }
+
     return nextDate;
   }
 
@@ -7461,6 +7467,15 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
 
+          // 🗓️ DIAS ÚTEIS (seg–sex): nunca agendar sábado/domingo. Remove o fim de
+          // semana dos dias-alvo; se o cliente estiver configurado SOMENTE em fim de
+          // semana, reprograma para dias úteis (seg–sex), mantendo a periodicidade.
+          let effectiveWeekdays = (Array.isArray(weekdaysArray) ? weekdaysArray : [])
+            .filter((d: any) => { const n = WEEKDAY_MAP[d]; return n !== undefined && n !== 0 && n !== 6; });
+          if (effectiveWeekdays.length === 0) {
+            effectiveWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+          }
+
           // 3. AGRESSIVAMENTE: Deletar TODAS as próximas visitas futuras para este cliente
           // Isso força a regeneração completa quando o dia da rota muda
           const futureCutoff = new Date(today);
@@ -7537,7 +7552,7 @@ export class DatabaseStorage implements IStorage {
                 const dayOfWeek = currentDate.getDay();
                 const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
 
-                if (dayName && weekdaysArray.includes(dayName)) {
+                if (dayName && effectiveWeekdays.includes(dayName) && dayOfWeek !== 0 && dayOfWeek !== 6) {
                   console.log(`🔍 [VISIT-SCHEDULER] ${customer.name}: Tentativa ${attempts + 1}, verificando ${dayName} em ${currentDate.toISOString().split('T')[0]}`);
                   // Verificar se já existe visita nesse dia
                   const dateStr = currentDate.toISOString().split('T')[0];
