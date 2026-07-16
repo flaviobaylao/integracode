@@ -1138,6 +1138,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         address: customers.address, weekdays: customers.weekdays,
         visitPeriodicity: customers.visitPeriodicity,
         virtualService: customers.virtualService,
+        latitude: customers.latitude, longitude: customers.longitude,
       }).from(customers).where(inArray(customers.id, cids));
       const byId = new Map(cs.map(c => [c.id, c]));
 
@@ -1166,6 +1167,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           assignmentId: r.id, customerId: r.customerId, customerName: c?.name || r.customerId,
           phone: c?.phone || null, city: c?.city || null, uf: c?.uf || null,
           address: c?.address || null, weekdays: (c?.weekdays as any) || [],
+          latitude: c?.latitude ?? null, longitude: c?.longitude ?? null,
           visitPeriodicity: per,
           repescagemCount: countReds(r.customerId, per),
           repescagemWindowMonths: per === 'mensal' ? 3 : 2,
