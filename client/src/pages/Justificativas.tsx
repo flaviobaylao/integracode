@@ -4,9 +4,10 @@ import { useAuth } from "@/hooks/useAuth";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { MessageCircle } from "lucide-react";
 
 // VIGIA 3B — Justificativa de não-atendimento (pendências do dia anterior).
-// Piloto: Gilmar (omie-vendor-3882132483). Fonte: /api/vendedor/justificativas/*
+// Fonte: /api/vendedor/justificativas/* (vendedor) e /api/admin/justificativas/pendentes-todos (admin).
 
 const MOTIVOS: [string, string][] = [
   ["fechado", "Estabelecimento fechado"],
@@ -25,10 +26,12 @@ function ontemBRT(): string {
 }
 
 type Pend = { customerId: string; nome: string; cidade?: string };
+type VendBox = { sellerId: string; sellerName: string; phone: string | null; clientes: Pend[] };
 
 export default function Justificativas() {
   const { user } = useAuth();
   const uAny = user as any;
+  const isAdmin = ["admin", "coordinator", "administrative"].includes(uAny?.role);
   const PILOTO = "omie-vendor-3882132483"; // Gilmar
   const sellerId =
     uAny?.omieVendorCode ? "omie-vendor-" + uAny.omieVendorCode : PILOTO;
@@ -39,6 +42,7 @@ export default function Justificativas() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
+  // Vendedor comum: pendências do próprio vendedor.
   const { data, isFetching, refetch } = useQuery<{
     ok: boolean;
     date: string;
@@ -54,6 +58,25 @@ export default function Justificativas() {
       if (!r.ok) throw new Error("Falha ao carregar pendências");
       return r.json();
     },
+    enabled: !isAdmin,
+  });
+
+  // Admin: pendências de TODOS os vendedores, agrupadas por vendedor.
+  const { data: todos, isFetching: fetchingTodos, refetch: refetchTodos } = useQuery<{
+    ok: boolean;
+    date: string;
+    vendedores: VendBox[];
+  }>({
+    queryKey: ["/api/admin/justificativas/pendentes-todos", date, nonce],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/admin/justificativas/pendentes-todos?date=${date}`,
+        { credentials: "include", cache: "no-store" },
+      );
+      if (!r.ok) throw new Error("Falha ao carregar pendências");
+      return r.json();
+    },
+    enabled: isAdmin,
   });
 
   const { data: semana } = useQuery<{
@@ -72,24 +95,27 @@ export default function Justificativas() {
   });
 
   const pendentes = data?.pendentes || [];
+  const vendedores = todos?.vendedores || [];
 
-  const salvar = async (cid: string) => {
-    const reason = sel[cid];
+  const salvar = async (cid: string, sid: string) => {
+    const key = sid + ":" + cid;
+    const reason = sel[key];
     if (!reason) {
       alert("Escolha um motivo.");
       return;
     }
-    setSavingId(cid);
+    setSavingId(key);
     try {
       const r = await fetch(`/api/vendedor/justificativas`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ date, customerId: cid, sellerId, reason, notes: notes[cid] || "" }),
+        body: JSON.stringify({ date, customerId: cid, sellerId: sid, reason, notes: notes[key] || "" }),
       });
       if (!r.ok) throw new Error("save");
       setNonce((n) => n + 1);
-      await refetch();
+      if (isAdmin) await refetchTodos();
+      else await refetch();
     } catch (e) {
       alert("Não foi possível salvar a justificativa.");
     } finally {
@@ -97,17 +123,82 @@ export default function Justificativas() {
     }
   };
 
-  const meuResumo = useMemo(() => {
-    const list = semana?.porVendedor || [];
-    return list;
-  }, [semana]);
+  // Monta o texto padrão do WhatsApp para o vendedor com a relação dos clientes.
+  const buildMsg = (box: VendBox): string => {
+    const linhas = box.clientes
+      .map((c) => `- ${c.nome}${c.cidade ? " (" + c.cidade + ")" : ""}`)
+      .join("\n");
+    return `Bom dia,\nOntem os clientes abaixo não foram atendidos, pode dizer o que houve?\n${linhas}`;
+  };
+
+  // Abre a Central de Atendimento (nova guia) na conversa com o VENDEDOR, já com o texto padrão.
+  const enviarWhatsapp = (box: VendBox) => {
+    const digits = String(box.phone || "").replace(/\D/g, "");
+    if (!digits) {
+      alert("Vendedor sem telefone cadastrado. Cadastre o telefone para enviar pela Central.");
+      return;
+    }
+    const msg = buildMsg(box);
+    window.open(
+      `/telemarketing/atendimento?phone=${digits}&text=${encodeURIComponent(msg)}`,
+      "honest-central-atendimento",
+    );
+  };
+
+  const meuResumo = useMemo(() => semana?.porVendedor || [], [semana]);
+
+  // Linha de um cliente pendente (motivo + observação + justificar).
+  const renderCliente = (p: Pend, sid: string) => {
+    const key = sid + ":" + p.customerId;
+    return (
+      <div
+        key={key}
+        className="border rounded-lg p-3 flex flex-col md:flex-row md:items-end gap-2"
+      >
+        <div className="flex-1">
+          <div className="font-medium">{p.nome}</div>
+          {p.cidade ? (
+            <div className="text-xs text-muted-foreground">{p.cidade}</div>
+          ) : null}
+        </div>
+        <label className="text-xs">
+          Motivo
+          <select
+            className="block border rounded px-2 py-1 text-sm min-w-[200px]"
+            value={sel[key] || ""}
+            onChange={(e) => setSel((s) => ({ ...s, [key]: e.target.value }))}
+          >
+            <option value="">Selecione…</option>
+            {MOTIVOS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <input
+          className="border rounded px-2 py-1 text-sm md:w-56"
+          placeholder="Observação (opcional)"
+          value={notes[key] || ""}
+          onChange={(e) => setNotes((n) => ({ ...n, [key]: e.target.value }))}
+        />
+        <Button
+          size="sm"
+          disabled={savingId === key}
+          onClick={() => salvar(p.customerId, sid)}
+        >
+          {savingId === key ? "Salvando…" : "Justificar"}
+        </Button>
+      </div>
+    );
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="page-justificativas">
       <div className="flex flex-wrap items-center gap-3">
         <BackToDashboardButton />
         <h1 className="text-2xl font-bold">Pendências de Visita — Justificar</h1>
-        {isFetching && (
+        {(isFetching || fetchingTodos) && (
           <span className="text-xs text-muted-foreground">carregando…</span>
         )}
       </div>
@@ -127,68 +218,67 @@ export default function Justificativas() {
         </span>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Não atendidos ({pendentes.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {pendentes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nenhuma pendência para justificar neste dia. 👍
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {pendentes.map((p) => (
-                <div
-                  key={p.customerId}
-                  className="border rounded-lg p-3 flex flex-col md:flex-row md:items-end gap-2"
-                >
-                  <div className="flex-1">
-                    <div className="font-medium">{p.nome}</div>
-                    {p.cidade ? (
-                      <div className="text-xs text-muted-foreground">{p.cidade}</div>
-                    ) : null}
-                  </div>
-                  <label className="text-xs">
-                    Motivo
-                    <select
-                      className="block border rounded px-2 py-1 text-sm min-w-[200px]"
-                      value={sel[p.customerId] || ""}
-                      onChange={(e) =>
-                        setSel((s) => ({ ...s, [p.customerId]: e.target.value }))
-                      }
+      {isAdmin ? (
+        // Visão do administrador: um box por vendedor com seus clientes não atendidos.
+        vendedores.length === 0 ? (
+          <Card>
+            <CardContent className="py-6">
+              <p className="text-sm text-muted-foreground">
+                Nenhuma pendência de não-atendimento neste dia. 👍
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {vendedores.map((box) => (
+              <Card key={box.sellerId} data-testid={`box-vendedor-${box.sellerId}`}>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="text-base">
+                      {box.sellerName} ({box.clientes.length})
+                    </CardTitle>
+                    <Button
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white"
+                      onClick={() => enviarWhatsapp(box)}
+                      title={`Enviar WhatsApp para ${box.sellerName} pela Central de Atendimento`}
+                      data-testid={`button-whatsapp-vendedor-${box.sellerId}`}
                     >
-                      <option value="">Selecione…</option>
-                      {MOTIVOS.map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <input
-                    className="border rounded px-2 py-1 text-sm md:w-56"
-                    placeholder="Observação (opcional)"
-                    value={notes[p.customerId] || ""}
-                    onChange={(e) =>
-                      setNotes((n) => ({ ...n, [p.customerId]: e.target.value }))
-                    }
-                  />
-                  <Button
-                    size="sm"
-                    disabled={savingId === p.customerId}
-                    onClick={() => salvar(p.customerId)}
-                  >
-                    {savingId === p.customerId ? "Salvando…" : "Justificar"}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                      <MessageCircle className="h-4 w-4 mr-1" />
+                      Enviar WhatsApp
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {box.clientes.map((p) => renderCliente(p, box.sellerId))}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )
+      ) : (
+        // Visão do vendedor: seus próprios clientes não atendidos.
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Não atendidos ({pendentes.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {pendentes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nenhuma pendência para justificar neste dia. 👍
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {pendentes.map((p) => renderCliente(p, sellerId))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {meuResumo.length > 0 && (
         <Card>
@@ -223,8 +313,7 @@ export default function Justificativas() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        Piloto de justificativa de não-atendimento. Fonte da pendência: cartão de
-        visita do dia sem check-in e sem venda.
+        Fonte da pendência: cartão de visita do dia sem check-in e sem venda.
       </p>
     </div>
   );
