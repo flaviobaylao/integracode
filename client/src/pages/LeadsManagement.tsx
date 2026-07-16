@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock } from "lucide-react";
 import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +33,14 @@ export default function LeadsManagement() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForService, setSelectedLeadForService] = useState<Lead | null>(null);
   const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
+  // Desfecho do lead (Converter / Não Convertido / Prorrogar)
+  const [converterLead, setConverterLead] = useState<Lead | null>(null);
+  const [cust, setCust] = useState<any>({});
+  const [naoConverterLead, setNaoConverterLead] = useState<Lead | null>(null);
+  const [motivoNao, setMotivoNao] = useState<string>("");
+  const [obsNao, setObsNao] = useState<string>("");
+  const [prorrogarLead, setProrrogarLead] = useState<Lead | null>(null);
+  const [novaDataProrrogar, setNovaDataProrrogar] = useState<string>("");
   const [formData, setFormData] = useState({
     fantasyName: "",
     latitude: "",
@@ -156,6 +164,68 @@ export default function LeadsManagement() {
       });
     },
   });
+
+  // === Desfecho do lead ===
+  const invalidateLeads = () => queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+
+  const converterMut = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/leads/${converterLead!.id}/convert-to-customer`, {
+      name: cust.name,
+      customerType: cust.customerType || 'pessoa_juridica',
+      cpf: cust.cpf || null,
+      cnpj: cust.cnpj || null,
+      companyName: cust.companyName || null,
+      phone: cust.phone,
+      email: cust.email || null,
+      address: cust.address,
+      city: cust.city || null,
+      state: cust.state || null,
+      zipCode: cust.zipCode || null,
+      neighborhood: cust.neighborhood || null,
+      sellerId: converterLead!.assignedTo || null,
+      weekdays: cust.weekdays || ['Seg'],
+      visitPeriodicity: cust.visitPeriodicity || 'semanal',
+    }),
+    onSuccess: () => {
+      toast({ title: "Lead convertido!", description: "Cliente ativo criado. Registre o primeiro pedido na Rota do Dia / Pedidos." });
+      setConverterLead(null); setCust({});
+      invalidateLeads();
+    },
+    onError: (e: any) => toast({ title: "Erro ao converter", description: e?.message || "Verifique os dados", variant: "destructive" }),
+  });
+
+  const naoConverterMut = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/leads/${naoConverterLead!.id}/desfecho`, { acao: 'nao_converter', motivo: motivoNao, observacao: obsNao }),
+    onSuccess: () => {
+      toast({ title: "Lead finalizado", description: "Registrado como NÃO CONVERTIDO." });
+      setNaoConverterLead(null); setMotivoNao(""); setObsNao("");
+      invalidateLeads();
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Falha ao finalizar", variant: "destructive" }),
+  });
+
+  const prorrogarMut = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/leads/${prorrogarLead!.id}/desfecho`, { acao: 'prorrogar', data: novaDataProrrogar }),
+    onSuccess: () => {
+      toast({ title: "Retorno prorrogado", description: "Nova data de visita registrada." });
+      setProrrogarLead(null); setNovaDataProrrogar("");
+      invalidateLeads();
+    },
+    onError: (e: any) => toast({ title: "Não foi possível prorrogar", description: e?.message || "Erro", variant: "destructive" }),
+  });
+
+  const openConverter = (lead: Lead) => {
+    setCust({ name: lead.fantasyName, customerType: 'pessoa_juridica', phone: lead.phone || '', address: '', city: '', neighborhood: '', visitPeriodicity: 'semanal' });
+    setConverterLead(lead);
+  };
+  const openProrrogar = (lead: Lead) => {
+    const d = nowBrazil(); d.setDate(d.getDate() + 15);
+    setNovaDataProrrogar(d.toISOString().slice(0, 10));
+    setProrrogarLead(lead);
+  };
+  // Limites do date picker de prorrogação: amanhã até hoje+15
+  const prorrogarMin = (() => { const d = nowBrazil(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+  const prorrogarMax = (() => { const d = nowBrazil(); d.setDate(d.getDate() + 15); return d.toISOString().slice(0, 10); })();
 
   const resetForm = () => {
     setFormData({
@@ -281,6 +351,7 @@ export default function LeadsManagement() {
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
   const isVendedor = currentUser?.role === 'vendedor';
   const isTelemarketing = currentUser?.role === 'telemarketing';
+  const canAct = isAdmin || isVendedor || isTelemarketing;
 
   const statusLabels: Record<string, string> = {
     pending: "Pendente",
@@ -342,6 +413,9 @@ export default function LeadsManagement() {
   // Filtrar leads
   const filteredLeads = useMemo(() => {
     return leads.filter(lead => {
+      // Convertidos saem da lista (contam apenas nas caixas por vendedor)
+      if (lead.status === 'converted') return false;
+
       // Filtro por nome
       if (filterName && !lead.fantasyName.toLowerCase().includes(filterName.toLowerCase())) {
         return false;
@@ -402,6 +476,9 @@ export default function LeadsManagement() {
     }
   });
 
+  // Não convertidos (descartados) vão para o FINAL da lista, preservando a ordenação dentro de cada grupo
+  const displayLeads = [...sortedLeads].sort((a: any, b: any) => (a.status === 'discarded' ? 1 : 0) - (b.status === 'discarded' ? 1 : 0));
+
   const stats = {
     total: leads.length,
     pending: leads.filter(l => l.status === 'pending').length,
@@ -409,6 +486,20 @@ export default function LeadsManagement() {
     visited: leads.filter(l => l.status === 'visited').length,
     converted: leads.filter(l => l.status === 'converted').length,
   };
+
+  // Contagens por vendedor: Convertidos / Não Convertidos / Prorrogados
+  const sellerStats = useMemo(() => {
+    const nameById = new Map((allUsers || []).map((u: any) => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id]));
+    const byId: Record<string, { id: string; name: string; convertidos: number; naoConvertidos: number; prorrogados: number }> = {};
+    for (const l of (leads as any[])) {
+      const sid = l.assignedTo || 'sem_vendedor';
+      if (!byId[sid]) byId[sid] = { id: sid, name: sid === 'sem_vendedor' ? 'Sem vendedor' : (nameById.get(sid) || 'Vendedor'), convertidos: 0, naoConvertidos: 0, prorrogados: 0 };
+      if (l.status === 'converted') byId[sid].convertidos++;
+      else if (l.status === 'discarded') byId[sid].naoConvertidos++;
+      else if (Number(l.postponementCount || 0) >= 1) byId[sid].prorrogados++;
+    }
+    return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name));
+  }, [leads, allUsers]);
 
   if (isLoading) {
     return (
@@ -469,53 +560,39 @@ export default function LeadsManagement() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-honest-blue">{stats.total}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Agendados</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.scheduled}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Visitados</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{stats.visited}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Convertidos</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.converted}</div>
-          </CardContent>
-        </Card>
+      {/* Contagens por vendedor: Convertidos / Não Convertidos / Prorrogados */}
+      <div>
+        <h2 className="text-sm font-semibold text-muted-foreground mb-2">Desempenho por vendedor</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {sellerStats.length === 0 ? (
+            <Card><CardContent className="py-6 text-sm text-muted-foreground">Nenhum lead atribuído.</CardContent></Card>
+          ) : sellerStats.map((s) => (
+            <Card key={s.id} data-testid={`seller-stats-${s.id}`}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 truncate">
+                  <Users className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="truncate" title={s.name}>{s.name}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-xl font-bold text-green-600">{s.convertidos}</div>
+                    <div className="text-[11px] text-muted-foreground leading-tight">Convertidos</div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold text-red-600">{s.naoConvertidos}</div>
+                    <div className="text-[11px] text-muted-foreground leading-tight">Não convert.</div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold text-amber-600">{s.prorrogados}</div>
+                    <div className="text-[11px] text-muted-foreground leading-tight">Prorrogados</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
 
       {/* Filtros */}
@@ -636,18 +713,18 @@ export default function LeadsManagement() {
                   <SortableTh label="Último Atendimento" colKey="lastService" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
                   <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold" />
-                  {isAdmin && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
+                  {canAct && <th className="text-left py-3 px-4 font-semibold">Ações</th>}
                 </tr>
               </thead>
               <tbody>
-                {sortedLeads.length === 0 ? (
+                {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 10 : 9} className="text-center py-8 text-gray-500">
+                    <td colSpan={canAct ? 10 : 9} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
                 ) : (
-                  sortedLeads.map((lead) => (
+                  displayLeads.map((lead) => (
                     <tr 
                       key={lead.id} 
                       className="border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer" 
@@ -674,11 +751,19 @@ export default function LeadsManagement() {
                         </div>
                       </td>
                       <td className="py-3 px-4">
+                        <div className="flex flex-col gap-1 items-start">
                         <Badge className={statusColors[lead.status]}>
                           {statusLabels[lead.status]}
                         </Badge>
-                      </td>
-                      <td className="py-3 px-4 text-xs">
+                        {Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted' && (
+                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>
+                        )}
+                        {lead.status === 'discarded' && (lead as any).nonConversionReason && (
+                          <span className="text-[11px] text-muted-foreground">Motivo: {(lead as any).nonConversionReason}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-xs">
                         {lastServiceLogs[lead.id] ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="font-medium">
@@ -700,45 +785,53 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4 text-xs">
                         {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
                       </td>
-                      {isAdmin && (
+                      {canAct && (
                         <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setSelectedLeadForVisitHistory(lead)}
-                              title="Histórico de Visitas"
-                              data-testid={`button-history-lead-${lead.id}`}
-                            >
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                            onClick={() => openConverter(lead)}
+                            title="Converter em cliente (cadastro + 1º pedido)"
+                            data-testid={`button-converter-lead-${lead.id}`}
+                          >
+                            <CheckCircle className="h-4 w-4 mr-1" /> Converter
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }}
+                            title="Não convertido (justificativa obrigatória)"
+                            data-testid={`button-naoconvertido-lead-${lead.id}`}
+                          >
+                            <XCircle className="h-4 w-4 mr-1" /> Não Convertido
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-400 text-amber-700"
+                            disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin}
+                            title={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin ? "Prorrogação já utilizada — somente admin pode reagendar" : "Prorrogar (revisita, máx. 15 dias)"}
+                            onClick={() => openProrrogar(lead)}
+                            data-testid={`button-prorrogar-lead-${lead.id}`}
+                          >
+                            <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
+                          </Button>
+                          {isAdmin && (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de Visitas" data-testid={`button-history-lead-${lead.id}`}>
                               <History className="h-4 w-4" />
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setSelectedLeadForService(lead)}
-                              title="Registrar Atendimento"
-                              data-testid={`button-service-lead-${lead.id}`}
-                            >
-                              <FileText className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleEdit(lead)}
-                              data-testid={`button-edit-lead-${lead.id}`}
-                            >
+                            <Button size="sm" variant="ghost" onClick={() => handleEdit(lead)} title="Editar" data-testid={`button-edit-lead-${lead.id}`}>
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleDelete(lead.id)}
-                              data-testid={`button-delete-lead-${lead.id}`}
-                            >
+                            <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(lead.id)} title="Excluir" data-testid={`button-delete-lead-${lead.id}`}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          </div>
-                        </td>
+                          </>
+                          )}
+                        </div>
+                      </td>
                       )}
                     </tr>
                   ))
@@ -978,6 +1071,141 @@ export default function LeadsManagement() {
           }}
         />
       )}
+
+      {/* Dialog: Não Convertido (justificativa obrigatória) */}
+      <Dialog open={!!naoConverterLead} onOpenChange={(o) => { if (!o) setNaoConverterLead(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Não convertido — justificativa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{naoConverterLead?.fantasyName}</p>
+            <div>
+              <Label>Motivo da não-conversão *</Label>
+              <Select value={motivoNao} onValueChange={setMotivoNao}>
+                <SelectTrigger><SelectValue placeholder="Selecione o motivo" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="preco">Preço</SelectItem>
+                  <SelectItem value="sem_interesse">Sem interesse</SelectItem>
+                  <SelectItem value="ja_tem_fornecedor">Já tem fornecedor</SelectItem>
+                  <SelectItem value="fechou">Fechou / encerrou</SelectItem>
+                  <SelectItem value="sem_perfil">Sem perfil</SelectItem>
+                  <SelectItem value="sem_contato">Sem contato</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Justificativa / observação *</Label>
+              <Textarea value={obsNao} onChange={(e) => setObsNao(e.target.value)} placeholder="Descreva o que aconteceu na visita" rows={3} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setNaoConverterLead(null)}>Cancelar</Button>
+            <Button variant="destructive" disabled={!motivoNao || !obsNao.trim() || naoConverterMut.isPending} onClick={() => naoConverterMut.mutate()}>
+              Confirmar não-conversão
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Prorrogar (revisita, máx. 15 dias) */}
+      <Dialog open={!!prorrogarLead} onOpenChange={(o) => { if (!o) setProrrogarLead(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Prorrogar revisita</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{prorrogarLead?.fantasyName}</p>
+            <div>
+              <Label>Nova data da visita (máximo 15 dias)</Label>
+              <Input type="date" value={novaDataProrrogar} min={prorrogarMin} max={prorrogarMax} onChange={(e) => setNovaDataProrrogar(e.target.value)} />
+              <p className="text-[11px] text-muted-foreground mt-1">Permitido de {prorrogarMin.split('-').reverse().join('/')} até {prorrogarMax.split('-').reverse().join('/')}.</p>
+            </div>
+            {Number((prorrogarLead as any)?.postponementCount || 0) >= 1 && (
+              <p className="text-xs text-amber-700">Este lead já foi prorrogado uma vez. Reagendamento permitido apenas para admin.</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setProrrogarLead(null)}>Cancelar</Button>
+            <Button className="bg-amber-600 hover:bg-amber-700 text-white" disabled={!novaDataProrrogar || prorrogarMut.isPending} onClick={() => prorrogarMut.mutate()}>
+              Confirmar prorrogação
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Converter em cliente (cadastro) */}
+      <Dialog open={!!converterLead} onOpenChange={(o) => { if (!o) setConverterLead(null); }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Converter em cliente ativo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nome / Razão social *</Label>
+              <Input value={cust.name || ""} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Tipo *</Label>
+                <Select value={cust.customerType || "pessoa_juridica"} onValueChange={(v) => setCust({ ...cust, customerType: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pessoa_juridica">Pessoa Jurídica (CNPJ)</SelectItem>
+                    <SelectItem value="pessoa_fisica">Pessoa Física (CPF)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{(cust.customerType || "pessoa_juridica") === "pessoa_fisica" ? "CPF" : "CNPJ"}</Label>
+                <Input
+                  value={(cust.customerType === "pessoa_fisica" ? cust.cpf : cust.cnpj) || ""}
+                  onChange={(e) => setCust({ ...cust, [cust.customerType === "pessoa_fisica" ? "cpf" : "cnpj"]: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Telefone *</Label>
+                <Input value={cust.phone || ""} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
+              </div>
+              <div>
+                <Label>Periodicidade</Label>
+                <Select value={cust.visitPeriodicity || "semanal"} onValueChange={(v) => setCust({ ...cust, visitPeriodicity: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="semanal">Semanal</SelectItem>
+                    <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                    <SelectItem value="mensal">Mensal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label>Endereço *</Label>
+              <Input value={cust.address || ""} onChange={(e) => setCust({ ...cust, address: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Cidade</Label>
+                <Input value={cust.city || ""} onChange={(e) => setCust({ ...cust, city: e.target.value })} />
+              </div>
+              <div>
+                <Label>Bairro</Label>
+                <Input value={cust.neighborhood || ""} onChange={(e) => setCust({ ...cust, neighborhood: e.target.value })} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Após criar o cliente, registre o <strong>primeiro pedido</strong> pela Rota do Dia / Pedidos. Dias de visita padrão: Segunda.</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setConverterLead(null)}>Cancelar</Button>
+            <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!cust.name || !cust.phone || !cust.address || converterMut.isPending} onClick={() => converterMut.mutate()}>
+              Converter em cliente
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
