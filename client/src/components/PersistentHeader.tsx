@@ -28,6 +28,11 @@ export default function PersistentHeader() {
       try { setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
     };
     load();
+    // Persistência por USUÁRIO (servidor): hidrata os favoritos salvos na conta.
+    fetch('/api/user/favorites', { credentials: 'include' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d && Array.isArray(d.favorites) && d.favorites.length > 0) { setFavorites(d.favorites); try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(d.favorites)); } catch { /* noop */ } } })
+      .catch(() => { /* noop */ });
     window.addEventListener("storage", load);
     return () => window.removeEventListener("storage", load);
   }, []);
