@@ -56,6 +56,25 @@ cron.schedule('30 8 * * *', async () => {
   await runDebitosVencidosAlertaCron();
 }, { timezone: 'America/Sao_Paulo' });
 
+// 📅 Retorno de lead atrasado: todo dia 06:10 (BRT), marca como "retorno atrasado" os leads
+// agendados cuja data de retorno já passou e o vendedor não deu desfecho — cobrança no dia seguinte.
+cron.schedule('10 6 * * *', async () => {
+  try {
+    const r = await db.execute(sql`
+      UPDATE leads SET return_overdue = true, updated_at = NOW()
+      WHERE status = 'scheduled'
+        AND next_contact_date IS NOT NULL
+        AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND return_overdue = false
+      RETURNING id
+    `);
+    const n = (r.rows || []).length;
+    if (n > 0) console.log(`📅 [LEAD-RETORNO-ATRASADO] ${n} lead(s) marcado(s) como retorno atrasado.`);
+  } catch (e: any) {
+    console.error('[LEAD-RETORNO-ATRASADO] falha no cron:', e?.message);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 cron.schedule('17 * * * *', async () => {
   try {
     const out = await runRadarScan('radar-auto');
