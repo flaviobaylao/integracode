@@ -27,6 +27,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import LeadVisitHistoryModal from "@/components/LeadVisitHistoryModal";
+import CustomerModal from "@/components/CustomerModal";
 
 export default function LeadsManagement() {
   const [isCreating, setIsCreating] = useState(false);
@@ -238,8 +239,17 @@ export default function LeadsManagement() {
     onError: (e: any) => toast({ title: "Não foi possível prorrogar", description: e?.message || "Erro", variant: "destructive" }),
   });
 
+  // Marca o lead como convertido depois que o cliente é criado no formulário de Novo Cliente.
+  const marcarConvertidoMut = useMutation({
+    mutationFn: async (leadId: string) => apiRequest('PATCH', `/api/leads/${leadId}`, { status: 'converted' }),
+    onSuccess: () => {
+      toast({ title: "Lead convertido!", description: "Cliente cadastrado e lead marcado como convertido." });
+      invalidateLeads();
+    },
+    onError: (e: any) => toast({ title: "Cliente criado", description: "Mas não foi possível marcar o lead como convertido: " + (e?.message || ''), variant: "destructive" }),
+  });
+
   const openConverter = (lead: Lead) => {
-    setCust({ name: lead.fantasyName, customerType: 'pessoa_juridica', phone: lead.phone || '', address: '', city: '', neighborhood: '', visitPeriodicity: 'semanal' });
     setConverterLead(lead);
   };
   const openProrrogar = (lead: Lead) => {
@@ -1242,77 +1252,23 @@ export default function LeadsManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog: Converter em cliente (cadastro) */}
-      <Dialog open={!!converterLead} onOpenChange={(o) => { if (!o) setConverterLead(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Converter em cliente ativo</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Nome / Razão social *</Label>
-              <Input value={cust.name || ""} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Tipo *</Label>
-                <Select value={cust.customerType || "pessoa_juridica"} onValueChange={(v) => setCust({ ...cust, customerType: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pessoa_juridica">Pessoa Jurídica (CNPJ)</SelectItem>
-                    <SelectItem value="pessoa_fisica">Pessoa Física (CPF)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>{(cust.customerType || "pessoa_juridica") === "pessoa_fisica" ? "CPF" : "CNPJ"}</Label>
-                <Input
-                  value={(cust.customerType === "pessoa_fisica" ? cust.cpf : cust.cnpj) || ""}
-                  onChange={(e) => setCust({ ...cust, [cust.customerType === "pessoa_fisica" ? "cpf" : "cnpj"]: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Telefone *</Label>
-                <Input value={cust.phone || ""} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
-              </div>
-              <div>
-                <Label>Periodicidade</Label>
-                <Select value={cust.visitPeriodicity || "semanal"} onValueChange={(v) => setCust({ ...cust, visitPeriodicity: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="semanal">Semanal</SelectItem>
-                    <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                    <SelectItem value="mensal">Mensal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label>Endereço *</Label>
-              <Input value={cust.address || ""} onChange={(e) => setCust({ ...cust, address: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Cidade</Label>
-                <Input value={cust.city || ""} onChange={(e) => setCust({ ...cust, city: e.target.value })} />
-              </div>
-              <div>
-                <Label>Bairro</Label>
-                <Input value={cust.neighborhood || ""} onChange={(e) => setCust({ ...cust, neighborhood: e.target.value })} />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">Após criar o cliente, registre o <strong>primeiro pedido</strong> pela Rota do Dia / Pedidos. Dias de visita padrão: Segunda.</p>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setConverterLead(null)}>Cancelar</Button>
-            <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!cust.name || !cust.phone || !cust.address || converterMut.isPending} onClick={() => converterMut.mutate()}>
-              Converter em cliente
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Conversão: abre o formulário COMPLETO de Novo Cliente, prefilled com os dados do lead.
+          Ao criar o cliente, o lead é marcado como convertido (sai da lista). */}
+      {converterLead && (
+        <CustomerModal
+          isOpen={!!converterLead}
+          onClose={() => setConverterLead(null)}
+          initialData={{
+            name: converterLead.fantasyName,
+            phone: converterLead.phone || '',
+            customerType: 'pessoa_juridica',
+            sellerId: converterLead.assignedTo || '',
+            latitude: (converterLead as any).latitude,
+            longitude: (converterLead as any).longitude,
+          }}
+          onCreated={() => { const lid = converterLead.id; marcarConvertidoMut.mutate(lid); }}
+        />
+      )}
     </div>
   );
 }
