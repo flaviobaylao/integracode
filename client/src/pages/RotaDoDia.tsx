@@ -850,6 +850,14 @@ export default function RotaDoDia() {
     });
   }, [allVirtualVisits, virtualAttendedIds, presentialSearch, presentialFilter]);
 
+  // A busca por cliente também abrange os cards de Repescagem.
+  const filteredRepescagem = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    const list = Array.isArray(repescagemOverlay) ? repescagemOverlay : [];
+    if (!q) return list;
+    return list.filter((r: any) => (r.customerName || '').toLowerCase().includes(q));
+  }, [repescagemOverlay, presentialSearch]);
+
   const currentSeller = sellers?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -2122,11 +2130,11 @@ export default function RotaDoDia() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
-                  Repescagem ({repescagemOverlay.length})
+                  Repescagem ({filteredRepescagem.length}{filteredRepescagem.length !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {repescagemOverlay.map((r: any) => (
+                {filteredRepescagem.map((r: any) => (
                   <div
                     key={r.assignmentId}
                     className="flex items-start justify-between p-2 rounded-lg border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]"
@@ -2242,6 +2250,11 @@ export default function RotaDoDia() {
                     </div>
                   </div>
                 ))}
+                {filteredRepescagem.length === 0 && repescagemOverlay.length > 0 && (
+                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400" data-testid="repescagem-empty">
+                    Nenhum cliente de repescagem corresponde à busca.
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
