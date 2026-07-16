@@ -70,6 +70,7 @@ export default function VirtualServiceLogModal({
   const [nextContactDate, setNextContactDate] = useState<string>("");
   const [temperature, setTemperature] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [loadingConversa, setLoadingConversa] = useState(false);
 
   // Reset serviceType when modal opens with a new defaultServiceType
   useEffect(() => {
@@ -231,6 +232,35 @@ export default function VirtualServiceLogModal({
     setImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  const anexarConversaCentral = async () => {
+    if (entityType !== 'customer') {
+      toast({ title: "Indisponível", description: "Disponível apenas para clientes.", variant: "destructive" });
+      return;
+    }
+    setLoadingConversa(true);
+    try {
+      const data: any = await apiRequest("GET", `/api/chat/conversation-for-customer/${customerId}`);
+      if (!data?.found || !Array.isArray(data.messages) || data.messages.length === 0) {
+        toast({ title: "Sem conversa", description: data?.reason || "Não há conversa vinculada na Central.", variant: "destructive" });
+        return;
+      }
+      const linhas = data.messages.map((m: any) => {
+        const quem = m.senderType === 'customer' ? 'Cliente' : (m.senderType === 'agent' ? 'Atendente' : 'Sistema');
+        let hora = '';
+        try { hora = format(new Date(m.createdAt), "dd/MM HH:mm", { locale: ptBR }); } catch {}
+        return `[${hora}] ${quem}: ${String(m.content || '').trim()}`;
+      }).join('\n');
+      const capturadoEm = format(new Date(), "dd/MM/yyyy HH:mm", { locale: ptBR });
+      const bloco = `----- Conversa da Central de Atendimento (${data.customerName || customerName}) - capturada em ${capturadoEm} -----\n${linhas}\n----- fim da conversa (${data.messages.length} mensagens) -----`;
+      setNotes(prev => (prev && prev.trim() ? prev + '\n\n' : '') + bloco);
+      toast({ title: "Conversa anexada", description: `${data.messages.length} mensagens adicionadas às notas.` });
+    } catch (e: any) {
+      toast({ title: "Erro", description: e?.message || "Falha ao buscar a conversa.", variant: "destructive" });
+    } finally {
+      setLoadingConversa(false);
+    }
+  };
+
   const handleSubmit = () => {
     if (!notes && images.length === 0) {
       toast({
@@ -332,6 +362,28 @@ export default function VirtualServiceLogModal({
                   </p>
                 </div>
 
+                {entityType === 'customer' && (
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={anexarConversaCentral}
+                      disabled={loadingConversa}
+                      className="gap-2"
+                    >
+                      {loadingConversa ? (
+                        <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                      ) : (
+                        <FileText className="h-4 w-4" />
+                      )}
+                      Puxar conversa da Central
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Anexa o histórico do chat do cliente (Central de Atendimento) nas notas acima.
+                    </p>
+                  </div>
+                )}
                 <div>
                   <Label>Imagens</Label>
                   <div className="mt-1 flex flex-wrap gap-2">
