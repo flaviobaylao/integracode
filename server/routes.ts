@@ -24895,6 +24895,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🗓️ ADMIN: programa a próxima visita de TODOS os leads (exceto convertidos/descartados)
+  // com base na data "criado em" + 15 dias (dia útil). Se a data já passou, reprograma para
+  // frente, distribuída nos próximos dias úteis (por vendedor). Marca como "scheduled" para
+  // entrarem na Rota do Dia na data programada.
+  app.post('/api/admin/programar-retornos-leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Apenas administradores podem executar esta ação.' });
+      }
+      const PER_DAY = Number(req.body?.porDiaPorVendedor) > 0 ? Number(req.body.porDiaPorVendedor) : 8;
+
+      // Datas ancoradas ao meio-dia UTC → a data de calendário fica estável na conversão para BRT.
+      const mkDate = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+      const addDays = (dt: Date, n: number) => { const x = new Date(dt); x.setUTCDate(x.getUTCDate() + n); return x; };
+      const toBiz = (dt: Date) => { const w = dt.getUTCDay(); if (w === 6) return addDays(dt, 2); if (w === 0) return addDays(dt, 1); return dt; };
+      const advanceBiz = (dt: Date) => toBiz(addDays(dt, 1));
+      const parseDay = (s: string) => { const [y, m, d] = s.split('-').map(Number); return mkDate(y, m, d); };
+
+      const today = parseDay(getBrazilDateString()); // hoje em BRT (meia-noite lógica)
+
+      const result = await db.execute(sql`
+        SELECT id, assigned_to, CAST(created_at AS TEXT) AS created_txt
+        FROM leads
+        WHERE status NOT IN ('converted', 'discarded')
+      `);
+      const rows = (result.rows || []) as any[];
+
+      const updates: { id: string; date: Date }[] = [];
+      const pastBySeller: Record<string, { id: string; created: string }[]> = {};
+
+      for (const r of rows) {
+        const cStr = getBrazilDateString(new Date(r.created_txt)); // data (BRT) do cadastro
+        const ret = toBiz(addDays(parseDay(cStr), 15));            // criado + 15 dias úteis
+        if (ret.getTime() >= today.getTime()) {
+          updates.push({ id: r.id, date: ret });                  // futuro: mantém criado+15
+        } else {
+          const sid = r.assigned_to || 'sem_vendedor';
+          (pastBySeller[sid] = pastBySeller[sid] || []).push({ id: r.id, created: r.created_txt });
+        }
+      }
+
+      let reprogramados = 0;
+      for (const sid of Object.keys(pastBySeller)) {
+        const arr = pastBySeller[sid].sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime());
+        let day = advanceBiz(today); // primeiro dia útil após hoje
+        let count = 0;
+        for (const item of arr) {
+          if (count >= PER_DAY) { day = advanceBiz(day); count = 0; }
+          updates.push({ id: item.id, date: day });
+          count++;
+          reprogramados++;
+        }
+      }
+
+      let aplicados = 0;
+      for (const u of updates) {
+        await db.execute(sql`
+          UPDATE leads
+          SET next_contact_date = ${u.date}, original_return_date = ${u.date},
+              status = 'scheduled', return_overdue = false, updated_at = NOW()
+          WHERE id = ${u.id}
+        `);
+        aplicados++;
+      }
+
+      console.log(`🗓️ [PROGRAMAR-RETORNOS] ${aplicados} leads programados (${reprogramados} reprogramados) por ${user.email}`);
+      return res.json({
+        message: 'Próximas visitas programadas com sucesso.',
+        totalElegiveis: rows.length,
+        aplicados,
+        futurosCriadoMais15: updates.length - reprogramados,
+        reprogramados,
+        porDiaPorVendedor: PER_DAY,
+      });
+    } catch (error: any) {
+      console.error('Erro ao programar retornos de leads:', error);
+      return res.status(500).json({ message: 'Erro ao programar retornos de leads', error: error?.message });
+    }
+  });
+
   // Buscar um lead específico
   app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
