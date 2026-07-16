@@ -24779,6 +24779,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // 📅 Retornos de lead do vendedor: os que vencem HOJE (aparecem na rota) + os ATRASADOS (não voltou).
+  // Registrado ANTES de /api/leads/:id para não ser capturado pela rota genérica.
+  app.get('/api/leads/retornos', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      // Vendedor/telemarketing veem só os seus; admin/coord/administrative podem filtrar por vendedor.
+      let sellerId = String(req.query.sellerId || '');
+      if (['vendedor', 'telemarketing'].includes(user.role)) sellerId = user.id;
+      const dateStr = String(req.query.date || ''); // opcional YYYY-MM-DD; default = hoje BRT
+      const ref = dateStr ? new Date(`${dateStr}T12:00:00-03:00`) : nowBrazil();
+      const refDay = ref.toISOString().slice(0, 10);
+
+      const filtroVendedor = sellerId ? sql`AND assigned_to = ${sellerId}` : sql``;
+      const result = await db.execute(sql`
+        SELECT id, fantasy_name, contact, phone, latitude, longitude, temperature, status,
+               assigned_to, postponement_count, return_overdue,
+               CAST(next_contact_date AS TEXT) AS next_contact_date
+        FROM leads
+        WHERE status = 'scheduled'
+          AND next_contact_date IS NOT NULL
+          AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${refDay}::date
+          ${filtroVendedor}
+        ORDER BY next_contact_date ASC
+      `);
+      const rows = (result.rows || []).map((r: any) => {
+        const d = r.next_contact_date ? String(r.next_contact_date).slice(0, 10) : null;
+        const atrasado = !!d && d < refDay;
+        return {
+          id: r.id,
+          fantasyName: r.fantasy_name,
+          contact: r.contact,
+          phone: r.phone,
+          latitude: r.latitude ? String(r.latitude) : null,
+          longitude: r.longitude ? String(r.longitude) : null,
+          temperature: r.temperature,
+          status: r.status,
+          assignedTo: r.assigned_to,
+          postponementCount: Number(r.postponement_count || 0),
+          returnDate: r.next_contact_date,
+          overdue: atrasado || r.return_overdue === true,
+        };
+      });
+      res.json({
+        date: refDay,
+        hoje: rows.filter((r: any) => !r.overdue),
+        atrasados: rows.filter((r: any) => r.overdue),
+        total: rows.length,
+      });
+    } catch (error: any) {
+      console.error('Erro ao buscar retornos de lead:', error);
+      res.status(500).json({ message: 'Erro ao buscar retornos de lead', error: error?.message });
+    }
+  });
+
   // Buscar um lead específico
   app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
@@ -24834,7 +24888,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...leadData,
         createdBy: user.id
       });
-      
+
+      // 📅 RETORNO AUTOMÁTICO (cadastro + 15 dias, em dia útil): data TRAVADA de revisita na rota do vendedor.
+      // O vendedor não pode alterá-la (o PATCH só libera photo/observation/status). Só admin ajusta.
+      try {
+        const _ret = nowBrazil();
+        _ret.setDate(_ret.getDate() + 15);
+        const _dow = _ret.getDay();               // 0=Dom, 6=Sáb
+        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);      // sábado → segunda
+        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1); // domingo → segunda
+        await db.execute(sql`
+          UPDATE leads
+          SET next_contact_date = ${_ret}, original_return_date = ${_ret}, status = 'scheduled', updated_at = NOW()
+          WHERE id = ${lead.id}
+        `);
+        (lead as any).nextContactDate = _ret;
+        (lead as any).originalReturnDate = _ret;
+        (lead as any).status = 'scheduled';
+        console.log(`📅 [LEAD-RETORNO] ${lead.fantasyName}: retorno agendado p/ ${_ret.toISOString().slice(0,10)} (vendedor ${lead.assignedTo || user.id})`);
+      } catch (retErr) {
+        console.error('Erro ao agendar retorno automático do lead:', retErr);
+      }
+
       // Registrar prospecção por criação de lead
       try {
         await db.execute(sql`
@@ -25398,6 +25473,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao converter lead:', error);
       res.status(500).json({ message: 'Erro ao converter lead', error: error.message });
+    }
+  });
+
+  // 📌 DESFECHO do retorno do lead: 'nao_converter' (finaliza/descarta com motivo) ou 'prorrogar' (1x, até +15 dias úteis).
+  // A conversão em cliente usa o endpoint dedicado /convert-to-customer (form completo).
+  app.post('/api/leads/:id/desfecho', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { id } = req.params;
+      const { acao, motivo, observacao } = req.body || {};
+
+      const lead = await storage.getLead(id);
+      if (!lead) return res.status(404).json({ message: 'Lead não encontrado' });
+
+      // Vendedor só age no lead atribuído a ele.
+      if (['vendedor', 'telemarketing'].includes(user.role) && lead.assignedTo && lead.assignedTo !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado. Você só pode dar desfecho em leads atribuídos a você.' });
+      }
+
+      if (acao === 'nao_converter') {
+        const motivosOk = ['preco', 'sem_interesse', 'ja_tem_fornecedor', 'fechou', 'sem_perfil', 'sem_contato', 'outro'];
+        if (!motivo || !motivosOk.includes(String(motivo))) {
+          return res.status(400).json({ message: 'Informe o motivo da não-conversão.', code: 'MOTIVO_OBRIGATORIO', motivos: motivosOk });
+        }
+        await db.execute(sql`
+          UPDATE leads
+          SET status = 'discarded', non_conversion_reason = ${String(motivo)}, return_overdue = false, updated_at = NOW()
+          WHERE id = ${id}
+        `);
+        try {
+          await storage.createLeadVisit({
+            leadId: id, userId: user.id, userName: user.name || user.email,
+            observation: `NÃO CONVERTIDO (${motivo})${observacao ? ' - ' + String(observacao) : ''}`,
+          } as any);
+        } catch (_e) {}
+        console.log(`🚫 [LEAD-DESFECHO] ${lead.fantasyName} finalizado como NÃO CONVERTIDO (${motivo}) por ${user.email}`);
+        return res.json({ message: 'Lead finalizado como não convertido.', status: 'discarded', reason: motivo });
+      }
+
+      if (acao === 'prorrogar') {
+        // Trava: uma única prorrogação.
+        if (Number((lead as any).postponementCount || 0) >= 1) {
+          return res.status(409).json({ message: 'Prorrogação já utilizada. Finalize (não converter) ou converta o lead.', code: 'PRORROGACAO_JA_USADA' });
+        }
+        // Nova data = hoje + até 15 dias (dia útil). Servidor impõe o teto de +15.
+        let dias = Number(req.body?.dias);
+        if (!Number.isFinite(dias) || dias < 1) dias = 15;
+        if (dias > 15) dias = 15; // teto
+        const _ret = nowBrazil();
+        _ret.setDate(_ret.getDate() + Math.floor(dias));
+        const _dow = _ret.getDay();
+        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
+        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        await db.execute(sql`
+          UPDATE leads
+          SET next_contact_date = ${_ret}, postponement_count = 1, status = 'scheduled', return_overdue = false, updated_at = NOW()
+          WHERE id = ${id}
+        `);
+        try {
+          await storage.createLeadVisit({
+            leadId: id, userId: user.id, userName: user.name || user.email,
+            observation: `PRORROGADO p/ ${_ret.toISOString().slice(0,10)}${observacao ? ' - ' + String(observacao) : ''}`,
+          } as any);
+        } catch (_e) {}
+        console.log(`⏭️ [LEAD-DESFECHO] ${lead.fantasyName} PRORROGADO p/ ${_ret.toISOString().slice(0,10)} por ${user.email}`);
+        return res.json({ message: 'Retorno prorrogado (única prorrogação usada).', status: 'scheduled', returnDate: _ret.toISOString() });
+      }
+
+      return res.status(400).json({ message: "Ação inválida. Use 'nao_converter' ou 'prorrogar'. (Para converter, use /convert-to-customer.)" });
+    } catch (error: any) {
+      console.error('Erro no desfecho do lead:', error);
+      res.status(500).json({ message: 'Erro ao registrar desfecho do lead', error: error?.message });
     }
   });
 
