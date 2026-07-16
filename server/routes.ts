@@ -19562,6 +19562,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // 📅 Retornos de lead do dia entram na ROTA como paradas de lead (sequência + mapa + otimização).
+      // Idempotente e só para a data atual/futura (não altera rotas passadas). Só leads com coordenadas.
+      try {
+        const todayBR = getBrazilDateString();
+        if (date >= todayBR) {
+          const { db: _dbLR } = await import('./db');
+          const leadRet: any = await _dbLR.execute(sql`
+            SELECT id FROM leads
+            WHERE status = 'scheduled'
+              AND next_contact_date IS NOT NULL
+              AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${date}::date
+              AND assigned_to = ${sellerId}
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          `);
+          const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
+          const curStops: any = (route.visitStops as any) || {};
+          let addedLead = false;
+          for (const lr of (leadRet?.rows || [])) {
+            const stopId = `lead:${lr.id}`;
+            if (!curOrder.includes(stopId) && !curStops[stopId]) {
+              curOrder.push(stopId);
+              curStops[stopId] = { entityType: 'lead', entityId: lr.id };
+              addedLead = true;
+            }
+          }
+          if (addedLead) {
+            await storage.updateDailyRoute(route.id, { optimizedOrder: curOrder, visitStops: curStops, totalVisits: curOrder.length });
+            (route as any).optimizedOrder = curOrder;
+            (route as any).visitStops = curStops;
+            console.log(`📅 [LEAD-RETORNOS] Retornos de lead injetados na rota ${route.id} (agora ${curOrder.length} paradas)`);
+          }
+        }
+      } catch (leadRetErr) {
+        console.warn('⚠️ [LEAD-RETORNOS] Falha ao injetar retornos de lead na rota:', leadRetErr);
+      }
+
       // NOVA ARQUITETURA COM VISITSTOPS: Resolver stops (customers + leads)
       console.log(`🔍 [DEBUG] Resolvendo stops (customers + leads) para ${date}`);
       
