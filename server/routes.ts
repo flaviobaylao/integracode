@@ -24724,11 +24724,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
+        postponementCount: leads.postponementCount,
+        nonConversionReason: leads.nonConversionReason,
+        returnOverdue: leads.returnOverdue,
         createdAt: leads.createdAt,
         updatedAt: leads.updatedAt,
         hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
       }).from(leads).orderBy(desc(leads.createdAt));
-      
+
       console.log('📋 [LEADS] Leads encontrados:', rows.length);
       
       let leadsData = rows.map((row: any) => ({
@@ -24749,10 +24752,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
+        postponementCount: Number(row.postponementCount || 0),
+        nonConversionReason: row.nonConversionReason || null,
+        returnOverdue: row.returnOverdue === true,
         createdAt: row.createdAt ? String(row.createdAt) : null,
         updatedAt: row.updatedAt ? String(row.updatedAt) : null,
       }));
-      
+
       if (user.role === 'telemarketing') {
         leadsData = leadsData.filter((lead: any) => lead.createdBy === user.id);
       }
@@ -25513,22 +25519,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (acao === 'prorrogar') {
-        // Trava: uma única prorrogação.
-        if (Number((lead as any).postponementCount || 0) >= 1) {
+        // Trava: uma única prorrogação para o vendedor. Admin/coordenador pode reagendar novamente.
+        const isAdminUser = ['admin', 'coordinator', 'administrative'].includes(user.role);
+        if (Number((lead as any).postponementCount || 0) >= 1 && !isAdminUser) {
           return res.status(409).json({ message: 'Prorrogação já utilizada. Finalize (não converter) ou converta o lead.', code: 'PRORROGACAO_JA_USADA' });
         }
-        // Nova data = hoje + até 15 dias (dia útil). Servidor impõe o teto de +15.
-        let dias = Number(req.body?.dias);
-        if (!Number.isFinite(dias) || dias < 1) dias = 15;
-        if (dias > 15) dias = 15; // teto
-        const _ret = nowBrazil();
-        _ret.setDate(_ret.getDate() + Math.floor(dias));
-        const _dow = _ret.getDay();
-        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
-        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        // Data futura escolhida (YYYY-MM-DD) OU +dias. Teto: no máximo 15 dias corridos a partir de hoje.
+        const _hoje0 = nowBrazil(); _hoje0.setHours(0, 0, 0, 0);
+        const _teto = new Date(_hoje0); _teto.setDate(_teto.getDate() + 15);
+        let _ret: Date;
+        const _dataStr = String(req.body?.data || '').trim();
+        if (_dataStr) {
+          _ret = new Date(`${_dataStr}T12:00:00-03:00`);
+          if (isNaN(_ret.getTime())) return res.status(400).json({ message: 'Data inválida.' });
+          const _r0 = new Date(_ret); _r0.setHours(0, 0, 0, 0);
+          if (_r0 <= _hoje0) return res.status(400).json({ message: 'A nova data de visita deve ser futura.' });
+          if (_r0 > _teto) return res.status(400).json({ message: 'A nova visita pode ser no máximo 15 dias à frente.', code: 'TETO_15_DIAS' });
+        } else {
+          let dias = Number(req.body?.dias);
+          if (!Number.isFinite(dias) || dias < 1) dias = 15;
+          if (dias > 15) dias = 15; // teto
+          _ret = nowBrazil();
+          _ret.setDate(_ret.getDate() + Math.floor(dias));
+          const _dow = _ret.getDay();
+          if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
+          else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        }
+        // Mantém a contagem em 1 (trava do vendedor); admin reagenda sem zerar.
+        const _novoCount = Number((lead as any).postponementCount || 0) >= 1 ? Number((lead as any).postponementCount) : 1;
         await db.execute(sql`
           UPDATE leads
-          SET next_contact_date = ${_ret}, postponement_count = 1, status = 'scheduled', return_overdue = false, updated_at = NOW()
+          SET next_contact_date = ${_ret}, postponement_count = ${_novoCount}, status = 'scheduled', return_overdue = false, updated_at = NOW()
           WHERE id = ${id}
         `);
         try {
@@ -25538,7 +25559,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } as any);
         } catch (_e) {}
         console.log(`⏭️ [LEAD-DESFECHO] ${lead.fantasyName} PRORROGADO p/ ${_ret.toISOString().slice(0,10)} por ${user.email}`);
-        return res.json({ message: 'Retorno prorrogado (única prorrogação usada).', status: 'scheduled', returnDate: _ret.toISOString() });
+        return res.json({ message: 'Retorno prorrogado.', status: 'scheduled', returnDate: _ret.toISOString() });
       }
 
       return res.status(400).json({ message: "Ação inválida. Use 'nao_converter' ou 'prorrogar'. (Para converter, use /convert-to-customer.)" });
