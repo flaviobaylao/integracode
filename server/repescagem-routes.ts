@@ -334,8 +334,8 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const candidates = await computeRedCandidates({ startDate, endDate }, skipCands);
   const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
 
-  // PULAR CICLO: clientes atendidos com PEDIDO (venda) FORA do dia de rota → reescreve agenda
-  // pendente pulando 1 ciclo. Idempotente (só reescreve se ainda não foi pulado).
+  // PULAR CICLO: clientes atendidos com PEDIDO (venda) FORA do dia de rota -> reescreve agenda
+  // pendente pulando 1 ciclo. Idempotente (so reescreve se ainda nao foi pulado).
   if (skipCands.length > 0) {
     try {
       const { recalcularAgendaPulandoCiclo } = await import('./visitScheduleService');
@@ -349,25 +349,65 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     } catch (e) { console.error('[PULAR-CICLO][reconcile] import:', (e as any)?.message); }
   }
 
-  // Atendentes habilitados. IMPORTANTE (Repescagem2): o fluxo antigo de
-  // distribuição por menor carga é de ATENDIMENTO INTERNO. Vendedores externos
-  // podem estar habilitados (para o sorteio por perímetro da Fase 2), mas NÃO
-  // devem receber clientes neste fluxo antigo — por isso são filtrados aqui.
+  // ── Atendentes habilitados, separados por funcao (Repescagem2 — distribuicao por PERIMETRO) ──
+  // Vendedores externos (role 'vendedor') recebem por PERIMETRO: cliente de carteira externa,
+  // com coordenada, a ate REPESCAGEM_PERIMETER_KM de alguma parada da rota do dia do vendedor,
+  // com teto EXTERNAL_MAX_PER_SELLER/dia e PRIORIDADE para o proprio vendedor do cliente.
+  // O restante (sem coordenada, fora de perimetro, ou carteira nao-externa) vai para o
+  // telemarketing habilitado por MENOR CARGA. Admins/excluidos gerenciam mas nao recebem.
   const enabledRaw = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
   const enabledRawIds = enabledRaw.map(a => a.userId);
   const enabledUsers = enabledRawIds.length > 0
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, enabledRawIds))
     : [];
   const roleById = new Map(enabledUsers.map(u => [u.id, u.role]));
-  const enabledIds = enabledRawIds.filter(id =>
-    !REPESCAGEM_EXCLUDED_USER_IDS.has(id) && roleById.get(id) !== 'vendedor');
-  const enabledSet = new Set(enabledIds);
+  const allEnabledIds = enabledRawIds.filter(id => !REPESCAGEM_EXCLUDED_USER_IDS.has(id));
+  const externalIds = allEnabledIds.filter(id => roleById.get(id) === 'vendedor');
+  const internalIds = allEnabledIds.filter(id => roleById.get(id) !== 'vendedor');
+  const externalSet = new Set(externalIds);
+  const internalSet = new Set(internalIds);
+  const enabledSet = new Set(allEnabledIds);
 
-  // Atribuições pendentes existentes
+  // Carteira (dono) + coordenadas de cada candidato; e funcao do dono (p/ saber
+  // quais clientes sao "de vendedor externo").
+  const candIds = candidates.map(c => c.customerId);
+  const custInfo = candIds.length > 0
+    ? await db.select({ id: customers.id, lat: customers.latitude, lng: customers.longitude, sellerId: customers.sellerId })
+        .from(customers).where(inArray(customers.id, candIds))
+    : [];
+  const coordById = new Map(custInfo.map(c => [c.id, {
+    lat: c.lat != null ? Number(c.lat) : null,
+    lng: c.lng != null ? Number(c.lng) : null,
+    sellerId: (c.sellerId as string | null) || null,
+  }]));
+  const ownerSellerIds = Array.from(new Set(custInfo.map(c => c.sellerId).filter(Boolean) as string[]));
+  const ownerRoleRows = ownerSellerIds.length > 0
+    ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, ownerSellerIds))
+    : [];
+  const ownerRoleById = new Map(ownerRoleRows.map(u => [u.id, u.role]));
+  const isExternalPortfolio = (custId: string): boolean => {
+    const sid = coordById.get(custId)?.sellerId;
+    return !!sid && ownerRoleById.get(sid) === 'vendedor';
+  };
+
+  // Ancoras (paradas com coordenada) da rota do dia de cada vendedor externo habilitado.
+  const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
+  for (const extId of externalIds) {
+    try { anchorsBySeller.set(extId, await repGetRouteAnchors(extId, today)); }
+    catch { anchorsBySeller.set(extId, []); }
+  }
+  const withinPerimeter = (custId: string, extId: string): boolean => {
+    const info = coordById.get(custId);
+    if (!info || info.lat == null || info.lng == null) return false;
+    const anchors = anchorsBySeller.get(extId) || [];
+    return anchors.some(a => repHaversineKm(info.lat as number, info.lng as number, a.lat, a.lng) <= REPESCAGEM_PERIMETER_KM);
+  };
+
+  // Atribuicoes pendentes existentes
   const pending = await db.select().from(repescagemAssignments)
     .where(eq(repescagemAssignments.status, 'pending'));
 
-  // 1) Marcar como completed quando houve service log após assignedAt
+  // 1) Marcar como completed quando houve service log apos assignedAt
   // Batch: buscar TODOS os logs relevantes de uma vez para os pending atuais
   if (pending.length > 0) {
     const customerIds = Array.from(new Set(pending.map(p => p.customerId)));
@@ -417,8 +457,8 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const pendingNow = await db.select().from(repescagemAssignments)
     .where(eq(repescagemAssignments.status, 'pending'));
 
-  // 2) Cancelar atribuições para clientes que NÃO são mais candidatos
-  // (ex: cliente foi atendido por outra via, mudança de status)
+  // 2) Cancelar atribuicoes para clientes que NAO sao mais candidatos
+  // (ex: cliente foi atendido por outra via, mudanca de status)
   for (const a of pendingNow) {
     if (!candidateByCustomerId.has(a.customerId)) {
       await db.update(repescagemAssignments).set({
@@ -437,39 +477,103 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     }
   }
 
-  // 3) Construir mapa de carga atual por usuário habilitado
+  // 3) Carga atual por atendente habilitado (externos e internos), a partir dos pendentes validos
   const stillPending = await db.select().from(repescagemAssignments)
     .where(eq(repescagemAssignments.status, 'pending'));
-  const loadByUser = new Map<string, number>();
-  for (const id of enabledIds) loadByUser.set(id, 0);
+  const externalLoad = new Map<string, number>();
+  for (const id of externalIds) externalLoad.set(id, 0);
+  const internalLoad = new Map<string, number>();
+  for (const id of internalIds) internalLoad.set(id, 0);
   const validPendingByCustomer = new Map<string, typeof stillPending[number]>();
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
-    if (enabledSet.has(a.assignedUserId)) {
-      loadByUser.set(a.assignedUserId, (loadByUser.get(a.assignedUserId) || 0) + 1);
+    if (externalSet.has(a.assignedUserId)) {
+      externalLoad.set(a.assignedUserId, (externalLoad.get(a.assignedUserId) || 0) + 1);
+      validPendingByCustomer.set(a.customerId, a);
+    } else if (internalSet.has(a.assignedUserId)) {
+      internalLoad.set(a.assignedUserId, (internalLoad.get(a.assignedUserId) || 0) + 1);
       validPendingByCustomer.set(a.customerId, a);
     }
   }
 
-  function pickLeastLoaded(): string | null {
-    if (enabledIds.length === 0) return null;
-    let best: string | null = null;
-    let bestLoad = Infinity;
-    for (const id of enabledIds) {
-      const l = loadByUser.get(id) || 0;
-      if (l < bestLoad) { bestLoad = l; best = id; }
-    }
+  function pickLeastLoadedInternal(): string | null {
+    if (internalIds.length === 0) return null;
+    let best: string | null = null; let bestLoad = Infinity;
+    for (const id of internalIds) { const l = internalLoad.get(id) || 0; if (l < bestLoad) { bestLoad = l; best = id; } }
     return best;
   }
 
-  // 4) Reatribuir os pendentes cujo usuário foi desabilitado
+  // Escolhe o alvo de um candidato: Fase A (externo por perimetro, dono primeiro,
+  // teto EXTERNAL_MAX_PER_SELLER) -> Fase B (telemarketing por menor carga).
+  function chooseTarget(customerId: string): { userId: string; phase: 'external' | 'telemarketing' } | null {
+    if (isExternalPortfolio(customerId)) {
+      const ownerId = coordById.get(customerId)?.sellerId || null;
+      const qualifying = externalIds.filter(extId =>
+        (externalLoad.get(extId) || 0) < EXTERNAL_MAX_PER_SELLER && withinPerimeter(customerId, extId));
+      if (qualifying.length > 0) {
+        let pick: string;
+        if (ownerId && qualifying.includes(ownerId)) {
+          pick = ownerId; // prioridade: o proprio vendedor do cliente
+        } else {
+          pick = qualifying.reduce((best, id) =>
+            (externalLoad.get(id) || 0) < (externalLoad.get(best) || 0) ? id : best, qualifying[0]);
+        }
+        return { userId: pick, phase: 'external' };
+      }
+    }
+    const t = pickLeastLoadedInternal();
+    if (t) return { userId: t, phase: 'telemarketing' };
+    return null;
+  }
+
+  function applyLoad(userId: string, phase: 'external' | 'telemarketing') {
+    if (phase === 'external') externalLoad.set(userId, (externalLoad.get(userId) || 0) + 1);
+    else internalLoad.set(userId, (internalLoad.get(userId) || 0) + 1);
+  }
+
+  // 3.5) Promover para o vendedor externo: clientes de carteira externa que hoje
+  // estao no telemarketing mas passaram a qualificar no perimetro (<=2km) da rota
+  // do dia de um vendedor externo habilitado (dono primeiro, respeitando o teto).
+  // Faz a nova regra valer de imediato na lista existente. So promove (nunca rebaixa
+  // por mudanca de rota) para evitar churn diario.
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
-    if (enabledSet.has(a.assignedUserId)) continue;
-    const newUserId = pickLeastLoaded();
-    if (!newUserId) {
-      // Ninguém habilitado — cancela a atribuição para que o cliente
-      // apareça como "Não atribuído" no fallback de órfãos.
+    if (!internalSet.has(a.assignedUserId)) continue; // so mexe em quem esta no telemarketing
+    if (!isExternalPortfolio(a.customerId)) continue;
+    const ownerId = coordById.get(a.customerId)?.sellerId || null;
+    const qualifying = externalIds.filter(extId =>
+      (externalLoad.get(extId) || 0) < EXTERNAL_MAX_PER_SELLER && withinPerimeter(a.customerId, extId));
+    if (qualifying.length === 0) continue;
+    const pick = (ownerId && qualifying.includes(ownerId))
+      ? ownerId
+      : qualifying.reduce((b, id) => (externalLoad.get(id) || 0) < (externalLoad.get(b) || 0) ? id : b, qualifying[0]);
+    const oldUser = a.assignedUserId;
+    await db.update(repescagemAssignments).set({
+      assignedUserId: pick,
+      phase: 'external',
+      carteiraSellerId: ownerId,
+      assignedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(repescagemAssignments.id, a.id));
+    await db.insert(repescagemAssignmentHistory).values({
+      assignmentId: a.id,
+      customerId: a.customerId,
+      fromUserId: oldUser,
+      toUserId: pick,
+      action: 'reassigned',
+      reason: 'Realocado ao vendedor externo por perimetro',
+    });
+    internalLoad.set(oldUser, Math.max(0, (internalLoad.get(oldUser) || 0) - 1));
+    externalLoad.set(pick, (externalLoad.get(pick) || 0) + 1);
+    validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: pick });
+  }
+
+  // 4) Reatribuir os pendentes cujo atendente foi desabilitado
+  for (const a of stillPending) {
+    if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (enabledSet.has(a.assignedUserId)) continue; // atribuicao ainda valida
+    const target = chooseTarget(a.customerId);
+    if (!target) {
       await db.update(repescagemAssignments).set({
         status: 'cancelled',
         completedAt: new Date(),
@@ -481,13 +585,15 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         fromUserId: a.assignedUserId,
         toUserId: null,
         action: 'cancelled',
-        reason: 'Atendente desabilitado e nenhum outro disponível',
+        reason: 'Atendente desabilitado e nenhum outro disponivel',
       });
       continue;
     }
     const oldUser = a.assignedUserId;
     await db.update(repescagemAssignments).set({
-      assignedUserId: newUserId,
+      assignedUserId: target.userId,
+      phase: target.phase,
+      carteiraSellerId: coordById.get(a.customerId)?.sellerId || null,
       assignedAt: new Date(),
       updatedAt: new Date(),
     }).where(eq(repescagemAssignments.id, a.id));
@@ -495,36 +601,36 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       assignmentId: a.id,
       customerId: a.customerId,
       fromUserId: oldUser,
-      toUserId: newUserId,
+      toUserId: target.userId,
       action: 'reassigned',
       reason: 'Atendente anterior desabilitado',
     });
-    loadByUser.set(newUserId, (loadByUser.get(newUserId) || 0) + 1);
-    validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: newUserId });
+    applyLoad(target.userId, target.phase);
+    validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: target.userId });
   }
 
-  // 4.5) Rebalancear: se a diferença entre o atendente mais carregado e o
-  // menos carregado for > 1, mover atribuições do mais para o menos.
-  if (enabledIds.length > 1) {
+  // 4.5) Rebalancear SO o telemarketing (as alocacoes externas ficam presas a rota
+  // do dia). Move do mais carregado para o menos carregado ate a diferenca ser <= 1.
+  if (internalIds.length > 1) {
     const getMax = () => {
       let id: string | null = null; let v = -Infinity;
-      for (const u of enabledIds) { const l = loadByUser.get(u) || 0; if (l > v) { v = l; id = u; } }
+      for (const u of internalIds) { const l = internalLoad.get(u) || 0; if (l > v) { v = l; id = u; } }
       return { id, v };
     };
     const getMin = () => {
       let id: string | null = null; let v = Infinity;
-      for (const u of enabledIds) { const l = loadByUser.get(u) || 0; if (l < v) { v = l; id = u; } }
+      for (const u of internalIds) { const l = internalLoad.get(u) || 0; if (l < v) { v = l; id = u; } }
       return { id, v };
     };
     let safety = 10000;
     while (safety-- > 0) {
       const max = getMax(); const min = getMin();
       if (!max.id || !min.id || max.v - min.v <= 1) break;
-      // Pega uma atribuição do max para mover ao min
       const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id);
       if (!toMove) break;
       await db.update(repescagemAssignments).set({
         assignedUserId: min.id,
+        phase: 'telemarketing',
         assignedAt: new Date(),
         updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, toMove.id));
@@ -534,21 +640,20 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         fromUserId: max.id,
         toUserId: min.id,
         action: 'reassigned',
-        reason: 'Rebalanceamento (novo atendente habilitado)',
+        reason: 'Rebalanceamento telemarketing',
       });
-      loadByUser.set(max.id, max.v - 1);
-      loadByUser.set(min.id, min.v + 1);
+      internalLoad.set(max.id, max.v - 1);
+      internalLoad.set(min.id, min.v + 1);
       validPendingByCustomer.set(toMove.customerId, { ...toMove, assignedUserId: min.id });
     }
   }
 
-  // 5) Atribuir candidatos novos (sem pendente válido) a quem está habilitado
-  if (enabledIds.length > 0) {
-    // Batch: pré-carregar todos os assignments anteriores dos candidatos relevantes
+  // 5) Atribuir candidatos novos (sem pendente valido) via perimetro -> telemarketing
+  if (allEnabledIds.length > 0) {
     const candidateIds = candidates
       .filter(c => !validPendingByCustomer.has(c.customerId))
       .map(c => c.customerId);
-    const priorMap = new Map<string, string[]>(); // key = customerId+lastRedDate -> statuses
+    const priorMap = new Map<string, string[]>();
     if (candidateIds.length > 0) {
       const allPrior = await db.select({
         customerId: repescagemAssignments.customerId,
@@ -565,7 +670,6 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     }
     for (const cand of candidates) {
       if (validPendingByCustomer.has(cand.customerId)) {
-        // Atualiza lastRedDate caso tenha mudado
         const a = validPendingByCustomer.get(cand.customerId)!;
         if (a.lastRedDate !== cand.lastRedDate) {
           await db.update(repescagemAssignments).set({
@@ -575,28 +679,28 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         }
         continue;
       }
-      // Já existe completed para a MESMA lastRedDate?
       const priorStatuses = priorMap.get(`${cand.customerId}_${cand.lastRedDate}`) || [];
       if (priorStatuses.includes('completed')) continue;
-      // criar nova
-      const newUserId = pickLeastLoaded();
-      if (!newUserId) break;
+      const target = chooseTarget(cand.customerId);
+      if (!target) continue; // ninguem habilitado apto — fica sem atribuicao (fallback de orfaos)
       const inserted = await db.insert(repescagemAssignments).values({
         customerId: cand.customerId,
         lastRedDate: cand.lastRedDate,
-        assignedUserId: newUserId,
+        assignedUserId: target.userId,
         status: 'pending',
+        phase: target.phase,
+        carteiraSellerId: coordById.get(cand.customerId)?.sellerId || null,
       }).returning();
       const newAssign = inserted[0];
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: newAssign.id,
         customerId: cand.customerId,
         fromUserId: null,
-        toUserId: newUserId,
+        toUserId: target.userId,
         action: 'assigned',
-        reason: 'Distribuição automática',
+        reason: target.phase === 'external' ? 'Distribuicao por perimetro (vendedor externo)' : 'Distribuicao telemarketing',
       });
-      loadByUser.set(newUserId, (loadByUser.get(newUserId) || 0) + 1);
+      applyLoad(target.userId, target.phase);
     }
   }
 }
@@ -612,7 +716,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
 // Observação: esta fase NÃO injeta na rota nem trava paradas (isso é a Fase 3);
 // é validável por API/log. Não interfere na lista antiga (status 'pending').
 // ============================================================================
-const REPESCAGEM_PERIMETER_KM = 3;
+const REPESCAGEM_PERIMETER_KM = 2;
 const EXTERNAL_MAX_PER_SELLER = 3;
 let __drawRunning = false;
 let __lastDrawCheckMs = 0;
