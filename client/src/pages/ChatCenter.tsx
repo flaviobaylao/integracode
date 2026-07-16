@@ -528,7 +528,8 @@ function ChatCenterInner() {
     const params = new URLSearchParams(window.location.search);
     const conversationId = params.get('conversationId');
     const phoneParam = params.get('phone');
-    
+    const textParam = params.get('text'); // texto pré-preenchido no compositor (opcional)
+
     // Marcar como processado se tiver parâmetros
     if (conversationId || phoneParam) {
       phoneParamProcessed.current = true;
@@ -566,6 +567,8 @@ function ChatCenterInner() {
           }
           window.history.replaceState({}, '', '/telemarketing/atendimento');
         }
+        // Pré-preenche o compositor com o texto recebido (o admin revisa e envia).
+        if (textParam) setMessageText(textParam);
       } catch (error) {
         console.warn('⚠️ [ChatCenter] Erro ao ler parâmetro:', error);
       }
