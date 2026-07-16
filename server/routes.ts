@@ -426,6 +426,74 @@ async function markVirtualVisitExecuted(customerId: string): Promise<void> {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// REGIÃO → DIA DE ROTA: encaixa a data de retorno de um lead no dia da semana em
+// que o vendedor atende a região do lead. O sinal é o(s) cliente(s) ativo(s) do
+// mesmo vendedor geograficamente mais próximo(s) (o dia deles vira o dia do lead).
+// ─────────────────────────────────────────────────────────────────────────────
+const __WD_NUM: Record<string, number> = { dom: 0, domingo: 0, seg: 1, segunda: 1, ter: 2, terca: 2, qua: 3, quarta: 3, qui: 4, quinta: 4, sex: 5, sexta: 5, sab: 6, sabado: 6 };
+function __wdToNum(s: any): number | null {
+  const k = String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  if (k in __WD_NUM) return __WD_NUM[k];
+  const k3 = k.slice(0, 3);
+  return (k3 in __WD_NUM) ? __WD_NUM[k3] : null;
+}
+function __parseWeekdays(raw: any): number[] {
+  let arr: any[] = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (typeof raw === 'string') { try { const p = JSON.parse(raw); arr = Array.isArray(p) ? p : [p]; } catch { arr = raw.split(/[,;\/]/); } }
+  const nums = arr.map(__wdToNum).filter((n): n is number => n !== null);
+  return Array.from(new Set(nums));
+}
+function __haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371, toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+// Retorna o dia da semana (0=Dom..6=Sáb) de rota mais adequado para (lat,lng),
+// por voto ponderado pela proximidade dos K clientes mais próximos, ou null.
+function __regionTargetWeekday(custs: Array<{ latitude: any; longitude: any; weekdays: any }>, lat: number, lng: number, maxKm = 15, k = 8): number | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !custs || !custs.length) return null;
+  const near = custs
+    .map(c => ({ d: __haversineKm(lat, lng, Number(c.latitude), Number(c.longitude)), wds: __parseWeekdays(c.weekdays) }))
+    .filter(o => Number.isFinite(o.d) && o.wds.length > 0)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, k)
+    .filter(o => o.d <= maxKm);
+  if (!near.length) return null;
+  const score: Record<number, number> = {};
+  for (const o of near) { const w = 1 / (o.d + 0.3); for (const wd of o.wds) score[wd] = (score[wd] || 0) + w; }
+  let best: number | null = null, bestScore = -1;
+  for (const wd of Object.keys(score).map(Number)) { if (score[wd] > bestScore) { bestScore = score[wd]; best = wd; } }
+  return best;
+}
+// Move `base` para a data mais próxima (±maxShift dias, empate → futuro) cujo dia
+// da semana = wd, respeitando limites opcionais notBefore/notAfter. Sem match: base.
+function __snapToWeekday(base: Date, wd: number | null, maxShift = 3, notBefore: Date | null = null, notAfter: Date | null = null): Date {
+  if (wd === null) return base;
+  const ok = (d: Date) => (!notBefore || d.getTime() >= notBefore.getTime()) && (!notAfter || d.getTime() <= notAfter.getTime());
+  if (base.getUTCDay() === wd && ok(base)) return base;
+  for (let s = 1; s <= maxShift; s++) {
+    const up = new Date(base); up.setUTCDate(up.getUTCDate() + s);
+    if (up.getUTCDay() === wd && ok(up)) return up;
+    const dn = new Date(base); dn.setUTCDate(dn.getUTCDate() - s);
+    if (dn.getUTCDay() === wd && ok(dn)) return dn;
+  }
+  return base;
+}
+// Clientes ativos (com coord+dias) de um vendedor — base do "dia de rota da região".
+async function __sellerCustomers(sellerId: string): Promise<Array<{ latitude: any; longitude: any; weekdays: any }>> {
+  if (!sellerId) return [];
+  const r = await db.execute(sql`
+    SELECT CAST(latitude AS DOUBLE PRECISION) AS latitude, CAST(longitude AS DOUBLE PRECISION) AS longitude, weekdays
+    FROM customers
+    WHERE seller_id = ${sellerId} AND is_active = true
+      AND latitude IS NOT NULL AND longitude IS NOT NULL AND weekdays IS NOT NULL
+  `);
+  return (r.rows || []) as any[];
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -24917,23 +24985,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const today = parseDay(getBrazilDateString()); // hoje em BRT (meia-noite lógica)
 
       const result = await db.execute(sql`
-        SELECT id, assigned_to, CAST(created_at AS TEXT) AS created_txt
+        SELECT id, assigned_to,
+               CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng,
+               CAST(created_at AS TEXT) AS created_txt
         FROM leads
         WHERE status NOT IN ('converted', 'discarded')
       `);
       const rows = (result.rows || []) as any[];
 
+      // Clientes ativos (coord+dias) agrupados por vendedor → base do "dia de rota da região".
+      const custRes = await db.execute(sql`
+        SELECT seller_id, CAST(latitude AS DOUBLE PRECISION) AS latitude, CAST(longitude AS DOUBLE PRECISION) AS longitude, weekdays
+        FROM customers
+        WHERE is_active = true AND latitude IS NOT NULL AND longitude IS NOT NULL AND weekdays IS NOT NULL
+      `);
+      const custBySeller: Record<string, any[]> = {};
+      for (const c of (custRes.rows || []) as any[]) { const s = c.seller_id || ''; (custBySeller[s] = custBySeller[s] || []).push(c); }
+
       const updates: { id: string; date: Date }[] = [];
-      const pastBySeller: Record<string, { id: string; created: string }[]> = {};
+      const pastBySeller: Record<string, { id: string; created: string; lat: number; lng: number; sid: string }[]> = {};
+      let ajustadosPorRegiao = 0;
 
       for (const r of rows) {
         const cStr = getBrazilDateString(new Date(r.created_txt)); // data (BRT) do cadastro
-        const ret = toBiz(addDays(parseDay(cStr), 15));            // criado + 15 dias úteis
-        if (ret.getTime() >= today.getTime()) {
-          updates.push({ id: r.id, date: ret });                  // futuro: mantém criado+15
+        const base = toBiz(addDays(parseDay(cStr), 15));           // criado + 15 dias úteis
+        const sid = r.assigned_to || 'sem_vendedor';
+        if (base.getTime() >= today.getTime()) {
+          const wd = __regionTargetWeekday(custBySeller[sid] || [], Number(r.lat), Number(r.lng));
+          const snapped = __snapToWeekday(base, wd, 3, today, null); // encaixa no dia de rota da região
+          if (snapped.getTime() !== base.getTime()) ajustadosPorRegiao++;
+          updates.push({ id: r.id, date: snapped });
         } else {
-          const sid = r.assigned_to || 'sem_vendedor';
-          (pastBySeller[sid] = pastBySeller[sid] || []).push({ id: r.id, created: r.created_txt });
+          (pastBySeller[sid] = pastBySeller[sid] || []).push({ id: r.id, created: r.created_txt, lat: Number(r.lat), lng: Number(r.lng), sid });
         }
       }
 
@@ -24944,7 +25027,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let count = 0;
         for (const item of arr) {
           if (count >= PER_DAY) { day = advanceBiz(day); count = 0; }
-          updates.push({ id: item.id, date: day });
+          const wd = __regionTargetWeekday(custBySeller[sid] || [], item.lat, item.lng);
+          const snapped = __snapToWeekday(day, wd, 3, today, null); // encaixa no dia de rota da região
+          if (snapped.getTime() !== day.getTime()) ajustadosPorRegiao++;
+          updates.push({ id: item.id, date: snapped });
           count++;
           reprogramados++;
         }
@@ -24968,6 +25054,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aplicados,
         futurosCriadoMais15: updates.length - reprogramados,
         reprogramados,
+        ajustadosPorRegiao,
         porDiaPorVendedor: PER_DAY,
       });
     } catch (error: any) {
@@ -25035,11 +25122,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📅 RETORNO AUTOMÁTICO (cadastro + 15 dias, em dia útil): data TRAVADA de revisita na rota do vendedor.
       // O vendedor não pode alterá-la (o PATCH só libera photo/observation/status). Só admin ajusta.
       try {
-        const _ret = nowBrazil();
+        let _ret = nowBrazil();
         _ret.setDate(_ret.getDate() + 15);
         const _dow = _ret.getDay();               // 0=Dom, 6=Sáb
         if (_dow === 6) _ret.setDate(_ret.getDate() + 2);      // sábado → segunda
         else if (_dow === 0) _ret.setDate(_ret.getDate() + 1); // domingo → segunda
+        // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias.
+        try {
+          const _custs = await __sellerCustomers(String((lead as any).assignedTo || user.id));
+          const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
+          _ret = __snapToWeekday(_ret, _wd, 3, null, null);
+        } catch (_snapErr) { /* mantém _ret */ }
         await db.execute(sql`
           UPDATE leads
           SET next_contact_date = ${_ret}, original_return_date = ${_ret}, status = 'scheduled', updated_at = NOW()
@@ -25703,6 +25796,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
           else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
         }
+        // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias,
+        // sem sair da janela permitida (futuro e teto de 15 dias).
+        try {
+          const _custs = await __sellerCustomers(String((lead as any).assignedTo || ''));
+          const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
+          const _nb = new Date(_hoje0.getTime() + 86400000);
+          const _na = new Date(_hoje0.getTime() + 15 * 86400000 + 23 * 3600000);
+          _ret = __snapToWeekday(_ret, _wd, 3, _nb, _na);
+        } catch (_snapErr) { /* mantém _ret */ }
         // Mantém a contagem em 1 (trava do vendedor); admin reagenda sem zerar.
         const _novoCount = Number((lead as any).postponementCount || 0) >= 1 ? Number((lead as any).postponementCount) : 1;
         await db.execute(sql`
@@ -25723,11 +25825,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (acao === 'resgatar') {
         // Resgata um lead não convertido (descartado): volta para a lista COMO NOVO, com os mesmos dados.
         // Nova data de retorno = hoje + 15 dias (dia útil), zera prorrogação/motivo/atraso.
-        const _ret = nowBrazil();
+        let _ret = nowBrazil();
         _ret.setDate(_ret.getDate() + 15);
         const _dow = _ret.getDay();
         if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
         else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias.
+        try {
+          const _custs = await __sellerCustomers(String((lead as any).assignedTo || '')));
+          const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
+          _ret = __snapToWeekday(_ret, _wd, 3, null, null);
+        } catch (_snapErr) { /* mantém _ret */ }
         await db.execute(sql`
           UPDATE leads
           SET status = 'scheduled', next_contact_date = ${_ret}, original_return_date = ${_ret},
