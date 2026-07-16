@@ -25,9 +25,12 @@ const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coor
 // não entram no sorteio. Não há auto-habilitação (somente admin habilita).
 const REPESCAGEM_ELIGIBLE_ROLES = ['vendedor', 'telemarketing'];
 const REPESCAGEM_EXCLUDED_USER_IDS = new Set<string>([
-  '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest 1
-  'f87166f7-0431-4bd1-8c8c-074d13b2c861', // Honest 2
   'omie-vendor-2425693369',               // Flavio E
+  'omie-vendor-4253571754',               // Fabio H
+  'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
+  'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
+  'omie-vendor-4324270246',               // Lorenna Pina
+  // Honest 1 e Honest 2 REMOVIDOS da exclusao -> agora elegiveis (telemarketing)
 ]);
 
 function brTodayStr(): string {
