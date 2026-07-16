@@ -22,6 +22,7 @@ import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
+import LeadReturnsPanel from "@/components/LeadReturnsPanel";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
@@ -1062,6 +1063,11 @@ export default function RotaDoDia() {
         <div className="mb-6 p-4 rounded-md border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200 text-sm" data-testid="banner-missing-coords">
           <strong>{missingCoords.count} cliente(s) da agenda deste dia SEM coordenada</strong> — ficam fora da rota otimizada. Atualize o cadastro (lat/long): {missingCoords.customers.map((c) => c.name).join(', ')}
         </div>
+      )}
+
+      {/* 📅 Retornos de lead (revisita agendada +15 dias) — aparecem na rota do vendedor na data prevista */}
+      {selectedSellerId && selectedDate && (
+        <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} />
       )}
 
       {!selectedSellerId ? (
