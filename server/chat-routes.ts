@@ -479,50 +479,47 @@ async function consolidateDuplicateConversations(storage: any): Promise<{ consol
 
 // Helper function to upload chat media to Object Storage
 async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, originalFilename: string): Promise<string | null> {
-  try {
-    console.log(`📤 [CHAT-UPLOAD] Iniciando upload: ${originalFilename} (${mimetype}, ${Math.round(buffer.length / 1024)}KB)`);
-    
-    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
-    const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    
-    console.log(`📤 [CHAT-UPLOAD] ENV: PUBLIC_PATHS=${publicPaths ? 'set' : 'not set'}, PRIVATE_DIR=${privateDir ? 'set' : 'not set'}`);
-    
-    let baseDirEnv = publicPaths || privateDir;
-    if (!baseDirEnv) {
-      console.log('⚠️ [CHAT-UPLOAD] PUBLIC_OBJECT_SEARCH_PATHS e PRIVATE_OBJECT_DIR not set');
+  // Fallback: guarda a midia no banco e serve via /api/chat-media/:id (funciona no Railway, sem Object Storage do Replit)
+  const saveToDb = async (): Promise<string | null> => {
+    try {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS chat_media (id text PRIMARY KEY, mimetype text, filename text, data text, created_at timestamptz DEFAULT now())`);
+      const id = nanoid(16);
+      const b64 = buffer.toString('base64');
+      await db.execute(sql`INSERT INTO chat_media (id, mimetype, filename, data) VALUES (${id}, ${mimetype}, ${originalFilename}, ${b64})`);
+      const url = `/api/chat-media/${id}`;
+      console.log(`✅ [CHAT-UPLOAD] Salvo no banco (fallback): ${url} (${Math.round(buffer.length / 1024)}KB)`);
+      return url;
+    } catch (e: any) {
+      console.error('❌ [CHAT-UPLOAD] Falha no fallback DB:', e?.message || e);
       return null;
     }
-    
+  };
+  try {
+    console.log(`📤 [CHAT-UPLOAD] Iniciando upload: ${originalFilename} (${mimetype}, ${Math.round(buffer.length / 1024)}KB)`);
+    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
+    const privateDir = process.env.PRIVATE_OBJECT_DIR;
+    const baseDirEnv = publicPaths || privateDir;
+    if (!baseDirEnv) {
+      console.log('⚠️ [CHAT-UPLOAD] Object Storage nao configurado — usando fallback no banco');
+      return await saveToDb();
+    }
     const baseDir = baseDirEnv.split(',')[0].trim();
-    console.log(`📤 [CHAT-UPLOAD] baseDir: ${baseDir}`);
-    
-    // Parse path to get bucket and object name
-    let pathNorm = baseDir.startsWith('/') ? baseDir : `/${baseDir}`;
+    const pathNorm = baseDir.startsWith('/') ? baseDir : `/${baseDir}`;
     const parts = pathNorm.split('/').filter(p => p);
     const bucketName = parts[0];
     const basePath = parts.slice(1).join('/');
-    
     const fileId = nanoid(12);
     const ext = path.extname(originalFilename).toLowerCase() || '.bin';
     const objectName = `${basePath}/chat-media/${fileId}${ext}`;
-    
-    console.log(`📤 [CHAT-UPLOAD] Salvando: bucket=${bucketName}, object=${objectName}`);
-    
     const bucket = objectStorageClient.bucket(bucketName);
     const file = bucket.file(objectName);
-    
-    await file.save(buffer, {
-      contentType: mimetype,
-      resumable: false,
-    });
-    
-    // Return URL that passes through our server (works even if bucket is private)
+    await file.save(buffer, { contentType: mimetype, resumable: false });
     const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
     console.log(`✅ [CHAT-UPLOAD] Arquivo salvo: ${serverUrl} (${Math.round(buffer.length / 1024)}KB)`);
     return serverUrl;
   } catch (error: any) {
-    console.error('❌ [CHAT-UPLOAD] Erro ao fazer upload:', error.message, error.stack);
-    return null;
+    console.error('❌ [CHAT-UPLOAD] Erro no Object Storage, tentando fallback no banco:', error.message);
+    return await saveToDb();
   }
 }
 
@@ -747,6 +744,23 @@ export function registerChatRoutes(app: Express): void {
       }
     }
   );
+
+
+  // Serve midia guardada no banco (fallback de upload) — publico p/ o Umbler baixar a imagem
+  app.get("/api/chat-media/:id", async (req: any, res: any) => {
+    try {
+      const { id } = req.params;
+      const r: any = await db.execute(sql`SELECT mimetype, data FROM chat_media WHERE id = ${id} LIMIT 1`);
+      const row = (r as any)?.rows?.[0];
+      if (!row || !row.data) return res.status(404).send('not found');
+      const buf = Buffer.from(String(row.data), 'base64');
+      res.setHeader('Content-Type', row.mimetype || 'application/octet-stream');
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.send(buf);
+    } catch (e: any) {
+      return res.status(500).send('erro');
+    }
+  });
 
   // ============================================================
   // BUSCAR/CRIAR CONVERSA POR TELEFONE
