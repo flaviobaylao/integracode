@@ -781,8 +781,8 @@ export default function RotaDoDia() {
   // Visitas Sem Pedido   = concluídas (check-in OU pedido) que ficaram SEM pedido
   const orderStats = useMemo(() => {
     // Clientes que estão na rota (presenciais + virtuais)
-    const routeCustomerIds = new Set<string>();
-    (route?.visits || []).forEach((v: any) => { if (v.customerId) routeCustomerIds.add(String(v.customerId)); });
+    const routeCids = new Set<string>();
+    (route?.visits || []).forEach((v: any) => { if (v.customerId) routeCids.add(String(v.customerId)); });
 
     // Concluídas = check-in feito OU atendimento virtual realizado...
     const concluidas = new Set<string>();
@@ -792,7 +792,7 @@ export default function RotaDoDia() {
     let comPedidos = 0;
     let valor = 0;
     // ...e QUALQUER cliente da rota com pedido do dia (o pedido é o registro na rota).
-    routeCustomerIds.forEach((cid: string) => {
+    routeCids.forEach((cid: string) => {
       const ords = (customerInfo?.orders?.[cid]) || [];
       if (ords.length > 0) {
         comPedidos++;
