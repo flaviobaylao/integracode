@@ -1121,7 +1121,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {Array.isArray(users) && sortSellersByType(users.filter((user: User) => user.role === 'vendedor' && user.isActive)).map((user: User) => (
+                            {Array.isArray(users) && sortSellersByType(users.filter((user: User) => user.isActive && (user.role === 'vendedor' || user.role === 'telemarketing'))).map((user: User) => (
                               <SelectItem key={user.id} value={user.id}>
                                 {user.firstName} {user.lastName} {user.route && `(${user.route})`}
                               </SelectItem>
