@@ -2234,6 +2234,13 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
+  // Importacao do historico de NF-e do Omie: marcadores de origem/lote (dedup por access_key).
+  db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_origin varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_batch_id varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS import_origin varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS import_batch_id varchar`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fiscal_invoices_import_batch ON fiscal_invoices(import_batch_id)`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fii_import_batch ON fiscal_invoice_items(import_batch_id)`).catch(() => {});
   // Condição de pagamento por cliente (editada em Clientes Ativos): forma + prazo do boleto.
   // Sem estas colunas o salvamento da "Forma de Pagamento" não persistia. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_method varchar`).catch(() => {});
