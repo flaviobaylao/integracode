@@ -1065,11 +1065,6 @@ export default function RotaDoDia() {
         </div>
       )}
 
-      {/* 📅 Retornos de lead (revisita agendada +15 dias) — aparecem na rota do vendedor na data prevista */}
-      {selectedSellerId && selectedDate && (
-        <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} />
-      )}
-
       {!selectedSellerId ? (
         <Card>
           <CardContent className="py-12 text-center">
@@ -1772,6 +1767,11 @@ export default function RotaDoDia() {
                   <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="presential-empty">
                     Nenhuma visita corresponde à busca/filtro.
                   </div>
+                )}
+
+                {/* Retornos de lead (revisita +15 dias) - dentro do box das visitas presenciais */}
+                {selectedSellerId && selectedDate && (
+                  <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} />
                 )}
 
                 {(() => {
