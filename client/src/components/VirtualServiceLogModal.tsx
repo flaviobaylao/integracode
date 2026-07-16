@@ -239,7 +239,8 @@ export default function VirtualServiceLogModal({
     }
     setLoadingConversa(true);
     try {
-      const data: any = await apiRequest("GET", `/api/chat/conversation-for-customer/${customerId}`);
+      const _dateQ = serviceDate ? `?date=${encodeURIComponent(serviceDate)}` : '';
+      const data: any = await apiRequest("GET", `/api/chat/conversation-for-customer/${customerId}${_dateQ}`);
       if (!data?.found || !Array.isArray(data.messages) || data.messages.length === 0) {
         toast({ title: "Sem conversa", description: data?.reason || "Não há conversa vinculada na Central.", variant: "destructive" });
         return;
@@ -251,7 +252,7 @@ export default function VirtualServiceLogModal({
         return `[${hora}] ${quem}: ${String(m.content || '').trim()}`;
       }).join('\n');
       const capturadoEm = format(new Date(), "dd/MM/yyyy HH:mm", { locale: ptBR });
-      const bloco = `----- Conversa da Central de Atendimento (${data.customerName || customerName}) - capturada em ${capturadoEm} -----\n${linhas}\n----- fim da conversa (${data.messages.length} mensagens) -----`;
+      const bloco = `----- Conversa da Central de Atendimento (${data.customerName || customerName})${data.date ? ' - dia ' + String(data.date).split('-').reverse().join('/') : ''} - capturada em ${capturadoEm} -----\n${linhas}\n----- fim da conversa (${data.messages.length} mensagens) -----`;
       setNotes(prev => (prev && prev.trim() ? prev + '\n\n' : '') + bloco);
       toast({ title: "Conversa anexada", description: `${data.messages.length} mensagens adicionadas às notas.` });
     } catch (e: any) {
@@ -317,33 +318,37 @@ export default function VirtualServiceLogModal({
               <CardContent className="space-y-4">
                 <div>
                   <Label>Tipo de Atendimento</Label>
-                  <div className="mt-2 flex gap-2 flex-wrap">
-                    {(Object.keys(serviceTypeLabels) as ServiceType[])
-                      .filter((type) => {
-                        if (entityType === 'lead') return type === 'prospecao';
-                        return type === 'nao_venda';
-                      })
+                <div className="mt-2 flex gap-2 flex-wrap">
+                  {entityType === 'customer' ? (
+                    <span className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 bg-red-100 text-red-700 border-red-300 font-medium">
+                      <X className="h-4 w-4" />
+                      Não Venda
+                    </span>
+                  ) : (
+                    (Object.keys(serviceTypeLabels) as ServiceType[])
+                      .filter((type) => type === 'prospecao')
                       .map((type) => {
-                      const config = serviceTypeLabels[type];
-                      const Icon = config.icon;
-                      const isSelected = serviceType === type;
-                      return (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => setServiceType(type)}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
-                            isSelected 
-                              ? `${config.color} border-current font-medium shadow-sm` 
-                              : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800'
-                          }`}
-                        >
-                          <Icon className="h-4 w-4" />
-                          {config.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                        const config = serviceTypeLabels[type];
+                        const Icon = config.icon;
+                        const isSelected = serviceType === type;
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setServiceType(type)}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
+                              isSelected
+                                ? `${config.color} border-current font-medium shadow-sm`
+                                : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800'
+                            }`}
+                          >
+                            <Icon className="h-4 w-4" />
+                            {config.label}
+                          </button>
+                        );
+                      })
+                  )}
+                </div>
                 </div>
                 
                 <div>
