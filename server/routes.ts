@@ -20057,6 +20057,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         adminAdjustments = aaRows?.rows?.[0]?.admin_adjustments || {};
       } catch {}
 
+      // ➕ Marcar visitas ADICIONADAS MANUALMENTE à rota (sales_card com source='manual_route_addition')
+      // O front exibe "Adicionado manualmente" no rodapé do box dessas visitas.
+      const manualCustomerIds = new Set<string>();
+      try {
+        const manualRows: any = await db.execute(sql`
+          SELECT DISTINCT customer_id
+          FROM sales_cards
+          WHERE seller_id = ${route.sellerId}
+            AND source = 'manual_route_addition'
+            AND DATE(scheduled_date) = ${date}
+        `);
+        (manualRows?.rows || []).forEach((r: any) => {
+          if (r?.customer_id) manualCustomerIds.add(r.customer_id);
+        });
+      } catch (manualErr) {
+        console.warn('⚠️ [MANUAL-ADD] Erro ao buscar visitas adicionadas manualmente (não crítico):', manualErr);
+      }
+      visits.forEach((v: any) => {
+        if (v && v.customerId && manualCustomerIds.has(v.customerId)) {
+          v.addedManually = true;
+        }
+      });
+
       res.json({
         route: {
           ...route,
