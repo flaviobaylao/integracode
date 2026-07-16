@@ -773,30 +773,43 @@ export default function RotaDoDia() {
     return s;
   }, [route?.visits, attendedCustomerIds]);
 
-  // Métricas de PEDIDOS sobre as CONCLUÍDAS = visitas físicas realizadas (CHECK-IN) + atendimentos virtuais realizados.
-  // (Regra do check-out desligada: a visita é concluída no CHECK-IN.)
-  // Visitas com Pedidos  = concluídas que tiveram pedido implantado
-  // Valor Visitas c/ Ped = soma dos pedidos das concluídas
-  // Visitas Sem Pedido   = concluídas SEM registro de pedido
+  // Métricas de PEDIDOS.
+  // REGRA: qualquer PEDIDO do dia (NF emitida + venda) de um cliente que ESTÁ NA ROTA
+  // conta como registro/atendimento na rota — mesmo SEM check-in ou atendimento registrado.
+  // Visitas com Pedidos  = clientes da rota (presenciais + virtuais) com pedido do dia
+  // Valor Visitas c/ Ped = soma do saleValue desses pedidos
+  // Visitas Sem Pedido   = concluídas (check-in OU pedido) que ficaram SEM pedido
   const orderStats = useMemo(() => {
-    // Universo de concluídas por customerId
+    // Clientes que estão na rota (presenciais + virtuais)
+    const routeCustomerIds = new Set<string>();
+    (route?.visits || []).forEach((v: any) => { if (v.customerId) routeCustomerIds.add(String(v.customerId)); });
+
+    // Concluídas = check-in feito OU atendimento virtual realizado...
     const concluidas = new Set<string>();
     (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in' && cp.customerId) concluidas.add(String(cp.customerId)); });
     virtualConcludedIds.forEach((id) => concluidas.add(id));
+
     let comPedidos = 0;
     let valor = 0;
-    let semPedido = 0;
-    concluidas.forEach((cid: string) => {
+    // ...e QUALQUER cliente da rota com pedido do dia (o pedido é o registro na rota).
+    routeCustomerIds.forEach((cid: string) => {
       const ords = (customerInfo?.orders?.[cid]) || [];
       if (ords.length > 0) {
         comPedidos++;
         valor += ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0);
-      } else {
-        semPedido++;
+        concluidas.add(cid);
       }
     });
+
+    // Sem Pedido = concluídas (check-in ou pedido) sem nenhum pedido do dia.
+    let semPedido = 0;
+    concluidas.forEach((cid: string) => {
+      const ords = (customerInfo?.orders?.[cid]) || [];
+      if (ords.length === 0) semPedido++;
+    });
+
     return { comPedidos, semPedido, valor, totalConcluidas: concluidas.size };
-  }, [route?.checkpoints, customerInfo, virtualConcludedIds]);
+  }, [route?.visits, route?.checkpoints, customerInfo, virtualConcludedIds]);
 
   // Visitas presenciais (exclui virtuais)
   const presentialVisits = useMemo(
