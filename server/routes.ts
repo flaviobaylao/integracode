@@ -960,6 +960,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ATALHOS FAVORITOS por usuário — persistência no servidor (system_settings,
+  // chave user_favorites_<id>). Antes ficavam só no localStorage e sumiam ao
+  // deslogar/logar ou trocar de dispositivo. Guarda a lista de ids de atalhos.
+  app.get('/api/user/favorites', authenticateUser, async (req: any, res) => {
+    try {
+      const uid = req.currentUser?.id;
+      if (!uid) return res.status(401).json({ message: 'Não autenticado' });
+      const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${'user_favorites_' + uid} LIMIT 1`);
+      const row = ((r?.rows ?? r) || [])[0];
+      let fav: any = [];
+      if (row?.value) { try { fav = JSON.parse(row.value); } catch { fav = []; } }
+      res.json({ favorites: Array.isArray(fav) ? fav.filter((x: any) => typeof x === 'string') : [] });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || 'Erro ao buscar favoritos' });
+    }
+  });
+
+  app.put('/api/user/favorites', authenticateUser, async (req: any, res) => {
+    try {
+      const uid = req.currentUser?.id;
+      if (!uid) return res.status(401).json({ message: 'Não autenticado' });
+      let fav = (req.body?.favorites ?? []);
+      if (!Array.isArray(fav)) fav = [];
+      fav = fav.filter((x: any) => typeof x === 'string').slice(0, 20);
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${'user_favorites_' + uid}, ${JSON.stringify(fav)}, ${req.currentUser?.email || uid}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      res.json({ ok: true, favorites: fav });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || 'Erro ao salvar favoritos' });
+    }
+  });
+
   // DEBUG ENDPOINT - Comparar notas do Excel com banco de dados
   app.get('/api/debug/compare-invoices', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
