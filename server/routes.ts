@@ -25468,17 +25468,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Validar dados obrigatórios
       if (!name || !customerType || !phone || !address) {
-        return res.status(400).json({ 
-          message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios' 
+        return res.status(400).json({
+          message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios'
         });
       }
+
+      // Normaliza documentos: só grava se tiver dígitos (evita colisão na unique de cpf/cnpj com valor vazio).
+      const _cpf = (String(cpf ?? '').replace(/\D/g, '').length ? cpf : null);
+      const _cnpj = (String(cnpj ?? '').replace(/\D/g, '').length ? cnpj : null);
+
+      // Checagem de duplicidade (a coluna cpf/cnpj é UNIQUE → sem isso o INSERT estoura com erro genérico).
+      if (_cpf) {
+        const dup = await storage.getCustomerByCpf(_cpf);
+        if (dup) return res.status(409).json({ message: `CPF já cadastrado no cliente "${dup.name}". Não é possível converter com CPF duplicado.`, code: 'CPF_DUPLICADO', field: 'cpf' });
+      }
+      if (_cnpj) {
+        const dup = await storage.getCustomerByCnpj(_cnpj);
+        if (dup) return res.status(409).json({ message: `CNPJ já cadastrado no cliente "${dup.name}". Não é possível converter com CNPJ duplicado.`, code: 'CNPJ_DUPLICADO', field: 'cnpj' });
+      }
+
+      // Vendedor: usa o informado, senão o dono do lead, senão o usuário logado (seller_id é NOT NULL).
+      const _sellerId = sellerId || lead.assignedTo || req.currentUser?.id || '';
 
       // Criar cliente
       const customer = await storage.createCustomer({
         name,
         customerType: customerType as 'pessoa_fisica' | 'pessoa_juridica',
-        cpf: cpf || null,
-        cnpj: cnpj || null,
+        cpf: _cpf,
+        cnpj: _cnpj,
         companyName: companyName || null,
         fantasyName: lead.fantasyName,
         phone,
@@ -25488,18 +25505,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         state: state || null,
         zipCode: zipCode || null,
         neighborhood: neighborhood || null,
-        sellerId: sellerId || '',
+        sellerId: _sellerId,
         weekdays: weekdays ? JSON.stringify(normalizeWeekdayInput(weekdays)) : JSON.stringify(['Seg']),
         visitPeriodicity: visitPeriodicity || 'semanal',
-        latitude: lead.latitude.toString(),
-        longitude: lead.longitude.toString(),
+        latitude: normalizeCoord(lead.latitude) ?? null,
+        longitude: normalizeCoord(lead.longitude) ?? null,
         isActive: true
-      });
+      } as any);
 
       // Atualizar lead como convertido
       await storage.updateLead(id, {
         status: 'converted',
-        assignedTo: sellerId || null
+        assignedTo: _sellerId || null
       });
 
       console.log(`✅ Lead ${lead.fantasyName} convertido em cliente ${customer.name}`);
@@ -25509,7 +25526,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error('Erro ao converter lead:', error);
-      res.status(500).json({ message: 'Erro ao converter lead', error: error.message });
+      const msg = String(error?.message || '');
+      if (/unique|duplicate|duplicad/i.test(msg)) {
+        return res.status(409).json({ message: 'Já existe um cliente com este CPF/CNPJ. Ajuste o documento e tente novamente.', code: 'DOC_DUPLICADO', error: msg });
+      }
+      res.status(500).json({ message: 'Erro ao converter lead: ' + (error?.message || 'erro desconhecido'), error: error.message });
     }
   });
 
@@ -25593,7 +25614,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ message: 'Retorno prorrogado.', status: 'scheduled', returnDate: _ret.toISOString() });
       }
 
-      return res.status(400).json({ message: "Ação inválida. Use 'nao_converter' ou 'prorrogar'. (Para converter, use /convert-to-customer.)" });
+      if (acao === 'resgatar') {
+        // Resgata um lead não convertido (descartado): volta para a lista COMO NOVO, com os mesmos dados.
+        // Nova data de retorno = hoje + 15 dias (dia útil), zera prorrogação/motivo/atraso.
+        const _ret = nowBrazil();
+        _ret.setDate(_ret.getDate() + 15);
+        const _dow = _ret.getDay();
+        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
+        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        await db.execute(sql`
+          UPDATE leads
+          SET status = 'scheduled', next_contact_date = ${_ret}, original_return_date = ${_ret},
+              postponement_count = 0, non_conversion_reason = NULL, return_overdue = false, updated_at = NOW()
+          WHERE id = ${id}
+        `);
+        try {
+          await storage.createLeadVisit({
+            leadId: id, userId: user.id, userName: user.name || user.email,
+            observation: `RESGATADO — voltou para a lista como novo (retorno ${_ret.toISOString().slice(0,10)})`,
+          } as any);
+        } catch (_e) {}
+        console.log(`♻️ [LEAD-DESFECHO] ${lead.fantasyName} RESGATADO por ${user.email}`);
+        return res.json({ message: 'Lead resgatado — voltou para a lista como novo.', status: 'scheduled', returnDate: _ret.toISOString() });
+      }
+
+      return res.status(400).json({ message: "Ação inválida. Use 'nao_converter', 'prorrogar' ou 'resgatar'. (Para converter, use /convert-to-customer.)" });
     } catch (error: any) {
       console.error('Erro no desfecho do lead:', error);
       res.status(500).json({ message: 'Erro ao registrar desfecho do lead', error: error?.message });
