@@ -1909,8 +1909,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Cliente não encontrado" });
       }
       
-      // Check if customer is already inactive
-      if (!existingCustomer.isActive) {
+      // "Ja inativo" so quando o cliente tambem NAO esta mais na lista de ativos.
+      // A lista de Clientes Ativos vem de active_customers.isActive=true; quando esse
+      // estado ficava dessincronizado de customers.isActive, o endpoint respondia
+      // "ja inativo" (customers.isActive=false) SEM remover da lista -> o cliente seguia
+      // aparecendo em Clientes Ativos. Se ainda estiver na lista, seguimos e reconciliamos.
+      const acStill: any = await db.execute(sql`SELECT 1 FROM active_customers WHERE customer_id = ${id} AND is_active = true LIMIT 1`);
+      const stillInActiveList = !!(acStill?.rows && acStill.rows.length > 0);
+      if (!existingCustomer.isActive && !stillInActiveList) {
         return res.status(400).json({ message: "Cliente já está inativo" });
       }
       
