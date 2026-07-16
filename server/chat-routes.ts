@@ -3729,13 +3729,14 @@ export function registerChatRoutes(app: Express): void {
       if (!conversation) {
         return res.json({ found: false, reason: "Sem conversa vinculada na Central de Atendimento" });
       }
-      const msgs = await storage.getChatMessages(conversation.id);
-      const messages = (msgs || []).map((m: any) => ({
-        senderType: m.senderType,
-        content: m.content,
-        createdAt: m.createdAt,
-      }));
-      return res.json({ found: true, conversationId: conversation.id, customerName: conversation.customerName, phone: normalized, messages });
+      const allMsgs = (await storage.getChatMessages(conversation.id)) || [];
+      const dayOf = (d: any) => { try { return new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; } };
+      const reqDate = String((req.query && req.query.date) || "").slice(0, 10);
+      const days = Array.from(new Set(allMsgs.map((m: any) => dayOf(m.createdAt)).filter(Boolean))).sort();
+      const targetDay = (reqDate && days.includes(reqDate)) ? reqDate : (days.length ? days[days.length - 1] : "");
+      const dayMsgs = targetDay ? allMsgs.filter((m: any) => dayOf(m.createdAt) === targetDay) : [];
+      const messages = dayMsgs.map((m: any) => ({ senderType: m.senderType, content: m.content, createdAt: m.createdAt }));
+      return res.json({ found: true, conversationId: conversation.id, customerName: conversation.customerName, phone: normalized, date: targetDay, totalConversation: allMsgs.length, messages });
     } catch (error: any) {
       console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
       return res.status(500).json({ found: false, error: error?.message || "erro" });
