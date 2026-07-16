@@ -1782,7 +1782,7 @@ export default function RotaDoDia() {
                           const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
                           const isFinalized = !!(isAttended || hasOrderToday);
-                          const isNaoVenda = !!(visit.customerId && noSaleCustomerIds.has(visit.customerId));
+                          const isNaoVenda = !!(visit.customerId && isAttended && !hasOrderToday);
                           return (
                           <div
                             key={visit.id || visit.customerId}
