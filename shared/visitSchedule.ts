@@ -100,12 +100,22 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
     throw new Error('Cliente deve ter pelo menos um dia da semana configurado');
   }
 
-  const targetWeekdays = weekdays
+  const rawTargetWeekdays = weekdays
     .map(day => normalizeWeekday(day as string))
     .filter((num): num is number => num !== null);
-  
-  if (targetWeekdays.length === 0) {
+
+  if (rawTargetWeekdays.length === 0) {
     throw new Error('Nenhum dia da semana válido encontrado');
+  }
+
+  // 🗓️ REGRA DE DIAS ÚTEIS (seg–sex): agendamentos NUNCA caem em sábado (6) ou
+  // domingo (0). Remove o fim de semana dos dias-alvo; se o cliente estiver
+  // configurado SOMENTE em fim de semana, reprograma para qualquer dia útil
+  // (seg–sex), mantendo a periodicidade. Todo o cálculo abaixo escolhe datas
+  // apenas dentro de targetWeekdays, então nenhuma data de fim de semana é gerada.
+  let targetWeekdays = rawTargetWeekdays.filter(n => n !== 0 && n !== 6);
+  if (targetWeekdays.length === 0) {
+    targetWeekdays = [1, 2, 3, 4, 5];
   }
 
   // Garantir que baseDate tenha horas zeradas
