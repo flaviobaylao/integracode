@@ -2326,7 +2326,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     const rec: any = await db.execute(sql`
       SELECT r.id, r.amount, r.due_date, r.customer_id, r.customer_name, r.customer_document,
              r.fiscal_invoice_id, r.billing_pipeline_id, r.omie_instance_id,
-             c.address, c.city, c.neighborhood, c.state, c.zip_code, c.cpf, c.cnpj, c.name AS c_name
+             c.address, c.city, c.neighborhood, c.state, c.zip_code, c.cpf, c.cnpj, c.name AS c_name,
+             c.collection_discount
       FROM receivables r LEFT JOIN customers c ON c.id = r.customer_id
       WHERE r.id = ${receivableId} AND r.deleted_at IS NULL LIMIT 1`);
     const row = rec.rows?.[0];
@@ -2342,6 +2343,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
         debtorState: row.state, debtorZip: row.zip_code,
         receivableId: row.id, fiscalInvoiceId: row.fiscal_invoice_id,
         customerId: row.customer_id, billingPipelineId: row.billing_pipeline_id,
+        descontoPct: parseFloat(String(row.collection_discount ?? '0')) || 0,
       },
     };
   }
