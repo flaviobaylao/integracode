@@ -529,6 +529,11 @@ async function autoReleaseRegularizedDebtOrders(horario: string) {
     if (blocked.length === 0) { console.log(`✅ [AUTO-RELEASE] (${horario}) Nenhum pedido bloqueado por debito vencido.`); return; }
     console.log(`🔎 [AUTO-RELEASE] (${horario}) ${blocked.length} pedido(s) bloqueado(s) por debito vencido - re-verificando debitos...`);
     const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes');
+    // Snapshot dos cards JA presentes no pipeline — usado para confirmar que a liberacao
+    // REALMENTE colocou o pedido no faturamento antes de marcar 'released' (evita pedido
+    // sumir dos bloqueados sem ser faturado quando o envio ao pipeline falha/no-op).
+    let pipelineCardIds = new Set<string>();
+    try { pipelineCardIds = new Set((await storage.getBillingPipelineItems()).map((i: any) => i.salesCardId).filter(Boolean)); } catch { /* segue; confirma via retorno do autoSend */ }
     let released = 0, kept = 0, failed = 0;
     for (const order of blocked as any[]) {
       try {
@@ -537,11 +542,28 @@ async function autoReleaseRegularizedDebtOrders(horario: string) {
         if (!doc) { kept++; continue; }
         const debt = await storage.getOverdueDebtByDocument(doc);
         if (debt) { kept++; continue; }
-        // Debito regularizado -> libera: envia ao pipeline (etapa "pedido") e marca released
+        // Debito regularizado -> libera: SO marca 'released' se o pedido REALMENTE entrar no
+        // pipeline de faturamento. Sem card de venda, ou se o envio falhar/no-op, MANTEM
+        // bloqueado e tenta de novo na proxima hora (evita pedido liberado-e-nao-faturado).
         const salesCard = order.salesCardId ? await storage.getSalesCard(order.salesCardId) : null;
-        if (salesCard) {
-          try { await autoSendToBillingPipeline(salesCard, 'system-debito-regularizado', { skipDebtCheck: true }); }
-          catch (e: any) { console.warn(`⚠️ [AUTO-RELEASE] autoSend falhou p/ card ${order.salesCardId} (segue liberando):`, e?.message); }
+        if (!salesCard) {
+          kept++;
+          console.warn(`⚠️ [AUTO-RELEASE] Pedido ${order.id} sem sales_card (${order.salesCardId || 'null'}) — mantido bloqueado (nao ha o que enviar ao pipeline).`);
+          continue;
+        }
+        let inPipeline = false;
+        try {
+          const created: any = await autoSendToBillingPipeline(salesCard, 'system-debito-regularizado', { skipDebtCheck: true });
+          if (created) { inPipeline = true; pipelineCardIds.add(salesCard.id); }
+          else { inPipeline = pipelineCardIds.has(salesCard.id); } // null por DUPLICADO = ja esta no pipeline (ok liberar)
+        } catch (e: any) {
+          console.warn(`⚠️ [AUTO-RELEASE] autoSend falhou p/ card ${order.salesCardId}:`, e?.message);
+          inPipeline = false;
+        }
+        if (!inPipeline) {
+          kept++;
+          console.warn(`⚠️ [AUTO-RELEASE] Pedido ${order.id} NAO entrou no pipeline (envio falhou/no-op) — mantido bloqueado p/ retry na proxima hora.`);
+          continue;
         }
         await db.update(blockedOrders)
           .set({ status: 'released', releasedAt: nowBrazil(), releasedBy: 'system-auto-debito-regularizado', updatedAt: nowBrazil() })
