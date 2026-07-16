@@ -138,6 +138,7 @@ export interface RegistrarBoletoParams {
   customerId?: string | null;
   billingPipelineId?: string | null;
   createdBy?: string | null;
+  descontoPct?: number; // desconto de cobranca (%) do cadastro do cliente -> desconto ate o vencimento no boleto
 }
 
 export interface RegistrarBoletoResult {
@@ -259,6 +260,17 @@ export async function registrarBoleto(
   if (account.bbMultaPercentual && parseFloat(account.bbMultaPercentual) > 0) {
     const multaDate = new Date(effectiveDueDate); multaDate.setDate(multaDate.getDate() + 1); // BB exige data da multa POSTERIOR ao vencimento (usa vencimento efetivo)
     body.multa = { tipo: 2, porcentagem: parseFloat(account.bbMultaPercentual), data: formatBBDate(multaDate) };
+  }
+
+  // Desconto de cobranca ("desconto ate o vencimento") vindo do cadastro do cliente
+  // (params.descontoPct, em %). NAO reduz o valorOriginal: mantem o valor cheio e aplica o
+  // desconto por VALOR FIXO (tipo 1) valido ate o vencimento efetivo. Ex.: 6% de R$ 301,70 =>
+  // desconto de R$ 18,10 -> cliente paga R$ 283,60 se pagar em dia, R$ 301,70 se atrasar.
+  if (params.descontoPct && params.descontoPct > 0 && params.descontoPct < 100) {
+    const descValor = Number((Number(params.amount) * params.descontoPct / 100).toFixed(2));
+    if (descValor > 0 && descValor < Number(params.amount)) {
+      body.desconto = { tipo: 1, dataExpiracao: formatBBDate(effectiveDueDate), valor: descValor };
+    }
   }
 
   const instrucoesLinhas = [
