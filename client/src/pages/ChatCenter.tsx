@@ -1228,6 +1228,23 @@ function ChatCenterInner() {
     setSelectedFile(file);
   };
 
+  const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.type && it.type.startsWith('image/')) {
+        const file = it.getAsFile();
+        if (file) {
+          e.preventDefault();
+          setSelectedFile(file);
+          toast({ title: "Imagem colada", description: "Imagem pronta para enviar — adicione uma legenda se quiser e clique em enviar." });
+          break;
+        }
+      }
+    }
+  };
+
   const getMediaType = (file: File): 'image' | 'audio' | 'video' | 'document' => {
     const mime = file.type;
     if (mime.startsWith('image/')) return 'image';
@@ -2025,8 +2042,8 @@ function ChatCenterInner() {
                                     {msg.messageType === 'video' && <video src={msg.content} controls className="max-w-sm rounded" />}
                                   </div>
                                 ) : null}
-                                {msg.messageType === 'text' && msg.content && <p className="text-sm">{msg.content}</p>}
-                                {msg.messageType !== 'text' && msg.messageType !== 'location' && msg.messageType !== 'image' && msg.messageType !== 'audio' && msg.messageType !== 'video' && msg.messageType !== 'document' && msg.content && !msg.content.startsWith('data:') && !msg.content.startsWith('/objects/') && !msg.content.startsWith('/uploads/') && !msg.content.includes('Erro:') && <p className="text-sm">{msg.content}</p>}
+                                {msg.messageType === 'text' && msg.content && <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>}
+                                {msg.messageType !== 'text' && msg.messageType !== 'location' && msg.messageType !== 'image' && msg.messageType !== 'audio' && msg.messageType !== 'video' && msg.messageType !== 'document' && msg.content && !msg.content.startsWith('data:') && !msg.content.startsWith('/objects/') && !msg.content.startsWith('/uploads/') && !msg.content.includes('Erro:') && <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>}
                                   <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>
@@ -2085,7 +2102,8 @@ function ChatCenterInner() {
                             handleSendMessage();
                           }
                         }}
-                        data-testid="textarea-message"
+                                                onPaste={handlePasteImage}
+                                                data-testid="textarea-message"
                         className="resize-y flex-1 min-h-[44px] max-h-[50vh]"
                         rows={2}
                         disabled={!!selectedFile}
