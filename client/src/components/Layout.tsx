@@ -55,7 +55,23 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const MAX_FAVORITES = 7;
   const [favorites, setFavorites] = useState<string[]>([]);
   useEffect(() => {
-    try { setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
+    let local: string[] = [];
+    try { local = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"); } catch { /* noop */ }
+    if (Array.isArray(local)) setFavorites(local);
+    // Persistência por USUÁRIO (servidor): sobrevive a logout/login e troca de dispositivo.
+    fetch('/api/user/favorites', { credentials: 'include' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d || !Array.isArray(d.favorites)) return;
+        if (d.favorites.length > 0) {
+          setFavorites(d.favorites);
+          try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(d.favorites)); } catch { /* noop */ }
+        } else if (Array.isArray(local) && local.length > 0) {
+          // servidor ainda vazio, mas já existem favoritos locais → migra pro servidor (não apaga)
+          fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: local }) }).catch(() => { /* noop */ });
+        }
+      })
+      .catch(() => { /* mantém o localStorage */ });
   }, []);
   const toggleFavorite = (itemId: string) => {
     setFavorites((prev) => {
@@ -69,6 +85,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         next = [...prev, itemId];
       }
       try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(next)); } catch { /* noop */ }
+      fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: next }) }).catch(() => { /* noop */ });
       return next;
     });
   };
