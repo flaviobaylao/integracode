@@ -1772,8 +1772,8 @@ export default function RotaDoDia() {
                             </Button>
                           )}
                           
-                          {/* Botão Deletar (admin e vendedor) */}
-                          {(isAdmin || isVendedor || isTelemarketing) && route.id && (
+                          {/* Botão Deletar — leads: SOMENTE admin; clientes: admin e vendedor/telemarketing */}
+                          {(isLead ? isAdmin : (isAdmin || isVendedor || isTelemarketing)) && route.id && (
                             <Button
                               size="icon"
                               variant="ghost"
