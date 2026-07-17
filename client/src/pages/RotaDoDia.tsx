@@ -1499,7 +1499,8 @@ export default function RotaDoDia() {
                       size="sm"
                       variant="default"
                       onClick={() => optimizeRouteMutation.mutate(route.id)}
-                      disabled={optimizeRouteMutation.isPending}
+                      disabled={optimizeRouteMutation.isPending || presentialVisits.length === 0}
+                      title={presentialVisits.length === 0 ? 'Não há visitas presenciais para otimizar nesta rota' : 'Otimizar a ordem das visitas presenciais'}
                       className="flex items-center gap-2"
                       data-testid="button-optimize-route"
                     >
