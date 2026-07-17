@@ -7,6 +7,7 @@ import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, 
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances, cleanupOmieCredentials } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
+import { logCustomerChanges, getCustomerChangeHistory } from "./customerAudit";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import { evolutionAPIService } from "./evolution-api-service";
@@ -1821,7 +1822,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete cleanedData.installmentCustom;
 
       // Update customer
+      const __auditBefore = await storage.getCustomer(id).catch(() => null);
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
+      // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
+      try { await logCustomerChanges({ customerId: id, before: __auditBefore, changes: cleanedData, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
 
       // CONDIÇÃO DE PAGAMENTO do cliente: payment_method / boleto_days / collection_discount /
       // payment_installments EXISTEM no banco (customers) mas NÃO no schema drizzle de customers,
@@ -2467,8 +2471,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      const __auditBeforePut = await storage.getCustomer(id).catch(() => null);
       const customer = await storage.updateCustomer(id, data);
-      
+      // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
+      try { await logCustomerChanges({ customerId: id, before: __auditBeforePut, changes: data, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
+
       // Log de confirmação das configurações de entrega salvas
       console.log('✅ [PUT] Cliente atualizado:', {
         id: customer.id,
@@ -3113,15 +3120,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (typeof fields?.virtualService === 'boolean') patch.virtualService = fields.virtualService;
       if (typeof fields?.segmentoPrincipal === 'string') patch.segmentoPrincipal = String(fields.segmentoPrincipal);
       if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
+      const __bulkUser = req.currentUser;
+      const __bulkActor = { id: __bulkUser?.id, name: [__bulkUser?.firstName, __bulkUser?.lastName].filter(Boolean).join(' ').trim() || __bulkUser?.email };
       let updated = 0; const errors: string[] = [];
       for (const id of ids) {
-        try { await storage.updateCustomer(String(id), patch); updated++; }
+        try {
+          const __b = await storage.getCustomer(String(id)).catch(() => null);
+          await storage.updateCustomer(String(id), patch); updated++;
+          // 📜 Histórico de alterações (edição em massa / rezoneamento)
+          try { await logCustomerChanges({ customerId: String(id), before: __b, changes: patch, actor: __bulkActor, source: 'bulk' }); } catch (_e) {}
+        }
         catch (e: any) { if (errors.length < 8) errors.push(String(id).slice(0, 8) + ": " + String(e?.message || e).slice(0, 60)); }
       }
       res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), errors });
     } catch (error: any) {
       console.error("Error bulk updating customers:", error);
       res.status(500).json({ message: "Falha na edição em massa: " + String(error?.message || error) });
+    }
+  });
+
+  // 📜 Histórico das últimas alterações de um cliente (rezoneamento, periodicidade, etc.)
+  app.get('/api/customers/:id/change-history', authenticateUser, async (req: any, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 30, 100);
+      const rows = await getCustomerChangeHistory(String(req.params.id), limit);
+      res.json(rows);
+    } catch (error: any) {
+      console.error('Error fetching customer change history:', error);
+      res.status(500).json({ message: String(error?.message || error) });
     }
   });
 
