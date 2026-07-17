@@ -1,5 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { parseISO } from "date-fns";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -18,9 +18,10 @@ import OmieSyncManager from "./OmieSyncManager";
 import CustomerExcelImport from "./CustomerExcelImport";
 import WhatsAppButton from "./WhatsAppButton";
 import GeocodeAllButton from "./GeocodeAllButton";
+import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
 import OmieInstanceBadge from "./OmieInstanceBadge";
-import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload } from "lucide-react";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload, History } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
 function normalizeWeekdays(weekdays: string | string[]): string[] {
@@ -77,6 +78,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 }
 
 export default function CustomerManagement() {
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showOmieImport, setShowOmieImport] = useState(false);
   const [showOmieSync, setShowOmieSync] = useState(false);
@@ -578,7 +580,8 @@ export default function CustomerManagement() {
               <tbody className="divide-y divide-gray-200">
                 {filteredCustomers.length > 0 ? (
                   filteredCustomers.map((customer: CustomerWithSeller) => (
-                    <tr key={customer.id} className="hover:bg-gray-50">
+                    <Fragment key={customer.id}>
+                    <tr className="hover:bg-gray-50">
                       <td className="px-6 py-4">
                         <div>
                           <button
@@ -647,8 +650,18 @@ export default function CustomerManagement() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center space-x-2">
-                          <WhatsAppButton 
-                            phone={customer.phone} 
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setHistoryOpenId(historyOpenId === customer.id ? null : customer.id)}
+                            title="Histórico de alterações"
+                            data-testid={`button-history-${customer.id}`}
+                            className={historyOpenId === customer.id ? 'text-primary' : 'text-gray-600'}
+                          >
+                            <History className="h-4 w-4" />
+                          </Button>
+                          <WhatsAppButton
+                            phone={customer.phone}
                             customerName={(customer as any).fantasyName || customer.name}
                             size="sm"
                           />
@@ -693,6 +706,14 @@ export default function CustomerManagement() {
                         </div>
                       </td>
                     </tr>
+                    {historyOpenId === customer.id && (
+                      <tr className="bg-gray-50">
+                        <td colSpan={8} className="px-6 py-1">
+                          <CustomerHistoryBox customerId={customer.id} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))
                 ) : (
                   <tr>
