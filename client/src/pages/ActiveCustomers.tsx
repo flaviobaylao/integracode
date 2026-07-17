@@ -1200,9 +1200,21 @@ export default function ActiveCustomers() {
                   placeholder="Buscar..."
                   value={searchTerm}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
-                  className="pl-10 h-9"
+                  className="pl-10 pr-8 h-9"
                   data-testid="input-search"
                 />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm("")}
+                    title="Limpar busca"
+                    aria-label="Limpar busca"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    data-testid="button-clear-search"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </div>
               
               <Filter className="h-4 w-4 text-muted-foreground" />
