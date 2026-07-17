@@ -994,6 +994,7 @@ function PayablesTab() {
   const [danfeFile, setDanfeFile] = useState<File | null>(null);
   const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
   const [attBusy, setAttBusy] = useState(false);
+  const [dupInfo, setDupInfo] = useState<any>(null);
   const { data: payableAttachments = [], refetch: refetchAttachments } = useQuery<any[]>({
     queryKey: ['/api/financial/payables', selectedItem?.id, 'attachments'],
     queryFn: async () => { if (!selectedItem?.id) return []; const r = await fetch(`/api/financial/payables/${selectedItem.id}/attachments`, { credentials: 'include' }); return r.ok ? r.json() : []; },
@@ -1009,12 +1010,12 @@ function PayablesTab() {
       await fetch(`/api/financial/payables/${payableId}/attachments`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: j.kind, fileName: j.file.name, mimeType: j.file.type || 'application/octet-stream', base64: b64 }) });
     }
   };
-  const submitCreatePayable = async () => {
+  const submitCreatePayable = async (force = false) => {
     if (!form.chartAccountId) return;
     setAttBusy(true);
     try {
       const rec = (form.recurFreq && form.recurFreq !== 'none') ? { freq: form.recurFreq, interval: form.recurInterval || 1, endType: form.recurEndType || 'count', count: form.recurCount || 12, until: form.recurUntil || '' } : undefined;
-      const res: any = await apiRequest('POST', '/api/financial/payables', { ...form, source: 'manual', recurrence: rec });
+      const res: any = await apiRequest('POST', '/api/financial/payables', { ...form, source: 'manual', recurrence: rec, allowDuplicate: force });
       const payableId = res?.id || (Array.isArray(res?.items) && res.items[0]?.id) || null;
       if (payableId && (danfeFile || boletoFiles.length)) {
         try { await uploadPayableAttachments(payableId); } catch (e: any) { toast({ title: 'Conta criada, mas falha ao anexar arquivos', description: e?.message, variant: 'destructive' }); }
@@ -1043,9 +1044,12 @@ function PayablesTab() {
         }
       }
       queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
-      setShowCreate(false); setDanfeFile(null); setBoletoFiles([]);
+      setShowCreate(false); setDanfeFile(null); setBoletoFiles([]); setDupInfo(null);
       toast({ title: res?.recurring ? `${res.count} contas a pagar criadas` : (baixado ? 'Conta a pagar criada e BAIXADA (Caixinha)' : 'Conta a pagar criada com sucesso') });
-    } catch (e: any) { toast({ title: 'Erro', description: e?.message || String(e), variant: 'destructive' }); }
+    } catch (e: any) {
+      if (e?.status === 409 && e?.duplicate) { setDupInfo({ existing: e?.existing || null }); }
+      else { toast({ title: 'Erro', description: e?.message || String(e), variant: 'destructive' }); }
+    }
     finally { setAttBusy(false); }
   };
   const buscarFornecedores = (v: string) => {
@@ -1448,8 +1452,32 @@ function PayablesTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowCreate(false); setDanfeFile(null); setBoletoFiles([]); }}>Cancelar</Button>
-            <Button onClick={submitCreatePayable} disabled={attBusy || createMutation.isPending || !form.chartAccountId}>
+            <Button onClick={() => submitCreatePayable()} disabled={attBusy || createMutation.isPending || !form.chartAccountId}>
               {(attBusy || createMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dupInfo} onOpenChange={(o) => { if (!o) setDupInfo(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Possível conta duplicada</DialogTitle>
+            <DialogDescription>
+              Já existe uma conta a pagar deste fornecedor com o mesmo valor e vencimento próximo. Confira antes de lançar de novo para evitar duplicidade.
+            </DialogDescription>
+          </DialogHeader>
+          {dupInfo?.existing && (
+            <div className="text-sm rounded border border-amber-300 bg-amber-50 p-3 space-y-1">
+              <div><span className="text-gray-500">Valor:</span> R$ {Number(dupInfo.existing.amount || 0).toFixed(2).replace('.', ',')}</div>
+              <div><span className="text-gray-500">Vencimento:</span> {dupInfo.existing.dueDate ? new Date(dupInfo.existing.dueDate).toLocaleDateString('pt-BR') : '—'}</div>
+              <div><span className="text-gray-500">Situação:</span> {({ paga: 'Paga', a_vencer: 'A vencer', vencida: 'Atrasada', cancelada: 'Cancelada' } as any)[dupInfo.existing.status] || dupInfo.existing.status}</div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDupInfo(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={() => submitCreatePayable(true)} disabled={attBusy}>
+              {attBusy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar mesmo assim
             </Button>
           </DialogFooter>
         </DialogContent>
