@@ -8943,6 +8943,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
 
     const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    // A regeneração NUNCA toca em HOJE nem no passado: só cuida das ocorrências FUTURAS
+    // (a partir de amanhã). Assim a lista de atendimentos virtuais do dia nunca encolhe
+    // quando a regeneração semanal roda no meio do dia.
+    const tomorrow = new Date(today); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
     const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
     let custProcessed = 0, agendaCreated = 0;
     const routeKeys = new Set<string>();
@@ -8953,8 +8957,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!Array.isArray(weekdays) || weekdays.length === 0) continue;
       const periodicity = c.visit_periodicity || 'semanal';
 
-      // Limpa agenda futura pendente deste cliente e regenera
-      await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${today.toISOString()}`);
+      // Limpa apenas a agenda FUTURA pendente (>= amanhã) deste cliente e regenera.
+      // Hoje e o passado ficam intactos (preserva os atendimentos virtuais já programados para hoje).
+      await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${tomorrow.toISOString()}`);
 
       let dates: Date[] = [];
       try {
@@ -8966,6 +8971,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const dt of dates) {
         const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
+        // Só cria ocorrências FUTURAS (>= amanhã). Nunca recria hoje/passado,
+        // preservando o que já está agendado para o dia corrente.
+        if (ds.getTime() < tomorrow.getTime()) continue;
         const iso = ds.toISOString();
         await db.execute(sql`
           INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
@@ -9027,6 +9035,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro na regeneração telemarketing:', error);
       res.status(500).json({ message: 'Erro na regeneração', error: String(error?.message || error) });
+    }
+  });
+
+  // RESTAURAÇÃO PONTUAL (apenas ADITIVA — só insere, nunca apaga): recria os atendimentos
+  // virtuais de HOJE para os vendedores informados, incluindo todos os clientes ativos cujo
+  // DIA DA SEMANA é hoje e que ainda não têm agenda virtual pendente para hoje. Serve para
+  // desfazer o encolhimento causado pela regeneração semanal antiga.
+  app.post('/api/telemarketing/restore-today-virtual', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const DEFAULT_SELLERS = ['omie-vendor-4077616122', 'omie-vendor-4323360115', 'omie-vendor-4317814615'];
+      const sellerIds: string[] = Array.isArray(req.body?.sellerIds) && req.body.sellerIds.length
+        ? req.body.sellerIds.map((s: any) => String(s))
+        : DEFAULT_SELLERS;
+      const todayStr = getBrazilDateString(); // YYYY-MM-DD (BRT)
+      const iso = `${todayStr}T12:00:00.000Z`;
+      const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+      const todayAbbr = days[new Date(iso).getUTCDay()];
+
+      const custRes = await db.execute(sql`
+        SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address
+        FROM customers
+        WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
+          AND is_active = true
+          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
+
+      let added = 0, skipped = 0, notToday = 0;
+      const byPeriod: Record<string, number> = {};
+      for (const c of custRes.rows as any[]) {
+        let wd: any;
+        try { wd = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { continue; }
+        if (!Array.isArray(wd) || !wd.map((x: any) => String(x)).includes(todayAbbr)) { notToday++; continue; }
+        const ex = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${c.id} AND is_virtual = true AND DATE(scheduled_date) = ${todayStr}::date LIMIT 1`);
+        if ((ex.rows as any[]).length > 0) { skipped++; continue; }
+        const period = c.visit_periodicity || 'semanal';
+        await db.execute(sql`
+          INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+          VALUES (${c.id}, ${c.seller_id}, ${iso}, ${todayAbbr}, ${period}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
+        added++; byPeriod[period] = (byPeriod[period] || 0) + 1;
+      }
+      res.json({ ok: true, date: todayStr, weekday: todayAbbr, sellers: sellerIds, added, skipped, notToday, byPeriod });
+    } catch (error: any) {
+      console.error('Erro em restore-today-virtual:', error);
+      res.status(500).json({ message: 'Erro ao restaurar virtuais de hoje', error: String(error?.message || error) });
     }
   });
 
