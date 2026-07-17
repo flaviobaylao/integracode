@@ -1019,9 +1019,32 @@ function PayablesTab() {
       if (payableId && (danfeFile || boletoFiles.length)) {
         try { await uploadPayableAttachments(payableId); } catch (e: any) { toast({ title: 'Conta criada, mas falha ao anexar arquivos', description: e?.message, variant: 'destructive' }); }
       }
+      // BAIXA IMEDIATA (Instancia CAIXINHA = dinheiro a vista): apos criar, ja registra o pagamento
+      // reutilizando o MESMO mecanismo de baixa do "Registrar Pagamento" (POST .../payments).
+      // Nao se aplica a recorrencia (vencimentos futuros nao devem ser baixados hoje).
+      let baixado = false;
+      if (form.instanceId === 'CAIXINHA' && !rec && payableId) {
+        const baixaValRaw = (form.cxAmount !== undefined && form.cxAmount !== '') ? form.cxAmount : form.amount;
+        const baixaVal = Number(String(baixaValRaw ?? '').replace(',', '.'));
+        if (baixaVal > 0) {
+          try {
+            await apiRequest('POST', `/api/financial/payables/${payableId}/payments`, {
+              amount: String(baixaValRaw),
+              paymentMethod: 'dinheiro',
+              financialAccountId: caixinhaAccount?.id || null,
+              paymentDate: form.cxPaymentDate || new Date().toISOString().split('T')[0],
+              reference: 'Baixa Caixinha (à vista)',
+              notes: 'Baixa imediata à vista lançada junto com a conta (Instância CAIXINHA)',
+            });
+            baixado = true;
+          } catch (e: any) {
+            toast({ title: 'Conta criada, mas falha ao dar baixa (Caixinha)', description: e?.message || String(e), variant: 'destructive' });
+          }
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
       setShowCreate(false); setDanfeFile(null); setBoletoFiles([]);
-      toast({ title: res?.recurring ? `${res.count} contas a pagar criadas` : 'Conta a pagar criada com sucesso' });
+      toast({ title: res?.recurring ? `${res.count} contas a pagar criadas` : (baixado ? 'Conta a pagar criada e BAIXADA (Caixinha)' : 'Conta a pagar criada com sucesso') });
     } catch (e: any) { toast({ title: 'Erro', description: e?.message || String(e), variant: 'destructive' }); }
     finally { setAttBusy(false); }
   };
@@ -1063,6 +1086,8 @@ function PayablesTab() {
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ['/api/financial/accounts'],
   });
+  // Conta financeira "CAIXINHA" (dinheiro a vista) — usada na baixa imediata do lancamento manual.
+  const caixinhaAccount = (accounts as any[]).find((a: any) => String(a.name || '').trim().toUpperCase() === 'CAIXINHA');
 
   const [sortAZ, setSortAZ] = useState(false);
   const [valueMin, setValueMin] = useState('');
@@ -1189,7 +1214,7 @@ function PayablesTab() {
         <div><Label className="text-xs">Emissão até</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento de</Label><Input type="date" value={dueDateStart} onChange={e => setDueDateStart(e.target.value)} className="w-[150px]" /></div>
         <div><Label className="text-xs">Vencimento até</Label><Input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)} className="w-[150px]" /></div>
-        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setSupSug([]); setShowCreate(true); }} className="ml-auto">
+        <Button onClick={() => { setForm({ title: '', supplierName: '', supplierDocument: '', description: '', amount: '', dueDate: '', paymentMethod: '', instanceId: '', chartAccountId: '', cxPaymentDate: '', cxAmount: '', source: 'manual', recurFreq: 'none', recurInterval: 1, recurEndType: 'count', recurCount: 12, recurUntil: '' }); setSupSug([]); setShowCreate(true); }} className="ml-auto">
           <Plus className="w-4 h-4 mr-2" />Nova Conta a Pagar
         </Button>
         {selectedIds.length > 0 && (
@@ -1313,7 +1338,14 @@ function PayablesTab() {
               </div>
               <div>
                 <Label>Instância</Label>
-                <Select value={form.instanceId || 'none'} onValueChange={v => setForm({ ...form, instanceId: v === 'none' ? '' : v })}>
+                <Select value={form.instanceId || 'none'} onValueChange={v => {
+                  const inst = v === 'none' ? '' : v;
+                  if (inst === 'CAIXINHA') {
+                    setForm({ ...form, instanceId: inst, paymentMethod: form.paymentMethod || 'dinheiro', cxPaymentDate: form.cxPaymentDate || new Date().toISOString().split('T')[0], cxAmount: (form.cxAmount === undefined || form.cxAmount === '') ? (form.amount || '') : form.cxAmount });
+                  } else {
+                    setForm({ ...form, instanceId: inst });
+                  }
+                }}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Selecione</SelectItem>
@@ -1321,10 +1353,22 @@ function PayablesTab() {
                     <SelectItem value="GYN">GYN</SelectItem>
                     <SelectItem value="IND">IND</SelectItem>
                     <SelectItem value="SERV">SERV</SelectItem>
+                    <SelectItem value="CAIXINHA">CAIXINHA</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
+            {form.instanceId === 'CAIXINHA' && (
+              <div className="rounded-md border border-green-300 bg-green-50 p-3 space-y-2" data-testid="caixinha-baixa-box">
+                <div className="flex items-center gap-2 text-sm font-semibold text-green-800"><Banknote className="w-4 h-4" />Baixa imediata — Caixinha (dinheiro à vista)</div>
+                <p className="text-xs text-green-700">Ao clicar em Criar, a conta será lançada e já dada como <strong>PAGA</strong> em dinheiro pela conta <strong>CAIXINHA</strong>, na data e no valor abaixo.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Data do Pagamento</Label><Input type="date" value={form.cxPaymentDate || ''} onChange={e => setForm({ ...form, cxPaymentDate: e.target.value })} data-testid="input-caixinha-date" /></div>
+                  <div><Label>Valor Pago</Label><Input type="number" step="0.01" value={form.cxAmount ?? ''} onChange={e => setForm({ ...form, cxAmount: e.target.value })} placeholder={form.amount || '0.00'} data-testid="input-caixinha-amount" /></div>
+                </div>
+                {!caixinhaAccount && <div className="text-xs text-amber-700">⚠ Conta financeira "CAIXINHA" não encontrada no cadastro — a baixa será registrada sem conta vinculada.</div>}
+              </div>
+            )}
             <div>
               <Label>Categoria (DRE) *</Label>
               <Select value={form.chartAccountId || 'none'} onValueChange={v => setForm({ ...form, chartAccountId: v === 'none' ? '' : v })}>
