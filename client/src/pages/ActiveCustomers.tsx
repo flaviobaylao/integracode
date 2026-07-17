@@ -569,6 +569,14 @@ export default function ActiveCustomers() {
     staleTime: 0, // Dados sempre considerados antigos
   });
 
+  // 📲 Status de confirmação de telefone por cliente (destacar em vermelho quem não confirmou em 24h)
+  const { data: phoneVerif = {} } = useQuery<Record<string, { status: string; over24h: boolean }>>({
+    queryKey: ['/api/customers/phone-verification-status'],
+    queryFn: () => fetch('/api/customers/phone-verification-status', { credentials: 'include' }).then(r => r.ok ? r.json() : {}),
+    refetchInterval: 300000,
+    staleTime: 60000,
+  });
+
   // ── Atualização de cadastro via Receita/SEFAZ (job em background) ──
   // O botão dispara o job no servidor; a barra acompanha por polling (2s).
   const { data: receitaSync } = useQuery<any>({
@@ -1537,7 +1545,20 @@ export default function ActiveCustomers() {
                               )}
                             </TableCell>
                             <TableCell className="font-mono text-sm">
-                              {ac.customer?.phone || "-"}
+                              {(() => {
+                                const _pv = ac.customer?.id ? (phoneVerif as any)[ac.customer.id] : null;
+                                const _unconfirmed = !!(_pv && _pv.over24h);
+                                const _confirmed = !!(_pv && _pv.status === 'confirmed');
+                                return (
+                                  <span
+                                    className={_unconfirmed ? "text-red-600 font-semibold" : ""}
+                                    title={_unconfirmed ? "Telefone não confirmado pelo cliente em 24h" : (_confirmed ? "Telefone confirmado pelo cliente" : "")}
+                                  >
+                                    {ac.customer?.phone || "-"}
+                                    {_confirmed ? " ✓" : ""}
+                                  </span>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">
