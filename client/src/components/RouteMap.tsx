@@ -42,12 +42,17 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
   // Validar coordenadas antes de renderizar
-  const hasValidCoordinates = 
-    homeLocation && 
-    typeof homeLocation.latitude === 'number' && 
+  const hasValidCoordinates =
+    homeLocation &&
+    typeof homeLocation.latitude === 'number' &&
     typeof homeLocation.longitude === 'number' &&
-    !isNaN(homeLocation.latitude) && 
+    !isNaN(homeLocation.latitude) &&
     !isNaN(homeLocation.longitude);
+
+  // "Casa" só é plotável se tiver coordenada real (evita o marcador cair em 0,0 no Atlântico
+  // para vendedores sem home configurado — ex.: carteiras 100% virtuais/telemarketing).
+  const homeIsPlottable = !!hasValidCoordinates &&
+    !(homeLocation.latitude === 0 && homeLocation.longitude === 0);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current || !hasValidCoordinates) return;
@@ -100,22 +105,24 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
       iconAnchor: [20, 20],
     });
 
-    // Adicionar marcador da casa
-    const homeMarker = L.marker([homeLocation.latitude, homeLocation.longitude], {
-      icon: homeIcon,
-    })
-      .addTo(map)
-      .bindPopup('<strong>Sua Casa</strong><br>Início e fim da rota');
+    // Adicionar marcador da casa (apenas se a coordenada de casa for real)
+    if (homeIsPlottable) {
+      L.marker([homeLocation.latitude, homeLocation.longitude], {
+        icon: homeIcon,
+      })
+        .addTo(map)
+        .bindPopup('<strong>Sua Casa</strong><br>Início e fim da rota');
+    }
 
     // Array para armazenar coordenadas da rota
-    const routeCoordinates: [number, number][] = [
-      [homeLocation.latitude, homeLocation.longitude]
-    ];
+    const routeCoordinates: [number, number][] = homeIsPlottable
+      ? [[homeLocation.latitude, homeLocation.longitude]]
+      : [];
 
     // Todos os pontos plotados (para enquadrar o mapa com presenciais, leads e repescagem).
-    const allPoints: [number, number][] = [
-      [homeLocation.latitude, homeLocation.longitude]
-    ];
+    const allPoints: [number, number][] = homeIsPlottable
+      ? [[homeLocation.latitude, homeLocation.longitude]]
+      : [];
 
     // Adicionar marcadores para cada visita na ordem otimizada
     optimizedOrder.forEach((visitId, index) => {
@@ -214,8 +221,10 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
         .bindPopup(`<strong>${p.customerName}</strong><br>🟡 Repescagem`);
     });
 
-    // Voltar para casa
-    routeCoordinates.push([homeLocation.latitude, homeLocation.longitude]);
+    // Voltar para casa (apenas se a casa for plotável)
+    if (homeIsPlottable) {
+      routeCoordinates.push([homeLocation.latitude, homeLocation.longitude]);
+    }
 
     // Desenhar linha da rota otimizada
     if (routeCoordinates.length > 1) {
@@ -302,11 +311,10 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
 
     // Desenhar rota executada em vermelho (baseado em check-ins)
     if (checkInCoordinates.length > 0) {
-      // Adicionar casa do vendedor no início
-      const executedRouteCoordinates: [number, number][] = [
-        [homeLocation.latitude, homeLocation.longitude],
-        ...checkInCoordinates
-      ];
+      // Adicionar casa do vendedor no início (apenas se a casa for plotável)
+      const executedRouteCoordinates: [number, number][] = homeIsPlottable
+        ? [[homeLocation.latitude, homeLocation.longitude], ...checkInCoordinates]
+        : [...checkInCoordinates];
 
       // Desenhar linha vermelha sólida para rota executada
       L.polyline(executedRouteCoordinates, {
