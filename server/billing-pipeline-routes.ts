@@ -374,6 +374,64 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
   }
 }
 
+// ============ Rede de seguranca #2: pedidos presos em 'pending' ============
+// Um pedido pode ficar preso em sales_cards.status='pending' com a venda ja registrada
+// (produtos + valor) quando a FINALIZACAO nao completa (ex.: o app do vendedor perdeu conexao
+// ao confirmar). Nesse estado o card NUNCA gera item no pipeline (autoSend so roda na conclusao)
+// e o pedido "some" do funil. Esta rede promove os presos: marca o card 'completed' preservando
+// a DATA DE REGISTRO original e envia ao pipeline via autoSendToBillingPipeline (que aplica
+// bloqueio de debito/tipo de operacao + dedup + auditoria). Idempotente.
+//  - sem cardIds: varre automaticamente (parados ha >= minAgeMinutes, com produtos, sem item no pipeline).
+//  - com cardIds: processa exatamente esses ids (recuperacao pontual).
+//  - apply=false: dryRun (so relata o que faria).
+export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; cardIds?: string[]; apply?: boolean }): Promise<{ scanned: number; recovered: number; blockedOrSkipped: number; notEligible: number; details: any[] }> {
+  const apply = opts?.apply !== false; // default: aplica
+  const minAge = Number(opts?.minAgeMinutes ?? 60);
+  const details: any[] = [];
+  let recovered = 0, blockedOrSkipped = 0, notEligible = 0;
+  let ids: string[] = [];
+  try {
+    if (opts?.cardIds?.length) {
+      ids = opts.cardIds.filter(Boolean);
+    } else {
+      const q: any = await db.execute(sql`
+        SELECT sc.id FROM sales_cards sc
+        WHERE sc.status = 'pending'
+          AND sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
+          AND sc.products IS NOT NULL AND jsonb_array_length(sc.products) > 0
+          AND sc.updated_at < (now() - (${minAge} * interval '1 minute'))
+          AND NOT EXISTS (SELECT 1 FROM billing_pipeline bp WHERE bp.sales_card_id = sc.id)`);
+      ids = (q.rows || []).map((r: any) => r.id);
+    }
+  } catch (e: any) {
+    return { scanned: 0, recovered: 0, blockedOrSkipped: 0, notEligible: 0, details: [{ error: e?.message || String(e) }] };
+  }
+  const scanned = ids.length;
+  for (const id of ids) {
+    try {
+      const card: any = await storage.getSalesCard(id);
+      if (!card) { notEligible++; details.push({ id, result: 'not_found' }); continue; }
+      if (!card.saleValue || parseFloat(String(card.saleValue)) === 0) { notEligible++; details.push({ id, result: 'no_value' }); continue; }
+      if (['no_sale', 'cancelled', 'canceled', 'transferred'].includes(String(card.status))) { notEligible++; details.push({ id, result: 'status_' + card.status }); continue; }
+      if (!apply) { details.push({ id, val: card.saleValue, status: card.status, result: 'would_recover' }); continue; }
+      // Preserva a data de registro do pedido (senao o item entraria no pipeline como "hoje").
+      const completedDate = card.completedDate || card.createdAt || new Date();
+      if (card.status === 'pending') {
+        await db.execute(sql`UPDATE sales_cards SET status = 'completed', completed_date = ${completedDate}, updated_at = now() WHERE id = ${id} AND status = 'pending'`);
+      }
+      let email = 'reconcile-pending';
+      try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email);
+      if (item) { recovered++; details.push({ id, val: card.saleValue, result: 'recovered', pipelineId: item.id, stage: item.stage }); }
+      else { blockedOrSkipped++; details.push({ id, val: card.saleValue, result: 'blocked_or_dup' }); }
+    } catch (e: any) {
+      blockedOrSkipped++; details.push({ id, result: 'error', error: e?.message || String(e) });
+    }
+  }
+  console.log(`🛟 [RECONCILE-PENDING] scanned=${scanned} recovered=${recovered} blocked/dup=${blockedOrSkipped} notEligible=${notEligible} apply=${apply}`);
+  return { scanned, recovered, blockedOrSkipped, notEligible, details };
+}
+
 function isAdminOnly(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
   if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
@@ -687,6 +745,19 @@ export function registerBillingPipelineRoutes(app: Express) {
   app.post('/api/admin/pipeline/reconcile-orphans', authenticateUser, isAdminOnly, async (req: any, res) => {
     try { const days = Number(req.body?.days) || 7; const r = await reconcileOrphanOrders(days); res.json({ ok: true, ...r }); }
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Rede de seguranca #2: recuperar pedidos presos em 'pending' (venda registrada, nunca finalizada,
+  // sem item no pipeline). ?apply=1 aplica; sem apply = dryRun (so relata). Body opcional:
+  // { cardIds: string[] } p/ recuperacao pontual; { minAge } minutos (default 60) p/ a varredura.
+  app.post('/api/admin/pipeline/reconcile-pending', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.query.apply === '1' || req.body?.apply === true;
+      const minAgeMinutes = Number(req.query.minAge ?? req.body?.minAge) || 60;
+      const cardIds = Array.isArray(req.body?.cardIds) ? req.body.cardIds.map((x: any) => String(x)) : undefined;
+      const r = await reconcilePendingOrders({ apply, minAgeMinutes, cardIds });
+      res.json({ ok: true, apply, ...r });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   // Envia UM card especifico (por id) para o pipeline de faturamento. Idempotente
