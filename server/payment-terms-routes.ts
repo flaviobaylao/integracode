@@ -107,6 +107,49 @@ export function registerPaymentTerms(app: Express) {
     }
   });
 
+  // ---- Copiar config de envio de documentos por e-mail do 1.0 p/ o 2.0 ----
+  // POST { apply: true } aplica; sem apply = dry-run (só conta).
+  // Match por CNPJ/CPF (mesmo padrão do pull de condições de pagamento).
+  app.post("/api/admin/docs-email/pull-from-1-0", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    const apply = req.body?.apply === true;
+    let src: any = null, tgt: any = null;
+    try {
+      src = await client(process.env.REPLIT_DATABASE_URL);
+      tgt = await client(process.env.DATABASE_URL);
+      const s1 = (await src.query(
+        'SELECT cnpj, cpf, notification_email, send_danfe_email, send_xml_email, send_boleto_pix_email, send_pedido_email FROM customers WHERE notification_email IS NOT NULL OR send_danfe_email OR send_xml_email OR send_boleto_pix_email OR send_pedido_email'
+      )).rows as any[];
+      const t2 = (await tgt.query("SELECT id, cnpj, cpf FROM customers")).rows as any[];
+      const docToId = new Map<string, string>();
+      for (const c of t2) for (const d of [dig(c.cnpj), dig(c.cpf)]) if (d.length >= 11 && !docToId.has(d)) docToId.set(d, String(c.id));
+      const result: any = { srcWithConfig: s1.length, apply, matched: 0, updated: 0, semDoc: 0, semMatch: 0, errors: [] as string[] };
+      for (const row of s1) {
+        const d = [dig(row.cnpj), dig(row.cpf)].find((x) => x.length >= 11);
+        if (!d) { result.semDoc++; continue; }
+        const id = docToId.get(d);
+        if (!id) { result.semMatch++; continue; }
+        result.matched++;
+        if (apply) {
+          try {
+            await tgt.query(
+              "UPDATE customers SET notification_email = COALESCE($1, notification_email), send_danfe_email = $2, send_xml_email = $3, send_boleto_pix_email = $4, send_pedido_email = $5, updated_at = now() WHERE id = $6",
+              [row.notification_email || null, !!row.send_danfe_email, !!row.send_xml_email, !!row.send_boleto_pix_email, !!row.send_pedido_email, id]
+            );
+            result.updated++;
+          } catch (e: any) { if (result.errors.length < 10) result.errors.push(String(e?.message || e)); }
+        } else {
+          result.updated++;
+        }
+      }
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    } finally {
+      try { if (src) await src.end(); } catch {}
+      try { if (tgt) await tgt.end(); } catch {}
+    }
+  });
+
   // ---- Puxar forma/prazo/desconto/parcelamento do 1.0 p/ o 2.0 ------------
   app.post("/api/admin/payment-terms/pull-from-1-0", async (req, res) => {
     const apply = req.body?.apply === true;
