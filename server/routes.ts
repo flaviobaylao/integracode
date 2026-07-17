@@ -15,6 +15,7 @@ import { registerObjectStorageRoutes } from "./replit_integrations/object_storag
 import { registerOmieNfeImportRoutes } from "./omie-nfe-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
+import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
@@ -717,6 +718,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('✅ Report engine routes registered');
 
   registerPurchaseRoutes(app);
+
+  // Confirmacao de telefone do comprador via link (WhatsApp) — nao bloqueia o pedido
+  registerPhoneVerification(app, { authenticateUser, requireRole });
 
   // Version endpoint
   app.get('/api/version', (req, res) => {
@@ -1826,6 +1830,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
       // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
       try { await logCustomerChanges({ customerId: id, before: __auditBefore, changes: cleanedData, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
+      // 📲 Confirmacao de telefone quando o numero muda
+      try {
+        const _pvNew = String((cleanedData as any).phone || '').replace(/\D/g, '');
+        const _pvOld = String((__auditBefore && __auditBefore.phone) || '').replace(/\D/g, '');
+        if ((cleanedData as any).phone !== undefined && _pvNew && _pvNew !== _pvOld) {
+          void triggerPhoneConfirmation(id, (cleanedData as any).phone, (updatedCustomer && ((updatedCustomer as any).fantasyName || (updatedCustomer as any).name)) || null, user?.id).catch(() => {});
+        }
+      } catch (_epv) {}
 
       // CONDIÇÃO DE PAGAMENTO do cliente: payment_method / boleto_days / collection_discount /
       // payment_installments EXISTEM no banco (customers) mas NÃO no schema drizzle de customers,
@@ -2047,6 +2059,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Criar cliente no Integra
       const customer = await storage.createCustomer(data);
+      // 📲 Confirmacao de telefone do cliente recem-criado (se veio numero valido)
+      try {
+        const _pvNew = String((customer && (customer as any).phone) || (data as any).phone || '').replace(/\D/g, '');
+        if (_pvNew.length >= 10 && _pvNew.length <= 13) {
+          void triggerPhoneConfirmation(customer.id, (customer as any).phone || (data as any).phone, (customer as any).fantasyName || (customer as any).name || null, req.userId).catch(() => {});
+        }
+      } catch (_epv) {}
 
       // Cronograma de parcelas (coluna aditiva): grava via SQL bruto no cliente recem-criado.
       if (Object.prototype.hasOwnProperty.call(req.body, 'installmentSchedule')) {
@@ -2475,6 +2494,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = await storage.updateCustomer(id, data);
       // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
       try { await logCustomerChanges({ customerId: id, before: __auditBeforePut, changes: data, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
+      // 📲 Confirmacao de telefone quando o numero muda
+      try {
+        const _pvNew = String((data as any).phone || '').replace(/\D/g, '');
+        const _pvOld = String((__auditBeforePut && __auditBeforePut.phone) || '').replace(/\D/g, '');
+        if ((data as any).phone !== undefined && _pvNew && _pvNew !== _pvOld) {
+          void triggerPhoneConfirmation(id, (data as any).phone, (customer && ((customer as any).fantasyName || (customer as any).name)) || null, user?.id).catch(() => {});
+        }
+      } catch (_epv) {}
 
       // Log de confirmação das configurações de entrega salvas
       console.log('✅ [PUT] Cliente atualizado:', {
@@ -2522,8 +2549,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (contact !== undefined) {
         updateData.contact = contact;
       }
-      
+
+      const _pvBefore: any = await storage.getCustomer(id).catch(() => null);
       const customer = await storage.updateCustomer(id, updateData);
+      // 📲 Confirmacao de telefone quando o numero muda
+      const _pvOld = String((_pvBefore && _pvBefore.phone) || '').replace(/\D/g, '');
+      const _pvNew = String(phone || '').replace(/\D/g, '');
+      if (_pvNew && _pvNew !== _pvOld) {
+        void triggerPhoneConfirmation(id, phone, (customer && ((customer as any).fantasyName || (customer as any).name)) || (_pvBefore && (_pvBefore.fantasyName || _pvBefore.name)) || null, req.userId).catch(() => {});
+      }
       res.json({ message: "Telefone atualizado com sucesso", customer });
     } catch (error) {
       console.error("Error updating customer phone:", error);
@@ -5869,6 +5903,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Grava no cadastro do cliente quando veio um número novo válido pelo pedido
         if (_reqPhone && _phValid && _effPhone !== String((_custPh && _custPh.phone) || '')) {
           try { await storage.updateCustomer(cardBefore.customerId, { phone: _reqPhone }); console.log('🔒 [TRAVA-TELEFONE] telefone do cliente', cardBefore.customerId, 'atualizado ->', _reqPhone); } catch (_eup) {}
+          // 📲 Confirmacao de telefone (numero novo no pedido) — nao bloqueia
+          void triggerPhoneConfirmation(cardBefore.customerId, _reqPhone, (_custPh && (_custPh.fantasyName || _custPh.name)) || null, user?.id).catch(() => {});
         }
       }
     } catch (_etp) { console.warn('[TRAVA-TELEFONE] erro (ignorado):', (_etp as any)?.message); }
