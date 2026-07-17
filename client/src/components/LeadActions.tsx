@@ -41,6 +41,12 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   const [converterOpen, setConverterOpen] = useState(false);
   const [cust, setCust] = useState<any>({});
   const [loadingLead, setLoadingLead] = useState(false);
+  const [prorrogarOpen, setProrrogarOpen] = useState(false);
+  const [novaData, setNovaData] = useState<string>("");
+  const _pad = (n: number) => String(n).padStart(2, "0");
+  const _toDay = (d: Date) => `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`;
+  const prorrogarMin = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return _toDay(d); })();
+  const prorrogarMax = (() => { const d = new Date(); d.setDate(d.getDate() + 15); return _toDay(d); })();
 
   const invalidate = () => {
     if (sellerId && date) {
@@ -52,9 +58,10 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   };
 
   const prorrogarMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", dias: 15 }),
+    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", data: novaData }),
     onSuccess: (r: any) => {
-      toast({ title: "Retorno prorrogado", description: "Prorrogação registrada (única permitida)." });
+      toast({ title: "Retorno prorrogado", description: "Nova data de visita registrada." });
+      setProrrogarOpen(false);
       invalidate();
     },
     onError: (e: any) => toast({ title: "Não foi possível prorrogar", description: e?.message || "Erro", variant: "destructive" }),
@@ -119,10 +126,9 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
     }
   };
 
-  const prorrogar = () => {
-    if (confirm("Prorrogar o retorno deste lead por até 15 dias? Só é permitido uma única vez.")) {
-      prorrogarMut.mutate();
-    }
+  const abrirProrrogar = () => {
+    setNovaData(prorrogarMax);
+    setProrrogarOpen(true);
   };
 
   return (
@@ -150,13 +156,40 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
           variant="outline"
           className="border-amber-400 text-amber-700 dark:text-amber-400 h-8"
           disabled={prorrogarMut.isPending}
-          title="Prorrogar uma única vez (até +15 dias)"
-          onClick={(e) => { e.stopPropagation(); prorrogar(); }}
+          title="Prorrogar (escolha a data, até +15 dias)"
+          onClick={(e) => { e.stopPropagation(); abrirProrrogar(); }}
           data-testid={`button-lead-prorrogar-${leadId}`}
         >
           <Clock className="w-4 h-4 mr-1" /> Prorrogar
         </Button>
       </div>
+
+      {/* Dialog: Prorrogar (escolher data, até +15 dias) */}
+      <Dialog open={prorrogarOpen} onOpenChange={(o) => { if (!o) setProrrogarOpen(false); }}>
+        <DialogContent className="max-w-sm" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Prorrogar retorno</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{leadName}</p>
+            <div>
+              <Label>Nova data da visita</Label>
+              <Input type="date" value={novaData} min={prorrogarMin} max={prorrogarMax} onChange={(e) => setNovaData(e.target.value)} />
+              <p className="text-[11px] text-muted-foreground mt-1">Permitido de {prorrogarMin.split("-").reverse().join("/")} até {prorrogarMax.split("-").reverse().join("/")} (máx. 15 dias).</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProrrogarOpen(false)}>Cancelar</Button>
+            <Button
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+              disabled={!novaData || prorrogarMut.isPending}
+              onClick={() => prorrogarMut.mutate()}
+            >
+              Confirmar prorrogação
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog: Não converter */}
       <Dialog open={naoConverterOpen} onOpenChange={(o) => { if (!o) setNaoConverterOpen(false); }}>
