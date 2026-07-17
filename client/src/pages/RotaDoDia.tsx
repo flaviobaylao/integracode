@@ -86,6 +86,18 @@ export default function RotaDoDia() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
+  // Cobertura temporaria: Robson cobre as carteiras de Maria E. e Natalia B. em 17/07/2026 (06h-18h BRT).
+  const COVERAGE_GRANT = {
+    granteeId: 'omie-vendor-4077616122', // Robson
+    startMs: new Date('2026-07-17T06:00:00-03:00').getTime(),
+    endMs: new Date('2026-07-17T18:00:00-03:00').getTime(),
+    sellers: [
+      { id: 'omie-vendor-4077616122', firstName: 'Robson', lastName: '(minha carteira)', role: 'telemarketing', isActive: true },
+      { id: 'omie-vendor-4323360115', firstName: 'Maria', lastName: 'E.', role: 'telemarketing', isActive: true },
+      { id: 'omie-vendor-4317814615', firstName: 'Natalia', lastName: 'B.', role: 'telemarketing', isActive: true },
+    ],
+  };
+  const coverageActive = !!user && user.id === COVERAGE_GRANT.granteeId && Date.now() >= COVERAGE_GRANT.startMs && Date.now() <= COVERAGE_GRANT.endMs;
   // Administradores autorizados a EDITAR/ADICIONAR/REMOVER check-in e check-out (ajuste do sistema).
   const CHECKIN_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
   const isCheckinAdmin = CHECKIN_ADMINS.includes((user?.email || '').toLowerCase().trim());
@@ -880,7 +892,7 @@ export default function RotaDoDia() {
     return list.filter((r: any) => (r.customerName || '').toLowerCase().includes(q));
   }, [repescagemOverlay, presentialSearch]);
 
-  const currentSeller = sellers?.find(s => s.id === selectedSellerId);
+  const currentSeller = (isAdmin ? sellers : (coverageActive ? COVERAGE_GRANT.sellers : undefined))?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
     if (!route || !route.sellerHome) return { plannedDistance: 0, executedDistance: 0, averageVisitTime: 0 };
@@ -1065,7 +1077,7 @@ export default function RotaDoDia() {
           </CardContent>
         </Card>
 
-        {isAdmin && (
+        {(isAdmin || coverageActive) && (
           <Card>
             <CardContent className="pt-6">
               <label className="text-sm font-medium mb-2 block">
@@ -1077,7 +1089,7 @@ export default function RotaDoDia() {
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sellers?.filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !HIDDEN_ROUTE_SELLER_IDS.has(s.id)).sort(compareSellersByType).map((seller) => (
+                  {(isAdmin ? (sellers || []).filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !HIDDEN_ROUTE_SELLER_IDS.has(s.id)).sort(compareSellersByType) : COVERAGE_GRANT.sellers).map((seller) => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName}
                     </SelectItem>
