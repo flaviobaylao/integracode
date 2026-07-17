@@ -19846,7 +19846,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               scheduledDate: route.routeDate,
               isVirtual: false,
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
-              visitDuration: visitAgendaInfo?.visitDuration ?? null
+              visitDuration: visitAgendaInfo?.visitDuration ?? null,
+              // Estado do desfecho do lead (para colorir o card e mostrar a TAG na rota do dia)
+              leadStatus: lead.status,
+              leadNextContactDate: lead.nextContactDate,
+              leadPostponementCount: lead.postponementCount,
+              leadNonConversionReason: lead.nonConversionReason,
             };
           }
         })
