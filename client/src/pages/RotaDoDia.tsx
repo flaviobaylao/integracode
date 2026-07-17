@@ -1554,22 +1554,28 @@ export default function RotaDoDia() {
                   const isCompleted = !!checkInCheckpoint;
                   const isInProgress = false;
                   const isLead = (visit as any).visitType === 'lead';
+                  // Estado do desfecho do lead — mesma lógica de "atendido" dos clientes presenciais.
+                  const leadStatus = (visit as any).leadStatus;
+                  const leadNextDay = (visit as any).leadNextContactDate ? String((visit as any).leadNextContactDate).slice(0, 10) : null;
+                  const leadReason = (visit as any).leadNonConversionReason;
+                  const leadConverted = isLead && leadStatus === 'converted';
+                  const leadDiscarded = isLead && leadStatus === 'discarded';
+                  const leadPostponed = isLead && leadStatus === 'scheduled' && !!leadNextDay && leadNextDay > selectedDate;
+                  const leadDone = leadConverted || leadDiscarded || leadPostponed;
 
                   let statusColor = 'text-gray-600 dark:text-gray-400';
                   let borderColor = 'border-gray-200 dark:border-gray-700';
-                  
+
                   if (isLead) {
-                    // LEADs aparecem em AMARELO OURO, com variações baseadas no status
-                    if (hasOffsite) {
+                    if (leadDone) {
+                      // Lead ATENDIDO (converteu / não converteu / prorrogou) → card VERDE, como cliente presencial.
+                      statusColor = 'text-green-700 dark:text-green-300';
+                      borderColor = 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950';
+                    } else if (hasOffsite) {
                       statusColor = 'text-red-600 dark:text-red-400';
                       borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
-                    } else if (isCompleted) {
-                      statusColor = 'text-amber-700 dark:text-amber-300';
-                      borderColor = 'border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950';
-                    } else if (isInProgress) {
-                      statusColor = 'text-amber-600 dark:text-amber-400';
-                      borderColor = 'border-amber-500 dark:border-amber-600 bg-amber-50 dark:bg-amber-950';
                     } else {
+                      // Lead PENDENTE de atendimento → AMARELO OURO.
                       statusColor = 'text-amber-600 dark:text-amber-400';
                       borderColor = 'border-amber-500 dark:border-amber-700';
                     }
@@ -1605,7 +1611,7 @@ export default function RotaDoDia() {
                           onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
-                            hasOffsite ? 'bg-red-600' : isCompleted ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                            hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
                             {index + 1}
                           </div>
@@ -1621,6 +1627,16 @@ export default function RotaDoDia() {
                                 <Badge variant="outline" className="text-xs border-amber-500 text-amber-700 dark:text-amber-400">
                                   Lead
                                 </Badge>
+                              )}
+                              {/* TAG do desfecho do lead (card verde de atendido) */}
+                              {leadConverted && (
+                                <Badge className="text-xs bg-green-600 hover:bg-green-600 text-white">Conversão</Badge>
+                              )}
+                              {leadDiscarded && (
+                                <Badge className="text-xs bg-red-600 hover:bg-red-600 text-white">Não Convertido{leadReason ? `: ${leadReason}` : ''}</Badge>
+                              )}
+                              {leadPostponed && (
+                                <Badge className="text-xs bg-amber-500 hover:bg-amber-500 text-white">Prorrogado para {leadNextDay ? leadNextDay.split('-').reverse().join('/') : ''}</Badge>
                               )}
                               {/* 🟣 Tag de ajuste administrativo (só quando houve alteração efetiva) */}
                               {hasAdminChange && (
@@ -1737,8 +1753,8 @@ export default function RotaDoDia() {
                                 </div>
                               )}
 
-                              {/* Ações do Lead (Converter / Não converter / Prorrogar) — direto no card da rota */}
-                              {isLead && (
+                              {/* Ações do Lead (Converter / Não converter / Prorrogar) — só enquanto NÃO atendido */}
+                              {isLead && !leadDone && (
                                 <div onClick={(e) => e.stopPropagation()}>
                                   <LeadActions
                                     leadId={visit.entityId || visit.leadId || visit.customerId}
