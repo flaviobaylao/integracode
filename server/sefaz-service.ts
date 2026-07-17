@@ -964,7 +964,13 @@ function buildDocumento(
       if (resolvedCstIcmsCrt3 === '00') {
         // CRT 3 + CST 00 — tributação normal. Sempre computa quando os valores
         // do item estão zerados/ausentes para evitar destaques zerados na DANFE.
-        const aliqIcmsRaw = parseFloat(item.aliqIcms?.toString() || scenario?.aliqIcms?.toString() || defaultGoIcmsAliq());
+        // FASE 3.4q: um aliqIcms=0 gravado no item (o pipeline persiste '0' para todo
+        // emitente) NAO pode zerar o destaque. Regime Normal (SERV) em venda
+        // interestadual usa a aliquota interestadual padrao (GO->DF=12%, GO->Sul/Sudeste=7%)
+        // quando item/cenario nao trazem uma aliquota positiva.
+        const _aliqItem00 = parseFloat(item.aliqIcms?.toString() || '0');
+        const _aliqScen00 = parseFloat(scenario?.aliqIcms?.toString() || '0');
+        const aliqIcmsRaw = _aliqItem00 > 0 ? _aliqItem00 : (_aliqScen00 > 0 ? _aliqScen00 : parseFloat(defaultGoIcmsAliq()));
         const itemVbc = parseFloat(item.baseIcms?.toString() || '0');
         const vbc00b = itemVbc > 0 ? itemVbc : parseFloat(totPrc);
         const itemVicms = parseFloat(item.valorIcms?.toString() || '0');
