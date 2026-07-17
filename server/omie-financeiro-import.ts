@@ -221,3 +221,5 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
     }
   });
 }
+
+// redeploy-nudge 2026-07-17: restart p/ liberar conexoes stored_objects
