@@ -599,6 +599,46 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   console.log('⚠️ [SCHEDULER] Liberacao automatica de bloqueados DESATIVADA (ambiente de desenvolvimento)');
 }
 
+// 🎯 Distribuicao da REPESCAGEM: todos os dias as 22:00 (BRT), programando a ROTA DO DIA SEGUINTE.
+// 1) gera as rotas de AMANHA p/ os vendedores ativos com coordenadas; 2) roda a distribuicao da
+//    repescagem p/ amanha sobre essas rotas (perimetro 2km, teto 3/vendedor, PROPRIO vendedor
+//    primeiro; o restante vai ao telemarketing habilitado). Idempotente por dia (force refaz o nao-atendido).
+cron.schedule('0 22 * * *', async () => {
+  console.log('🎯 [REPESCAGEM-22H] Iniciando distribuicao da repescagem para o dia seguinte...');
+  try {
+    const { users } = await import('../shared/schema');
+    const { eq } = await import('drizzle-orm');
+    const { runRepescagemDrawForDate } = await import('./repescagem-routes');
+    const { generateDailyRoute } = await import('./routeOptimizationService');
+
+    // amanha (BRT)
+    const amanha = nowBrazil();
+    amanha.setHours(0, 0, 0, 0);
+    amanha.setDate(amanha.getDate() + 1);
+    const amanhaStr = amanha.toISOString().split('T')[0];
+
+    // 1) Gerar as rotas de AMANHA (programa a "rota do dia seguinte").
+    const vendedores = await db.select().from(users).where(eq(users.role, 'vendedor'));
+    let rotasGeradas = 0, rotasPuladas = 0, rotasErro = 0;
+    for (const v of vendedores) {
+      try {
+        if (!v.homeLatitude || !v.homeLongitude) { rotasPuladas++; continue; }
+        const existe = await storage.getDailyRouteBySellerAndDate(v.id, amanha);
+        if (existe) { rotasPuladas++; continue; }
+        await generateDailyRoute(storage, v.id, amanha);
+        rotasGeradas++;
+      } catch (e: any) { rotasErro++; console.error(`[REPESCAGEM-22H] rota amanha ${v.firstName || v.id}:`, e?.message); }
+    }
+    console.log(`🗺️ [REPESCAGEM-22H] Rotas de amanha (${amanhaStr}): ${rotasGeradas} geradas, ${rotasPuladas} puladas, ${rotasErro} erros`);
+
+    // 2) Rodar a distribuicao/sorteio da repescagem p/ AMANHA sobre as rotas geradas.
+    const r = await runRepescagemDrawForDate(amanhaStr, { force: true });
+    console.log(`🎯 [REPESCAGEM-22H] Distribuicao ${amanhaStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
+  } catch (e: any) {
+    console.error('❌ [REPESCAGEM-22H] falha:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // DESATIVADO: Sistema migrado para cards permanentes + order_history
 // Geração automática de agenda de visitas REMOVIDA após migração para cards permanentes
 // A geração de visitas agora usa visit_schedule_history em vez de sales_cards

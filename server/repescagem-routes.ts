@@ -893,28 +893,54 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   const allocated = new Set<string>();
   const rows: any[] = [];
 
-  // ---- Fase A: externos (perímetro 3 km, prioriza outra carteira, até 3) ----
+  // Funcao (role) dos DONOS de carteira dos candidatos (p/ saber quais sao de vendedor externo).
+  const ownerIds = Array.from(new Set(coordRows.map(c => c.sellerId).filter(Boolean) as string[]));
+  const ownerRoleRows = ownerIds.length
+    ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, ownerIds))
+    : [];
+  const ownerRoleById = new Map(ownerRoleRows.map(u => [u.id, u.role]));
+  const isExtPortfolio = (custId: string): boolean => {
+    const sid = coordById.get(custId)?.sellerId;
+    return !!sid && ownerRoleById.get(sid) === 'vendedor';
+  };
+
+  // ---- Fase A: externos (perimetro 2 km, teto EXTERNAL_MAX_PER_SELLER, PRIORIDADE do proprio vendedor) ----
+  // Somente clientes de carteira de vendedor externo entram aqui; o resto vai p/ telemarketing (Fase B).
+  const extLoad = new Map<string, number>(externalSellers.map(id => [id, 0]));
+  const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
   for (const sellerId of externalSellers) {
-    const anchors = await repGetRouteAnchors(sellerId, drawDate);
-    if (anchors.length === 0) continue;
-    const pool = candidates.filter((c: any) => {
-      if (allocated.has(c.customerId)) return false;
-      const info = coordById.get(c.customerId);
-      if (!info || info.lat == null || info.lng == null) return false;
-      return anchors.some(a => repHaversineKm(info.lat as number, info.lng as number, a.lat, a.lng) <= REPESCAGEM_PERIMETER_KM);
-    });
-    // Prioriza clientes de OUTRA carteira; a própria carteira só como preenchimento.
-    pool.sort((a: any, b: any) => {
-      const aOwn = coordById.get(a.customerId)?.sellerId === sellerId ? 1 : 0;
-      const bOwn = coordById.get(b.customerId)?.sellerId === sellerId ? 1 : 0;
-      if (aOwn !== bOwn) return aOwn - bOwn;
-      return repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate);
-    });
-    for (const c of pool.slice(0, EXTERNAL_MAX_PER_SELLER)) {
-      allocated.add(c.customerId);
-      rows.push({ customerId: c.customerId, lastRedDate: c.lastRedDate, assignedUserId: sellerId,
-        carteiraSellerId: coordById.get(c.customerId)?.sellerId || c.sellerId || null,
-        phase: 'external', drawDate, status: 'in_route' });
+    anchorsBySeller.set(sellerId, await repGetRouteAnchors(sellerId, drawDate));
+  }
+  const nearRoute = (custId: string, sellerId: string): boolean => {
+    const info = coordById.get(custId);
+    if (!info || info.lat == null || info.lng == null) return false;
+    const anchors = anchorsBySeller.get(sellerId) || [];
+    return anchors.some(a => repHaversineKm(info.lat as number, info.lng as number, a.lat, a.lng) <= REPESCAGEM_PERIMETER_KM);
+  };
+  const allocExternal = (custId: string, sellerId: string, cand: any) => {
+    allocated.add(custId);
+    extLoad.set(sellerId, (extLoad.get(sellerId) || 0) + 1);
+    rows.push({ customerId: custId, lastRedDate: cand.lastRedDate, assignedUserId: sellerId,
+      carteiraSellerId: coordById.get(custId)?.sellerId || cand.sellerId || null,
+      phase: 'external', drawDate, status: 'in_route' });
+  };
+  const extCandidates = candidates
+    .filter((c: any) => isExtPortfolio(c.customerId))
+    .sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
+  // Pre-passo: o PROPRIO vendedor do cliente primeiro (se habilitado, perto da rota e abaixo do teto).
+  for (const c of extCandidates) {
+    if (allocated.has(c.customerId)) continue;
+    const owner = coordById.get(c.customerId)?.sellerId || null;
+    if (owner && extLoad.has(owner) && (extLoad.get(owner) || 0) < EXTERNAL_MAX_PER_SELLER && nearRoute(c.customerId, owner)) {
+      allocExternal(c.customerId, owner, c);
+    }
+  }
+  // Preenchimento: outro vendedor externo cuja rota do dia passe perto, respeitando o teto.
+  for (const sellerId of externalSellers) {
+    for (const c of extCandidates) {
+      if ((extLoad.get(sellerId) || 0) >= EXTERNAL_MAX_PER_SELLER) break;
+      if (allocated.has(c.customerId)) continue;
+      if (nearRoute(c.customerId, sellerId)) allocExternal(c.customerId, sellerId, c);
     }
   }
 
@@ -1589,4 +1615,11 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
+}
+
+
+// Exportado para o agendador (scheduler.ts): roda a distribuicao/sorteio da repescagem
+// para uma data especifica (ex.: o dia seguinte), programando a rota daquele dia.
+export async function runRepescagemDrawForDate(drawDate: string, opts?: { force?: boolean }): Promise<any> {
+  return runDailyDraw({ drawDate, force: opts?.force ?? true });
 }
