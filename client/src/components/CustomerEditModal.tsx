@@ -125,6 +125,11 @@ export default function CustomerEditModal({
     paymentInstallments: "" as any,
     installmentSchedule: "" as any, // Cronograma de parcelas (ex.: "7/14/21")
     installmentCustom: false as any, // UI: modo "Personalizado" ativo
+    notificationEmail: "" as any, // Envio automático de documentos (replicado do 1.0)
+    sendDanfeEmail: false as any,
+    sendXmlEmail: false as any,
+    sendBoletoPixEmail: false as any,
+    sendPedidoEmail: false as any,
     serviceStartDate: "", // Data de início do fornecimento (só admins alteram)
   });
 
@@ -209,6 +214,11 @@ export default function CustomerEditModal({
       installmentSchedule: (() => { const n = String((formData as any).installmentSchedule || "").split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650); return n.length ? n.join('/') : null; })(),
       paymentInstallments: (() => { const n = String((formData as any).installmentSchedule || "").split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650); if (n.length) return n.length; return (formData as any).paymentInstallments === "" || (formData as any).paymentInstallments == null ? null : Number((formData as any).paymentInstallments); })(),
       collectionDiscount: (formData as any).collectionDiscount === "" || (formData as any).collectionDiscount == null ? null : String((formData as any).collectionDiscount),
+      notificationEmail: String((formData as any).notificationEmail || "").trim() || null,
+      sendDanfeEmail: !!(formData as any).sendDanfeEmail,
+      sendXmlEmail: !!(formData as any).sendXmlEmail,
+      sendBoletoPixEmail: !!(formData as any).sendBoletoPixEmail,
+      sendPedidoEmail: !!(formData as any).sendPedidoEmail,
       omieInstanceId: (formData as any).omieInstanceId || null,
     };
     
@@ -351,6 +361,11 @@ export default function CustomerEditModal({
         paymentInstallments: (customer as any).paymentInstallments ?? "",
         installmentSchedule: (customer as any).installmentSchedule || "",
         installmentCustom: (() => { const s = String((customer as any).installmentSchedule || ""); return (!!s && !["7/14","7/14/21","14/21","21/28/35"].includes(s)) as any; })(),
+        notificationEmail: (customer as any).notificationEmail || "",
+        sendDanfeEmail: !!(customer as any).sendDanfeEmail,
+        sendXmlEmail: !!(customer as any).sendXmlEmail,
+        sendBoletoPixEmail: !!(customer as any).sendBoletoPixEmail,
+        sendPedidoEmail: !!(customer as any).sendPedidoEmail,
         serviceStartDate: (customer as any).serviceStartDate ? new Date((customer as any).serviceStartDate).toISOString().split('T')[0] : "",
       });
     }
@@ -817,6 +832,35 @@ export default function CustomerEditModal({
             </div>
 
             
+            {/* Envio automático de documentos por e-mail (replicado do Integra 1.0) */}
+            <div className="space-y-3 border border-sky-200 bg-sky-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-sky-900">Envio Automático de Documentos por E-mail</Label>
+              <div>
+                <Label className="text-sm">E-mail para envio</Label>
+                <Input
+                  type="email"
+                  value={(formData as any).notificationEmail}
+                  onChange={(e) => setFormData(prev => ({ ...prev, notificationEmail: e.target.value } as any))}
+                  placeholder="email@cliente.com.br"
+                  data-testid="input-notification-email"
+                />
+                <p className="text-xs text-gray-500 mt-1">Se vazio, nada é enviado mesmo com as opções marcadas.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {([['sendDanfeEmail','DANFE (PDF)'],['sendXmlEmail','XML da NF-e'],['sendBoletoPixEmail','Boleto / PIX'],['sendPedidoEmail','Pedido']] as [string,string][]).map(([k,lbl]) => (
+                  <div key={k} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={'docsend-'+k}
+                      checked={!!(formData as any)[k]}
+                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, [k]: checked === true } as any))}
+                      data-testid={'checkbox-'+k}
+                    />
+                    <label htmlFor={'docsend-'+k} className="text-sm cursor-pointer">{lbl}</label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Veículo Exclusivo */}
             <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-orange-900">Veículo Exclusivo</Label>
