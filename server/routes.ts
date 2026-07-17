@@ -22652,8 +22652,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Acesso negado' });
       }
 
-      const { name, phone, notes, customerId } = req.body;
-      
+      const { name, phone, notes, customerId, contactName } = req.body;
+
       if (!name || !phone) {
         return res.status(400).json({ message: 'Nome e telefone são obrigatórios' });
       }
@@ -22671,7 +22671,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByUserId: user.id
       });
 
-      res.status(201).json(contact);
+      // 👤 Nome do contato da empresa (coluna aditiva contact_name, criada sob demanda).
+      // Exibido como subtítulo discreto abaixo da razão social nas conversas.
+      if (contactName !== undefined) {
+        try {
+          await db.execute(sql`ALTER TABLE phonebook_contacts ADD COLUMN IF NOT EXISTS contact_name text`);
+          await db.execute(sql`UPDATE phonebook_contacts SET contact_name = ${contactName || null} WHERE phone = ${cleanPhone}`);
+        } catch (e: any) {
+          console.warn('[PHONEBOOK] falha ao salvar contact_name:', e?.message);
+        }
+      }
+
+      res.status(201).json({ ...contact, contactName: contactName ?? null });
     } catch (error: any) {
       console.error('Erro ao criar contato:', error);
       res.status(500).json({ message: 'Erro ao criar contato', error: error.message });
