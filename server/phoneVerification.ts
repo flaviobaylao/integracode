@@ -219,4 +219,42 @@ export function registerPhoneVerification(
       return res.status(500).json({ message: 'Erro no envio de teste', error: e && e.message });
     }
   });
+
+  // Disparo em MASSA por carteira de vendedor (admin) — vinculado a cada cliente (aparece no Clientes Ativos).
+  // body: { sellerId, dryRun?, limit? }. dryRun=true so conta/lista, nao envia.
+  app.post('/api/admin/phone-verification/send-carteira', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!user || !['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado.' });
+      }
+      const sellerId = String((req.body && req.body.sellerId) || '').trim();
+      const dryRun = !!(req.body && req.body.dryRun);
+      const limit = Math.max(0, Math.min(3000, Number((req.body && req.body.limit)) || 0));
+      if (!sellerId) return res.status(400).json({ message: 'Informe sellerId.' });
+      await ensurePhoneVerification();
+      const rows: any = await db.execute(sql`
+        SELECT id, name, fantasy_name, phone FROM customers
+        WHERE seller_id = ${sellerId} AND is_active = true
+          AND COALESCE(is_lead, false) = false AND COALESCE(is_supplier, false) = false`);
+      const list = rows.rows || rows;
+      const _fake = (d: string) => !d || /^(\d)\1+$/.test(d) || '01234567890123456789'.includes(d) || '98765432109876543210'.includes(d) || d.includes('00000');
+      let targets = list.filter((c: any) => { const d = String(c.phone || '').replace(/\D/g, ''); return d.length >= 10 && d.length <= 13 && !_fake(d); });
+      if (limit > 0) targets = targets.slice(0, limit);
+      if (dryRun) {
+        return res.json({ dryRun: true, totalCarteiraAtiva: list.length, comTelefoneValido: targets.length, amostra: targets.slice(0, 8).map((c: any) => ({ nome: c.fantasy_name || c.name, phone: c.phone })) });
+      }
+      let sent = 0; let failed = 0;
+      for (const c of targets) {
+        try {
+          const r = await triggerPhoneConfirmation(c.id, c.phone, c.fantasy_name || c.name || null, user.id);
+          if (r && r.ok && r.sent) sent++; else failed++;
+        } catch { failed++; }
+      }
+      console.log(`[PHONE-VERIF] carteira seller=${sellerId} alvo=${targets.length} sent=${sent} failed=${failed}`);
+      return res.json({ ok: true, alvo: targets.length, sent, failed });
+    } catch (e: any) {
+      return res.status(500).json({ message: 'Erro no disparo em massa', error: e && e.message });
+    }
+  });
 }
