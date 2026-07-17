@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { authenticateUser, requireRole } from "./authMiddleware";
 
 // ---------------------------------------------------------------------------
 // Prazos/condições de pagamento por cliente — puxa do 1.0 (Neon) p/ o 2.0.
@@ -38,6 +39,67 @@ export function registerPaymentTerms(app: Express) {
         )).rows;
       }
       res.json({ totalCols: cols.length, payCols, samples });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    } finally {
+      try { if (src) await src.end(); } catch {}
+    }
+  });
+
+  // ---- Diagnóstico SOMENTE-LEITURA: config de e-mail (GoDaddy) e campos de
+  // envio de documentos (DANFE/XML/pedido/boleto) no 1.0 (Neon). Nenhuma
+  // escrita em nenhum dos bancos. Valores de colunas sensíveis (senha/secret/
+  // token/key) NUNCA são retornados — apenas o marcador '***definido***'.
+  app.get("/api/admin/docs-email/diag-1-0", authenticateUser, requireRole(["admin"]), async (_req, res) => {
+    let src: any = null;
+    try {
+      src = await client(process.env.REPLIT_DATABASE_URL);
+      const SECRET_RX = /pass|senha|secret|token|key|pwd|credential/i;
+      const redact = (row: any) => {
+        const out: any = {};
+        for (const [k, v] of Object.entries(row || {})) {
+          out[k] = SECRET_RX.test(k) ? (v == null || v === "" ? null : "***definido***") : v;
+        }
+        return out;
+      };
+      // 1) tabelas que parecem config de e-mail/SMTP no 1.0
+      const tables = (await src.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
+      )).rows.map((r: any) => r.table_name) as string[];
+      const emailTables = tables.filter((t) => /mail|smtp|email/i.test(t));
+      const configTables = tables.filter((t) => /config|setting/i.test(t));
+      const inspect: any = {};
+      for (const t of [...new Set([...emailTables, ...configTables])].slice(0, 12)) {
+        const cols = (await src.query(
+          "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position", [t]
+        )).rows as any[];
+        const colNames = cols.map((c: any) => String(c.column_name));
+        const looksEmail = /mail|smtp|email/i.test(t) || colNames.some((c) => /smtp|mail_host|email_host/i.test(c));
+        const cnt = parseInt(String((await src.query(`SELECT COUNT(*)::int AS n FROM "${t}"`)).rows[0].n), 10);
+        let rows: any[] = [];
+        if (looksEmail && cnt <= 50) {
+          rows = ((await src.query(`SELECT * FROM "${t}" LIMIT 10`)).rows as any[]).map(redact);
+        } else if (cnt <= 500) {
+          // tabelas de settings chave/valor: só linhas relacionadas a e-mail
+          const kv = (await src.query(`SELECT * FROM "${t}" LIMIT 500`)).rows as any[];
+          rows = kv.filter((r) => /smtp|mail|godaddy|secureserver/i.test(JSON.stringify(Object.values(r)))).slice(0, 20).map(redact);
+        }
+        inspect[t] = { count: cnt, columns: cols, sample: rows };
+      }
+      // 2) colunas de envio de documentos no customers do 1.0
+      const custCols = (await src.query(
+        "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' ORDER BY ordinal_position"
+      )).rows as any[];
+      const rx = /mail|danfe|xml|pedido|envio|send|nfe|documento/i;
+      const docCols = custCols.filter((c) => rx.test(String(c.column_name)));
+      let custSamples: any[] = [];
+      if (docCols.length) {
+        const names = docCols.map((c) => String(c.column_name));
+        const sel = names.map((c) => `"${c}"`).join(", ");
+        const whereNN = names.map((c) => `"${c}" IS NOT NULL`).join(" OR ");
+        custSamples = (await src.query(`SELECT name, ${sel} FROM customers WHERE (${whereNN}) LIMIT 8`)).rows as any[];
+      }
+      res.json({ emailTables, configTables, inspect, customersDocCols: docCols, custSamples });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e) });
     } finally {
