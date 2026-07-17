@@ -1570,7 +1570,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS visit_justifications (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), visit_date date NOT NULL, customer_id text NOT NULL, seller_id text NOT NULL, reason text NOT NULL, notes text, created_at timestamptz DEFAULT now(), created_by varchar)"));
     await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_visit_justif ON visit_justifications (visit_date, customer_id, seller_id)"));
   }
-  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'outro'];
+  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'outro', 'removido'];
 
   // lista pendencias (nao atendidas) de uma data p/ um vendedor, que ainda NAO foram justificadas
   app.get('/api/vendedor/justificativas/pendentes', async (req: Request, res: Response) => {
