@@ -1,5 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Fragment } from "react";
 import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -23,6 +23,7 @@ import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import GeocodeAllButton from "@/components/GeocodeAllButton";
+import CustomerHistoryBox from "@/components/CustomerHistoryBox";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
@@ -55,7 +56,8 @@ import {
   MessageCircle,
   Copy,
   Send,
-  RefreshCw
+  RefreshCw,
+  History
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -244,6 +246,7 @@ export default function ActiveCustomers() {
   const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [bulkSeller, setBulkSeller] = useState("");
   const [bulkPeriodicity, setBulkPeriodicity] = useState("");
   const [bulkVirtualType, setBulkVirtualType] = useState("");
@@ -1473,8 +1476,8 @@ export default function ActiveCustomers() {
                         </TableRow>
                       ) : (
                         filteredCustomers.map((ac) => (
-                          <TableRow 
-                            key={ac.id} 
+                          <Fragment key={ac.id}>
+                          <TableRow
                             data-testid={`row-customer-${ac.id}`}
                             onClick={(e) => handleActionClick(e, ac)}
                             className={`cursor-pointer transition-colors ${((ac.nextThreeVisits?.length ?? 0) === 0) ? 'bg-red-100 hover:bg-red-200' : 'hover:bg-muted/50'}${(ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude)) ? ' text-red-600' : ''}`}
@@ -1498,6 +1501,15 @@ export default function ActiveCustomers() {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setHistoryOpenId(historyOpenId === ac.id ? null : ac.id); }}
+                                  title="Histórico de alterações"
+                                  className={`shrink-0 transition-colors ${historyOpenId === ac.id ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
+                                  data-testid={`button-history-${ac.id}`}
+                                >
+                                  <History className="h-4 w-4" />
+                                </button>
                                 <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                                 </div>
@@ -1616,6 +1628,14 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                           </TableRow>
+                          {historyOpenId === ac.id && (
+                            <TableRow className="bg-muted/20 hover:bg-muted/20">
+                              <TableCell colSpan={16} className="py-1">
+                                <CustomerHistoryBox customerId={ac.customer?.id} />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          </Fragment>
                         ))
                       )}
                     </TableBody>
