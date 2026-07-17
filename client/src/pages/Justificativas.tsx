@@ -18,7 +18,7 @@ const MOTIVOS: [string, string][] = [
   ["sem_interesse", "Sem interesse"],
   ["outro", "Outro"],
 ];
-const MOTIVO_LABEL: Record<string, string> = Object.fromEntries(MOTIVOS);
+const MOTIVO_LABEL: Record<string, string> = { ...Object.fromEntries(MOTIVOS), removido: "Removido da lista" };
 
 function ontemBRT(): string {
   const y = new Date(Date.now() - 86400000);
@@ -123,6 +123,29 @@ export default function Justificativas() {
     }
   };
 
+  // Admin: remove o cliente da lista de não-atendidos (marca como "removido").
+  const excluir = async (cid: string, sid: string) => {
+    if (!confirm("Remover este cliente da lista de não-atendidos?")) return;
+    const key = sid + ":" + cid;
+    setSavingId(key);
+    try {
+      const r = await fetch(`/api/vendedor/justificativas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ date, customerId: cid, sellerId: sid, reason: "removido", notes: "Removido da lista pelo admin" }),
+      });
+      if (!r.ok) throw new Error("excluir");
+      setNonce((n) => n + 1);
+      if (isAdmin) await refetchTodos();
+      else await refetch();
+    } catch (e) {
+      alert("Não foi possível remover o cliente da lista.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   // Monta o texto padrão do WhatsApp para o vendedor com a relação dos clientes.
   const buildMsg = (box: VendBox): string => {
     const linhas = box.clientes
@@ -189,6 +212,18 @@ export default function Justificativas() {
         >
           {savingId === key ? "Salvando…" : "Justificar"}
         </Button>
+        {isAdmin && (
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={savingId === key}
+            onClick={() => excluir(p.customerId, sid)}
+            title="Remover este cliente da lista de não-atendidos"
+            data-testid={`button-excluir-${p.customerId}`}
+          >
+            Excluir
+          </Button>
+        )}
       </div>
     );
   };
