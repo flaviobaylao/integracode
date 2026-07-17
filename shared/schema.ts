@@ -289,6 +289,15 @@ export const customers = pgTable("customers", {
   paymentInstallments: integer("payment_installments"),
   installmentSchedule: varchar("installment_schedule"),
 
+  // Envio automático de documentos por e-mail (replicado do cadastro do Integra 1.0).
+  // Colunas JÁ EXISTEM no banco (criadas pela migração de boot em server/index.ts e
+  // populadas pelo pull do 1.0 em 17/jul) — seguro entrar no schema drizzle.
+  notificationEmail: varchar("notification_email"),
+  sendDanfeEmail: boolean("send_danfe_email").default(false),
+  sendXmlEmail: boolean("send_xml_email").default(false),
+  sendBoletoPixEmail: boolean("send_boleto_pix_email").default(false),
+  sendPedidoEmail: boolean("send_pedido_email").default(false),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
