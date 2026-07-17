@@ -376,7 +376,9 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
-      if (!(r.customerName || '').toLowerCase().includes(q)) return false;
+      // Busca por CLIENTE ou NF (numero da nota / titulo). Aceita "104371" ou "NF-104371".
+      const hay = `${r.customerName || ''} ${r.titleNumber || ''} ${r.invoiceNumber || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
     }
     if (valueMin !== '' && Number(r.amount || 0) < parseFloat(String(valueMin).replace(',', '.'))) return false;
     if (valueMax !== '' && Number(r.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
@@ -520,7 +522,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
           <Label className="text-xs">Cliente</Label>
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Buscar cliente..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[200px]" />
+            <Input placeholder="Buscar cliente ou NF..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[220px]" />
           </div>
         </div>
         <div>
