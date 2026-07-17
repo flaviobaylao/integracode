@@ -1146,6 +1146,44 @@ export function registerFinancialRoutes(app: Express) {
       // FASE 3.4e - categoria DRE obrigatoria: sem categoria (manual ou por regra), nao cria.
       if (!data.chartAccountId) return res.status(400).json({ message: 'Selecione a categoria DRE (plano de contas). Nenhuma conta pode ser criada sem categoria.' });
       const rec = req.body.recurrence;
+      // TRAVA ANTI-DUPLICIDADE (regra do Flavio): impede lancar 2x a mesma conta a pagar.
+      // Bloqueia quando ja existe titulo NAO cancelado / NAO excluido com o mesmo fornecedor
+      // (documento se houver, senao nome) + mesmo valor + vencimento a ate 7 dias de distancia.
+      // Override explicito: body.allowDuplicate === true (ou force === true) para casos legitimos.
+      const allowDup = req.body?.allowDuplicate === true || req.body?.force === true;
+      if (!allowDup && !(rec && rec.freq && rec.freq !== 'none')) {
+        try {
+          const dd = data.dueDate instanceof Date ? data.dueDate : (data.dueDate ? new Date(data.dueDate) : null);
+          const amt = (data.amount !== undefined && data.amount !== null && data.amount !== '') ? String(data.amount) : null;
+          if (dd && amt) {
+            const doc = data.supplierDocument ? String(data.supplierDocument).replace(/\D/g, '') : '';
+            const nm = String(data.supplierName || '').trim().toUpperCase();
+            const dupRes: any = await db.execute(sql`
+              SELECT id, due_date, amount, status, created_at, created_by
+              FROM payables
+              WHERE deleted_at IS NULL
+                AND status <> 'cancelada'
+                AND amount::numeric = ${amt}::numeric
+                AND due_date >= ${dd}::timestamp - interval '7 days'
+                AND due_date <= ${dd}::timestamp + interval '7 days'
+                AND (
+                  (${doc} <> '' AND regexp_replace(COALESCE(supplier_document, ''), '[^0-9]', '', 'g') = ${doc})
+                  OR (${doc} = '' AND upper(trim(supplier_name)) = ${nm})
+                )
+              ORDER BY created_at DESC
+              LIMIT 1`);
+            const hit = (dupRes?.rows ?? dupRes ?? [])[0];
+            if (hit) {
+              const dtxt = new Date(hit.due_date).toLocaleDateString('pt-BR');
+              return res.status(409).json({
+                duplicate: true,
+                existing: { id: hit.id, dueDate: hit.due_date, amount: hit.amount, status: hit.status },
+                message: 'Ja existe uma conta a pagar deste fornecedor com o mesmo valor e vencimento proximo (venc. ' + dtxt + '). Lancamento bloqueado para evitar duplicidade. Se for realmente uma segunda conta, confirme a duplicidade para prosseguir.',
+              });
+            }
+          }
+        } catch { /* nunca bloqueia a criacao por falha da checagem de duplicidade */ }
+      }
       if (rec && rec.freq && rec.freq !== 'none') {
         const base = data.dueDate instanceof Date ? data.dueDate : (data.dueDate ? new Date(data.dueDate) : new Date());
         const dates = buildRecurrenceDates(base, rec);
