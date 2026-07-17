@@ -1440,13 +1440,27 @@ export default function RotaDoDia() {
                 </CardTitle>
                 {/* Busca por cliente + filtro Atendidos/Pendentes */}
                 <div className="flex flex-1 flex-wrap items-center gap-2 lg:justify-center">
-                  <Input
-                    placeholder="Buscar cliente..."
-                    value={presentialSearch}
-                    onChange={(e) => setPresentialSearch(e.target.value)}
-                    className="h-9 w-full sm:max-w-xs"
-                    data-testid="input-presential-search"
-                  />
+                  <div className="relative w-full sm:max-w-xs">
+                    <Input
+                      placeholder="Buscar cliente..."
+                      value={presentialSearch}
+                      onChange={(e) => setPresentialSearch(e.target.value)}
+                      className="h-9 w-full pr-8"
+                      data-testid="input-presential-search"
+                    />
+                    {presentialSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setPresentialSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                        title="Limpar busca"
+                        aria-label="Limpar busca"
+                        data-testid="button-clear-presential-search"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                   <Select value={presentialFilter} onValueChange={(v) => setPresentialFilter(v as 'todos' | 'atendidos' | 'pendentes')}>
                     <SelectTrigger className="h-9 w-[150px]" data-testid="select-presential-filter">
                       <SelectValue />
