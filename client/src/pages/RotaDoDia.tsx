@@ -23,6 +23,7 @@ import type { DailyRouteResponse } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
 import LeadReturnsPanel from "@/components/LeadReturnsPanel";
+import LeadActions from "@/components/LeadActions";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
@@ -836,6 +837,15 @@ export default function RotaDoDia() {
   const presentialVisits = useMemo(
     () => (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual'),
     [route?.visits]
+  );
+  // IDs dos leads que já estão na rota (paradas de lead) — usados para não duplicar
+  // esses leads no painel "Retornos de Lead" (eles já têm botões no card da rota).
+  const routeLeadIds = useMemo(
+    () => presentialVisits
+      .filter((v: any) => v.visitType === 'lead')
+      .map((v: any) => String(v.entityId || v.leadId || v.customerId))
+      .filter(Boolean),
+    [presentialVisits]
   );
   // Clientes com CHECK-IN realizado = "Atendidos" (concluídos); demais = "Pendentes".
   // (Check-out desligado: a visita conta como atendida/concluída ao fazer o check-in.)
@@ -1711,6 +1721,19 @@ export default function RotaDoDia() {
                                   {(visit as any).observation}
                                 </div>
                               )}
+
+                              {/* Ações do Lead (Converter / Não converter / Prorrogar) — direto no card da rota */}
+                              {isLead && (
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <LeadActions
+                                    leadId={visit.entityId || visit.leadId || visit.customerId}
+                                    leadName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    date={selectedDate}
+                                    onDone={() => refetch()}
+                                  />
+                                </div>
+                              )}
                             </div>
 
                             {hasOffsite && (
@@ -1815,7 +1838,7 @@ export default function RotaDoDia() {
 
                 {/* Retornos de lead (revisita +15 dias) - dentro do box das visitas presenciais */}
                 {selectedSellerId && selectedDate && (
-                  <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} />
+                  <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} excludeIds={routeLeadIds} />
                 )}
 
                 {(() => {
