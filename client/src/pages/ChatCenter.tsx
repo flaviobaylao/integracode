@@ -267,6 +267,11 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
                 </span>
               )}
             </div>
+            {conv.contactName && (
+              <p className="text-[11px] text-gray-500 truncate leading-tight" title="Contato na empresa" data-testid={`conv-contact-${conv.id}`}>
+                {conv.contactName}
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-[10px] font-medium whitespace-nowrap text-gray-400">
@@ -282,7 +287,7 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
         <button
           onClick={(e) => {
             e.stopPropagation();
-            setPhonebookData({ name: conv.customerName, phone: conv.customerPhone });
+            setPhonebookData({ name: conv.customerName, phone: conv.customerPhone, contactName: conv.contactName || "" });
           }}
           className="p-1.5 rounded-full bg-green-50 hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors border border-green-200"
           title="Adicionar à agenda"
@@ -1074,16 +1079,17 @@ function ChatCenterInner() {
     return Object.values(byPhone).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
   })();
 
-  const [phonebookData, setPhonebookData] = useState<{ name: string; phone: string } | null>(null);
+  const [phonebookData, setPhonebookData] = useState<{ name: string; phone: string; contactName?: string } | null>(null);
 
   // Mutation para adicionar contato à agenda
   const addToPhonebookMutation = useMutation({
-    mutationFn: async ({ name, phone }: { name: string; phone: string }) => {
-      return apiRequest('POST', '/api/phonebook-contacts', { name, phone });
+    mutationFn: async ({ name, phone, contactName }: { name: string; phone: string; contactName?: string }) => {
+      return apiRequest('POST', '/api/phonebook-contacts', { name, phone, contactName });
     },
     onSuccess: () => {
       toast({ title: "Sucesso", description: "Contato adicionado à agenda" });
       queryClient.invalidateQueries({ queryKey: ['/api/phonebook-contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] });
       setPhonebookData(null);
     },
     onError: () => {
@@ -1347,10 +1353,19 @@ function ChatCenterInner() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Nome do Cliente</label>
               <Input 
-                value={phonebookData?.name || ""} 
+                value={phonebookData?.name || ""}
                 onChange={(e) => setPhonebookData(prev => prev ? { ...prev, name: e.target.value } : null)}
                 placeholder="Nome completo"
                 data-testid="input-edit-phonebook-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Nome do contato <span className="text-gray-400 font-normal">(opcional)</span></label>
+              <Input
+                value={phonebookData?.contactName || ""}
+                onChange={(e) => setPhonebookData(prev => prev ? { ...prev, contactName: e.target.value } : null)}
+                placeholder="Ex.: Débora — pessoa de contato na empresa"
+                data-testid="input-edit-phonebook-contact"
               />
             </div>
             <div className="space-y-2">
@@ -1369,9 +1384,10 @@ function ChatCenterInner() {
             <Button 
               onClick={() => {
                 if (phonebookData) {
-                  addToPhonebookMutation.mutate({ 
-                    name: phonebookData.name, 
-                    phone: phonebookData.phone 
+                  addToPhonebookMutation.mutate({
+                    name: phonebookData.name,
+                    phone: phonebookData.phone,
+                    contactName: phonebookData.contactName || ""
                   });
                 }
               }}
@@ -1783,6 +1799,11 @@ function ChatCenterInner() {
                     <div className="flex items-start justify-between">
                       <div>
                         <CardTitle className="text-lg">{selectedChat.customerName}</CardTitle>
+                        {(selectedChat as any).contactName && (
+                          <p className="text-xs text-gray-500 mt-0.5" data-testid="header-contact-name">
+                            {(selectedChat as any).contactName}
+                          </p>
+                        )}
                         <div className="flex items-center gap-2 mt-2">
                           <Phone className="w-4 h-4 text-gray-600" />
                           <span className="text-sm text-gray-600">{selectedChat.customerPhone}</span>
@@ -1795,7 +1816,8 @@ function ChatCenterInner() {
                                   className="h-6 w-6 text-green-600 hover:text-green-700 hover:bg-green-50"
                                   onClick={() => setPhonebookData({
                                     name: selectedChat.customerName,
-                                    phone: selectedChat.customerPhone
+                                    phone: selectedChat.customerPhone,
+                                    contactName: (selectedChat as any).contactName || ""
                                   })}
                                   disabled={addToPhonebookMutation.isPending}
                                   data-testid="button-add-to-phonebook"
