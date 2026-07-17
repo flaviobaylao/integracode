@@ -226,6 +226,17 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     }
   } catch (e) { console.error('[computeRedCandidates] venda set:', (e as any)?.message); }
 
+  // ULTIMA VENDA real por cliente (faturamentos com valor>0 + pipeline 'venda'), na janela.
+  // Regra: cliente que comprou DENTRO da sua periodicidade esta na cadencia e NAO cai na repescagem.
+  const lastPurchaseByCustomer = new Map<string, string>();
+  const considerPurchase = (cid: string | undefined | null, ds: string | undefined | null) => {
+    if (!cid || !ds) return;
+    const prev = lastPurchaseByCustomer.get(cid);
+    if (!prev || ds > prev) lastPurchaseByCustomer.set(cid, ds);
+  };
+  for (const b of billingOrders) considerPurchase(omieCodeToCustomerId.get(b.omieCustomerCode || ''), b.dateStr);
+  for (const [cid, set] of vendaOrderDatesByCustomer) for (const ds of set) considerPurchase(cid, ds);
+
   const todayStr = brTodayStr();
   const candidates: Array<{
     customerId: string;
@@ -277,6 +288,13 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const hasOrder = orderSet.has(vKey);
     // Vermelho = agendada, no passado, sem visita, sem pedido
     if (hasVisit || hasOrder) continue;
+    // NAO cai na repescagem se comprou (venda real) DENTRO da sua periodicidade (contada de hoje).
+    const periodDays = PERIODICITY_DAYS[c.periodicity || 'semanal'] || 7;
+    const lastPurchase = lastPurchaseByCustomer.get(c.id);
+    if (lastPurchase) {
+      const daysSincePurchase = Math.floor((new Date(todayStr).getTime() - new Date(lastPurchase).getTime()) / 86400000);
+      if (daysSincePurchase <= periodDays) continue;
+    }
     // NOVO: se o cliente recebeu QUALQUER pedido, atendimento virtual,
     // check-in de rota ou visita concluída APÓS lastDate (inclusive),
     // ele já foi atendido na repescagem -> sai da lista.
