@@ -3561,7 +3561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (user.role === 'vendedor') {
         targetSellerId = user.id;
       } else if (user.role === 'telemarketing') {
-        targetSellerId = sellerId || undefined;
+        targetSellerId = user.id; // limitado as proprias informacoes
       } else if (['admin', 'coordinator', 'administrative'].includes(user.role)) {
         targetSellerId = sellerId || undefined;
       } else {
@@ -3919,15 +3919,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         instanceLabels[inst.id] = inst.name || inst.display_name || inst.id;
       }
 
+      // Telemarketing: visualizacao limitada as proprias informacoes (ve apenas a propria linha)
+      const _restrictOwn = user.role === 'telemarketing';
+      const _sellersOut = _restrictOwn ? results.filter((r: any) => r.sellerId === user.id) : results;
+      const _historyOut = _restrictOwn ? (historyRows.rows || []).filter((h: any) => String(h.seller_id) === String(user.id)) : (historyRows.rows || []);
+
       res.json({
         month: targetMonth,
         year: targetYear,
         workingDaysInMonth,
         workingDaysElapsed,
         commissionTiers: COMMISSION_TIERS,
-        sellers: results,
+        sellers: _sellersOut,
         telemarketing: telemarketingResult,
-        history: historyRows.rows || [],
+        history: _historyOut,
         currentUserId: user.id,
         instanceLabels,
       });
