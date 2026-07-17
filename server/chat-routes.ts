@@ -5983,6 +5983,46 @@ export function registerChatRoutes(app: Express): void {
     } catch (e: any) { console.error('[LABELS] delete:', e); res.status(500).json({ error: e?.message }); }
   });
 
+  // 🗑️ Excluir (soft-delete) uma mensagem do chat.
+  // Regra: o usuário SÓ pode excluir a PRÓPRIA mensagem (msg.senderId === currentUser.id).
+  // Não apaga o registro — marca metadata.deleted e guarda quem excluiu, para exibir
+  // "Mensagem excluída pelo usuário [nome]" no lugar do conteúdo.
+  app.delete("/api/chat/messages/:messageId", authenticateUser, async (req: any, res: any) => {
+    try {
+      const currentUser = (req as any).currentUser;
+      const userId = currentUser?.id;
+      const userName = [currentUser?.firstName, currentUser?.lastName]
+        .filter(Boolean).join(' ').trim() || currentUser?.email || 'Usuário';
+      const { messageId } = req.params;
+
+      const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, messageId)).limit(1);
+      if (!msg) return res.status(404).json({ error: "Mensagem não encontrada" });
+
+      // 🔒 Só o autor pode excluir a própria mensagem
+      if (!userId || String(msg.senderId) !== String(userId)) {
+        return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens" });
+      }
+
+      const prevMeta = (msg.metadata || {}) as any;
+      if (prevMeta.deleted) {
+        return res.json({ success: true, alreadyDeleted: true, deletedByName: prevMeta.deletedByName });
+      }
+      const newMeta = {
+        ...prevMeta,
+        deleted: true,
+        deletedByName: userName,
+        deletedById: userId,
+        deletedAt: new Date().toISOString(),
+      };
+      await db.update(chatMessages).set({ metadata: newMeta }).where(eq(chatMessages.id, messageId));
+      console.log(`🗑️ [MSG-DELETE] Mensagem ${messageId} excluída por ${userName} (${userId})`);
+      return res.json({ success: true, deletedByName: userName });
+    } catch (e: any) {
+      console.error('[MSG-DELETE] erro:', e?.message || e);
+      return res.status(500).json({ error: e?.message || "erro" });
+    }
+  });
+
   // Todas as marcações conversa->etiqueta
   app.get("/api/chat/conversation-labels", authenticateUser, async (_req, res) => {
     try {
