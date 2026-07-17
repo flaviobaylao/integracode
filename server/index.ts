@@ -3744,6 +3744,18 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule varchar`);
   } catch (e: any) { console.warn('[PAYMENT-COLS-MIGRATION] falha ao garantir colunas:', e?.message); }
 
+  // Envio automatico de documentos por e-mail (replicado do cadastro do Integra 1.0):
+  // notification_email + flags por tipo de documento. AWAITED antes dos workers e do
+  // listen porque as colunas tambem entram no schema drizzle de customers (qualquer
+  // select de customers falharia se a coluna nao existisse). Idempotente.
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS notification_email varchar`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_danfe_email boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_xml_email boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_boleto_pix_email boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_pedido_email boolean DEFAULT false`);
+  } catch (e: any) { console.warn('[DOCS-EMAIL-COLS-MIGRATION] falha ao garantir colunas:', e?.message); }
+
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
 
