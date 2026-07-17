@@ -98,6 +98,20 @@ async function _promoteAgendados(origem: string) {
 cron.schedule('5 0 * * *', () => { void _promoteAgendados('diario'); }, { timezone: 'America/Sao_Paulo' });
 cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timezone: 'America/Sao_Paulo' });
 
+// Rede de seguranca: recupera pedidos presos em sales_cards.status='pending' com venda registrada
+// (produtos + valor) que nunca foram finalizados e por isso NAO geraram item no pipeline ("somem" do funil).
+// Roda a cada 30 min; so mexe em cards parados ha >= 60 min (nao toca em pedido sendo montado agora).
+// Envia via autoSendToBillingPipeline (aplica bloqueio de debito/dedup + auditoria). Idempotente.
+cron.schedule('*/30 * * * *', async () => {
+  try {
+    const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
+    const r = await reconcilePendingOrders({ apply: true, minAgeMinutes: 60 });
+    if (r.recovered > 0) console.log(`🛟 [SCHEDULER] reconcile-pending: ${r.recovered} pedido(s) preso(s) recuperado(s) para o pipeline (de ${r.scanned} varrido[s]).`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] erro no reconcile-pending:', error?.message || error);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
