@@ -3449,6 +3449,17 @@ export function registerChatRoutes(app: Express): void {
         console.error("[CHAT] Error getting phonebook contacts:", e);
       }
 
+      // 👤 Mapa telefone -> nome do contato da empresa (coluna aditiva contact_name).
+      // Tolerante à ausência da coluna (só existe após o 1º salvamento no modal da agenda).
+      const contactNameByPhone: Record<string, string> = {};
+      try {
+        const cnRows: any = await db.execute(sql`SELECT phone, contact_name FROM phonebook_contacts WHERE contact_name IS NOT NULL AND contact_name <> ''`);
+        for (const r of (cnRows?.rows || [])) {
+          const p = String(r.phone || '').replace(/\D/g, '');
+          if (p) contactNameByPhone[p] = r.contact_name;
+        }
+      } catch (e) { /* coluna ainda não existe — ignora */ }
+
       // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas atribuídas
       let filteredConversations = conversations;
       if (!isAdmin && currentUser?.id) {
@@ -3486,6 +3497,7 @@ export function registerChatRoutes(app: Express): void {
           id: conv.id,
           customerId: conv.customerId,
           customerName: displayName,
+          contactName: contactNameByPhone[normalizedPhone] || (phonebookContact ? contactNameByPhone[String((phonebookContact as any).phone || '').replace(/\D/g, '')] : '') || null,
           customerPhone: conv.customerPhone || customer?.phone || "-",
           customerLinked: !!(phonebookContact && (phonebookContact as any).customerId),
           channelPhone: (conv as any).channelPhone || null,
