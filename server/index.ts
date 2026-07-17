@@ -1593,6 +1593,40 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     }
   });
 
+  // ADMIN: pendências de não-atendimento de TODOS os vendedores, agrupadas por vendedor (com telefone).
+  app.get('/api/admin/justificativas/pendentes-todos', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      let date = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const y = new Date(Date.now() - 86400000);
+        date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(y);
+      }
+      const nomeSub = "(SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1)";
+      const foneSub = "(SELECT u.phone FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1)";
+      const q = "SELECT sc.seller_id AS sid, " + nomeSub + " AS vendedor, " + foneSub + " AS telefone, "
+        + "sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade "
+        + "FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id "
+        + "WHERE (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date "
+        + "AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 "
+        + "AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) "
+        + "AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) "
+        + "GROUP BY sc.seller_id, sc.customer_id ORDER BY vendedor NULLS LAST, MAX(c.name)";
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+      const bySeller: Record<string, any> = {};
+      for (const x of rows) {
+        const sid = String(x.sid);
+        if (!bySeller[sid]) bySeller[sid] = { sellerId: sid, sellerName: x.vendedor || sid, phone: x.telefone || null, clientes: [] };
+        bySeller[sid].clientes.push({ customerId: String(x.cid), nome: x.nome, cidade: x.cidade || '' });
+      }
+      const vendedores = Object.values(bySeller).sort((a: any, b: any) => b.clientes.length - a.clientes.length);
+      res.json({ ok: true, date, totalClientes: rows.length, vendedores });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
+    }
+  });
+
   app.post('/api/vendedor/justificativas', async (req: Request, res: Response) => {
     try {
       await ensureJustifTable();
