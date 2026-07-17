@@ -43,7 +43,7 @@ function fmtDate(d: string | null): string {
   }
 }
 
-export default function LeadReturnsPanel({ sellerId, date }: { sellerId: string; date: string }) {
+export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { sellerId: string; date: string; excludeIds?: string[] }) {
   const { toast } = useToast();
   const [naoConverterLead, setNaoConverterLead] = useState<LeadReturn | null>(null);
   const [motivo, setMotivo] = useState<string>("");
@@ -119,8 +119,11 @@ export default function LeadReturnsPanel({ sellerId, date }: { sellerId: string;
     setConverterLead(l);
   };
 
-  const hoje = data?.hoje || [];
-  const atrasados = data?.atrasados || [];
+  // Leads que já aparecem como parada na rota (com botões no próprio card) são
+  // removidos daqui para evitar duplicação. Sobram os leads sem coordenada / fora da rota.
+  const excludeSet = new Set((excludeIds || []).map((x) => String(x)));
+  const hoje = (data?.hoje || []).filter((l) => !excludeSet.has(String(l.id)));
+  const atrasados = (data?.atrasados || []).filter((l) => !excludeSet.has(String(l.id)));
   if (isLoading || (hoje.length === 0 && atrasados.length === 0)) return null;
 
   const renderLead = (l: LeadReturn) => (
