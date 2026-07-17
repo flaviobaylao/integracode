@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive, Tag } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive, Tag, Trash2, Ban } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1197,6 +1197,35 @@ function ChatCenterInner() {
         || 'Não atribuído');
 
   // Nome do remetente exibido no card de cada mensagem
+  // ===== Excluir mensagem (soft-delete) =====
+  // Só é possível excluir a PRÓPRIA mensagem: senderId da mensagem === id do usuário logado.
+  const isOwnMessage = (msg: any): boolean =>
+    !!(user as any)?.id && String(msg?.senderId) === String((user as any).id);
+  const isDeletedMessage = (msg: any): boolean => !!(msg?.metadata as any)?.deleted;
+  const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState<string | null>(null);
+  const deleteMessageMutation = useMutation({
+    mutationFn: async (messageId: string) => {
+      const res = await fetch(`/api/chat/messages/${messageId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error((e as any)?.error || 'Falha ao excluir mensagem');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      setConfirmDeleteMsgId(null);
+      toast({ title: "Mensagem excluída" });
+    },
+    onError: (e: any) => {
+      setConfirmDeleteMsgId(null);
+      toast({ title: "Não foi possível excluir", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const senderLabelForMsg = (msg: any): string => {
     if (msg?.senderType === 'agent') {
       const ag = agents.find(a => a.userId === msg.senderId || a.id === msg.senderId);
@@ -1991,6 +2020,13 @@ function ChatCenterInner() {
                                 <div className="text-xs font-semibold mb-1 opacity-80">
                                   👤 {senderLabelForMsg(msg)}
                                 </div>
+                                {isDeletedMessage(msg) ? (
+                                  <p className="text-sm italic text-gray-500 flex items-center gap-1" data-testid={`deleted-msg-${msg.id}`}>
+                                    <Ban className="w-3.5 h-3.5 shrink-0" />
+                                    Mensagem excluída{(msg.metadata as any)?.deletedByName ? ` pelo usuário ${(msg.metadata as any).deletedByName}` : ''}
+                                  </p>
+                                ) : (
+                                <>
                                 {msg.messageType === 'location' && (msg.content || '').includes('[Localização:') ? (
                                   <div className="mb-2 bg-gradient-to-r from-green-100 to-blue-100 p-2 rounded">
                                     <p className="text-xs font-semibold flex items-center gap-1">📍 {msg.content}</p>
@@ -2047,9 +2083,44 @@ function ChatCenterInner() {
                                 ) : null}
                                 {msg.messageType === 'text' && msg.content && <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>}
                                 {msg.messageType !== 'text' && msg.messageType !== 'location' && msg.messageType !== 'image' && msg.messageType !== 'audio' && msg.messageType !== 'video' && msg.messageType !== 'document' && msg.content && !msg.content.startsWith('data:') && !msg.content.startsWith('/objects/') && !msg.content.startsWith('/uploads/') && !msg.content.includes('Erro:') && <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>}
-                                  <p className={`text-xs mt-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
+                                </>
+                                )}
+                                <div className="flex items-center justify-between gap-2 mt-1">
+                                  <p className={`text-xs ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
                                   </p>
+                                  {isOwnMessage(msg) && !isDeletedMessage(msg) && (
+                                    confirmDeleteMsgId === msg.id ? (
+                                      <span className="flex items-center gap-1 text-xs">
+                                        <span className="text-gray-600">Excluir?</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteMessageMutation.mutate(msg.id)}
+                                          disabled={deleteMessageMutation.isPending}
+                                          className="text-red-600 font-semibold hover:underline disabled:opacity-50"
+                                          data-testid={`confirm-delete-${msg.id}`}
+                                        >Sim</button>
+                                        <span className="text-gray-300">/</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteMsgId(null)}
+                                          className="text-gray-600 hover:underline"
+                                          data-testid={`cancel-delete-${msg.id}`}
+                                        >Não</button>
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteMsgId(msg.id)}
+                                        className="text-gray-400 hover:text-red-600 transition-colors"
+                                        title="Excluir mensagem"
+                                        data-testid={`delete-msg-${msg.id}`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )
+                                  )}
+                                </div>
                                 </div>
                               </div>
                             </div>
