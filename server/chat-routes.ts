@@ -3485,13 +3485,23 @@ export function registerChatRoutes(app: Express): void {
         // ✅ PRIORIDADE: Agenda (phonebook) > Customer > Conversa > Fallback
         // Normalizar telefone para busca na agenda
         const normalizedPhone = (conv.customerPhone || customer?.phone || '').replace(/\D/g, '');
-        const phonebookContact = phonebookContacts.find((p: any) => {
+        const pbMatches = phonebookContacts.filter((p: any) => {
           const pPhone = (p.phone || '').replace(/\D/g, '');
           return pPhone === normalizedPhone || pPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(pPhone);
         });
-        
-        // Nome priorizado: agenda > customer > conversa > fallback
-        const displayName = phonebookContact?.name || customer?.name || conv.customerName || "Desconhecido";
+        // ⚠️ Pode haver linhas duplicadas para o mesmo telefone (ex.: uma criada
+        // automaticamente com o nome = próprio número). Preferir a que tem um nome
+        // "real" (diferente do telefone) para não sobrescrever a razão social salva.
+        const phonebookContact = pbMatches.find((p: any) => {
+          const nm = String(p.name || '').trim();
+          return nm && nm.replace(/\D/g, '') !== normalizedPhone;
+        }) || pbMatches[0];
+
+        // Nome priorizado: agenda (nome real) > customer > conversa > fallback.
+        // Um nome de agenda igual ao próprio telefone é ignorado para não mascarar o nome real.
+        const pbName = String(phonebookContact?.name || '').trim();
+        const pbNameReal = pbName && pbName.replace(/\D/g, '') !== normalizedPhone ? pbName : '';
+        const displayName = pbNameReal || customer?.name || conv.customerName || "Desconhecido";
         
         return {
           id: conv.id,
