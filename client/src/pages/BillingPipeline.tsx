@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -228,6 +228,36 @@ export default function BillingPipeline() {
   const { data: items = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
   });
+
+  // ----- Barra de rolagem horizontal no TOPO do Kanban (espelha o scroll do quadro) -----
+  const boardScrollRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [boardScrollWidth, setBoardScrollWidth] = useState(0);
+
+  useEffect(() => {
+    const board = boardScrollRef.current;
+    if (!board) return;
+    const measure = () => setBoardScrollWidth(board.scrollWidth);
+    measure();
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measure);
+      ro.observe(board);
+      Array.from(board.children).forEach((c) => ro!.observe(c as Element));
+    }
+    window.addEventListener('resize', measure);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [items]);
+
+  // Espelhamento bidirecional do scroll horizontal (topo <-> quadro), sem loop.
+  const handleTopScroll = () => {
+    const board = boardScrollRef.current, top = topScrollRef.current;
+    if (board && top && board.scrollLeft !== top.scrollLeft) board.scrollLeft = top.scrollLeft;
+  };
+  const handleBoardScroll = () => {
+    const board = boardScrollRef.current, top = topScrollRef.current;
+    if (board && top && top.scrollLeft !== board.scrollLeft) top.scrollLeft = board.scrollLeft;
+  };
 
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
@@ -894,8 +924,19 @@ export default function BillingPipeline() {
           </div>
         )}
 
+        {/* Barra de rolagem horizontal no TOPO (espelha o quadro abaixo) */}
+        <div
+          ref={topScrollRef}
+          onScroll={handleTopScroll}
+          className="overflow-x-auto overflow-y-hidden shrink-0"
+          style={{ height: 16 }}
+          aria-hidden="true"
+        >
+          <div style={{ width: boardScrollWidth || 1, height: 1 }} />
+        </div>
+
         {/* Kanban Board */}
-        <div className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
+        <div ref={boardScrollRef} onScroll={handleBoardScroll} className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
