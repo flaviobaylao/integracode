@@ -110,6 +110,15 @@ async function finalizePaidOrder(row: any): Promise<{ status: string; orderId?: 
       await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n💰 PIX PAGO na loja (txid ' + (row.txid || row.charge_id) + ') — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`);
     } catch { /* nota é cosmética */ }
     console.log(`✅ [LOJA-PIX] Pedido criado após PIX pago: ${data.orderNumber} (pending ${row.id})`);
+    // Pedido JÁ PAGO não espera: envia imediatamente ao pipeline de faturamento
+    // (reconcilePendingOrders marca completed + autoSendToBillingPipeline com travas/auditoria).
+    try {
+      const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
+      const r = await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] });
+      console.log(`🚀 [LOJA-PIX] Pedido pago enviado ao pipeline imediatamente (recovered=${r?.recovered}).`);
+    } catch (e: any) {
+      console.warn('⚠️ [LOJA-PIX] Envio imediato ao pipeline falhou (cron recupera em ≤90min):', e?.message || e);
+    }
     return { status: 'paid', orderId: data.orderId, orderNumber: data.orderNumber };
   } catch (e: any) {
     // Pagamento recebido mas criação do pedido falhou → NÃO tenta de novo sozinho
