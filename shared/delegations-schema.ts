@@ -10,6 +10,13 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./schema";
 
+// Referência LOCAL ao enum user_role (já existente no banco, definido em shared/schema.ts).
+// NÃO importar de "./schema": o ciclo de módulos (schema.ts re-exporta este arquivo via
+// `export *`, que é hoisted no ESM) faz este arquivo inicializar ANTES do corpo do schema.ts,
+// e o valor importado estaria undefined no momento do uso (ReferenceError que derrubou o boot).
+// Como esta const não é exportada, o drizzle-kit não vê enum duplicado — só o tipo 'user_role'.
+const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria']);
+
 // Tipo da delegação
 export const delegationTypeEnum = pgEnum('delegation_type', [
   'carteira_transferencia', // carteira de 1 vendedor -> 1 destinatário
