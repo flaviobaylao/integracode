@@ -3688,3 +3688,7 @@ export const agentesConfig = pgTable("agentes_config", {
 
 export type ConfigGlobal = typeof configGlobal.$inferSelect;
 export type AgenteConfig = typeof agentesConfig.$inferSelect;
+
+
+// Modulo Acessos e Delegacoes - tabelas em arquivo separado
+export * from "./delegations-schema";
