@@ -79,21 +79,34 @@ function monthLabel(d = new Date()): string {
 const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
 // Mini gráfico de barras (somente barras, sem eixos/valores) para os boxes do topo.
-function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, labelEvery = 1 }: { values: number[]; highlight?: number; color?: string; height?: number; labels?: string[]; labelEvery?: number }) {
+function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, labelEvery = 1, labelSize = "text-[7px]", captions, format }: { values: number[]; highlight?: number; color?: string; height?: number; labels?: string[]; labelEvery?: number; labelSize?: string; captions?: string[]; format?: (n: number) => string }) {
   const nums = values.map((v) => Number(v) || 0);
   const max = Math.max(1, ...nums);
+  const [sel, setSel] = useState<number | null>(null);
+  const selValid = sel !== null && (sel as number) >= 0 && (sel as number) < nums.length;
   return (
     <div className="mt-2">
-      <div className="flex items-end gap-[2px]" style={{ height }} aria-hidden="true">
+      {format && selValid && (
+        <div className="mb-1 text-[11px] font-semibold text-gray-800 whitespace-nowrap">
+          {((captions && captions[sel as number]) || (labels && labels[sel as number]) || ("#" + ((sel as number) + 1))) + ": " + format(nums[sel as number])}
+        </div>
+      )}
+      <div className="flex items-end gap-[2px]" style={{ height }}>
         {nums.map((val, i) => {
           const h = Math.max(2, Math.round((val / max) * height));
           const isHi = highlight === i;
+          const isSel = sel === i;
           return (
-            <div
+            <button
+              type="button"
               key={i}
-              className="flex-1 rounded-sm"
-              style={{ height: h, minWidth: 2, backgroundColor: isHi ? "#059669" : val > 0 ? color : "#e5e7eb" }}
-            />
+              onClick={() => setSel((prev) => (prev === i ? null : i))}
+              title={((captions && captions[i]) || (labels && labels[i]) || ("#" + (i + 1))) + ": " + (format ? format(val) : String(val))}
+              className="flex-1 flex items-end p-0 border-0 bg-transparent cursor-pointer"
+              style={{ height, minWidth: 2 }}
+            >
+              <div className="w-full rounded-sm" style={{ height: h, backgroundColor: isSel ? "#111827" : isHi ? "#059669" : val > 0 ? color : "#e5e7eb" }} />
+            </button>
           );
         })}
       </div>
@@ -102,7 +115,7 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
           {labels.map((lb, i) => (
             <div
               key={i}
-              className={`flex-1 text-center text-[7px] leading-none overflow-hidden whitespace-nowrap ${highlight === i ? "text-gray-700 font-semibold" : "text-gray-400"}`}
+              className={"flex-1 text-center " + labelSize + " leading-none overflow-hidden whitespace-nowrap " + (highlight === i || sel === i ? "text-gray-800 font-semibold" : "text-gray-500")}
               style={{ minWidth: 2 }}
             >
               {(labelEvery <= 1 || i % labelEvery === 0 || i === labels.length - 1) ? lb : ""}
@@ -150,12 +163,11 @@ export default function Dashboard() {
   const sellers = useMemo(() => {
     const rows = data?.visitSummary?.rows;
     if (!Array.isArray(rows)) return [];
-    const dset = new Set(dates);
     const map = new Map<string, any>();
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", fatDia: 0, fatSemana: 0, fatMes: 0, fatPeriodo: 0 }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", fatDia: 0, fatSemana: 0, fatMes: 0 }; map.set(S, w); }
       for (const v of N.visits || []) {
         if (!v.hasOrder) continue;
         const val = Number(v.orderValue) || 0;
@@ -163,13 +175,12 @@ export default function Dashboard() {
         w.fatMes += val;
         if (v.date >= weekStartISO) w.fatSemana += val;
         if (v.date === bounds.today) w.fatDia += val;
-        if (dset.has(v.date)) w.fatPeriodo += val;
       }
     }
     return Array.from(map.values()).filter((s) => s.fatMes > 0).sort((a, b) => b.fatMes - a.fatMes);
-  }, [data, weekStartISO, bounds.today, dates]);
+  }, [data, weekStartISO, bounds.today]);
 
-  const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes, fatPeriodo: t.fatPeriodo + s.fatPeriodo }), { fatDia: 0, fatSemana: 0, fatMes: 0, fatPeriodo: 0 }), [sellers]);
+  const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes }), { fatDia: 0, fatSemana: 0, fatMes: 0 }), [sellers]);
   const sortedSellers = useMemo(() => {
     const arr = [...sellers];
     const dir = sortDir === "asc" ? 1 : -1;
@@ -237,6 +248,21 @@ export default function Dashboard() {
   const MONTH_ABBR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const yy = bounds.today.slice(2, 4);
   const mm = Number(bounds.today.slice(5, 7));
+  const weekDayBars = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of (series.daily || [])) map[String(r.d)] = Number(r.v) || 0;
+    const base = new Date(bounds.today + "T12:00:00");
+    const dow = (base.getDay() + 6) % 7;
+    const monday = new Date(base); monday.setDate(base.getDate() - dow);
+    const wd = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+    const arr: number[] = []; const labels: string[] = []; const captions: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      const ds = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+      arr.push(map[ds] || 0); labels.push(wd[i]); captions.push(wd[i] + " " + brDate(ds));
+    }
+    return { arr, labels, captions, todayIdx: dow };
+  }, [series.daily, bounds.today]);
   const dayLabels = useMemo(() => monthDailyBars.arr.map((_, i) => String(i + 1)), [monthDailyBars.arr]);
   const weekLabels = useMemo(() => {
     const ld = monthDailyBars.arr.length || 31;
@@ -270,17 +296,17 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
-            <MiniBars values={monthDailyBars.arr} highlight={monthDailyBars.todayIdx} labels={dayLabels} labelEvery={5} />
-            <div className="text-[10px] text-gray-400 mt-1">Dias do mês</div>
+            <MiniBars values={weekDayBars.arr} highlight={weekDayBars.todayIdx} labels={weekDayBars.labels} captions={weekDayBars.captions} labelSize="text-[10px]" format={brl} />
+            <div className="text-[10px] text-gray-400 mt-1">Dias da semana (clique na barra)</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
@@ -309,19 +335,9 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
-              <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente. Periodo selecionado: {brDate(start)}{isSingleDay ? "" : " a " + brDate(end)}</div>
-            </div>
-            <div className="inline-flex items-center gap-1 text-sm">
-              <span className="text-gray-600">Periodo:</span>
-              <input type="date" value={start} min={bounds.first} max={bounds.last} onChange={(e) => { const v = e.target.value; setStart(v); if (v > end) setEnd(v); }} className="px-2 py-1.5 border rounded-md" aria-label="Data inicial" />
-              <span className="text-gray-400">-</span>
-              <input type="date" value={end} min={start || bounds.first} max={bounds.last} onChange={(e) => setEnd(e.target.value)} className="px-2 py-1.5 border rounded-md" aria-label="Data final" />
-              <button type="button" onClick={() => { setStart(bounds.today); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Definir para o dia vigente">Hoje</button>
-              <button type="button" onClick={() => { setStart(bounds.first); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Do inicio do mes ate hoje">Mes</button>
-            </div>
+          <div>
+            <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
+            <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente</div>
           </div>
         </CardHeader>
         <CardContent>
@@ -332,8 +348,7 @@ export default function Dashboard() {
                   <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
                   <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatDia")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento no Dia{sortArrow("fatDia")}</button></th>
                   <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatSemana")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento na Semana{sortArrow("fatSemana")}</button></th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento Mensal{sortArrow("fatMes")}</button></th>
-                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatPeriodo")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento no Periodo{sortArrow("fatPeriodo")}</button></th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento Mensal{sortArrow("fatMes")}</button></th>
                 </tr>
               </thead>
               <tbody>
@@ -342,12 +357,11 @@ export default function Dashboard() {
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatDia)}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatSemana)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatMes)}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatPeriodo)}</td>
+                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatMes)}</td>
                   </tr>
                 ))}
                 {sellers.length === 0 && (
-                  <tr><td colSpan={5} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                  <tr><td colSpan={4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
@@ -355,8 +369,7 @@ export default function Dashboard() {
                   <td className="py-2 pr-4">Total</td>
                   <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatDia)}</td>
                   <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatSemana)}</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
-                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatPeriodo)}</td>
+                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
                 </tr>
               </tfoot>
             </table>
