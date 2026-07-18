@@ -246,7 +246,7 @@ export default function Dashboard() {
       const mensal = weeks.reduce((acc: number, wk: any) => acc + wk.total, 0);
       arr.push({ sellerId: w.sellerId, sellerName: w.sellerName, weeks, mensal, fatMes: mensal });
     }
-    return arr;
+    return arr.filter((r: any) => r.fatMes > 0);
   }, [data, monthWeeks]);
   const sortedSellerDaily = useMemo(() => {
     const arr = [...sellerDaily];
