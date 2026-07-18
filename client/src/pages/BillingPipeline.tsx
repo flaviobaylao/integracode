@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -228,36 +228,6 @@ export default function BillingPipeline() {
   const { data: items = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
   });
-
-  // ----- Barra de rolagem horizontal no TOPO do Kanban (espelha o scroll do quadro) -----
-  const boardScrollRef = useRef<HTMLDivElement>(null);
-  const topScrollRef = useRef<HTMLDivElement>(null);
-  const [boardScrollWidth, setBoardScrollWidth] = useState(0);
-
-  useEffect(() => {
-    const board = boardScrollRef.current;
-    if (!board) return;
-    const measure = () => setBoardScrollWidth(board.scrollWidth);
-    measure();
-    let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(measure);
-      ro.observe(board);
-      Array.from(board.children).forEach((c) => ro!.observe(c as Element));
-    }
-    window.addEventListener('resize', measure);
-    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [items]);
-
-  // Espelhamento bidirecional do scroll horizontal (topo <-> quadro), sem loop.
-  const handleTopScroll = () => {
-    const board = boardScrollRef.current, top = topScrollRef.current;
-    if (board && top && board.scrollLeft !== top.scrollLeft) board.scrollLeft = top.scrollLeft;
-  };
-  const handleBoardScroll = () => {
-    const board = boardScrollRef.current, top = topScrollRef.current;
-    if (board && top && top.scrollLeft !== board.scrollLeft) top.scrollLeft = board.scrollLeft;
-  };
 
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
@@ -924,19 +894,8 @@ export default function BillingPipeline() {
           </div>
         )}
 
-        {/* Barra de rolagem horizontal no TOPO (espelha o quadro abaixo) */}
-        <div
-          ref={topScrollRef}
-          onScroll={handleTopScroll}
-          className="overflow-x-auto overflow-y-hidden shrink-0"
-          style={{ height: 16 }}
-          aria-hidden="true"
-        >
-          <div style={{ width: boardScrollWidth || 1, height: 1 }} />
-        </div>
-
         {/* Kanban Board */}
-        <div ref={boardScrollRef} onScroll={handleBoardScroll} className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
+        <div className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
@@ -1360,6 +1319,15 @@ export default function BillingPipeline() {
               <strong>{STAGES.find(s => s.key === batchStageTarget)?.label}</strong>?
             </DialogDescription>
           </DialogHeader>
+          {(() => {
+            const blockedSet = new Set((blockedOrders as any[]).map((b: any) => b.id));
+            const blockedCount = Array.from(selectedIds).filter(id => blockedSet.has(id)).length;
+            return blockedCount > 0 ? (
+              <div className="text-xs text-amber-700 bg-amber-50 dark:bg-amber-950 dark:text-amber-300 rounded px-2 py-1.5">
+                {blockedCount} {blockedCount === 1 ? 'pedido bloqueado será LIBERADO' : 'pedidos bloqueados serão LIBERADOS'} para o faturamento (entram na etapa "Pedido"), não movidos para a etapa selecionada.
+              </div>
+            ) : null;
+          })()}
           <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1 max-h-40 overflow-y-auto">
             {selectedItems.map(item => (
               <div key={item.id} className="flex items-center justify-between py-1 border-b last:border-0">
@@ -1371,10 +1339,26 @@ export default function BillingPipeline() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setBatchStageTarget(null)}>Cancelar</Button>
             <Button
-              onClick={() => batchStageTarget && batchStageMutation.mutate({ ids: Array.from(selectedIds), stage: batchStageTarget })}
-              disabled={batchStageMutation.isPending}
+              onClick={() => {
+                if (!batchStageTarget) return;
+                // Cards da coluna "Bloqueados" carregam o id de blocked_orders (NAO existe em
+                // billing_pipeline). Mover em lote precisa separar: bloqueados => LIBERAR (release),
+                // demais => mudanca de etapa normal. Sem isso o batch/stage devolvia "Item nao encontrado".
+                const blockedSet = new Set((blockedOrders as any[]).map((b: any) => b.id));
+                const allIds = Array.from(selectedIds);
+                const blockedIds = allIds.filter(id => blockedSet.has(id));
+                const pipelineIds = allIds.filter(id => !blockedSet.has(id));
+                if (blockedIds.length) releaseBlockedMutation.mutate(blockedIds);
+                if (pipelineIds.length) {
+                  batchStageMutation.mutate({ ids: pipelineIds, stage: batchStageTarget });
+                } else {
+                  setBatchStageTarget(null);
+                  setSelectedIds(new Set());
+                }
+              }}
+              disabled={batchStageMutation.isPending || releaseBlockedMutation.isPending}
             >
-              {batchStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <ArrowRightCircle className="h-4 w-4 mr-1" />}
+              {(batchStageMutation.isPending || releaseBlockedMutation.isPending) ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <ArrowRightCircle className="h-4 w-4 mr-1" />}
               Mover {selectedIds.size} pedidos
             </Button>
           </DialogFooter>
