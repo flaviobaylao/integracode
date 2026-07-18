@@ -2954,6 +2954,41 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  // TEMP (Claude 18/jul) — diagnostico fiscal + reatribuicao p/ Honest 1. Protegido por token. REMOVER apos uso.
+  app.all('/api/tmp/claude-op', async (req: any, res) => {
+    try {
+      const t = String((req.query && req.query.t) || (req.body && req.body.t) || '');
+      if (t !== 'clop_743094c8ef02bb6aee') return res.status(403).json({ error: 'forbidden' });
+      const action = String((req.query && req.query.action) || 'diag');
+      const HONEST1 = '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794';
+      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const FYEAR = "(COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')";
+      const FBASE = "FROM fiscal_invoices WHERE status='authorized' AND COALESCE(operation_type,'saida')<>'entrada' AND COALESCE(fin_nfe,'1')<>'4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND " + FYEAR + " >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo'))";
+      const MAP = "SELECT c.id AS cid, c.name AS nome, c.seller_id AS sid, NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') AS sname FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id) WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)";
+      const TARGET = "SELECT cid, nome, sid, COALESCE(sname,'Flavio Administrador') AS disp FROM (" + MAP + ") m WHERE COALESCE(sname,'Flavio Administrador') IN ('Flavio Administrador','Flavio E','Ranses G.','Maycon M','Gabriel R')";
+      if (action === 'fiscal') {
+        const byNat = await q("SELECT to_char(date_trunc('month'," + FYEAR + "),'YYYY-MM') AS m, UPPER(COALESCE(NULLIF(TRIM(nature_of_operation),''),'(sem natureza)')) AS nat, COUNT(*)::int AS cnt, COALESCE(SUM(total_invoice),0)::float AS v " + FBASE + " GROUP BY 1,2 ORDER BY 1, v DESC");
+        const byIssuer = await q("SELECT to_char(date_trunc('month'," + FYEAR + "),'YYYY-MM') AS m, COALESCE(NULLIF(issuer_cnpj,''),'(sem)') AS cnpj, COUNT(*)::int AS cnt, COALESCE(SUM(total_invoice),0)::float AS v " + FBASE + " GROUP BY 1,2 ORDER BY 1, v DESC");
+        const monTot = await q("SELECT to_char(date_trunc('month'," + FYEAR + "),'YYYY-MM') AS m, COUNT(*)::int AS cnt, COALESCE(SUM(total_invoice),0)::float AS v " + FBASE + " GROUP BY 1 ORDER BY 1");
+        return res.json({ monTot, byNat, byIssuer });
+      }
+      if (action === 'preview') {
+        const groups = await q("SELECT disp, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE nome IS NULL OR TRIM(nome)='' OR nome='-' OR UPPER(nome) LIKE 'ZZ%' OR UPPER(nome) LIKE '%TESTE%') AS lixo FROM (" + TARGET + ") t GROUP BY disp ORDER BY total DESC");
+        const tot = await q("SELECT COUNT(*)::int AS n FROM (" + TARGET + ") t");
+        return res.json({ groups, totalToMove: tot[0] && tot[0].n });
+      }
+      if (action === 'move') {
+        const before = await q("SELECT cid, sid, disp, nome FROM (" + TARGET + ") t");
+        const ids = before.map((r: any) => String(r.cid)).filter((x: string) => x && x.indexOf("'") < 0);
+        if (!ids.length) return res.json({ moved: 0, before: [] });
+        const inList = ids.map((id: string) => "'" + id + "'").join(',');
+        const upd: any = await db.execute(sql.raw("UPDATE customers SET seller_id = '" + HONEST1 + "' WHERE id IN (" + inList + ")"));
+        return res.json({ moved: upd.rowCount != null ? upd.rowCount : ids.length, count: ids.length, before });
+      }
+      return res.json({ ok: true, hint: 'action=fiscal|preview|move' });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 400) }); }
+  });
+
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
