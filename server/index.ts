@@ -105,6 +105,17 @@ app.use((req, res, next) => {
   const distHotsitePath = path.join(process.cwd(), "server", "public-hotsite");
   log("🏪 Servindo hotsite de " + distHotsitePath);
 
+  // Redireciona a RAIZ do subdominio da loja (loja.bebahonest.com.br) direto para /shop,
+  // para que a bio do Instagram possa usar o link limpo (sem o /shop). So afeta o path "/"
+  // desse host; qualquer outra rota (/api, /shop, admin em outros hosts) segue normal.
+  app.get('/', (req, res, next) => {
+    const host = String(req.headers.host || '').toLowerCase();
+    if (host.startsWith('loja.bebahonest.com.br')) {
+      return res.redirect(302, '/shop');
+    }
+    next();
+  });
+
   // Servir arquivos estáticos do hotsite com fallthrough disabled
   app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
 
