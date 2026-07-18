@@ -289,6 +289,14 @@ export function registerHotsiteCard(app: Express): void {
           await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n💳 CARTÃO APROVADO na loja (Cielo PaymentId ' + (sale.paymentId || '?') + ', ' + brand + ' final ' + last4 + ', ' + installments + 'x) — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`);
         } catch { /* nota é cosmética */ }
         console.log(`✅ [LOJA-CARTAO] Pedido criado após cartão aprovado: ${data.orderNumber} (payment ${sale.paymentId})`);
+        // Pedido JÁ PAGO não espera: envia imediatamente ao pipeline de faturamento
+        try {
+          const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
+          const r = await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] });
+          console.log(`🚀 [LOJA-CARTAO] Pedido pago enviado ao pipeline imediatamente (recovered=${r?.recovered}).`);
+        } catch (e2: any) {
+          console.warn('⚠️ [LOJA-CARTAO] Envio imediato ao pipeline falhou (cron recupera em ≤90min):', e2?.message || e2);
+        }
         return res.status(201).json({ success: true, orderId: data.orderId, orderNumber: data.orderNumber, paymentId: sale.paymentId, installments, brand, last4 });
       } catch (e: any) {
         // Cobrado mas pedido falhou → registro fica para ação manual (dinheiro seguro)
