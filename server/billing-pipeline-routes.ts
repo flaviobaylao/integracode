@@ -277,6 +277,21 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
   if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) { await logOrderAudit(salesCard.id, 'skipped_no_sale'); return null; }
 
+  // TRAVA ANTI-REIMPORTACAO DO HISTORICO (Omie): pedidos cuja VENDA foi concluida ha mais de
+  // N dias (default 2) NAO entram no pipeline interno. A migracao do historico do Omie
+  // reintroduz pedidos antigos (muitos ja faturados), que sem esta trava reaparecem na etapa
+  // 'pedido' como duplicatas. Pedido REAL entra no pipeline no MESMO dia da conclusao
+  // (completedDate ~ agora), entao passa normalmente. Liberacoes manuais (skipDebtCheck) sao
+  // isentas para nao quebrar o release de bloqueados legitimos. Ajustavel: BILLING_HISTORY_MAX_AGE_DAYS.
+  if (!opts?.skipDebtCheck && salesCard.completedDate) {
+    const _cd = new Date(salesCard.completedDate).getTime();
+    const _maxAgeMs = (parseInt(process.env.BILLING_HISTORY_MAX_AGE_DAYS || '2', 10) || 2) * 86400000;
+    if (!isNaN(_cd) && (Date.now() - _cd) > _maxAgeMs) {
+      await logOrderAudit(salesCard.id, 'skipped_historical_import');
+      return null;
+    }
+  }
+
   try {
     const existing = await storage.getBillingPipelineItems();
     if (existing.find(i => i.salesCardId === salesCard.id)) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
