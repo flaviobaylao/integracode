@@ -91,6 +91,7 @@ import FilaResgate from "@/pages/FilaResgate";
 import Justificativas from "@/pages/Justificativas";
 import ProgramaIndicacao from "@/pages/ProgramaIndicacao";
 import AgentesIA from "@/pages/AgentesIA";
+import AcessosEDelegacoes from "@/pages/AcessosEDelegacoes";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
 import TabelaPrecos from "@/pages/TabelaPrecos";
@@ -290,6 +291,7 @@ function Router() {
           <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
           <Route path="/admin/sync-monitor" component={SyncMonitor} />
           <Route path="/admin/agentes" component={AgentesIA} />
+          <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/cenarios-fiscais" component={CenariosFiscais} />
           <Route path="/telefones-clientes" component={TelefonesClientes} />
           <Route path="/tabela-precos" component={TabelaPrecos} />
