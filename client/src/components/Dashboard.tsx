@@ -300,16 +300,13 @@ export default function Dashboard() {
     return { arr, todayIdx: Number(bounds.today.slice(8, 10)) - 1 };
   }, [series.daily, bounds.today]);
   const weekBars = useMemo(() => {
-    // 5 semanas do mês: dias 1-7, 8-14, 15-21, 22-28, 29+.
-    const buckets = [0, 0, 0, 0, 0];
-    const ym = bounds.today.slice(0, 7);
-    for (const r of (series.daily || [])) {
-      if (!String(r.d).startsWith(ym)) continue;
-      const day = Number(String(r.d).slice(8, 10));
-      buckets[Math.min(4, Math.floor((day - 1) / 7))] += Number(r.v) || 0;
-    }
-    return { arr: buckets, curWeek: Math.min(4, Math.floor((Number(bounds.today.slice(8, 10)) - 1) / 7)) };
-  }, [series.daily, bounds.today]);
+    const map: Record<string, number> = {};
+    for (const r of (series.daily || [])) map[String(r.d)] = Number(r.v) || 0;
+    const arr = monthWeeks.map((wk: any) => wk.days.reduce((acc: number, d: any) => acc + (d.inMonth ? (map[d.iso] || 0) : 0), 0));
+    let curWeek = 0;
+    monthWeeks.forEach((wk: any, i: number) => { if (wk.days.some((d: any) => d.iso === bounds.today)) curWeek = i; });
+    return { arr, curWeek };
+  }, [series.daily, monthWeeks, bounds.today]);
   const yearMonthBars = useMemo(() => {
     const y = bounds.today.slice(0, 4);
     const curMonth = Number(bounds.today.slice(5, 7));
@@ -340,15 +337,7 @@ export default function Dashboard() {
     return { arr, labels, captions, todayIdx: dow };
   }, [series.daily, bounds.today]);
   const dayLabels = useMemo(() => monthDailyBars.arr.map((_, i) => String(i + 1)), [monthDailyBars.arr]);
-  const weekLabels = useMemo(() => {
-    const ld = monthDailyBars.arr.length || 31;
-    return weekBars.arr.map((_, i) => {
-      const s = i * 7 + 1;
-      if (s > ld) return '';
-      const e = Math.min(i * 7 + 7, ld);
-      return `${s}-${e}/${mm}`;
-    });
-  }, [weekBars.arr, monthDailyBars.arr, mm]);
+  const weekLabels = useMemo(() => monthWeeks.map((wk: any) => wk.label), [monthWeeks]);
   const monthLabels = useMemo(() => yearMonthBars.arr.map((_, i) => `${MONTH_ABBR[i] || ''}/${yy}`), [yearMonthBars.arr, yy]);
 
   const blocked: any[] = ov.blocked || [];
@@ -443,7 +432,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="overflow-auto max-h-[70vh]">
-            <table className="text-xs w-auto">
+            <table className="text-xs w-full">
               <thead>
                 <tr className="border-b text-gray-500">
                   <th rowSpan={2} className="py-1 pr-3 pl-1 font-medium text-left sticky left-0 top-0 z-20 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
