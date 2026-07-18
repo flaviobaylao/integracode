@@ -191,6 +191,82 @@ export default function Dashboard() {
   }, [sellers, sortKey, sortDir]);
   const toggleSort = (k: string) => { if (sortKey === k) { setSortDir((d) => (d === "asc" ? "desc" : "asc")); } else { setSortKey(k); setSortDir("asc"); } };
   const sortArrow = (k: string) => (sortKey === k ? (sortDir === "asc" ? " \u25B2" : " \u25BC") : "");
+  // ==== Comparativo diario (seg-sab) por semana do mes vigente ====
+  const pad2 = (n: number) => (n < 10 ? "0" + n : "" + n);
+  const isoOf = (d: Date) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  const WD_ABBR = ["seg", "ter", "qua", "qui", "sex", "s\u00e1b"];
+  const nfmt = (v: number) => Number(v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+  const monthWeeks = useMemo(() => {
+    const parts = bounds.today.split("-");
+    const Y = Number(parts[0]); const M = Number(parts[1]);
+    const lastDay = new Date(Y, M, 0).getDate();
+    const first = new Date(Y, M - 1, 1);
+    const dow0 = (first.getDay() + 6) % 7;
+    const monday = new Date(Y, M - 1, 1 - dow0);
+    const lastDate = new Date(Y, M - 1, lastDay);
+    const weeks: any[] = [];
+    const cur = new Date(monday);
+    while (cur <= lastDate && weeks.length < 6) {
+      const days: any[] = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(cur); d.setDate(cur.getDate() + i);
+        days.push({ iso: isoOf(d), inMonth: d.getMonth() === M - 1, dayNum: d.getDate() });
+      }
+      const inM = days.filter((x) => x.inMonth);
+      const label = inM.length ? (inM[0].dayNum + "-" + inM[inM.length - 1].dayNum + "/" + pad2(M)) : "";
+      weeks.push({ days, label });
+      cur.setDate(cur.getDate() + 7);
+    }
+    return weeks;
+  }, [bounds.today]);
+  const sellerDaily = useMemo(() => {
+    const rows = data?.visitSummary?.rows;
+    const map = new Map<string, any>();
+    if (Array.isArray(rows)) {
+      for (const N of rows) {
+        const S = N.sellerId || "sem-vendedor";
+        let w = map.get(S);
+        if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", dates: new Map<string, number>() }; map.set(S, w); }
+        for (const v of N.visits || []) {
+          if (!v.hasOrder) continue;
+          const val = Number(v.orderValue) || 0;
+          if (val <= 0) continue;
+          w.dates.set(v.date, (w.dates.get(v.date) || 0) + val);
+        }
+      }
+    }
+    const arr: any[] = [];
+    for (const w of map.values()) {
+      const weeks = monthWeeks.map((wk: any) => {
+        const dayVals = wk.days.map((d: any) => (d.inMonth ? (w.dates.get(d.iso) || 0) : null));
+        const total = dayVals.reduce((acc: number, x: any) => acc + (x || 0), 0);
+        return { dayVals, total };
+      });
+      const mensal = weeks.reduce((acc: number, wk: any) => acc + wk.total, 0);
+      arr.push({ sellerId: w.sellerId, sellerName: w.sellerName, weeks, mensal, fatMes: mensal });
+    }
+    return arr.filter((r) => r.fatMes > 0);
+  }, [data, monthWeeks]);
+  const sortedSellerDaily = useMemo(() => {
+    const arr = [...sellerDaily];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => sortKey === "sellerName"
+      ? String(a.sellerName).localeCompare(String(b.sellerName), "pt-BR") * dir
+      : ((a.fatMes || 0) - (b.fatMes || 0)) * dir);
+    return arr;
+  }, [sellerDaily, sortKey, sortDir]);
+  const grandTotals = useMemo(() => {
+    const weeks = monthWeeks.map(() => ({ dayVals: [0, 0, 0, 0, 0, 0], total: 0 }));
+    let mensal = 0;
+    for (const r of sellerDaily) {
+      r.weeks.forEach((wk: any, wi: number) => {
+        wk.dayVals.forEach((v: any, di: number) => { if (v != null) weeks[wi].dayVals[di] += v; });
+        weeks[wi].total += wk.total;
+      });
+      mensal += r.mensal;
+    }
+    return { weeks, mensal };
+  }, [sellerDaily, monthWeeks]);
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -366,39 +442,57 @@ export default function Dashboard() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-auto max-h-[60vh]">
-            <table className="text-sm w-auto">
+          <div className="overflow-auto max-h-[70vh]">
+            <table className="text-xs w-auto">
               <thead>
                 <tr className="border-b text-gray-500">
-                  <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatDia")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento no Dia{sortArrow("fatDia")}</button></th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatSemana")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento na Semana{sortArrow("fatSemana")}</button></th>
-                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento Mensal{sortArrow("fatMes")}</button></th>
+                  <th rowSpan={2} className="py-1 pr-3 pl-1 font-medium text-left sticky left-0 top-0 z-20 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
+                  {monthWeeks.map((wk: any, i: number) => (
+                    <th key={i} colSpan={7} className="py-1 px-2 font-semibold text-center border-l bg-gray-50 sticky top-0 z-10">Semana {i + 1}{wk.label ? " (" + wk.label + ")" : ""}</th>
+                  ))}
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Mensal{sortArrow("fatMes")}</button></th>
+                </tr>
+                <tr className="border-b text-gray-400">
+                  {monthWeeks.flatMap((wk: any, i: number) => [
+                    ...WD_ABBR.map((wd: string, di: number) => (
+                      <th key={i + "d" + di} className={"py-1 px-1 font-normal text-right sticky top-6 z-10 bg-white " + (di === 0 ? "border-l" : "")}>{wd}</th>
+                    )),
+                    <th key={i + "s"} className="py-1 px-2 font-semibold text-right sticky top-6 z-10 bg-gray-50">Sem.</th>
+                  ])}
                 </tr>
               </thead>
               <tbody>
-                {sortedSellers.map((x) => (
+                {sortedSellerDaily.map((x: any) => (
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatDia)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatSemana)}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatMes)}</td>
+                    <td className="py-1 pr-3 pl-1 font-medium text-gray-800 whitespace-nowrap sticky left-0 bg-white">{x.sellerName}</td>
+                    {x.weeks.flatMap((wk: any, wi: number) => [
+                      ...wk.dayVals.map((v: any, di: number) => (
+                        <td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums text-gray-700 " + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? "" : nfmt(v)}</td>
+                      )),
+                      <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
+                    ])}
+                    <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
                   </tr>
                 ))}
-                {sellers.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                {sortedSellerDaily.length === 0 && (
+                  <tr><td colSpan={monthWeeks.length * 7 + 2} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-gray-300 font-semibold text-gray-800">
-                  <td className="py-2 pr-4">Total</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatDia)}</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatSemana)}</td>
-                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
+                  <td className="py-1 pr-3 pl-1 sticky left-0 bg-white">Total</td>
+                  {grandTotals.weeks.flatMap((wk: any, wi: number) => [
+                    ...wk.dayVals.map((v: number, di: number) => (
+                      <td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>
+                    )),
+                    <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
+                  ])}
+                  <td className="py-1 px-2 text-right tabular-nums border-l">{brl(grandTotals.mensal)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
+          <div className="text-[10px] text-gray-400 mt-2">Faturamento diario (seg a sab) por semana do mes vigente. Domingos nao entram no comparativo. Colunas de dia em R$ sem centavos; subtotais e mensal em R$.</div>
         </CardContent>
       </Card>
 
