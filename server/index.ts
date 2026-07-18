@@ -1,4 +1,5 @@
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
+import { registerDelegationRoutes } from "./delegations-routes";
 import { registerHotsitePix } from "./hotsite-pix";
 import { registerHotsiteCard } from "./hotsite-card";
 import express, { type Request, Response, NextFunction } from "express";
@@ -274,6 +275,7 @@ run();
   registerReconciliation(app);
   registerPaymentTerms(app);
   registerChargeGuarantee(app);
+  registerDelegationRoutes(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
   app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
