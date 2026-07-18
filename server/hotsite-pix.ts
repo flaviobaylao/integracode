@@ -41,7 +41,7 @@ function onlyDigits(s: any): string { return String(s || '').replace(/\D/g, '');
 
 // Recalcula o total no servidor (mesma regra do POST /api/public/orders):
 // preço por tabela + desconto de indicação. Nunca confia no total do cliente.
-async function computeServerTotal(body: any): Promise<{ total: number; refPct: number; refDiscount: number } | { error: string }> {
+export async function computeServerTotal(body: any): Promise<{ total: number; refPct: number; refDiscount: number } | { error: string }> {
   const items = Array.isArray(body.items) ? body.items : [];
   if (!items.length) return { error: 'Adicione pelo menos um produto' };
   let subtotal = 0;
