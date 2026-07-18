@@ -13,7 +13,7 @@ import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
 import type { Product, CartItem, Customer } from './types';
 
-type View = 'catalog' | 'checkout' | 'pix' | 'success';
+type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
 
 function HotsiteContent() {
   const { isSelectionComplete, priceTable, reset } = useCustomerType();
@@ -32,6 +32,18 @@ function HotsiteContent() {
   const [pixStatus, setPixStatus] = useState('awaiting_payment');
   const [pixCopied, setPixCopied] = useState(false);
   const [pixNow, setPixNow] = useState(Date.now());
+
+  // 💳 Cartão pagar-antes: pedido pendente + campos do formulário
+  const [cardOrder, setCardOrder] = useState<any>(null);
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardHolder, setCardHolder] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardInstallments, setCardInstallments] = useState(1);
+  const [cardMaxInst, setCardMaxInst] = useState(3);
+  const [cardError, setCardError] = useState('');
+  const [cardProcessing, setCardProcessing] = useState(false);
+  const [cardPendingMsg, setCardPendingMsg] = useState('');
 
   // Contagem regressiva da expiração do PIX (1s)
   useEffect(() => {
@@ -234,6 +246,17 @@ function HotsiteContent() {
         setView('pix');
         return;
       }
+      // 💳 Cartão pagar-antes: abre o formulário de cartão — o pedido só é
+      // registrado depois que a Cielo aprovar o pagamento.
+      if (paymentMethod === 'card') {
+        setCardOrder(order);
+        setCardError('');
+        setCardPendingMsg('');
+        setCardProcessing(false);
+        try { const cfgc = await api.getCardConfig(); setCardMaxInst(cfgc.maxInstallments || 3); } catch {}
+        setView('card');
+        return;
+      }
 
       console.log('🔵 Chamando api.createOrder...');
 
@@ -262,6 +285,84 @@ function HotsiteContent() {
   // Se a seleção de tipo de cliente não estiver completa, mostrar seletor
   if (!isSelectionComplete) {
     return <CustomerTypeSelector />;
+  }
+
+  // View: Pagamento com CARTÃO — o pedido só é registrado após aprovação da Cielo
+  if (view === 'card' && cardOrder) {
+    const totalCard = Number(cardOrder.totalAmount) || 0;
+    const instOptions = Array.from({ length: cardMaxInst }, (_, i) => i + 1);
+    const fmtNum = (v: string) => v.replace(/\D/g, '').slice(0, 19).replace(/(\d{4})(?=\d)/g, '$1 ');
+    const fmtExp = (v: string) => {
+      const d = v.replace(/\D/g, '').slice(0, 4);
+      return d.length > 2 ? d.slice(0, 2) + '/' + d.slice(2) : d;
+    };
+    const canPay = cardNumber.replace(/\D/g, '').length >= 13 && cardHolder.trim().length > 2 && /^\d{2}\/\d{2}$/.test(cardExpiry) && cardCvv.replace(/\D/g, '').length >= 3 && !cardProcessing;
+    const doPay = async () => {
+      if (!canPay) return;
+      setCardProcessing(true);
+      setCardError('');
+      try {
+        const r = await api.payWithCard(cardOrder, { number: cardNumber, holder: cardHolder, expiry: cardExpiry, cvv: cardCvv }, cardInstallments);
+        if (r.orderPending) {
+          setCardPendingMsg((r.message || 'Pagamento aprovado! Pedido em processamento.') + ' Código: ' + (r.paymentId || ''));
+        } else {
+          setOrderNumber(r.orderNumber || '');
+          setCart([]);
+          localStorage.removeItem('honest-cart');
+          setCardNumber(''); setCardHolder(''); setCardExpiry(''); setCardCvv('');
+          setView('success');
+        }
+      } catch (e: any) {
+        setCardError(e.message || 'Pagamento não autorizado.');
+      } finally {
+        setCardProcessing(false);
+      }
+    };
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-600 to-blue-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl">
+          <div className="flex justify-center mb-3"><HonestLogo size="lg" className="text-honest-green" /></div>
+          <h1 className="text-2xl font-bold text-honest-green text-center mb-1">Pagar com Cartão</h1>
+          <p className="text-3xl font-bold text-honest-orange text-center mb-4" data-testid="card-amount">R$ {totalCard.toFixed(2)}</p>
+          {cardPendingMsg ? (
+            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800">✅ {cardPendingMsg}</div>
+          ) : (
+            <>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Número do cartão</label>
+              <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base tracking-wider" data-testid="card-number" />
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Nome impresso no cartão</label>
+              <input autoComplete="cc-name" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase())} placeholder="COMO ESTÁ NO CARTÃO" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base" data-testid="card-holder" />
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Validade</label>
+                  <input inputMode="numeric" autoComplete="cc-exp" value={cardExpiry} onChange={e => setCardExpiry(fmtExp(e.target.value))} placeholder="MM/AA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-expiry" />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">CVV</label>
+                  <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-cvv" />
+                </div>
+              </div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Parcelas</label>
+              <select value={cardInstallments} onChange={e => setCardInstallments(parseInt(e.target.value, 10) || 1)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base bg-white" data-testid="card-installments">
+                {instOptions.map(n => (
+                  <option key={n} value={n}>{n}x de R$ {(totalCard / n).toFixed(2)} sem juros</option>
+                ))}
+              </select>
+              {cardError && (
+                <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">❌ {cardError}</div>
+              )}
+              <button onClick={doPay} disabled={!canPay} className={`w-full rounded-xl py-3 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:opacity-90' : 'bg-gray-300'}`} data-testid="btn-card-pay">
+                {cardProcessing ? '⏳ Processando pagamento…' : `Pagar R$ ${totalCard.toFixed(2)}`}
+              </button>
+              <p className="text-[11px] text-gray-400 text-center mb-2">🔒 Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
+            </>
+          )}
+          <button onClick={() => { setView(cardPendingMsg ? 'catalog' : 'checkout'); setCardError(''); }} className="btn-secondary w-full" data-testid="btn-card-back">
+            {cardPendingMsg ? 'Voltar ao início' : 'Voltar'}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // View: Pagamento PIX — o pedido só é registrado após o pagamento confirmado
