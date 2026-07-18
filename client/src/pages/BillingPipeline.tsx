@@ -1493,6 +1493,12 @@ function KanbanCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          {stage.key === 'agendado' && item.scheduledBillingDate && (
+            <Badge variant="outline" className="text-[10px] border-cyan-300 text-cyan-800 bg-cyan-50">
+              <Clock className="h-2.5 w-2.5 mr-0.5" />
+              Agendado para {String(item.scheduledBillingDate).slice(0, 10).split('-').reverse().join('/')}
+            </Badge>
+          )}
           {(() => {
             const cat = operationCategory(item);
             if (!cat) return null;
