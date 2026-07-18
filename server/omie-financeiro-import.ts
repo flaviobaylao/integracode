@@ -67,6 +67,20 @@ const REC_STATUS = new Set(["a_vencer", "recebida", "vencida", "cancelada"]);
 const PAG_STATUS = new Set(["a_vencer", "paga", "vencida", "cancelada"]);
 const PMETHODS = new Set(["dinheiro", "boleto", "cartao", "cartao_credito", "cartao_debito", "pix", "transferencia", "cheque", "outros"]);
 
+// ── Faturamentos (billings) ─────────────────────────────────────────────────
+const BILL_TYPES = new Set(["venda", "troca", "amostra"]);
+let _ensuredBill = false;
+async function ensureBillingsColumns(): Promise<void> {
+  if (_ensuredBill) return;
+  _ensuredBill = true;
+  const stmts = [
+    sql`ALTER TABLE billings ADD COLUMN IF NOT EXISTS import_origin varchar`,
+    sql`ALTER TABLE billings ADD COLUMN IF NOT EXISTS import_batch_id varchar`,
+    sql`CREATE INDEX IF NOT EXISTS idx_billings_import_batch ON billings(import_batch_id)`,
+  ];
+  for (const s of stmts) { try { await db.execute(s); } catch (e: any) { console.warn("[omie-fin] ensureBill:", e?.message); } }
+}
+
 function buildNotes(r: any): string {
   const parts: string[] = [];
   if (r.faturamentoDate) parts.push(`faturamento=${r.faturamentoDate}`);
@@ -215,7 +229,9 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
       if (!batchId || confirm !== batchId) return res.status(400).json({ message: "batchId + confirm (igual ao batchId) obrigatórios" });
       const dr: any = await db.execute(sql`DELETE FROM receivables WHERE import_batch_id = ${batchId}`);
       const dp: any = await db.execute(sql`DELETE FROM payables WHERE import_batch_id = ${batchId}`);
-      res.json({ ok: true, deletedReceivables: dr.rowCount ?? null, deletedPayables: dp.rowCount ?? null });
+      let deletedBillings: number | null = null;
+      try { const dbil: any = await db.execute(sql`DELETE FROM billings WHERE import_batch_id = ${batchId}`); deletedBillings = dbil.rowCount ?? null; } catch (e: any) { /* coluna pode não existir ainda */ }
+      res.json({ ok: true, deletedReceivables: dr.rowCount ?? null, deletedPayables: dp.rowCount ?? null, deletedBillings });
     } catch (error: any) {
       res.status(500).json({ message: error?.message });
     }
@@ -325,6 +341,135 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
       res.json({ ok: true, inserted, skipped, noTitle });
     } catch (error: any) {
       res.status(500).json({ message: "Falha ao importar baixas", error: error?.message });
+    }
+  });
+
+  // ── Importar FATURAMENTOS históricos (pedidos de venda) → billings ──────────
+  // Body: { batchId, dryRun, records:[{ omieOrderId, orderNumber, customerFantasyName,
+  //   customerDocument, cfop, invoiceDate, orderDate, totalValue, dueDate, sellerName,
+  //   omieCustomerCode, vendorCode, billingType, invoiceStatus, invoiceStage,
+  //   isCancelled, products, instanceCnpj }] }
+  // Dedup por omie_order_id (chave nativa Omie). Só INSERT do que falta. Idempotente.
+  // Datas originais (pedido/faturamento/vencimento) preservadas. Reversível por batchId.
+  app.post("/api/admin/import/omie-financeiro/import-billings", authenticateUser, async (req: Request, res: Response) => {
+    if (!isAdmin(req)) return res.status(403).json({ message: "Access denied (admin only)" });
+    try {
+      await ensureBillingsColumns();
+      const { batchId, dryRun, records } = req.body || {};
+      if (!batchId) return res.status(400).json({ message: "batchId obrigatório" });
+      if (!Array.isArray(records)) return res.status(400).json({ message: "records[] obrigatório" });
+
+      // 1) normaliza + valida (descarta os sem chave/número/data de pedido)
+      const norm: any[] = [];
+      let failed = 0;
+      const errors: any[] = [];
+      for (const r of records) {
+        const omieOrderId = String(r?.omieOrderId ?? "").trim();
+        const orderNumber = String(r?.orderNumber ?? "").trim();
+        const orderDate = clampDate(r?.orderDate);
+        if (!omieOrderId || !orderNumber || !orderDate) { failed++; if (errors.length < 30) errors.push({ omieOrderId, e: "omieOrderId/orderNumber/orderDate inválidos" }); continue; }
+        const billingType = BILL_TYPES.has(r?.billingType) ? r.billingType : "venda";
+        norm.push({
+          omieOrderId, orderNumber,
+          customer: (r?.customerFantasyName ? String(r.customerFantasyName) : "").trim() || "CLIENTE",
+          doc: onlyDigits(r?.customerDocument) || null,
+          cfop: r?.cfop ? String(r.cfop) : null,
+          invoiceDate: clampDate(r?.invoiceDate),
+          orderDate,
+          totalValue: Number(r?.totalValue || 0),
+          dueDate: clampDate(r?.dueDate),
+          sellerName: r?.sellerName ? String(r.sellerName) : null,
+          omieCustomerCode: r?.omieCustomerCode ? String(r.omieCustomerCode) : null,
+          vendorCode: r?.vendorCode ? String(r.vendorCode) : null,
+          billingType,
+          invoiceStatus: r?.invoiceStatus ? String(r.invoiceStatus) : null,
+          invoiceStage: r?.invoiceStage ? String(r.invoiceStage) : null,
+          isCancelled: !!r?.isCancelled,
+          products: Array.isArray(r?.products) ? r.products : null,
+          cnpj: r?.instanceCnpj,
+        });
+      }
+
+      // 2) dedup em lote contra a tabela (omie_order_id já existente)
+      const ids = Array.from(new Set(norm.map((x) => x.omieOrderId)));
+      const existing = new Set<string>();
+      for (let i = 0; i < ids.length; i += 1000) {
+        const ch = ids.slice(i, i + 1000);
+        const q: any = await db.execute(
+          sql`SELECT omie_order_id FROM billings WHERE omie_order_id IN (${sql.join(ch.map((v) => sql`${v}`), sql`, `)})`
+        );
+        for (const row of (q.rows || [])) existing.add(String(row.omie_order_id));
+      }
+
+      // 3) remove duplicados já-existentes e intra-lote (mantém 1ª ocorrência)
+      const seenLocal = new Set<string>();
+      const toInsert: any[] = [];
+      for (const x of norm) {
+        if (existing.has(x.omieOrderId) || seenLocal.has(x.omieOrderId)) continue;
+        seenLocal.add(x.omieOrderId);
+        toInsert.push(x);
+      }
+      const skipped = norm.length - toInsert.length;
+
+      if (dryRun) {
+        return res.json({ ok: true, dryRun: true, received: records.length, wouldInsert: toInsert.length, skipped, failed, errors });
+      }
+
+      // 4) resolve omie_instance_id (todos do lote são da mesma instância)
+      const instId = norm.length ? await instanceIdByCnpj(norm[0].cnpj) : null;
+
+      // 5) INSERT multi-linha em chunks (ON CONFLICT protege corrida/dedup)
+      let inserted = 0;
+      const CH = 200;
+      for (let i = 0; i < toInsert.length; i += CH) {
+        const slice = toInsert.slice(i, i + CH);
+        try {
+          const rows = slice.map((x) => sql`(${x.omieOrderId}, ${x.orderNumber}, ${x.customer}, ${x.doc}, ${x.cfop}, ${x.invoiceDate}::timestamp, ${x.orderDate}::timestamp, ${x.totalValue}, ${x.dueDate}::timestamp, ${x.sellerName}, ${x.omieCustomerCode}, ${x.vendorCode}, ${x.billingType}::billing_type, ${x.invoiceStatus}, ${x.invoiceStage}, ${x.isCancelled}, ${x.products ? JSON.stringify(x.products) : null}::jsonb, ${instId}, 'omie_historico', ${batchId})`);
+          const r: any = await db.execute(sql`
+            INSERT INTO billings
+              (omie_order_id, order_number, customer_fantasy_name, customer_document, cfop, invoice_date, order_date, total_value, due_date, seller_name, omie_customer_code, vendor_code, billing_type, invoice_status, invoice_stage, is_cancelled, products, omie_instance_id, import_origin, import_batch_id)
+            VALUES ${sql.join(rows, sql`, `)}
+            ON CONFLICT (omie_order_id) DO NOTHING
+          `);
+          inserted += (r.rowCount ?? slice.length);
+        } catch (e: any) {
+          failed += slice.length;
+          if (errors.length < 30) errors.push({ chunk: i, e: e?.message || String(e) });
+        }
+      }
+
+      res.json({ ok: true, dryRun: false, received: records.length, inserted, skipped, failed, errors });
+    } catch (error: any) {
+      console.error("[omie-fin] erro billings:", error);
+      res.status(500).json({ message: "Falha na importação de faturamentos", error: error?.message });
+    }
+  });
+
+  // ── Resumo dos faturamentos históricos importados ───────────────────────────
+  app.get("/api/admin/import/omie-financeiro/billings-summary", authenticateUser, async (req: Request, res: Response) => {
+    if (!isAdmin(req)) return res.status(403).json({ message: "Access denied (admin only)" });
+    try {
+      await ensureBillingsColumns();
+      const bid = req.query.batchId ? String(req.query.batchId) : null;
+      const where = bid ? sql`WHERE import_batch_id = ${bid}` : sql`WHERE import_origin = 'omie_historico'`;
+      const c: any = await db.execute(sql`SELECT count(*)::int AS n, coalesce(sum(total_value),0)::numeric AS total, min(order_date) AS min_d, max(order_date) AS max_d, count(*) FILTER (WHERE invoice_date IS NOT NULL)::int AS faturados, count(*) FILTER (WHERE is_cancelled)::int AS cancelados FROM billings ${where}`);
+      const byInst: any = await db.execute(sql`SELECT omie_instance_id, count(*)::int AS n FROM billings ${where} GROUP BY omie_instance_id ORDER BY n DESC`);
+      const byType: any = await db.execute(sql`SELECT billing_type, count(*)::int AS n FROM billings ${where} GROUP BY billing_type ORDER BY n DESC`);
+      const totalAll: any = await db.execute(sql`SELECT count(*)::int AS n FROM billings`);
+      res.json({
+        historico: {
+          count: c.rows?.[0]?.n ?? 0,
+          amount: c.rows?.[0]?.total ?? 0,
+          faturados: c.rows?.[0]?.faturados ?? 0,
+          cancelados: c.rows?.[0]?.cancelados ?? 0,
+          dateRange: [c.rows?.[0]?.min_d ?? null, c.rows?.[0]?.max_d ?? null],
+          byInstance: byInst.rows || [],
+          byType: byType.rows || [],
+        },
+        billingsTotal: totalAll.rows?.[0]?.n ?? 0,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message });
     }
   });
 }
