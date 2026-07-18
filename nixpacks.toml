@@ -4,7 +4,7 @@ nixPkgs = ["nodejs_20", "jdk17"]
 [phases.install]
 cmds = ["npm install --include=dev"]
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["npm run build", "cd hotsite && npm install && npm run build", "rm -rf server/public-hotsite && cp -r hotsite/dist server/public-hotsite"]
 
 [start]
 cmd = "node dist/index.js"
