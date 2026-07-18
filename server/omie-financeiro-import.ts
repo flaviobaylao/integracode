@@ -159,10 +159,10 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
               VALUES ${sql.join(rows, sql`, `)}
             `);
           } else {
-            const rows = slice.map((x) => sql`(${x.titleNumber}, ${x.name}, ${x.doc}, ${x.description}, ${x.issue}::timestamp, ${x.due}::timestamp, ${x.amount}, ${x.paid}, ${x.status}::payable_status, ${x.pm}::financial_payment_method, ${x.category}, ${x.notes}, ${x.externalId}, 'omie_historico', ${batchId})`);
+            const rows = slice.map((x) => sql`(${x.titleNumber}, ${x.name}, ${x.doc}, ${x.description}, ${x.issue}::timestamp, ${x.due}::timestamp, ${x.amount}, ${x.paid}, ${x.status}::payable_status, ${x.pm}::financial_payment_method, ${instId}, ${x.category}, ${x.notes}, ${x.externalId}, 'omie_historico', ${batchId})`);
             await db.execute(sql`
               INSERT INTO payables
-                (title_number, supplier_name, supplier_document, description, issue_date, due_date, amount, amount_paid, status, payment_method, category, notes, external_id, import_origin, import_batch_id)
+                (title_number, supplier_name, supplier_document, description, issue_date, due_date, amount, amount_paid, status, payment_method, omie_instance_id, category, notes, external_id, import_origin, import_batch_id)
               VALUES ${sql.join(rows, sql`, `)}
             `);
           }
@@ -220,6 +220,22 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
       res.status(500).json({ message: error?.message });
     }
   });
-}
 
-// redeploy-nudge 2026-07-17: restart p/ liberar conexoes stored_objects
+  // ── Backfill: preenche omie_instance_id em payables a partir do external_id ──
+  // external_id = omie_cp_<uuid-instancia>_<codigo>. Para os historicos que
+  // entraram sem o vinculo de empresa. Idempotente (so mexe onde esta NULL).
+  app.post("/api/admin/import/omie-financeiro/backfill-payable-instances", authenticateUser, async (req: Request, res: Response) => {
+    if (!isAdmin(req)) return res.status(403).json({ message: "Access denied (admin only)" });
+    try {
+      const r: any = await db.execute(sql`
+        UPDATE payables
+        SET omie_instance_id = substring(external_id from '^omie_cp_([0-9a-fA-F-]{36})_')
+        WHERE omie_instance_id IS NULL
+          AND external_id ~ '^omie_cp_[0-9a-fA-F-]{36}_'
+      `);
+      res.json({ ok: true, updated: r.rowCount ?? null });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message });
+    }
+  });
+}
