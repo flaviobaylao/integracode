@@ -221,6 +221,36 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
     }
   });
 
+  // ── Backfill: vincula chart_account_id (plano de contas DRE) por categoria ──
+  // Recebe { entries: [{ kind:'receber'|'pagar', name, code }] } (de-para categoria->codigo DRE).
+  // Resolve o codigo -> chart_of_accounts.id e atualiza os titulos historicos sem conta.
+  app.post("/api/admin/import/omie-financeiro/backfill-chart", authenticateUser, async (req: Request, res: Response) => {
+    if (!isAdmin(req)) return res.status(403).json({ message: "Access denied (admin only)" });
+    try {
+      const entries: any[] = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      if (!entries.length) return res.status(400).json({ message: "entries[] obrigatório" });
+      const coa: any = await db.execute(sql`SELECT id, code FROM chart_of_accounts`);
+      const byCode: Record<string, string> = {};
+      for (const r of (coa.rows || [])) byCode[String(r.code)] = String(r.id);
+      let updRec = 0, updPay = 0, missing = 0;
+      for (const e of entries) {
+        const acc = byCode[String(e.code)];
+        if (!acc) { missing++; continue; }
+        const name = String(e.name ?? "");
+        if (e.kind === "receber") {
+          const u: any = await db.execute(sql`UPDATE receivables SET chart_account_id = ${acc} WHERE import_origin = 'omie_historico' AND category = ${name} AND chart_account_id IS NULL`);
+          updRec += u.rowCount ?? 0;
+        } else {
+          const u: any = await db.execute(sql`UPDATE payables SET chart_account_id = ${acc} WHERE import_origin = 'omie_historico' AND category = ${name} AND chart_account_id IS NULL`);
+          updPay += u.rowCount ?? 0;
+        }
+      }
+      res.json({ ok: true, updatedReceivables: updRec, updatedPayables: updPay, missingCodes: missing });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message });
+    }
+  });
+
   // ── Backfill: preenche omie_instance_id em payables a partir do external_id ──
   // external_id = omie_cp_<uuid-instancia>_<codigo>. Para os historicos que
   // entraram sem o vinculo de empresa. Idempotente (so mexe onde esta NULL).
