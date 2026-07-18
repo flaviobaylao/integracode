@@ -13,7 +13,7 @@ import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
 import type { Product, CartItem, Customer } from './types';
 
-type View = 'catalog' | 'checkout' | 'success';
+type View = 'catalog' | 'checkout' | 'pix' | 'success';
 
 function HotsiteContent() {
   const { isSelectionComplete, priceTable, reset } = useCustomerType();
@@ -27,6 +27,41 @@ function HotsiteContent() {
   const [referralCode, setReferralCode] = useState('');
   const [discountInfo, setDiscountInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  // 💚 PIX pagar-antes: dados da cobrança + status ('awaiting_payment' | 'processing' | 'paid' | 'expired' | 'paid_order_error')
+  const [pixData, setPixData] = useState<any>(null);
+  const [pixStatus, setPixStatus] = useState('awaiting_payment');
+  const [pixCopied, setPixCopied] = useState(false);
+  const [pixNow, setPixNow] = useState(Date.now());
+
+  // Contagem regressiva da expiração do PIX (1s)
+  useEffect(() => {
+    if (view !== 'pix') return;
+    const t = setInterval(() => setPixNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [view]);
+
+  // Polling do pagamento (5s): quando o banco confirmar, o pedido é criado no servidor
+  useEffect(() => {
+    if (view !== 'pix' || !pixData) return;
+    if (pixStatus !== 'awaiting_payment' && pixStatus !== 'processing') return;
+    const t = setInterval(async () => {
+      try {
+        const s = await api.getPixStatus(pixData.pendingId);
+        if (s.status === 'paid') {
+          setOrderNumber(s.orderNumber || '');
+          setCart([]);
+          localStorage.removeItem('honest-cart');
+          setPixStatus('paid');
+          setView('success');
+        } else if (s.status === 'expired' || s.status === 'paid_order_error') {
+          setPixStatus(s.status);
+        } else if (s.status === 'processing') {
+          setPixStatus('processing');
+        }
+      } catch { /* tenta de novo no próximo ciclo */ }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [view, pixData, pixStatus]);
 
   // Carregar produtos ao iniciar
   useEffect(() => {
@@ -187,8 +222,21 @@ function HotsiteContent() {
       };
 
       console.log('🔵 Order objeto criado:', order);
+
+      // 💚 PIX pagar-antes: gera a cobrança e mostra o QR — o pedido só é
+      // registrado no sistema depois que o pagamento for confirmado.
+      if (paymentMethod === 'pix') {
+        const pix = await api.initPixOrder(order);
+        if (pix.referralDiscount) setDiscountInfo(pix.referralDiscount); else setDiscountInfo(null);
+        setPixData(pix);
+        setPixStatus('awaiting_payment');
+        setPixCopied(false);
+        setView('pix');
+        return;
+      }
+
       console.log('🔵 Chamando api.createOrder...');
-      
+
       const response = await api.createOrder(order);
         if (response.referralDiscount) setDiscountInfo(response.referralDiscount); else setDiscountInfo(null);
       
@@ -214,6 +262,65 @@ function HotsiteContent() {
   // Se a seleção de tipo de cliente não estiver completa, mostrar seletor
   if (!isSelectionComplete) {
     return <CustomerTypeSelector />;
+  }
+
+  // View: Pagamento PIX — o pedido só é registrado após o pagamento confirmado
+  if (view === 'pix' && pixData) {
+    const remainingMs = Math.max(0, new Date(pixData.expiresAt).getTime() - pixNow);
+    const mm = String(Math.floor(remainingMs / 60000)).padStart(2, '0');
+    const ss = String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0');
+    const isExpired = pixStatus === 'expired' || remainingMs <= 0;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-6 max-w-md w-full text-center shadow-2xl">
+          <div className="flex justify-center mb-4">
+            <HonestLogo size="lg" className="text-honest-green" />
+          </div>
+          <h1 className="text-2xl font-bold text-honest-green mb-1">Pague com PIX</h1>
+          <p className="text-3xl font-bold text-honest-orange mb-3" data-testid="pix-amount">R$ {Number(pixData.amount).toFixed(2)}</p>
+          {discountInfo && (
+            <div className="bg-green-50 border border-green-300 rounded-xl p-2 mb-3 text-xs text-green-800">
+              Desconto de indicação aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})
+            </div>
+          )}
+          {pixStatus === 'paid_order_error' ? (
+            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800 text-left">
+              ✅ <strong>Pagamento recebido!</strong> Estamos registrando seu pedido. Guarde este código e, se precisar, fale conosco no WhatsApp: <span className="font-mono break-all">{pixData.txid}</span>
+            </div>
+          ) : isExpired ? (
+            <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-4 text-sm text-red-700">
+              ⏰ Este PIX expirou sem pagamento. Nenhum pedido foi criado — volte e gere um novo código.
+            </div>
+          ) : (
+            <>
+              <p className="text-gray-600 mb-3 text-sm">Escaneie o QR Code ou copie o código abaixo</p>
+              <img src={pixData.qrCodeBase64} alt="QR Code PIX" className="mx-auto w-52 h-52 border-4 border-honest-green rounded-2xl mb-3" data-testid="pix-qrcode" />
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3">
+                <p className="text-[10px] text-gray-400 break-all mb-2 max-h-16 overflow-hidden">{pixData.pixCopiaECola}</p>
+                <button
+                  onClick={() => { try { navigator.clipboard.writeText(pixData.pixCopiaECola); setPixCopied(true); setTimeout(() => setPixCopied(false), 2500); } catch {} }}
+                  className="btn-primary w-full text-sm"
+                  data-testid="btn-copy-pix"
+                >
+                  {pixCopied ? '✅ Código copiado!' : '📋 Copiar código PIX'}
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 mb-1">Expira em <strong>{mm}:{ss}</strong></p>
+              <p className="text-sm text-emerald-700 mb-4">
+                {pixStatus === 'processing' ? '💫 Pagamento recebido, registrando seu pedido…' : '⏳ Aguardando pagamento… a confirmação é automática.'}
+              </p>
+            </>
+          )}
+          <button
+            onClick={() => { setView(isExpired || pixStatus === 'paid_order_error' ? 'catalog' : 'checkout'); setPixData(null); setPixStatus('awaiting_payment'); }}
+            className="btn-secondary w-full"
+            data-testid="btn-pix-back"
+          >
+            {isExpired ? 'Gerar novo pedido' : 'Voltar'}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // View: Sucesso
