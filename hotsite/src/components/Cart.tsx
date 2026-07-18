@@ -17,6 +17,10 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
   // Calcular pedido mínimo baseado no tipo de cliente
   const getMinimumOrder = (): number => {
+    // ⚠️ TEMPORÁRIO (TESTE DE PAGAMENTO ONLINE): pedido mínimo LIBERADO para consumidores
+    // a pedido do Flavio em 18/jul/2026, para testar PIX/cartão com valores baixos.
+    // REVERTER depois dos testes: basta remover este bloco (volta aos R$ 70/200).
+    if (category === 'consumer') return 0;
     if (category === 'consumer') {
       if (consumerTier === 'retail') return 70;
       if (consumerTier === 'wholesale') return 200;
