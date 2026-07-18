@@ -5292,6 +5292,11 @@ export class DatabaseStorage implements IStorage {
       FROM receivables
       WHERE deleted_at IS NULL
         AND (amount - COALESCE(amount_paid, 0)) > 0
+        -- Títulos HISTÓRICOS da migração Omie (import_origin='omie_historico') NÃO são
+        -- dívida viva para fins de bloqueio de crédito — são dados migrados (tratados como
+        -- conciliados). Sem esta exclusão, uma dívida de 2020-2025 importada travaria uma
+        -- venda atual (bloqueio indevido). Só entram no cálculo os recebíveis correntes.
+        AND COALESCE(import_origin, '') <> 'omie_historico'
         AND (
           status = 'vencida'
           OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
@@ -5299,8 +5304,12 @@ export class DatabaseStorage implements IStorage {
         AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
     const n = Number(row.n || 0);
-    if (n > 0) {
-      const totalAmount = Number(row.saldo || 0).toFixed(2);
+    const saldoNum = Number(row.saldo || 0);
+    // Piso de tolerância: débitos vencidos totais de até R$ 50,00 NÃO bloqueiam a venda
+    // (evita travar pedido por centavos / 1 dia de atraso). Só bloqueia acima do piso.
+    const DEBT_BLOCK_TOLERANCE = 50;
+    if (n > 0 && saldoNum > DEBT_BLOCK_TOLERANCE) {
+      const totalAmount = saldoNum.toFixed(2);
       const maxDaysOverdue = Number(row.max_dias || 0);
       console.log(`✅ [STORAGE] Débito vencido (Contas a Receber): ${row.client_name} - R$ ${totalAmount} (${n} título(s), ${maxDaysOverdue}d, doc ${normalizedSearchDocument})`);
       return {
@@ -5313,7 +5322,11 @@ export class DatabaseStorage implements IStorage {
         debts: [],
       };
     }
-    console.log(`ℹ️ [STORAGE] Nenhum débito vencido (Contas a Receber) para: ${normalizedSearchDocument}`);
+    if (n > 0) {
+      console.log(`ℹ️ [STORAGE] Débito vencido de R$ ${saldoNum.toFixed(2)} dentro da tolerância (<= R$ ${DEBT_BLOCK_TOLERANCE}) — não bloqueia: doc ${normalizedSearchDocument}`);
+    } else {
+      console.log(`ℹ️ [STORAGE] Nenhum débito vencido (Contas a Receber) para: ${normalizedSearchDocument}`);
+    }
     return undefined;
   }
 
