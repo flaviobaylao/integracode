@@ -278,6 +278,30 @@ export default function Dashboard() {
   const blocked: any[] = ov.blocked || [];
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
+  // Relacao de clientes faturados no DIA (mesma composicao do card Vendas Hoje: a faturar + NFs de hoje).
+  const billedDay = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const x of aFaturar) { const n = x.customer_name || x.customerName || "-"; m.set(n, (m.get(n) || 0) + (Number(x.sale_value) || 0)); }
+    for (const x of nfsHoje) { const n = x.customer_name || x.customerName || "-"; m.set(n, (m.get(n) || 0) + (Number(x.total_invoice) || 0)); }
+    const arr = [...m.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const total = arr.reduce((acc, [, v]) => acc + v, 0);
+    return { list: arr.map(([n, v]) => n + " - " + brl(v)), total };
+  }, [aFaturar, nfsHoje]);
+  // Relacao de clientes faturados na SEMANA vigente (billing_pipeline via visitSummary).
+  const billedWeek = useMemo(() => {
+    const rows = data?.visitSummary?.rows;
+    const m = new Map<string, number>();
+    if (Array.isArray(rows)) {
+      for (const N of rows) {
+        let v = 0;
+        for (const vis of N.visits || []) { if (vis.hasOrder && vis.date >= weekStartISO) v += Number(vis.orderValue) || 0; }
+        if (v > 0) { const n = N.customerName || "-"; m.set(n, (m.get(n) || 0) + v); }
+      }
+    }
+    const arr = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    const total = arr.reduce((acc, [, v]) => acc + v, 0);
+    return { list: arr.map(([n, v]) => n + " - " + brl(v)), total };
+  }, [data, weekStartISO]);
 
   // Filtro de vendedor do card "Pedidos e Notas Fiscais" (aplica nas 3 colunas).
   const matchSeller = (x: any) => multiMatch(pnfSeller, resolveSeller(x.seller_name || x.sellerName || x.seller_id || ""));
@@ -298,11 +322,12 @@ export default function Dashboard() {
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
             <MiniBars values={weekDayBars.arr} highlight={weekDayBars.todayIdx} labels={weekDayBars.labels} captions={weekDayBars.captions} labelSize="text-[10px]" format={brl} />
             <div className="text-[10px] text-gray-400 mt-1">Dias da semana (clique na barra)</div>
+            <button type="button" onClick={() => setModal({ title: "Clientes faturados hoje - Total " + brl(billedDay.total), names: billedDay.list })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados no dia</button>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div><button type="button" onClick={() => setModal({ title: "Clientes faturados na semana - Total " + brl(billedWeek.total), names: billedWeek.list })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados na semana</button></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle></CardHeader>
