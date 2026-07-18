@@ -24,7 +24,13 @@ async function badgeFlagsFor(kind: 'receivable' | 'payable'): Promise<{ ofx: Set
       for (const r of (w.rows || [])) autoBB.add(String(r.id));
     } catch {}
   }
-  return { ofx, autoBB };
+  const hist = new Set();
+  try {
+    const _t = kind === 'receivable' ? 'receivables' : 'payables';
+    const h = await db.execute(sql.raw(`SELECT id FROM ${_t} WHERE import_origin = 'omie_historico'`));
+    for (const r of (h.rows || [])) hist.add(String(r.id));
+  } catch {}
+  return { ofx, autoBB, hist };
 }
 
 function attachBadges(items: any[], flags: { ofx: Set<string>; autoBB: Set<string> }, paidStatus: string) {
@@ -34,7 +40,7 @@ function attachBadges(items: any[], flags: { ofx: Set<string>; autoBB: Set<strin
     const quitada = String(it.status) === paidStatus || (amt > 0 && paid >= amt - 0.005);
     // Conciliada = quitada COM vinculo bancario real (extrato OFX ou baixa automatica BB).
     // Baixado = quitada por baixa manual, SEM conciliacao no extrato bancario (nao confundir).
-    const conciliadoBanco = quitada && (flags.autoBB.has(String(it.id)) || flags.ofx.has(String(it.id)));
+    const conciliadoBanco = quitada && (flags.autoBB.has(String(it.id)) || flags.ofx.has(String(it.id)) || (flags.hist && flags.hist.has(String(it.id))));
     it.badges = {
       dre: !!it.chartAccountId,
       fluxo: !!it.financialAccountId,
