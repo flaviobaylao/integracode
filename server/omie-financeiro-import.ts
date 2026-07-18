@@ -268,4 +268,63 @@ export function registerOmieFinanceiroImportRoutes(app: Express): void {
       res.status(500).json({ message: error?.message });
     }
   });
+
+  // ── Importar BAIXAS (movimentos financeiros) dos titulos historicos ─────────
+  // Body: { payments: [{ kind, externalId, paidAt, amount, financialAccountId, paymentMethod, reference, notes }] }
+  // Resolve o titulo por external_id (so import_origin='omie_historico'), dedup por (titulo, reference).
+  app.post("/api/admin/import/omie-financeiro/import-payments", authenticateUser, async (req: Request, res: Response) => {
+    if (!isAdmin(req)) return res.status(403).json({ message: "Access denied (admin only)" });
+    try {
+      const payments: any[] = Array.isArray(req.body?.payments) ? req.body.payments : [];
+      if (!payments.length) return res.status(400).json({ message: "payments[] obrigatório" });
+      const groups: Record<string, any[]> = { receber: [], pagar: [] };
+      for (const p of payments) { if (p?.kind === "receber" || p?.kind === "pagar") groups[p.kind].push(p); }
+      let inserted = 0, skipped = 0, noTitle = 0;
+      for (const kind of ["receber", "pagar"] as const) {
+        const arr = groups[kind]; if (!arr.length) continue;
+        const table = kind === "receber" ? "receivables" : "payables";
+        const ptable = kind === "receber" ? "receivable_payments" : "payable_payments";
+        const fk = kind === "receber" ? "receivable_id" : "payable_id";
+        // 1) resolve external_id -> id (apenas titulos historicos)
+        const exts = Array.from(new Set(arr.map((p) => String(p.externalId))));
+        const idmap: Record<string, string> = {};
+        for (let i = 0; i < exts.length; i += 1000) {
+          const ch = exts.slice(i, i + 1000);
+          const q: any = await db.execute(sql`SELECT id, external_id FROM ${sql.raw(table)} WHERE import_origin = 'omie_historico' AND external_id IN (${sql.join(ch.map((v) => sql`${v}`), sql`, `)})`);
+          for (const r of (q.rows || [])) idmap[String(r.external_id)] = String(r.id);
+        }
+        // 2) dedup por (titulo, reference) contra pagamentos existentes
+        const tids = Array.from(new Set(Object.values(idmap)));
+        const seen = new Set<string>();
+        for (let i = 0; i < tids.length; i += 1000) {
+          const ch = tids.slice(i, i + 1000);
+          const q: any = await db.execute(sql.raw(`SELECT ${fk} AS tid, reference FROM ${ptable} WHERE ${fk} IN (${ch.map((v) => `'${v}'`).join(",")})`));
+          for (const r of (q.rows || [])) seen.add(String(r.tid) + "|" + String(r.reference ?? ""));
+        }
+        // 3) montar inserts
+        const toIns: any[] = [];
+        for (const p of arr) {
+          const tid = idmap[String(p.externalId)];
+          if (!tid) { noTitle++; continue; }
+          if (seen.has(tid + "|" + String(p.reference ?? ""))) { skipped++; continue; }
+          toIns.push({ tid, paidAt: p.paidAt, amount: Number(p.amount || 0), pm: p.paymentMethod || null, fa: p.financialAccountId || null, ref: p.reference != null ? String(p.reference) : null, notes: p.notes || null });
+        }
+        // 4) multi-row insert
+        for (let i = 0; i < toIns.length; i += 200) {
+          const slice = toIns.slice(i, i + 200);
+          if (kind === "receber") {
+            const rows = slice.map((x) => sql`(${x.tid}, ${x.paidAt}::timestamp, ${x.amount}, ${x.pm}::financial_payment_method, ${x.fa}, ${x.ref}, ${x.notes})`);
+            await db.execute(sql`INSERT INTO receivable_payments (receivable_id, paid_at, amount, payment_method, financial_account_id, reference, notes) VALUES ${sql.join(rows, sql`, `)}`);
+          } else {
+            const rows = slice.map((x) => sql`(${x.tid}, ${x.paidAt}::timestamp, ${x.amount}, ${x.pm}::financial_payment_method, ${x.fa}, ${x.ref}, ${x.notes})`);
+            await db.execute(sql`INSERT INTO payable_payments (payable_id, paid_at, amount, payment_method, financial_account_id, reference, notes) VALUES ${sql.join(rows, sql`, `)}`);
+          }
+          inserted += slice.length;
+        }
+      }
+      res.json({ ok: true, inserted, skipped, noTitle });
+    } catch (error: any) {
+      res.status(500).json({ message: "Falha ao importar baixas", error: error?.message });
+    }
+  });
 }
