@@ -144,6 +144,47 @@ async function createCardSale(params: {
   }
 }
 
+// Venda Google Pay (Wallet) — captura automática, à vista. Cielo decripta o token.
+async function createGooglePaySale(params: {
+  merchantOrderId: string; amountCents: number;
+  customerName: string; customerIdentity?: string; customerEmail?: string | null;
+  googlePayToken: string;
+}): Promise<CardSaleResult> {
+  const cfg = cieloConfig();
+  const walletKey = Buffer.from(String(params.googlePayToken)).toString('base64');
+  const body: any = {
+    MerchantOrderId: params.merchantOrderId,
+    Customer: { Name: params.customerName.slice(0, 100) },
+    Payment: {
+      Type: 'CreditCard', Amount: params.amountCents, Installments: 1,
+      SoftDescriptor: 'HONESTSUCOS', Capture: true,
+      Wallet: { Type: 'Googlepay', WalletKey: walletKey },
+    },
+  };
+  if (params.customerIdentity) { body.Customer.Identity = onlyDigits(params.customerIdentity); body.Customer.IdentityType = onlyDigits(params.customerIdentity).length === 14 ? 'CNPJ' : 'CPF'; }
+  if (params.customerEmail) body.Customer.Email = String(params.customerEmail).slice(0, 100);
+  try {
+    const resp = await cieloFetch(`${cfg.apiUrl}/1/sales`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', MerchantId: cfg.merchantId, MerchantKey: cfg.merchantKey },
+      body: JSON.stringify(body),
+    });
+    const data: any = await resp.json().catch(() => null);
+    if (!resp.ok || !data) {
+      const msg = Array.isArray(data) ? (data[0]?.Message || 'Erro Cielo') : (data?.Message || `HTTP ${resp.status}`);
+      console.error(`❌ [LOJA-GPAY] Cielo recusou (${resp.status}): ${msg}`);
+      return { approved: false, returnMessage: String(msg) };
+    }
+    const p = data.Payment || {};
+    const approved = p.Status === 2 || p.Status === 1;
+    console.log(`💳 [LOJA-GPAY] Cielo status=${p.Status} code=${p.ReturnCode} paymentId=${p.PaymentId} order=${params.merchantOrderId}`);
+    return { approved, status: p.Status, paymentId: p.PaymentId, tid: p.Tid, authorizationCode: p.AuthorizationCode, returnCode: String(p.ReturnCode || ''), returnMessage: String(p.ReturnMessage || '') };
+  } catch (e: any) {
+    console.error('❌ [LOJA-GPAY] Falha de rede na Cielo:', e?.message || e);
+    return { approved: false, networkError: true, returnMessage: 'network' };
+  }
+}
+
 // Consulta por MerchantOrderId (para desambiguar falha de rede pós-envio)
 async function queryByMerchantOrderId(merchantOrderId: string): Promise<CardSaleResult | null> {
   const cfg = cieloConfig();
@@ -306,6 +347,59 @@ export function registerHotsiteCard(app: Express): void {
       }
     } catch (e: any) {
       console.error('❌ [LOJA-CARTAO] Erro no card/pay:', e?.message || e);
+      res.status(500).json({ message: 'Erro ao processar o pagamento. Tente novamente.' });
+    }
+  });
+
+  // Google Pay: token da carteira -> Cielo -> SO se aprovado cria o pedido
+  app.post('/api/public/orders/card/pay-googlepay', async (req, res) => {
+    try {
+      await ensureTable();
+      const cfg = cieloConfig();
+      if (!cfg.merchantId || !cfg.merchantKey) return res.status(503).json({ message: 'Pagamento indisponível no momento.' });
+      const body = req.body || {}; const order = body.order || {}; const c = order.customer || {};
+      const token = body.googlePayToken;
+      if (!token) return res.status(400).json({ message: 'Token do Google Pay ausente' });
+      if (!String(c.name || '').trim()) return res.status(400).json({ message: 'Nome é obrigatório' });
+      if (onlyDigits(c.phone).length < 10) return res.status(400).json({ message: 'Telefone inválido' });
+      if (!String(c.address || '').trim()) return res.status(400).json({ message: 'Endereço é obrigatório' });
+      if ((c.customerType || 'pessoa_fisica') === 'pessoa_fisica' && onlyDigits(c.cpfCnpj).length !== 11) return res.status(400).json({ message: 'CPF é obrigatório e deve ter 11 dígitos' });
+      if (order.paymentMethod !== 'card') return res.status(400).json({ message: 'Método de pagamento deve ser cartão' });
+
+      const totals = await computeServerTotal(order);
+      if ('error' in totals) return res.status(400).json({ message: totals.error });
+      if (Math.abs(totals.total - (Number(order.totalAmount) || 0)) > 0.01) return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.total });
+      if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
+
+      const amountCents = Math.round(totals.total * 100);
+      const merchantOrderId = 'LOJAGP' + Date.now() + Math.floor(Math.random() * 1000);
+      const ins: any = await db.execute(sql`INSERT INTO hotsite_card_payments (merchant_order_id, amount, installments, card_brand, status, payload) VALUES (${merchantOrderId}, ${totals.total.toFixed(2)}, 1, ${'GooglePay'}, 'processing', ${JSON.stringify(order)}) RETURNING id`);
+      const rowId = ((ins.rows || ins)[0] || {}).id;
+
+      let sale = await createGooglePaySale({ merchantOrderId, amountCents, customerName: String(c.name), customerIdentity: c.cpfCnpj || undefined, customerEmail: c.email || null, googlePayToken: String(token) });
+      if (sale.networkError) { const q = await queryByMerchantOrderId(merchantOrderId); if (q) sale = q; }
+
+      if (!sale.approved) {
+        await db.execute(sql`UPDATE hotsite_card_payments SET status='denied', payment_id=${sale.paymentId||null}, return_code=${sale.returnCode||null}, return_message=${sale.returnMessage||null}, updated_at=now() WHERE id=${rowId}`);
+        if (sale.networkError) return res.status(502).json({ message: 'Não conseguimos falar com a operadora. Nada foi cobrado — tente novamente.' });
+        return res.status(402).json({ message: friendlyDecline(sale.returnCode || '', sale.returnMessage || '') });
+      }
+
+      await db.execute(sql`UPDATE hotsite_card_payments SET status='paid', payment_id=${sale.paymentId||null}, return_code=${sale.returnCode||null}, return_message=${sale.returnMessage||null}, updated_at=now() WHERE id=${rowId}`);
+      try {
+        const resp = await fetch(`${INTERNAL_BASE}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(order) });
+        const data: any = await resp.json();
+        if (!resp.ok || !data?.orderId) throw new Error(data?.message || `HTTP ${resp.status}`);
+        await db.execute(sql`UPDATE hotsite_card_payments SET order_id=${data.orderId}, order_number=${data.orderNumber||null}, updated_at=now() WHERE id=${rowId}`);
+        try { await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${' 💳 GOOGLE PAY APROVADO na loja (Cielo PaymentId ' + (sale.paymentId || '?') + ') — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`); } catch {}
+        try { const { reconcilePendingOrders } = await import('./billing-pipeline-routes'); await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] }); } catch (e2: any) { console.warn('⚠️ [LOJA-GPAY] envio imediato ao pipeline falhou:', e2?.message || e2); }
+        return res.status(201).json({ success: true, orderId: data.orderId, orderNumber: data.orderNumber, paymentId: sale.paymentId, brand: 'GooglePay' });
+      } catch (e: any) {
+        await db.execute(sql`UPDATE hotsite_card_payments SET status='paid_order_error', error=${String(e?.message||e)}, updated_at=now() WHERE id=${rowId}`);
+        return res.status(201).json({ success: true, orderPending: true, paymentId: sale.paymentId, message: 'Pagamento aprovado! Seu pedido está sendo registrado — guarde este código.' });
+      }
+    } catch (e: any) {
+      console.error('❌ [LOJA-GPAY] Erro no pay-googlepay:', e?.message || e);
       res.status(500).json({ message: 'Erro ao processar o pagamento. Tente novamente.' });
     }
   });
