@@ -1255,6 +1255,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updateData = req.body;
+      // Protecao contra "auto delete" de coordenadas do vendedor: nao apagar
+      // home_latitude/home_longitude quando o payload trouxer valor vazio/nulo/invalido.
+      // So atualiza as coordenadas quando um numero valido e enviado.
+      const __validHomeCoord = (v: any) => v !== undefined && v !== null && String(v).trim() !== '' && Number.isFinite(Number(String(v).replace(',', '.')));
+      if ('homeLatitude' in updateData && !__validHomeCoord(updateData.homeLatitude)) delete updateData.homeLatitude;
+      if ('homeLongitude' in updateData && !__validHomeCoord(updateData.homeLongitude)) delete updateData.homeLongitude;
       const updatedUser = await storage.updateUser(userId, updateData);
       
       res.json(updatedUser);
