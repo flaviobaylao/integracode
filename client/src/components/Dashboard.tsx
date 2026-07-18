@@ -224,9 +224,10 @@ export default function Dashboard() {
     const map = new Map<string, any>();
     if (Array.isArray(rows)) {
       for (const N of rows) {
-        const S = N.sellerId || "sem-vendedor";
+        const nm = (N.sellerName || "Sem vendedor").trim();
+        const S = nm.toLowerCase();
         let w = map.get(S);
-        if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", dates: new Map<string, number>() }; map.set(S, w); }
+        if (!w) { w = { sellerId: S, sellerName: nm, dates: new Map<string, number>() }; map.set(S, w); }
         for (const v of N.visits || []) {
           if (!v.hasOrder) continue;
           const val = Number(v.orderValue) || 0;
