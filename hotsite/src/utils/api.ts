@@ -95,6 +95,35 @@ export const api = {
     return response.json();
   },
 
+  // 💳 Cartão pagar-antes (Cielo): autoriza+captura e, só se aprovado, cria o pedido.
+  async payWithCard(order: any, card: { number: string; holder: string; expiry: string; cvv: string }, installments: number): Promise<{
+    success: boolean;
+    orderId?: string;
+    orderNumber?: string;
+    orderPending?: boolean;
+    paymentId?: string;
+    message?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/orders/card/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order, card, installments }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Pagamento não autorizado');
+    return data;
+  },
+
+  async getCardConfig(): Promise<{ enabled: boolean; maxInstallments: number }> {
+    try {
+      const response = await fetch(`${API_BASE}/orders/card/config`);
+      if (!response.ok) throw new Error('x');
+      return response.json();
+    } catch {
+      return { enabled: true, maxInstallments: 3 };
+    }
+  },
+
   async checkCustomerByCNPJ(cnpj: string): Promise<{
     exists: boolean;
     customer?: {
