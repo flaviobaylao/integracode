@@ -134,6 +134,8 @@ export default function Dashboard() {
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [pnfSeller, setPnfSeller] = useState<string[]>([]);
   const [modal, setModal] = useState<{ title: string; names: string[] } | null>(null);
+  const [sortKey, setSortKey] = useState<string>("fatMes");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const stats = data?.stats || {};
   const ov = data?.ordersOverview || {};
@@ -168,6 +170,16 @@ export default function Dashboard() {
   }, [data, weekStartISO, bounds.today, dates]);
 
   const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes, fatPeriodo: t.fatPeriodo + s.fatPeriodo }), { fatDia: 0, fatSemana: 0, fatMes: 0, fatPeriodo: 0 }), [sellers]);
+  const sortedSellers = useMemo(() => {
+    const arr = [...sellers];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => sortKey === "sellerName"
+      ? String(a.sellerName).localeCompare(String(b.sellerName), "pt-BR") * dir
+      : (((a as any)[sortKey] || 0) - ((b as any)[sortKey] || 0)) * dir);
+    return arr;
+  }, [sellers, sortKey, sortDir]);
+  const toggleSort = (k: string) => { if (sortKey === k) { setSortDir((d) => (d === "asc" ? "desc" : "asc")); } else { setSortKey(k); setSortDir("asc"); } };
+  const sortArrow = (k: string) => (sortKey === k ? (sortDir === "asc" ? " \u25B2" : " \u25BC") : "");
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -314,18 +326,18 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="overflow-auto max-h-[60vh]">
-            <table className="w-full text-sm">
+            <table className="text-sm w-auto">
               <thead>
                 <tr className="border-b text-gray-500">
-                  <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white">Vendedor</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento no Dia</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento na Semana</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Mensal</th>
-                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento no Periodo</th>
+                  <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatDia")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento no Dia{sortArrow("fatDia")}</button></th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatSemana")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento na Semana{sortArrow("fatSemana")}</button></th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento Mensal{sortArrow("fatMes")}</button></th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatPeriodo")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Faturamento no Periodo{sortArrow("fatPeriodo")}</button></th>
                 </tr>
               </thead>
               <tbody>
-                {sellers.map((x) => (
+                {sortedSellers.map((x) => (
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatDia)}</td>
