@@ -141,30 +141,31 @@ export default function Dashboard() {
 
   const dates = useMemo(() => datesInRange(start, end), [start, end]);
 
+  // Semana comeca na segunda-feira da semana atual (BRT).
+  const weekStartISO = useMemo(() => { const d = new Date(bounds.today + "T12:00:00"); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toISOString().slice(0, 10); }, [bounds.today]);
+  // Faturamento (billing_pipeline via visitSummary) por vendedor: Dia / Semana / Mes vigente.
+  // Mantem apenas vendedores COM faturamento no mes.
   const sellers = useMemo(() => {
     const rows = data?.visitSummary?.rows;
     if (!Array.isArray(rows)) return [];
-    const dset = new Set(dates);
     const map = new Map<string, any>();
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", clientesAtender: 0, completedVisits: 0, missedVisits: 0, revenue: 0, unmetRevenue: 0, completedNames: [] as string[], missedNames: [] as string[], clientesAtenderNames: [] as string[] }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", fatDia: 0, fatSemana: 0, fatMes: 0 }; map.set(S, w); }
       for (const v of N.visits || []) {
-        if (!dset.has(v.date)) continue;
-        if (v.isScheduled) { w.clientesAtender++; w.clientesAtenderNames.push(N.customerName || "-"); }
-        if (!v.isPast) continue;
-        const k = visitColor(v);
-        if (k === "green" || k === "yellow") { w.completedVisits++; w.completedNames.push(N.customerName || "-"); }
-        else if (k === "orange" || k === "red") { w.missedVisits++; w.unmetRevenue += (Number(v.metaValue) || 0); w.missedNames.push(N.customerName || "-"); }
-        // Faturamento de Visitas Efetivas: só conta o pedido quando houve CHECK-IN (visita efetivada).
-        if (v.hasVisit && v.hasOrder) w.revenue += v.orderValue || 0;
+        if (!v.hasOrder) continue;
+        const val = Number(v.orderValue) || 0;
+        if (val <= 0) continue;
+        w.fatMes += val;
+        if (v.date >= weekStartISO) w.fatSemana += val;
+        if (v.date === bounds.today) w.fatDia += val;
       }
     }
-    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
-  }, [data, dates]);
+    return Array.from(map.values()).filter((s) => s.fatMes > 0).sort((a, b) => b.fatMes - a.fatMes);
+  }, [data, weekStartISO, bounds.today]);
 
-  const totals = useMemo(() => sellers.reduce((t, s) => ({ clientesAtender: t.clientesAtender + s.clientesAtender, completedVisits: t.completedVisits + s.completedVisits, revenue: t.revenue + s.revenue, missedVisits: t.missedVisits + s.missedVisits, unmetRevenue: t.unmetRevenue + s.unmetRevenue }), { clientesAtender: 0, completedVisits: 0, revenue: 0, missedVisits: 0, unmetRevenue: 0 }), [sellers]);
+  const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes }), { fatDia: 0, fatSemana: 0, fatMes: 0 }), [sellers]);
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -294,18 +295,9 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base">Comparativo por Vendedor{isSingleDay ? " - dia vigente" : ""}</CardTitle>
-              <div className="text-xs text-gray-500">Periodo: {brDate(start)}{isSingleDay ? "" : " a " + brDate(end)} (mes vigente)</div>
-            </div>
-            <div className="inline-flex items-center gap-1 text-sm">
-              <span className="text-gray-600">Periodo:</span>
-              <input type="date" value={start} min={bounds.first} max={bounds.last} onChange={(e) => { const v = e.target.value; setStart(v); if (v > end) setEnd(v); }} className="px-2 py-1.5 border rounded-md" aria-label="Data inicial" />
-              <span className="text-gray-400">-</span>
-              <input type="date" value={end} min={start || bounds.first} max={bounds.last} onChange={(e) => setEnd(e.target.value)} className="px-2 py-1.5 border rounded-md" aria-label="Data final" />
-              <button type="button" onClick={() => { setStart(bounds.today); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Voltar para o dia vigente">Hoje</button>
-            </div>
+          <div>
+            <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
+            <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente</div>
           </div>
         </CardHeader>
         <CardContent>
@@ -314,36 +306,30 @@ export default function Dashboard() {
               <thead>
                 <tr className="border-b text-gray-500">
                   <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white">Vendedor</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Clientes a atender no dia</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Visitas Efetivadas</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Visitas Efetivas</th>
-                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Nao Efetivadas</th>
-                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Previsto Nao Efetivado</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento no Dia</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento na Semana</th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Mensal</th>
                 </tr>
               </thead>
               <tbody>
                 {sellers.map((x) => (
                   <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
-                    <td className="py-2 px-3 text-right tabular-nums"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Clientes a atender - " + x.sellerName, names: x.clientesAtenderNames })}>{x.clientesAtender}</button></td>
-                    <td className="py-2 px-3 text-right tabular-nums text-green-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Visitas Efetivadas - " + x.sellerName, names: x.completedNames })}>{x.completedVisits}</button></td>
-                    <td className="py-2 px-3 text-right tabular-nums font-semibold text-gray-800">{brl(x.revenue)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-red-700"><button type="button" className="underline hover:opacity-80 tabular-nums" onClick={() => setModal({ title: "Nao Efetivadas - " + x.sellerName, names: x.missedNames })}>{x.missedVisits}</button></td>
-                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-500">{brl(x.unmetRevenue)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatDia)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatSemana)}</td>
+                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatMes)}</td>
                   </tr>
                 ))}
                 {sellers.length === 0 && (
-                  <tr><td colSpan={6} className="py-6 text-center text-gray-400">Sem dados no periodo.</td></tr>
+                  <tr><td colSpan={4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-gray-300 font-semibold text-gray-800">
                   <td className="py-2 pr-4">Total</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{totals.clientesAtender}</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{totals.completedVisits}</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.revenue)}</td>
-                  <td className="py-2 px-3 text-right tabular-nums">{totals.missedVisits}</td>
-                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.unmetRevenue)}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatDia)}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatSemana)}</td>
+                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
                 </tr>
               </tfoot>
             </table>
