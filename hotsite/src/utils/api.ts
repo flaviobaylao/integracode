@@ -60,8 +60,39 @@ export const api = {
       console.error('❌ Request failed:', data);
       throw new Error(data.message || 'Erro ao criar pedido');
     }
-    
+
     return data;
+  },
+
+  // 💚 PIX pagar-antes: gera a cobrança (QR + copia-e-cola). O pedido só é
+  // criado no sistema depois que o pagamento for confirmado pelo banco.
+  async initPixOrder(order: any): Promise<{
+    pendingId: string;
+    txid: string;
+    amount: number;
+    qrCodeBase64: string;
+    pixCopiaECola: string;
+    expiresAt: string;
+    referralDiscount: { pct: number; amount: number; total: number } | null;
+  }> {
+    const response = await fetch(`${API_BASE}/orders/pix/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(order),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Erro ao gerar o PIX');
+    return data;
+  },
+
+  async getPixStatus(pendingId: string): Promise<{
+    status: string;
+    orderId?: string;
+    orderNumber?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/orders/pix/${encodeURIComponent(pendingId)}/status`);
+    if (!response.ok) throw new Error('Erro ao consultar o pagamento');
+    return response.json();
   },
 
   async checkCustomerByCNPJ(cnpj: string): Promise<{
