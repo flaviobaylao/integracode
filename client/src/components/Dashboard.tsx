@@ -129,7 +129,7 @@ export default function Dashboard() {
     return { total: t.total, valid: t.valid, invalid, pct: t.total > 0 ? Math.round((t.valid / t.total) * 100) : 0 };
   }, [phoneCov]);
   const bounds = useMemo(() => monthBounds(), []);
-  const [start, setStart] = useState<string>(bounds.today);
+  const [start, setStart] = useState<string>(bounds.first);
   const [end, setEnd] = useState<string>(bounds.today);
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [pnfSeller, setPnfSeller] = useState<string[]>([]);
@@ -148,11 +148,12 @@ export default function Dashboard() {
   const sellers = useMemo(() => {
     const rows = data?.visitSummary?.rows;
     if (!Array.isArray(rows)) return [];
+    const dset = new Set(dates);
     const map = new Map<string, any>();
     for (const N of rows) {
       const S = N.sellerId || "sem-vendedor";
       let w = map.get(S);
-      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", fatDia: 0, fatSemana: 0, fatMes: 0 }; map.set(S, w); }
+      if (!w) { w = { sellerId: S, sellerName: N.sellerName || "Sem vendedor", fatDia: 0, fatSemana: 0, fatMes: 0, fatPeriodo: 0 }; map.set(S, w); }
       for (const v of N.visits || []) {
         if (!v.hasOrder) continue;
         const val = Number(v.orderValue) || 0;
@@ -160,12 +161,13 @@ export default function Dashboard() {
         w.fatMes += val;
         if (v.date >= weekStartISO) w.fatSemana += val;
         if (v.date === bounds.today) w.fatDia += val;
+        if (dset.has(v.date)) w.fatPeriodo += val;
       }
     }
     return Array.from(map.values()).filter((s) => s.fatMes > 0).sort((a, b) => b.fatMes - a.fatMes);
-  }, [data, weekStartISO, bounds.today]);
+  }, [data, weekStartISO, bounds.today, dates]);
 
-  const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes }), { fatDia: 0, fatSemana: 0, fatMes: 0 }), [sellers]);
+  const totals = useMemo(() => sellers.reduce((t, s) => ({ fatDia: t.fatDia + s.fatDia, fatSemana: t.fatSemana + s.fatSemana, fatMes: t.fatMes + s.fatMes, fatPeriodo: t.fatPeriodo + s.fatPeriodo }), { fatDia: 0, fatSemana: 0, fatMes: 0, fatPeriodo: 0 }), [sellers]);
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -295,9 +297,19 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <div>
-            <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
-            <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
+              <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente. Periodo selecionado: {brDate(start)}{isSingleDay ? "" : " a " + brDate(end)}</div>
+            </div>
+            <div className="inline-flex items-center gap-1 text-sm">
+              <span className="text-gray-600">Periodo:</span>
+              <input type="date" value={start} min={bounds.first} max={bounds.last} onChange={(e) => { const v = e.target.value; setStart(v); if (v > end) setEnd(v); }} className="px-2 py-1.5 border rounded-md" aria-label="Data inicial" />
+              <span className="text-gray-400">-</span>
+              <input type="date" value={end} min={start || bounds.first} max={bounds.last} onChange={(e) => setEnd(e.target.value)} className="px-2 py-1.5 border rounded-md" aria-label="Data final" />
+              <button type="button" onClick={() => { setStart(bounds.today); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Definir para o dia vigente">Hoje</button>
+              <button type="button" onClick={() => { setStart(bounds.first); setEnd(bounds.today); }} className="px-2 py-1.5 border rounded-md text-gray-600 hover:bg-gray-100" title="Do inicio do mes ate hoje">Mes</button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -308,7 +320,8 @@ export default function Dashboard() {
                   <th className="py-2 pr-4 font-medium text-left sticky top-0 z-10 bg-white">Vendedor</th>
                   <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento no Dia</th>
                   <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento na Semana</th>
-                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Mensal</th>
+                  <th className="py-2 px-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento Mensal</th>
+                  <th className="py-2 pl-3 font-medium text-right sticky top-0 z-10 bg-white">Faturamento no Periodo</th>
                 </tr>
               </thead>
               <tbody>
@@ -317,11 +330,12 @@ export default function Dashboard() {
                     <td className="py-2 pr-4 font-medium text-gray-800">{x.sellerName}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatDia)}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatSemana)}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatMes)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-gray-800">{brl(x.fatMes)}</td>
+                    <td className="py-2 pl-3 text-right tabular-nums font-semibold text-gray-900">{brl(x.fatPeriodo)}</td>
                   </tr>
                 ))}
                 {sellers.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                  <tr><td colSpan={5} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
@@ -329,7 +343,8 @@ export default function Dashboard() {
                   <td className="py-2 pr-4">Total</td>
                   <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatDia)}</td>
                   <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatSemana)}</td>
-                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{brl(totals.fatMes)}</td>
+                  <td className="py-2 pl-3 text-right tabular-nums">{brl(totals.fatPeriodo)}</td>
                 </tr>
               </tfoot>
             </table>
