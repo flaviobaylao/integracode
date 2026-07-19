@@ -23,7 +23,7 @@ function cieloConfig() {
     apiUrl: sandbox ? 'https://apisandbox.cieloecommerce.cielo.com.br' : 'https://api.cieloecommerce.cielo.com.br',
     queryUrl: sandbox ? 'https://apiquerysandbox.cieloecommerce.cielo.com.br' : 'https://apiquery.cieloecommerce.cielo.com.br',
     sandbox,
-    maxInstallments: Math.max(1, Math.min(12, parseInt(process.env.CIELO_MAX_INSTALLMENTS || '3', 10) || 3)),
+    maxInstallments: 1, // parcelamento desativado na loja (a vista)
   };
 }
 
