@@ -441,6 +441,42 @@ export function registerDelegationRoutes(app: Express) {
     res.json({ ids: [...set] });
   }));
 
+  // Lista detalhada de clientes sob delegação vigente (para a aba filtrável).
+  // Cada item traz nome do cliente, delegado atual, titular e período.
+  app.get("/api/delegations/clientes-sob-delegacao", authenticateAdmin, safe(async (_req, res) => {
+    await ensureModuleTables();
+    const now = new Date();
+    const active = await db.select().from(delegations).where(and(
+      inArray(delegations.status, ["ativa", "agendada"]),
+      inArray(delegations.type, ["carteira_transferencia", "carteira_rateio"]),
+      lte(delegations.startsAt, now),
+      gte(delegations.endsAt, now),
+    ));
+    if (!active.length) return res.json([]);
+    const byId: Record<string, any> = {};
+    active.forEach((d) => (byId[d.id] = d));
+    const dids = active.map((d) => d.id);
+    const dcs = await db.select().from(delegationCustomers).where(inArray(delegationCustomers.delegationId, dids));
+    if (!dcs.length) return res.json([]);
+    const custIds = [...new Set(dcs.map((c) => c.customerId))];
+    const custRows = await db.select().from(customers).where(inArray(customers.id, custIds));
+    const custName: Record<string, string> = {};
+    custRows.forEach((c: any) => (custName[c.id] = c.fantasyName || c.name || c.id));
+    res.json(dcs.map((c) => {
+      const d = byId[c.delegationId];
+      return {
+        customerId: c.customerId,
+        customerName: custName[c.customerId] || c.customerId,
+        toUserId: c.toUserId,
+        fromUserId: d?.fromUserId,
+        delegationId: c.delegationId,
+        startsAt: d?.startsAt,
+        endsAt: d?.endsAt,
+        status: d?.status,
+      };
+    }));
+  }));
+
   // GET: overrides salvos p/ um usuário (o front mescla sobre o padrão da função)
   app.get("/api/user-permissions/:userId", authenticateAdmin, safe(async (req, res) => {
     await ensureModuleTables();
