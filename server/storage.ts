@@ -8484,6 +8484,33 @@ export class DatabaseStorage implements IStorage {
         }
       }
     } catch {}
+    // Enriquece com ORIGEM (hotsite) e PAGAMENTO ONLINE (loja) p/ os badges "HOTSITE" e "Pago"
+    // no card do pipeline. Independente do bloco de status fiscal acima (try/catch proprio p/
+    // nao derrubar o restante do enriquecimento). Fonte: sales_cards.source + as tabelas de
+    // pagamento da loja (hotsite_card_payments = cartao/GooglePay, hotsite_pending_pix = PIX).
+    try {
+      const rowsB = rows as any[];
+      const cardIds2 = Array.from(new Set(rowsB.map(r => r.salesCardId).filter(Boolean)));
+      if (cardIds2.length) {
+        try {
+          const scs = await db.select({ id: salesCards.id, source: salesCards.source })
+            .from(salesCards).where(inArray(salesCards.id, cardIds2 as any));
+          const srcById = new Map<string, string>();
+          for (const s of scs as any[]) srcById.set(String(s.id), String(s.source || ''));
+          for (const r of rowsB) { const s = srcById.get(String(r.salesCardId)); if (s) (r as any).source = s; }
+        } catch {}
+        const paidSet = new Set<string>();
+        try {
+          const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id = ANY(${cardIds2}::text[])`);
+          for (const x of (pc.rows || pc) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
+        } catch {}
+        try {
+          const pp: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_pending_pix WHERE status = 'paid' AND order_id = ANY(${cardIds2}::text[])`);
+          for (const x of (pp.rows || pp) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
+        } catch {}
+        for (const r of rowsB) if (paidSet.has(String(r.salesCardId))) (r as any).paidOnline = true;
+      }
+    } catch {}
     return rows as any;
   }
 
