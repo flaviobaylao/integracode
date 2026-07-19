@@ -1868,6 +1868,23 @@ async function ensureInstallmentScheduleColumn(): Promise<void> {
   try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule text`); __instSchedColReady = true; } catch (e: any) { console.warn('[BILLING-PIPELINE] ensure installment_schedule:', e?.message); }
 }
 
+// Detecta se o pedido (sales_card) foi PAGO ONLINE na loja/hotsite (Cielo cartao/GooglePay
+// ou PIX). Retorna o metodo p/ a baixa ('cartao'|'pix') ou null se nao houve pagamento online
+// confirmado. As tabelas sao criadas sob demanda pela loja (CREATE TABLE IF NOT EXISTS), entao
+// cada consulta tem try/catch proprio (tabela pode nao existir se nunca houve pagamento).
+export async function getHotsitePaidMethod(salesCardId: string | null | undefined): Promise<string | null> {
+  if (!salesCardId) return null;
+  try {
+    const c: any = await db.execute(sql`SELECT 1 FROM hotsite_card_payments WHERE order_id = ${salesCardId} AND status = 'paid' LIMIT 1`);
+    if (((c.rows || c) as any[]).length) return 'cartao';
+  } catch {}
+  try {
+    const p: any = await db.execute(sql`SELECT 1 FROM hotsite_pending_pix WHERE order_id = ${salesCardId} AND status = 'paid' LIMIT 1`);
+    if (((p.rows || p) as any[]).length) return 'pix';
+  } catch {}
+  return null;
+}
+
 export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceId: string | null, user: any) {
   // FASE 2 - Somente VENDA gera conta a receber. Amostra, troca, bonificacao,
   // transferencia, remessa e devolucao nao geram titulo nem cobranca (boleto/PIX).
@@ -1880,6 +1897,13 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   if (totalValue <= 0) return null;
 
   const now = nowBrazil();
+
+  // PEDIDO PAGO NA LOJA (hotsite): o dinheiro ja foi recebido (cartao/GooglePay/PIX na Cielo).
+  // Nesse caso NAO emitimos boleto/PIX de cobranca e, ao faturar, o titulo ja nasce QUITADO
+  // (baixa automatica -> status 'recebida'). Pagamento na loja e sempre a vista (1x) -> sem
+  // cronograma de parcelas.
+  const paidMethod = await getHotsitePaidMethod(item.salesCardId);
+  const paidOnline = !!paidMethod;
 
   // Vencimento por PRAZO: se o cliente tem condicao cadastrada (forma+prazo), usa AMBOS
   // do cadastro; senao usa a forma da venda + default (pix=5, boleto=7, a vista=0).
@@ -1922,6 +1946,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     createdBy: user?.email || null,
   };
   const emitCharge = (rcv: any) => {
+    if (paidOnline) return; // dinheiro ja recebido na loja -> sem boleto/PIX de cobranca
     if (effForma === 'boleto') { void generateBoletoForReceivable(rcv, item); }
     else if (effForma === 'pix' || effForma === 'a_vista' || effForma === 'dinheiro') { void generatePixForReceivable(rcv, item); }
   };
@@ -1938,7 +1963,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     }
   } catch (e: any) { console.warn('[BILLING-PIPELINE] cronograma de parcelas indisponivel:', e?.message); }
 
-  if (scheduleDays.length >= 1) {
+  if (!paidOnline && scheduleDays.length >= 1) {
     const nParc = scheduleDays.length;
     const totalCents = Math.round(totalValue * 100);
     const baseCents = Math.floor(totalCents / nParc);
@@ -1963,8 +1988,9 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   }
 
   // Sem cronograma: 1 titulo com vencimento pelo PRAZO (comportamento padrao).
+  // Pedido pago na loja (paidOnline) -> vencimento hoje (a vista, ja quitado).
   const dueDate = new Date(now);
-  dueDate.setDate(dueDate.getDate() + prazoDays);
+  dueDate.setDate(dueDate.getDate() + (paidOnline ? 0 : prazoDays));
   const receivable = await storage.createReceivable({
     ...baseReceivable,
     titleNumber: titleNumber,
@@ -1972,7 +1998,31 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     issueDate: now,
     dueDate: dueDate,
     amount: totalValue.toFixed(2),
+    ...(paidOnline ? { paymentMethod: (paidMethod === 'pix' ? 'pix' : 'cartao') as any } : {}),
   });
+
+  // BAIXA AUTOMATICA: pedido pago na loja nasce QUITADO ao ser faturado. Reusa o mesmo
+  // mecanismo do "Registrar Pagamento" (createReceivablePayment + status 'recebida'). Se a
+  // baixa falhar, o titulo fica aberto (recuperavel manualmente) e o faturamento nao quebra.
+  if (paidOnline) {
+    try {
+      await storage.createReceivablePayment({
+        receivableId: receivable.id,
+        paidAt: now,
+        amount: totalValue.toFixed(2),
+        paymentMethod: (paidMethod === 'pix' ? 'pix' : 'cartao') as any,
+        financialAccountId: null,
+        reference: 'Pagamento na loja (hotsite)',
+        notes: `Baixa automatica - pedido pago online (${paidMethod === 'pix' ? 'PIX' : 'cartao'}) na loja/hotsite. Faturamento gerou o titulo ja quitado.`,
+        createdBy: user?.email || 'sistema (loja)',
+      } as any);
+      await storage.updateReceivable(receivable.id, { amountPaid: totalValue.toFixed(2), status: 'recebida' as any });
+      console.log(`✅ [BILLING-PIPELINE] Recebivel ${receivable.id} BAIXADO automaticamente (pago na loja, ${paidMethod}) - pedido ${item.orderNumber || item.salesCardId}`);
+    } catch (e: any) {
+      console.warn('⚠️ [BILLING-PIPELINE] Falha na baixa automatica do pedido pago na loja (titulo fica aberto):', e?.message || e);
+    }
+  }
+
   emitCharge(receivable);
   return receivable;
 }
