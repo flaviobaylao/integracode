@@ -21,7 +21,7 @@ import GeocodeAllButton from "./GeocodeAllButton";
 import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
 import OmieInstanceBadge from "./OmieInstanceBadge";
-import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload, History } from "lucide-react";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
 function normalizeWeekdays(weekdays: string | string[]): string[] {
@@ -93,7 +93,7 @@ export default function CustomerManagement() {
   const [sellerFilter, setSellerFilter] = useState('all');
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
-  const [sortAZ, setSortAZ] = useState(false);
+  const [nameSort, setNameSort] = useState<'asc' | 'desc' | null>(null);
   const [routeDateFilter, setRouteDateFilter] = useState('');
   const [positivationFilter, setPositivationFilter] = useState('all');
   const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
@@ -290,7 +290,7 @@ export default function CustomerManagement() {
     const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
     return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone && matchesCoords;
   }) || [];
-  if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
+  if (nameSort) filteredCustomers.sort((a: any, b: any) => { const cmp = String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
   const selectableIds = filteredCustomers.map((c: any) => c.id).filter(Boolean) as string[];
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
   const toggleSelect = (id?: string) => { if (!id) return; setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
@@ -455,7 +455,6 @@ export default function CustomerManagement() {
             </div>
 
             <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
-            <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-customers">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
 
             <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
               <SelectTrigger className="w-[100px] h-9" data-testid="select-weekday-filter">
@@ -603,7 +602,20 @@ export default function CustomerManagement() {
                   <th className="px-4 py-4 text-left w-8">
                     <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="Selecionar todos" data-testid="checkbox-select-all" />
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Nome Fantasia</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">
+                    <button
+                      onClick={() => setNameSort((s) => (s === 'asc' ? 'desc' : 'asc'))}
+                      className="flex items-center gap-1 hover:text-primary transition-colors"
+                      data-testid="sort-name-customers"
+                    >
+                      Nome Fantasia
+                      {nameSort ? (
+                        nameSort === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                      ) : (
+                        <ArrowUpDown className="h-4 w-4 opacity-50" />
+                      )}
+                    </button>
+                  </th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Dias da Semana</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
