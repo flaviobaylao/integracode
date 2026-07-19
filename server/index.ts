@@ -20,6 +20,7 @@ import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { registerReconciliation } from "./reconciliation-routes";
 import { registerPaymentTerms } from "./payment-terms-routes";
 import { registerChargeGuarantee } from "./charge-guarantee-routes";
+import { registerInstagram } from "./instagram-routes";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { authenticateUser, requireRole } from './authMiddleware';
@@ -275,6 +276,7 @@ run();
   registerReconciliation(app);
   registerPaymentTerms(app);
   registerChargeGuarantee(app);
+  registerInstagram(app);
   registerDelegationRoutes(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
