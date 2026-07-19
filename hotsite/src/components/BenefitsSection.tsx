@@ -5,7 +5,7 @@ export default function BenefitsSection() {
     {
       icon: Heart,
       title: 'Saúde de Verdade',
-      description: 'Sem açúcar adicionado, sem conservantes químicos. Apenas o que a natureza oferece de melhor para seu corpo.'
+      description: 'Sem açúcar adicionado, sem adição de conservantes químicos. Apenas o que a natureza oferece de melhor para seu corpo.'
     },
     {
       icon: Zap,
