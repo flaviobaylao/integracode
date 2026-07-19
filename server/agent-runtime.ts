@@ -111,12 +111,15 @@ async function callAnthropic(model: string, system: string, messages: any[], too
 export async function generateAgentReply(agentId: string, messages: Array<{ role: string; content: any }>, ctx?: any): Promise<{ ok: boolean; reply?: string; error?: string; model?: string; usedTools?: string[] }> {
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, error: 'ANTHROPIC_API_KEY ausente' };
   try {
-    const a: any = await db.execute(sql`SELECT id, nome, modelo, system_prompt FROM agentes_config WHERE id = ${agentId} LIMIT 1`);
+    const a: any = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento FROM agentes_config WHERE id = ${agentId} LIMIT 1`);
     const agent = a.rows?.[0];
     if (!agent) return { ok: false, error: 'agente nao encontrado' };
     const g: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum' LIMIT 1`);
     const base = g.rows?.[0]?.valor || '';
-    const systemPrompt = (base ? base + '\n\n' : '') + (agent.system_prompt || '');
+    const kb = (agent.base_conhecimento || '').trim();
+    const systemPrompt = (base ? base + '\n\n' : '')
+      + (kb ? '# BASE DE CONHECIMENTO (fatos da Honest — responda so com o que esta aqui; se faltar, ofereca falar com uma pessoa)\n' + kb + '\n\n' : '')
+      + (agent.system_prompt || '');
     // normaliza histórico inicial (texto): começa com user, alterna
     const conv: any[] = [];
     for (const m of messages) {
@@ -150,20 +153,28 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
   } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
 }
 
-export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; }): Promise<void> {
+export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; channel?: string; username?: string; }): Promise<void> {
   try {
-    const mode = await getSetting('agents_runtime_mode', 'off');
+    const channel = (opts.channel || 'whatsapp').toLowerCase();
+    const isIG = channel === 'instagram';
+    const mode = await getSetting(isIG ? 'agents_ig_mode' : 'agents_runtime_mode', 'off');
     if (mode === 'off') return;
     if (!process.env.ANTHROPIC_API_KEY) return;
     const phone = onlyDigits(opts.phone);
+    const handle = (opts.username || '').replace(/^@/, '').trim().toLowerCase();
     if (mode === 'test') {
-      const allow = (await getSetting('agents_test_numbers', '5562995782812')).split(/[,;\s]+/).map(s => onlyDigits(s)).filter(Boolean);
-      if (!allow.includes(phone)) return;
+      if (isIG) {
+        const allow = (await getSetting('agents_ig_test_handles', '')).split(/[,;\n\s]+/).map(s => s.replace(/^@/, '').trim().toLowerCase()).filter(Boolean);
+        if (!allow.length || !handle || !allow.includes(handle)) return;
+      } else {
+        const allow = (await getSetting('agents_test_numbers', '5562995782812')).split(/[,;\s]+/).map(s => onlyDigits(s)).filter(Boolean);
+        if (!allow.includes(phone)) return;
+      }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
     // se a conversa foi transferida p/ humano, não responder mais
     if ((await getSetting('chat_ai_paused:' + opts.conversationId, '')) === '1') return;
-    const defId = await getSetting('agents_default', 'sdr');
+    const defId = await getSetting(isIG ? 'agents_ig_default' : 'agents_default', isIG ? 'instagram' : 'sdr');
     const routing = await getSetting('agents_routing', 'keyword');
     // contexto do cliente (p/ ferramentas)
     let customerId: string | null = null;
