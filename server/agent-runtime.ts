@@ -184,7 +184,7 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     const h: any = await db.execute(sql`SELECT sender_type, content FROM chat_messages WHERE conversation_id = ${opts.conversationId} ORDER BY created_at DESC LIMIT 10`);
     const hist = (h.rows || []).reverse().map((m: any) => ({ role: m.sender_type === 'customer' ? 'user' : 'assistant', content: String(m.content || '') }));
     if (!hist.length || hist[hist.length - 1].role !== 'user') hist.push({ role: 'user', content: opts.incomingText });
-    let chosenId = routing === 'keyword' ? pickAgentByKeyword(opts.incomingText, defId) : defId;
+    let chosenId = (!isIG && routing === 'keyword') ? pickAgentByKeyword(opts.incomingText, defId) : defId;
     try { const chk: any = await db.execute(sql`SELECT id FROM agentes_config WHERE id = ${chosenId} AND ativo = true LIMIT 1`); if (!chk.rows?.[0]) chosenId = defId; } catch { chosenId = defId; }
     const gen = await generateAgentReply(chosenId, hist, ctx);
     if (!gen.ok || !gen.reply) return;
