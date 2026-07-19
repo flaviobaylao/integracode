@@ -1073,6 +1073,53 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  // Inativação em massa: mesma semântica da individual (isActive=false, sai da lista de
+  // Clientes Ativos e apaga cards futuros pendentes), porém em lote e sem preservar card.
+  async bulkInactivateCustomers(ids: string[]): Promise<{ processed: number; inactivated: number; alreadyInactive: number; deletedCards: number; inactivatedIds: string[] }> {
+    if (!ids || ids.length === 0) return { processed: 0, inactivated: 0, alreadyInactive: 0, deletedCards: 0, inactivatedIds: [] };
+    const today = nowBrazil();
+    today.setHours(0, 0, 0, 0);
+
+    // Quais estavam ATIVOS antes (para auditoria e contagem)
+    const activeBefore = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
+    const inactivatedIds = activeBefore.map((r) => r.id);
+
+    // 1. customers.isActive = false
+    await db
+      .update(customers)
+      .set({ isActive: false, inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .where(inArray(customers.id, ids));
+
+    // 2. Remover da lista de Clientes Ativos (active_customers)
+    await db
+      .update(activeCustomers)
+      .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .where(inArray(activeCustomers.customerId, ids));
+
+    // 3. Apagar cards futuros pendentes/em andamento
+    const del = await db
+      .delete(salesCards)
+      .where(
+        and(
+          inArray(salesCards.customerId, ids),
+          or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress')),
+          gte(salesCards.scheduledDate, today)
+        )
+      )
+      .returning();
+
+    return {
+      processed: ids.length,
+      inactivated: inactivatedIds.length,
+      alreadyInactive: ids.length - inactivatedIds.length,
+      deletedCards: del.length,
+      inactivatedIds,
+    };
+  }
+
   async deleteCustomer(id: string): Promise<void> {
     await db.update(customers).set({ omieStatus: 'inativo' }).where(eq(customers.id, id));
   }
