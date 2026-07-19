@@ -461,13 +461,18 @@ export function registerDelegationRoutes(app: Express) {
     const custIds = [...new Set(dcs.map((c) => c.customerId))];
     const custRows = await db.select().from(customers).where(inArray(customers.id, custIds));
     const custName: Record<string, string> = {};
-    custRows.forEach((c: any) => (custName[c.id] = c.fantasyName || c.name || c.id));
+    const custSeller: Record<string, string | null> = {};
+    custRows.forEach((c: any) => {
+      custName[c.id] = c.fantasyName || c.name || c.id;
+      custSeller[c.id] = c.sellerId ?? null;
+    });
     res.json(dcs.map((c) => {
       const d = byId[c.delegationId];
       return {
         customerId: c.customerId,
         customerName: custName[c.customerId] || c.customerId,
-        toUserId: c.toUserId,
+        toUserId: c.toUserId,                                  // delegado registrado na criação
+        sellerAtualId: custSeller[c.customerId] ?? c.toUserId, // vendedor atual real (ao vivo)
         fromUserId: d?.fromUserId,
         delegationId: c.delegationId,
         startsAt: d?.startsAt,
