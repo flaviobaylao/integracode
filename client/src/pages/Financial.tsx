@@ -25,7 +25,7 @@ import {
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
   CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
   History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
-  Key, Ban, Camera
+  Key, Ban, Camera, ArrowUp, ArrowDown, ArrowUpDown
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -371,7 +371,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   });
 
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
-  const [sortAZ, setSortAZ] = useState(false);
+  const [nameSort, setNameSort] = useState<'asc' | 'desc' | null>(null);
   const filtered = receivables.filter((r: any) => {
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
@@ -384,7 +384,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     if (valueMax !== '' && Number(r.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
-  if (sortAZ) filtered.sort((a: any, b: any) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
+  if (nameSort) filtered.sort((a: any, b: any) => { const cmp = String(a.customerName || '').localeCompare(String(b.customerName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
 
   // Totais: no modo paginado usa o RESUMO do servidor (sobre todas as contas); com filtro
   // do cliente ativo, soma sobre o conjunto completo carregado (filtered).
@@ -538,7 +538,6 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <div><MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-receivables" /></div>
           </div>
           <div className="flex gap-2 items-end">
-            <Button type="button" variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-receivables">{sortAZ ? "Cliente A-Z: ligado" : "Ordenar A-Z"}</Button>
             <ExportExcelButton testId="export-receivables" onClick={() => exportToExcel(filtered.map((r: any) => ({ Titulo: r.titleNumber, Cliente: r.customerName, Vendedor: resolveSeller(r.sellerName), Categoria: r.category, Descricao: r.description, Valor: Number(r.amount || 0), ValorPago: Number(r.amountPaid || 0), Status: r.status, Vencimento: r.dueDate ? new Date(r.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-receber")} />
           </div>
         <div>
@@ -610,7 +609,20 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <TableHeader>
               <TableRow>
                 <TableHead>Título</TableHead>
-                <TableHead>Cliente</TableHead>
+                <TableHead>
+                  <button
+                    onClick={() => setNameSort((s) => (s === 'asc' ? 'desc' : 'asc'))}
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                    data-testid="sort-name-receivables"
+                  >
+                    Cliente
+                    {nameSort ? (
+                      nameSort === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                    ) : (
+                      <ArrowUpDown className="h-4 w-4 opacity-50" />
+                    )}
+                  </button>
+                </TableHead>
                 <TableHead>Vendedor</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Descrição</TableHead>
@@ -1095,7 +1107,7 @@ function PayablesTab() {
   // Conta financeira "CAIXINHA" (dinheiro a vista) — usada na baixa imediata do lancamento manual.
   const caixinhaAccount = (accounts as any[]).find((a: any) => String(a.name || '').trim().toUpperCase() === 'CAIXINHA');
 
-  const [sortAZ, setSortAZ] = useState(false);
+  const [nameSort, setNameSort] = useState<'asc' | 'desc' | null>(null);
   const [valueMin, setValueMin] = useState('');
   const [valueMax, setValueMax] = useState('');
   const filtered = payables.filter((p: any) => {
@@ -1112,7 +1124,7 @@ function PayablesTab() {
     if (valueMax !== '' && Number(p.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
-  if (sortAZ) filtered.sort((a: any, b: any) => String(a.supplierName || '').localeCompare(String(b.supplierName || '')));
+  if (nameSort) filtered.sort((a: any, b: any) => { const cmp = String(a.supplierName || '').localeCompare(String(b.supplierName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
 
   // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
   const { data: dreAccounts = [] } = useQuery<any[]>({
@@ -1197,7 +1209,6 @@ function PayablesTab() {
           </div>
         </div>
           <div className="flex gap-2 items-end">
-            <Button type="button" variant="outline" size="sm" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-payables">{sortAZ ? "Fornecedor A-Z: ligado" : "Ordenar A-Z"}</Button>
             <ExportExcelButton testId="export-payables" onClick={() => exportToExcel(filtered.map((p: any) => ({ Titulo: p.titleNumber, Fornecedor: p.supplierName, Documento: p.supplierDocument, Descricao: p.description, Valor: Number(p.amount || 0), ValorPago: Number(p.amountPaid || 0), Status: p.status, Vencimento: p.dueDate ? new Date(p.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-pagar")} />
           </div>
         <div>
@@ -1239,7 +1250,20 @@ function PayablesTab() {
               <TableRow>
                 <TableHead className="w-8"><input type="checkbox" className="h-4 w-4 cursor-pointer" aria-label="Selecionar todos" checked={filtered.length > 0 && filtered.slice(0, 300).every((p: any) => selectedIds.includes(p.id))} onChange={e => { const vis = filtered.slice(0, 300).map((p: any) => p.id); setSelectedIds(e.target.checked ? Array.from(new Set([...selectedIds, ...vis])) : selectedIds.filter(id => !vis.includes(id))); }} /></TableHead>
                 <TableHead>Título</TableHead>
-                <TableHead>Fornecedor</TableHead>
+                <TableHead>
+                  <button
+                    onClick={() => setNameSort((s) => (s === 'asc' ? 'desc' : 'asc'))}
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                    data-testid="sort-name-payables"
+                  >
+                    Fornecedor
+                    {nameSort ? (
+                      nameSort === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                    ) : (
+                      <ArrowUpDown className="h-4 w-4 opacity-50" />
+                    )}
+                  </button>
+                </TableHead>
                 <TableHead>CNPJ/CPF</TableHead>
                 <TableHead>Descrição</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
