@@ -570,7 +570,15 @@ export default function AcessosEDelegacoes() {
         {/* ============ ATIVAS ============ */}
         <TabsContent value="ativas" className="mt-4 space-y-6">
           {(() => {
-            const ativas = delegs.filter((d: any) => d.status === "ativa" || d.status === "agendada");
+            // Registros de reversão/auto-devolução (titular -> titular) não representam
+            // um rateio real; são apenas o marcador de retorno da carteira. Ocultamos da
+            // exibição para não confundir — o dado permanece no banco, só não é listado.
+            const isReversao = (d: any) => {
+              if (typeof d.reason === "string" && d.reason.trim().toLowerCase().startsWith("reversão automática")) return true;
+              const tgts = d.targets || [];
+              return d.type !== "acesso_funcao" && tgts.length > 0 && tgts.every((t: any) => t.toUserId === d.fromUserId);
+            };
+            const ativas = delegs.filter((d: any) => (d.status === "ativa" || d.status === "agendada") && !isReversao(d));
             const historico = delegs.filter((d: any) => d.status === "expirada" || d.status === "revogada");
             const card = (d: any) => {
               const total = (d.targets || []).reduce((s: number, t: any) => s + (t.customerCount || 0), 0);
