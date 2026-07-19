@@ -132,7 +132,21 @@ function ratear(clientes: Cli[], targets: string[], criteria: string) {
     const blocos = Object.values(grupos)
       .map((g) => ({ cs: g, fat: g.reduce((s, c) => s + c.avg, 0) }))
       .sort((a, b) => (usarFat ? b.fat - a.fat : b.cs.length - a.cs.length));
-    blocos.forEach((bl) => { const r = usarFat ? menorFat() : menorQtd(); r.cs.push(...bl.cs); r.fat += bl.fat; });
+    // cota justa por quantidade — impede que um bloco grande (ex.: todos "Sem
+    // segmento") seja despejado num único destinatário. Blocos que cabem na cota
+    // ficam juntos (afinidade de segmento); blocos maiores são divididos.
+    const fair = Math.max(1, Math.ceil(clientes.length / targets.length));
+    blocos.forEach((bl) => {
+      const r0 = usarFat ? menorFat() : menorQtd();
+      // mantém o bloco junto só se couber na cota restante do destinatário menos
+      // carregado; caso contrário divide cliente a cliente para equilibrar.
+      if (r0.cs.length + bl.cs.length <= fair) {
+        r0.cs.push(...bl.cs); r0.fat += bl.fat;
+      } else {
+        const cs = usarFat ? [...bl.cs].sort((a, b) => b.avg - a.avg) : bl.cs;
+        cs.forEach((c) => { const r = usarFat ? menorFat() : menorQtd(); r.cs.push(c); r.fat += c.avg; });
+      }
+    });
   } else {
     const arr = usarFat ? [...clientes].sort((a, b) => b.avg - a.avg) : [...clientes];
     arr.forEach((c) => { const r = usarFat ? menorFat() : menorQtd(); r.cs.push(c); r.fat += c.avg; });
@@ -145,8 +159,11 @@ async function carteiraDe(sellerId: string): Promise<Cli[]> {
   const rows = await db.select().from(customers).where(eq(customers.sellerId, sellerId));
   return rows.map((c: any) => ({
     id: c.id,
-    segment: c.segment ?? "Sem segmento",
-    avg: Number(c.avgRevenue3m ?? c.avg_revenue_3m ?? 0),
+    // segmento vem do CNAE (segmento_principal); faturamento usa o último valor de
+    // venda como proxy — não existe coluna de receita média na tabela customers.
+    // Nomes de coluna corretos: c.segment / c.avgRevenue3m NÃO existem no schema.
+    segment: c.segmentoPrincipal ?? c.segmento_principal ?? "Sem segmento",
+    avg: Number(c.lastSaleValue ?? c.last_sale_value ?? 0),
   }));
 }
 
