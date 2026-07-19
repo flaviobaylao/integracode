@@ -483,6 +483,14 @@ function isThreeAdmins(req: any, res: any, next: any) {
   next();
 }
 
+// REGRA (Flavio): trocar o VENDEDOR de um pedido no pipeline so pode admin (role) + os 3 admins + Lanucy.
+const SELLER_EDIT_EMAILS = ['cinthiamarque90@gmail.com', 'flaviobaylao@gmail.com', 'flavio@bebahonest.com.br', 'lanucy@bebahonest.com.br'];
+function canEditPedidoSeller(user: any): boolean {
+  if (!user) return false;
+  if (String(user.role || '') === 'admin') return true;
+  return SELLER_EDIT_EMAILS.includes(String(user.email || '').toLowerCase());
+}
+
 export function registerBillingPipelineRoutes(app: Express) {
   // Regenera PIX EXPIRADOS para recebiveis AINDA EM ABERTO. A cob imediata do a-vista vencia
   // em 1h -> o cliente nao conseguia pagar depois. Cria um QR NOVO (validade 3 dias) e marca o
@@ -1140,8 +1148,9 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (saleValue !== undefined) updates.saleValue = (saleValue === null || saleValue === '') ? null : String(saleValue);
       if (paymentMethod !== undefined) updates.paymentMethod = paymentMethod || null;
       if (operationType !== undefined) updates.operationType = operationType || null;
-      if (sellerId !== undefined) updates.sellerId = sellerId || null;
-      if (sellerName !== undefined) updates.sellerName = sellerName || null;
+      const _canSeller = canEditPedidoSeller(req.currentUser || req.user);
+      if (sellerId !== undefined && _canSeller) updates.sellerId = sellerId || null;
+      if (sellerName !== undefined && _canSeller) updates.sellerName = sellerName || null;
       if (products !== undefined) {
         updates.products = products;
         // Valor Total = soma dos produtos (fonte da verdade). Ao duplicar e editar um
