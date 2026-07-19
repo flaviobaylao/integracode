@@ -4,7 +4,7 @@ const SOCIAL_PROOF = [
   { value: '5.000+', label: 'clientes satisfeitos' },
   { value: '4.9★', label: 'avaliação média' },
   { value: '100%', label: 'fruta natural' },
-  { value: '2×', label: 'produção por semana' },
+  { value: 'Diária', label: 'produção fresca' },
 ];
 
 export default function HeroSection() {
@@ -59,7 +59,7 @@ export default function HeroSection() {
         </h1>
 
         <p className="text-lg md:text-xl mb-8 drop-shadow-lg max-w-xl mx-auto leading-relaxed opacity-95">
-          Sem açúcar adicionado. Sem conservantes. Direto da fazenda para sua mesa em até 48h. 🍓
+          Sem açúcar adicionado. Sem adição de conservantes. Direto da fazenda para sua mesa em até 48h. 🍓
         </p>
 
         {/* Dual CTA */}
