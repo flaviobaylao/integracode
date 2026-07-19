@@ -112,7 +112,8 @@ export function ensureModuleTables(): Promise<void> {
 type Cli = { id: string; segment: string; avg: number };
 function ratear(clientes: Cli[], targets: string[], criteria: string) {
   const recs = targets.map((id) => ({ toUserId: id, cs: [] as Cli[], fat: 0 }));
-  const menorFat = () => recs.reduce((a, b) => (b.fat < a.fat ? b : a));
+  // menor faturamento — empate resolvido por menor quantidade (evita despejar tudo no 1º)
+  const menorFat = () => recs.reduce((a, b) => (b.fat < a.fat || (b.fat === a.fat && b.cs.length < a.cs.length) ? b : a));
   const menorQtd = () => recs.reduce((a, b) => (b.cs.length < a.cs.length ? b : a));
 
   if (targets.length <= 1) { // transferência (ou nenhum)
@@ -121,16 +122,20 @@ function ratear(clientes: Cli[], targets: string[], criteria: string) {
   }
   const bySeg = criteria === "segmento" || criteria === "segmento_faturamento";
   const byFat = criteria === "faturamento" || criteria === "segmento_faturamento";
+  // só pesa por faturamento se existir dado real; senão distribui por quantidade
+  const temFat = clientes.some((c) => c.avg > 0);
+  const usarFat = byFat && temFat;
 
   if (bySeg) {
     const grupos: Record<string, Cli[]> = {};
     clientes.forEach((c) => (grupos[c.segment] = grupos[c.segment] || []).push(c));
     const blocos = Object.values(grupos)
       .map((g) => ({ cs: g, fat: g.reduce((s, c) => s + c.avg, 0) }))
-      .sort((a, b) => b.fat - a.fat);
-    blocos.forEach((bl) => { const r = byFat ? menorFat() : menorQtd(); r.cs.push(...bl.cs); r.fat += bl.fat; });
+      .sort((a, b) => (usarFat ? b.fat - a.fat : b.cs.length - a.cs.length));
+    blocos.forEach((bl) => { const r = usarFat ? menorFat() : menorQtd(); r.cs.push(...bl.cs); r.fat += bl.fat; });
   } else {
-    [...clientes].sort((a, b) => b.avg - a.avg).forEach((c) => { const r = menorFat(); r.cs.push(c); r.fat += c.avg; });
+    const arr = usarFat ? [...clientes].sort((a, b) => b.avg - a.avg) : [...clientes];
+    arr.forEach((c) => { const r = usarFat ? menorFat() : menorQtd(); r.cs.push(c); r.fat += c.avg; });
   }
   return recs;
 }
@@ -224,22 +229,38 @@ export function registerDelegationRoutes(app: Express) {
     res.json(ratear(clientes, targets, criteria));
   }));
 
-  // Cria delegação (carteira ou acesso)
+  // Cria delegação (carteira ou acesso).
+  // Parsing tolerante: aceita datas em texto (ISO) e injeta createdBy no servidor.
   app.post("/api/delegations", authenticateAdmin, safe(async (req, res) => {
     await ensureModuleTables();
-    const parsed = insertDelegationSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const body = parsed.data as any;
-    const targets: string[] = req.body.targets ?? [];
+    const b = req.body || {};
+    if (!b.type || !b.startsAt || !b.endsAt)
+      return res.status(400).json({ error: "type, startsAt e endsAt são obrigatórios" });
+    const starts = new Date(b.startsAt), ends = new Date(b.endsAt);
+    if (isNaN(starts.getTime()) || isNaN(ends.getTime()))
+      return res.status(400).json({ error: "datas inválidas" });
+    const targets: string[] = b.targets ?? [];
     const createdBy = (req as any).currentUser.id;
 
-    const [deleg] = await db.insert(delegations).values({ ...body, createdBy }).returning();
+    const [deleg] = await db.insert(delegations).values({
+      type: b.type,
+      status: starts > new Date() ? "agendada" : "ativa",
+      fromUserId: b.fromUserId ?? null,
+      originRole: b.originRole ?? null,
+      criteria: b.criteria ?? "nenhum",
+      accesses: b.accesses ?? null,
+      startsAt: starts,
+      endsAt: ends,
+      autoReturn: b.autoReturn ?? true,
+      reason: b.reason ?? null,
+      createdBy,
+    } as any).returning();
 
-    if (body.type === "acesso_funcao") {
+    if (b.type === "acesso_funcao") {
       if (targets[0]) await db.insert(delegationTargets).values({ delegationId: deleg.id, toUserId: targets[0] });
     } else {
-      const clientes = await carteiraDe(body.fromUserId);
-      const recs = ratear(clientes, targets, body.criteria);
+      const clientes = await carteiraDe(b.fromUserId);
+      const recs = ratear(clientes, targets, b.criteria ?? "nenhum");
       for (const r of recs) {
         await db.insert(delegationTargets).values({
           delegationId: deleg.id, toUserId: r.toUserId, customerCount: r.cs.length,
