@@ -25,7 +25,7 @@ import {
   delegations, delegationTargets, delegationCustomers, userPermissions,
   customers, insertDelegationSchema,
 } from "@shared/schema";
-import { authenticateAdmin } from "./authMiddleware";
+import { authenticateAdmin, authenticateUser } from "./authMiddleware";
 
 // wrapper: captura qualquer rejeição do handler async e responde 500 (nunca derruba o processo)
 const safe = (fn: (req: Request, res: Response) => Promise<any>) =>
@@ -348,6 +348,38 @@ export function registerDelegationRoutes(app: Express) {
   app.post("/api/delegations/run-returns", authenticateAdmin, safe(async (_req, res) => {
     await runDelegationReturns();
     res.json({ ok: true });
+  }));
+
+  // Exclui definitivamente uma delegação (e seus vínculos). Não devolve carteira;
+  // use revoke para devolver. Serve para limpar registros de teste/erros.
+  app.delete("/api/delegations/:id", authenticateAdmin, safe(async (req, res) => {
+    const id = req.params.id;
+    await db.delete(delegationCustomers).where(eq(delegationCustomers.delegationId, id));
+    await db.delete(delegationTargets).where(eq(delegationTargets.delegationId, id));
+    await db.delete(delegations).where(eq(delegations.id, id));
+    res.json({ ok: true });
+  }));
+
+  // Marcação visual "(sob delegação)": ids de clientes sob delegação ATIVA que o
+  // usuário atual deve ver marcados. Admin vê todos; delegado vê só os que
+  // recebeu. Só dentro do período (some sozinho quando a delegação encerra).
+  app.get("/api/delegations/customer-marks", authenticateUser, safe(async (req, res) => {
+    await ensureModuleTables();
+    const viewer = (req as any).currentUser;
+    const now = new Date();
+    const active = await db.select().from(delegations).where(and(
+      inArray(delegations.status, ["ativa", "agendada"]),
+      inArray(delegations.type, ["carteira_transferencia", "carteira_rateio"]),
+      lte(delegations.startsAt, now),
+      gte(delegations.endsAt, now),
+    ));
+    if (!active.length) return res.json({ ids: [] });
+    const dids = active.map((d) => d.id);
+    const rows = await db.select().from(delegationCustomers).where(inArray(delegationCustomers.delegationId, dids));
+    const isAdmin = viewer.role === "admin";
+    const set = new Set<string>();
+    for (const r of rows) { if (isAdmin || r.toUserId === viewer.id) set.add(r.customerId); }
+    res.json({ ids: [...set] });
   }));
 
   // GET: overrides salvos p/ um usuário (o front mescla sobre o padrão da função)
