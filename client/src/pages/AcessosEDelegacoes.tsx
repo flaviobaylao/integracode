@@ -18,6 +18,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { User } from "@shared/schema";
 
 // ---- Matriz de acessos por função (catálogo completo — mesma base do Layout.tsx) ----
@@ -239,9 +243,20 @@ export default function AcessosEDelegacoes() {
     setPermMap({ ...base, ...(savedPerms || {}) }); // override do salvo sobre o padrão
   }, [selUser?.id, savedPerms]);
 
+  // popups de confirmação (antes) e sucesso (depois) ao salvar acessos
+  const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
   const savePermsMut = useMutation({
     mutationFn: () => apiRequest("PUT", `/api/user-permissions/${selUser!.id}`, { permissions: permMap }),
-    onSuccess: () => toast({ title: "Acessos salvos", description: `Permissões de ${selUser?.firstName} atualizadas.` }),
+    onSuccess: () => {
+      setConfirmSaveOpen(false);
+      setSuccessOpen(true); // popup de sucesso
+      toast({ title: "Acessos atualizados", description: `As novas configurações de ${selUser?.firstName} estão vigentes.` });
+    },
+    onError: () => {
+      setConfirmSaveOpen(false);
+      toast({ title: "Erro ao salvar", description: "Não foi possível salvar os acessos. Tente novamente.", variant: "destructive" });
+    },
   });
   const toggleFlag = (label: string, cap: CapKey, val: boolean) => {
     setPermMap(prev => {
@@ -326,7 +341,7 @@ export default function AcessosEDelegacoes() {
               </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={resetPadrao}>Restaurar padrão</Button>
-                <Button size="sm" onClick={() => savePermsMut.mutate()} disabled={savePermsMut.isPending}>Salvar acessos</Button>
+                <Button size="sm" onClick={() => setConfirmSaveOpen(true)} disabled={savePermsMut.isPending}>Salvar acessos</Button>
               </div>
             </div>
             <div className="hidden md:grid w-fit grid-cols-[260px_repeat(5,58px)] items-end gap-0 py-2 bg-gray-50 rounded">
@@ -505,6 +520,40 @@ export default function AcessosEDelegacoes() {
           ))}
         </TabsContent>
       </Tabs>
+
+      {/* Popup 1: confirmação antes de salvar */}
+      <AlertDialog open={confirmSaveOpen} onOpenChange={setConfirmSaveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar alterações de acesso</AlertDialogTitle>
+            <AlertDialogDescription>
+              As permissões marcadas para <strong>{selUser?.firstName} {selUser?.lastName}</strong> ({ROLE_LABEL[selUser?.role||""]})
+              serão salvas e passarão a valer <strong>imediatamente</strong>. Deseja continuar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); savePermsMut.mutate(); }} disabled={savePermsMut.isPending}>
+              {savePermsMut.isPending ? "Salvando…" : "Confirmar e salvar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Popup 2: sucesso — configurações vigentes */}
+      <AlertDialog open={successOpen} onOpenChange={setSuccessOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle><i className="fas fa-circle-check text-green-500 mr-2" />Acessos atualizados</AlertDialogTitle>
+            <AlertDialogDescription>
+              As novas configurações de acesso de <strong>{selUser?.firstName} {selUser?.lastName}</strong> foram salvas e já estão <strong>vigentes</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setSuccessOpen(false)}>Entendi</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
