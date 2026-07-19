@@ -654,7 +654,7 @@ export default function AcessosEDelegacoes() {
           {(() => {
             const termo = buscaSob.trim().toLowerCase();
             const linhas = (sobDelegacao as any[])
-              .map((c) => ({ ...c, delegado: nomeUsuario(c.toUserId), titular: nomeUsuario(c.fromUserId) }))
+              .map((c) => ({ ...c, delegado: nomeUsuario(c.sellerAtualId || c.toUserId), titular: nomeUsuario(c.fromUserId) }))
               .filter((c) =>
                 !termo ||
                 (c.customerName || "").toLowerCase().includes(termo) ||
