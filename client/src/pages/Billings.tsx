@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2, FileText } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OmieInstanceBadge from '@/components/OmieInstanceBadge';
 import FiscalScenariosTab from '@/components/FiscalScenariosTab';
@@ -501,10 +501,10 @@ export default function Billings() {
     >
       <div className="flex items-center gap-1">
         {children}
-        {sortField === field && (
-          <span className="text-xs">
-            {sortDirection === 'asc' ? '↑' : '↓'}
-          </span>
+        {sortField === field ? (
+          sortDirection === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />
+        ) : (
+          <ArrowUpDown className="h-4 w-4 opacity-50" />
         )}
       </div>
     </TableHead>
