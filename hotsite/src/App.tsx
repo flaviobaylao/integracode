@@ -39,8 +39,7 @@ function HotsiteContent() {
   const [cardHolder, setCardHolder] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
-  const [cardInstallments, setCardInstallments] = useState(1);
-  const [cardMaxInst, setCardMaxInst] = useState(3);
+  const [cardInstallments] = useState(1);
   const [cardError, setCardError] = useState('');
   const [cardProcessing, setCardProcessing] = useState(false);
   const [cardPendingMsg, setCardPendingMsg] = useState('');
@@ -253,7 +252,6 @@ function HotsiteContent() {
         setCardError('');
         setCardPendingMsg('');
         setCardProcessing(false);
-        try { const cfgc = await api.getCardConfig(); setCardMaxInst(cfgc.maxInstallments || 3); } catch {}
         setView('card');
         return;
       }
@@ -290,7 +288,6 @@ function HotsiteContent() {
   // View: Pagamento com CARTÃO — o pedido só é registrado após aprovação da Cielo
   if (view === 'card' && cardOrder) {
     const totalCard = Number(cardOrder.totalAmount) || 0;
-    const instOptions = Array.from({ length: cardMaxInst }, (_, i) => i + 1);
     const fmtNum = (v: string) => v.replace(/\D/g, '').slice(0, 19).replace(/(\d{4})(?=\d)/g, '$1 ');
     const fmtExp = (v: string) => {
       const d = v.replace(/\D/g, '').slice(0, 4);
@@ -342,12 +339,6 @@ function HotsiteContent() {
                   <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-cvv" />
                 </div>
               </div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Parcelas</label>
-              <select value={cardInstallments} onChange={e => setCardInstallments(parseInt(e.target.value, 10) || 1)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base bg-white" data-testid="card-installments">
-                {instOptions.map(n => (
-                  <option key={n} value={n}>{n}x de R$ {(totalCard / n).toFixed(2)} sem juros</option>
-                ))}
-              </select>
               {cardError && (
                 <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">❌ {cardError}</div>
               )}
@@ -596,7 +587,7 @@ function HotsiteContent() {
               <HonestLogo size="xl" className="text-white mb-4" />
               <p className="text-sm opacity-90">
                 Sucos 100% naturais direto da fazenda para você.
-                Sem açúcar, sem conservantes, sem enrolação.
+                Sem açúcar, sem adição de conservantes, sem enrolação.
               </p>
             </div>
             <div>
