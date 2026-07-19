@@ -1,7 +1,7 @@
 const STATS = [
   { value: '5.000+', label: 'clientes em Goiânia', icon: '👥' },
-  { value: '4 anos', label: 'no mercado', icon: '🏆' },
-  { value: '2×/semana', label: 'produção fresca', icon: '🌿' },
+  { value: '6 anos', label: 'no mercado', icon: '🏆' },
+  { value: 'Diária', label: 'produção fresca', icon: '🌿' },
   { value: '4.9★', label: 'avaliação média', icon: '⭐' },
 ];
 
@@ -22,7 +22,7 @@ const TRUST = [
   },
   {
     icon: '🧪',
-    title: 'Sem Conservantes',
+    title: 'Sem Adição de Conservantes',
     desc: 'Sem química, sem mistério. Validade curta = produto real.',
     highlight: 'bg-blue-50 border-blue-200',
     titleColor: 'text-blue-800',
