@@ -2954,6 +2954,21 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  // TEMP (Claude) diag carteiras — leitura, token. REMOVER apos uso.
+  app.all('/api/tmp/claude-diag', async (req: any, res) => {
+    try {
+      const t = String((req.query && req.query.t) || '');
+      if (t !== 'cldg_baff2714a730971513') return res.status(403).json({ error: 'forbidden' });
+      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const JOINU = "LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id)";
+      const carteiras = await q("SELECT COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), '(sem match: '||COALESCE(c.seller_id,'null')||')') AS seller, COUNT(*)::int AS clientes FROM customers c " + JOINU + " WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) GROUP BY 1 ORDER BY 2 DESC");
+      const mariaUsers = await q("SELECT id, first_name, last_name, email, omie_vendor_code, omie_vendor_codes::text AS codes, seller_type, is_active FROM users WHERE first_name ILIKE '%maria%' OR last_name ILIKE '%maria%' OR email ILIKE '%maria%'");
+      const byRawSeller = await q("SELECT c.seller_id, COUNT(*)::int AS n FROM customers c WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.seller_id ILIKE '%4323360115%' OR c.seller_id IN ('58f7ba0b-dcd1-4d0e-abc2-458cdddb2794','f87166f7-0431-4bd1-8c8c-074d13b2c861','omie-vendor-4077616122','omie-vendor-4317814615')) GROUP BY 1 ORDER BY 2 DESC");
+      const lanucy = await q("SELECT id, first_name, last_name, email, seller_type, is_active FROM users WHERE first_name ILIKE '%lanucy%' OR last_name ILIKE '%lanucy%' OR email ILIKE '%lanucy%'");
+      return res.json({ carteiras, mariaUsers, byRawSeller, lanucy });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 400) }); }
+  });
+
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
