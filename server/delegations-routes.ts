@@ -384,11 +384,22 @@ export function registerDelegationRoutes(app: Express) {
     });
   }));
 
-  // Revoga (devolve carteira/acessos ao titular)
+  // Revoga: encerra a delegação e, se ela estava ATIVA (carteira já movida para
+  // os delegados), devolve os clientes ao titular imediatamente. Se estava só
+  // agendada (nada foi movido), apenas cancela.
   app.post("/api/delegations/:id/revoke", authenticateAdmin, safe(async (req, res) => {
+    const id = req.params.id;
+    const [d] = await db.select().from(delegations).where(eq(delegations.id, id));
+    if (d && d.status === "ativa" && d.fromUserId && d.type !== "acesso_funcao") {
+      const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, id));
+      for (const c of rows) {
+        try { await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId)); }
+        catch (e: any) { console.error("[acessos-delegacoes] revoke devolução falhou p/ cliente", c.customerId, e?.message); }
+      }
+    }
     await db.update(delegations)
       .set({ status: "revogada", revokedBy: (req as any).currentUser.id, revokedAt: new Date() })
-      .where(eq(delegations.id, req.params.id));
+      .where(eq(delegations.id, id));
     res.json({ ok: true });
   }));
 
