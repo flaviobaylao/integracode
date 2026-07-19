@@ -2954,6 +2954,26 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  // TEMP (Claude) contar/remover 'nao encontrado no sistema' (active_customers unmatched). token. REMOVER.
+  app.all('/api/tmp/claude-unm', async (req: any, res) => {
+    try {
+      const t = String((req.query && req.query.t) || '');
+      if (t !== 'clunm_37ef63e52a428b0f73') return res.status(403).json({ error: 'forbidden' });
+      const action = String((req.query && req.query.action) || 'count');
+      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      if (action === 'count') {
+        const byStatus = await q("SELECT match_status, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE is_active IS TRUE)::int AS ativos FROM active_customers GROUP BY 1 ORDER BY 2 DESC");
+        const sample = await q("SELECT document, fantasy_name_imported FROM active_customers WHERE match_status = 'unmatched' AND is_active IS TRUE ORDER BY updated_at DESC LIMIT 12");
+        return res.json({ byStatus, sampleUnmatched: sample });
+      }
+      if (action === 'remove') {
+        const r: any = await db.execute(sql.raw("UPDATE active_customers SET is_active = false, deactivated_at = now(), updated_at = now() WHERE is_active = true AND match_status = 'unmatched' RETURNING id"));
+        return res.json({ removed: r.rowCount != null ? r.rowCount : (r.rows ? r.rows.length : 0) });
+      }
+      return res.json({ hint: 'action=count|remove' });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
+  });
+
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
