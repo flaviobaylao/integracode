@@ -185,6 +185,8 @@ export default function AcessosEDelegacoes() {
   const { toast } = useToast();
   const { data: users = [] } = useQuery<User[]>({ queryKey: ["/api/users"] });
   const { data: delegs = [] } = useQuery<any[]>({ queryKey: ["/api/delegations"] });
+  const { data: sobDelegacao = [] } = useQuery<any[]>({ queryKey: ["/api/delegations/clientes-sob-delegacao"] });
+  const [buscaSob, setBuscaSob] = useState("");
 
   // Somente usuários ATIVOS (status "Ativo" em Gerenciamento de Usuários)
   const activeUsers = useMemo(() => users.filter(u => u.isActive), [users]);
@@ -361,6 +363,7 @@ export default function AcessosEDelegacoes() {
           <TabsTrigger value="carteira"><i className="fas fa-briefcase mr-2" />Delegar Carteira</TabsTrigger>
           <TabsTrigger value="acessos"><i className="fas fa-key mr-2" />Delegar Acessos &amp; Funções</TabsTrigger>
           <TabsTrigger value="ativas"><i className="fas fa-list-check mr-2" />Delegações Ativas</TabsTrigger>
+          <TabsTrigger value="sob-delegacao"><i className="fas fa-tag mr-2" />Clientes sob delegação</TabsTrigger>
         </TabsList>
 
         {/* ============ ACESSOS POR USUÁRIO ============ */}
@@ -626,6 +629,73 @@ export default function AcessosEDelegacoes() {
                   </div>
                 )}
               </>
+            );
+          })()}
+        </TabsContent>
+
+        {/* ============ CLIENTES SOB DELEGAÇÃO (lista filtrável, somente leitura) ============ */}
+        <TabsContent value="sob-delegacao" className="mt-4">
+          {(() => {
+            const termo = buscaSob.trim().toLowerCase();
+            const linhas = (sobDelegacao as any[])
+              .map((c) => ({ ...c, delegado: nomeUsuario(c.toUserId), titular: nomeUsuario(c.fromUserId) }))
+              .filter((c) =>
+                !termo ||
+                (c.customerName || "").toLowerCase().includes(termo) ||
+                (c.delegado || "").toLowerCase().includes(termo) ||
+                (c.titular || "").toLowerCase().includes(termo)
+              )
+              .sort((a, b) => (a.customerName || "").localeCompare(b.customerName || ""));
+            return (
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                  <h3 className="text-sm font-semibold text-gray-700">
+                    Clientes sob delegação <span className="text-gray-400">({linhas.length})</span>
+                  </h3>
+                  <input
+                    value={buscaSob}
+                    onChange={(e) => setBuscaSob(e.target.value)}
+                    placeholder="Filtrar por cliente, delegado ou titular…"
+                    className="border rounded px-3 py-1.5 text-sm w-72 max-w-full"
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mb-3">
+                  Marcação automática: o cliente aparece aqui enquanto está numa delegação vigente e sai sozinho quando ela encerra. Somente leitura.
+                </p>
+                {linhas.length === 0 && (
+                  <p className="text-sm text-gray-400">
+                    {sobDelegacao.length === 0 ? "Nenhum cliente sob delegação vigente no momento." : "Nenhum resultado para o filtro."}
+                  </p>
+                )}
+                {linhas.length > 0 && (
+                  <div className="border rounded overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-500 text-xs">
+                        <tr>
+                          <th className="text-left font-medium px-3 py-2">Cliente</th>
+                          <th className="text-left font-medium px-3 py-2">Delegado (carteira atual)</th>
+                          <th className="text-left font-medium px-3 py-2">Titular</th>
+                          <th className="text-left font-medium px-3 py-2">Devolve em</th>
+                          <th className="text-left font-medium px-3 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {linhas.map((c, i) => (
+                          <tr key={c.customerId + i} className="border-t">
+                            <td className="px-3 py-2">{c.customerName}</td>
+                            <td className="px-3 py-2">{c.delegado}</td>
+                            <td className="px-3 py-2 text-gray-500">{c.titular}</td>
+                            <td className="px-3 py-2 text-gray-500">{c.endsAt ? fmtDT(c.endsAt) : "—"}</td>
+                            <td className="px-3 py-2">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 whitespace-nowrap">sob delegação</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             );
           })()}
         </TabsContent>
