@@ -1,4 +1,4 @@
-import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
+import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 import { useState, useRef, useEffect, Fragment } from "react";
 import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -207,7 +207,6 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
-  const [sortAZ, setSortAZ] = useState(false);
   const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -217,7 +216,7 @@ export default function ActiveCustomers() {
   const [selectedPhone, setSelectedPhone] = useState<string>("");
   const [selectedCity, setSelectedCity] = useState<string>("");
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>("");
-  const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | null>(null);
+  const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showCardModal, setShowCardModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -864,12 +863,12 @@ export default function ActiveCustomers() {
   };
 
   // Função para alternar ordenação
-  const handleSort = (column: 'previousMonth' | 'currentMonth' | 'variation') => {
+  const handleSort = (column: 'previousMonth' | 'currentMonth' | 'variation' | 'name') => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
-      setSortDirection('desc');
+      setSortDirection(column === 'name' ? 'asc' : 'desc');
     }
   };
 
@@ -927,9 +926,16 @@ export default function ActiveCustomers() {
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
-      
+
+      if (sortColumn === 'name') {
+        const an = String(a.customer?.fantasyName || a.customer?.name || a.fantasyNameImported || '');
+        const bn = String(b.customer?.fantasyName || b.customer?.name || b.fantasyNameImported || '');
+        const cmp = an.localeCompare(bn, 'pt-BR', { sensitivity: 'base' });
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+
       let aValue: number, bValue: number;
-      
+
       if (sortColumn === 'previousMonth') {
         aValue = a.previousMonthTotal || 0;
         bValue = b.previousMonthTotal || 0;
@@ -946,7 +952,6 @@ export default function ActiveCustomers() {
       }
       return bValue - aValue;
     });
-  if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.customer?.fantasyName || a.customer?.name || a.fantasyNameImported || '').localeCompare(String(b.customer?.fantasyName || b.customer?.name || b.fantasyNameImported || '')));
 
   const selectableIds = filteredCustomers.map((ac: any) => ac.customer?.id).filter(Boolean) as string[];
   const allCustomersSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedCustomerIds.has(id));
@@ -1246,9 +1251,7 @@ export default function ActiveCustomers() {
               <Filter className="h-4 w-4 text-muted-foreground" />
               
               <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-active" />
-              <Button variant="outline" size="sm" className="h-9" onClick={() => setSortAZ(!sortAZ)} data-testid="sort-az-active">{sortAZ ? "A-Z: ligado" : "Ordenar A-Z"}</Button>
-              <ExportExcelButton testId="export-active" onClick={() => exportToExcel(filteredCustomers.map((ac: any) => ({ Nome: ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "", Documento: ac.document, Telefone: ac.customer?.phone, Vendedor: resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId), Cidade: ac.customer?.city, Bairro: ac.customer?.neighborhood, Periodicidade: ac.customer?.visitPeriodicity, MesAnterior: Number(ac.previousMonthTotal || 0), MesAtual: Number(ac.currentMonthTotal || 0) })), "clientes-ativos")} />
-              
+
               <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
                 <SelectTrigger className="w-[100px] h-9" data-testid="select-day-filter">
                   <SelectValue placeholder="Dia" />
@@ -1462,7 +1465,20 @@ export default function ActiveCustomers() {
                         <TableHead className="w-8"><Checkbox checked={allCustomersSelected} onCheckedChange={toggleSelectAllCustomers} aria-label="Selecionar todos" /></TableHead>
                         <TableHead className="min-w-[60px]">Status</TableHead>
                         <TableHead className="min-w-[120px]">CPF/CNPJ</TableHead>
-                        <TableHead className="min-w-[180px]">Nome</TableHead>
+                        <TableHead className="min-w-[180px]">
+                          <button
+                            onClick={() => handleSort('name')}
+                            className="flex items-center gap-1 hover:text-primary transition-colors"
+                            data-testid="sort-name"
+                          >
+                            Nome
+                            {sortColumn === 'name' ? (
+                              sortDirection === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
+                            ) : (
+                              <ArrowUpDown className="h-4 w-4 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
                         <TableHead className="min-w-[120px]">Telefone</TableHead>
                         <TableHead>Vendedor</TableHead>
                         <TableHead>Tipo</TableHead>
