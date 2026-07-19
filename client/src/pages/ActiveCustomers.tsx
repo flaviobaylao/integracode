@@ -988,6 +988,24 @@ export default function ActiveCustomers() {
     onError: (e: any) => { toast({ title: "Erro na edição em massa", description: e?.message || String(e), variant: "destructive" }); },
   });
 
+  const bulkInactivateMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedCustomerIds);
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
+      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+    },
+    onSuccess: (res: any) => {
+      const extra: string[] = [];
+      if (res.alreadyInactive) extra.push(`${res.alreadyInactive} já estavam inativos`);
+      if (res.deletedCards) extra.push(`${res.deletedCards} agendamento(s) futuro(s) removido(s)`);
+      toast({ title: "Inativação em massa concluída", description: `${res.inactivated ?? 0} cliente(s) inativado(s)${extra.length ? ' · ' + extra.join(' · ') : ''}.` });
+      setSelectedCustomerIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+    },
+    onError: (e: any) => { toast({ title: "Erro na inativação em massa", description: e?.message || String(e), variant: "destructive" }); },
+  });
+
   const formatDocument = (doc: string, type: string) => {
     if (type === "cpf" && doc.length === 11) {
       return `${doc.slice(0, 3)}.${doc.slice(3, 6)}.${doc.slice(6, 9)}-${doc.slice(9)}`;
@@ -1375,6 +1393,17 @@ export default function ActiveCustomers() {
               {selectedCustomerIds.size > 0 && (
                 <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white h-9" onClick={() => setShowBulkModal(true)} data-testid="button-bulk-edit">
                   ✏️ Editar em massa ({selectedCustomerIds.size})
+                </Button>
+              )}
+              {selectedCustomerIds.size > 0 && (
+                <Button
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-700 text-white h-9"
+                  onClick={() => { if (window.confirm(`Inativar ${selectedCustomerIds.size} cliente(s) selecionado(s)?\n\nEles sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos.`)) bulkInactivateMutation.mutate(); }}
+                  disabled={bulkInactivateMutation.isPending}
+                  data-testid="button-bulk-inactivate"
+                >
+                  🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
               {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || selectedCity || selectedNeighborhood) && (
