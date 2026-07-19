@@ -234,6 +234,12 @@ export default function AcessosEDelegacoes() {
       toast({ title: "Delegação revogada", description: "Carteira/acessos devolvidos ao titular." }); },
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/delegations/${id}`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/delegations"] });
+      toast({ title: "Delegação excluída", description: "Registro removido definitivamente." }); },
+  });
+
   const criarCarteira = () => {
     if (!fromUserId || !targets.length || !ini || !fim)
       return toast({ title: "Campos incompletos", variant: "destructive" });
@@ -241,6 +247,8 @@ export default function AcessosEDelegacoes() {
       type: modo === "transferencia" ? "carteira_transferencia" : "carteira_rateio",
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
       startsAt: new Date(ini), endsAt: new Date(fim), autoReturn: true,
+    }, {
+      onSuccess: () => { setFromUserId(""); setTargets([]); setIni(""); setFim(""); }, // limpa o formulário
     });
   };
 
@@ -257,6 +265,8 @@ export default function AcessosEDelegacoes() {
     createMut.mutate({
       type: "acesso_funcao", originRole: role, accesses: accSel, targets: [toUserAc],
       criteria: "nenhum", startsAt: new Date(acIni), endsAt: new Date(acFim), autoReturn: true,
+    }, {
+      onSuccess: () => { setAccSel([]); setToUserAc(""); setAcIni(""); setAcFim(""); }, // limpa o formulário
     });
   };
 
@@ -562,8 +572,11 @@ export default function AcessosEDelegacoes() {
                     </div>
                     <div className="text-right shrink-0">
                       {(d.status === "ativa" || d.status === "agendada") &&
-                        <div className="text-xs font-semibold text-amber-600 whitespace-nowrap"><i className="fas fa-hourglass-half mr-1" />{restanteStr(d.endsAt)}</div>}
-                      <Button size="sm" variant="ghost" className="text-red-500 mt-1" onClick={() => revokeMut.mutate(d.id)} disabled={revokeMut.isPending}>Revogar</Button>
+                        <div className="text-xs font-semibold text-amber-600 whitespace-nowrap"><i className="fas fa-hourglass-half mr-1" />{d.status === "agendada" ? "inicia em breve · " : ""}{restanteStr(d.endsAt)}</div>}
+                      <div className="flex gap-1 justify-end mt-1">
+                        <Button size="sm" variant="ghost" className="text-red-500" onClick={() => revokeMut.mutate(d.id)} disabled={revokeMut.isPending} title="Devolve a carteira ao titular">Revogar</Button>
+                        <Button size="sm" variant="ghost" className="text-gray-400" onClick={() => { if (confirm("Excluir este registro de delegação definitivamente? (não devolve carteira)")) deleteMut.mutate(d.id); }} disabled={deleteMut.isPending} title="Excluir registro">Excluir</Button>
+                      </div>
                     </div>
                   </div>
                   <div className="text-xs text-gray-500 mt-2">
@@ -600,7 +613,13 @@ export default function AcessosEDelegacoes() {
                       {historico.map((d: any) => (
                         <div key={d.id} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-2">
                           <span><span className="text-gray-400">{STATUS_META[d.status]?.label || d.status}</span> · {TIPO_LABEL[d.type] || d.type} · {nomeUsuario(d.fromUserId)}</span>
-                          <span className="text-gray-400">{fmtDT(d.endsAt)}</span>
+                          <span className="flex items-center gap-3">
+                            <span className="text-gray-400">{fmtDT(d.endsAt)}</span>
+                            <button className="text-gray-400 hover:text-red-500" title="Excluir registro"
+                              onClick={() => { if (confirm("Excluir este registro do histórico definitivamente?")) deleteMut.mutate(d.id); }}>
+                              <i className="fas fa-trash-can" />
+                            </button>
+                          </span>
                         </div>
                       ))}
                     </div>
