@@ -2101,7 +2101,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   app.get('/api/admin/agente-runtime', async (_req, res) => {
     try {
       const get = async (k: string, d: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key=${k} LIMIT 1`); const v = r.rows?.[0]?.value; return v == null ? d : String(v).replace(/^"|"$/g, ''); };
-      res.json({ mode: await get('agents_runtime_mode', 'off'), defaultAgent: await get('agents_default', 'sdr'), testNumbers: await get('agents_test_numbers', '5562995782812'), hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY });
+      res.json({ mode: await get('agents_runtime_mode', 'off'), defaultAgent: await get('agents_default', 'sdr'), testNumbers: await get('agents_test_numbers', '5562995782812'), igMode: await get('agents_ig_mode', 'off'), igTestHandles: await get('agents_ig_test_handles', ''), hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
   app.post('/api/admin/agente-runtime', async (req: any, res) => {
@@ -2111,6 +2111,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       if (b.mode != null) { if (!['off','test','on'].includes(b.mode)) return res.status(400).json({ error: 'mode invalido' }); await setK('agents_runtime_mode', b.mode); }
       if (b.defaultAgent != null) await setK('agents_default', String(b.defaultAgent));
       if (b.testNumbers != null) await setK('agents_test_numbers', String(b.testNumbers));
+      if (b.igMode != null) { if (!['off','test','on'].includes(b.igMode)) return res.status(400).json({ error: 'igMode invalido' }); await setK('agents_ig_mode', b.igMode); }
+      if (b.igTestHandles != null) await setK('agents_ig_test_handles', String(b.igTestHandles));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
@@ -2834,6 +2836,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   async function ensureAgentesTables() {
     await db.execute(sql`CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS agentes_config (id text PRIMARY KEY, nome text NOT NULL, modelo text NOT NULL, system_prompt text NOT NULL, ferramentas jsonb NOT NULL DEFAULT '[]'::jsonb, limites jsonb NOT NULL DEFAULT '{}'::jsonb, ativo boolean NOT NULL DEFAULT true, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())`);
+    await db.execute(sql`ALTER TABLE agentes_config ADD COLUMN IF NOT EXISTS base_conhecimento text NOT NULL DEFAULT ''`);
   }
   app.post("/api/admin/agentes/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { await ensureAgentesTables(); res.json({ ok: true }); }
@@ -2843,7 +2846,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try {
       await ensureAgentesTables();
       const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
-      const ags = await db.execute(sql`SELECT id, nome, modelo, system_prompt, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
+      const ags = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
       res.json({ baseComum: (base.rows[0] && (base.rows[0] as any).valor) || null, agentes: ags.rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
@@ -2855,7 +2858,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const row: any = ag.rows[0];
       if (!row) return res.status(404).json({ error: "agente nao encontrado" });
       const baseComum = (base.rows[0] && (base.rows[0] as any).valor) || "";
-      res.json(Object.assign({}, row, { system_prompt_efetivo: baseComum + "\n\n" + row.system_prompt }));
+      const kb = (row.base_conhecimento || "").trim();
+      res.json(Object.assign({}, row, { system_prompt_efetivo: (baseComum ? baseComum + "\n\n" : "") + (kb ? "# BASE DE CONHECIMENTO\n" + kb + "\n\n" : "") + row.system_prompt }));
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
   app.post("/api/admin/agentes/upsert", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
@@ -2863,7 +2867,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       await ensureAgentesTables();
       const b = req.body || {};
       if (!b.id || !b.nome || !b.modelo || !b.system_prompt) return res.status(400).json({ error: "id, nome, modelo, system_prompt obrigatorios" });
-      await db.execute(sql`INSERT INTO agentes_config (id, nome, modelo, system_prompt, ferramentas, limites, ativo) VALUES (${b.id}, ${b.nome}, ${b.modelo}, ${b.system_prompt}, ${JSON.stringify(b.ferramentas || [])}::jsonb, ${JSON.stringify(b.limites || {})}::jsonb, ${b.ativo !== false}) ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome, modelo = EXCLUDED.modelo, system_prompt = EXCLUDED.system_prompt, ferramentas = EXCLUDED.ferramentas, limites = EXCLUDED.limites, ativo = EXCLUDED.ativo, updated_at = now()`);
+      await db.execute(sql`INSERT INTO agentes_config (id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo) VALUES (${b.id}, ${b.nome}, ${b.modelo}, ${b.system_prompt}, ${String(b.base_conhecimento || '')}, ${JSON.stringify(b.ferramentas || [])}::jsonb, ${JSON.stringify(b.limites || {})}::jsonb, ${b.ativo !== false}) ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome, modelo = EXCLUDED.modelo, system_prompt = EXCLUDED.system_prompt, base_conhecimento = EXCLUDED.base_conhecimento, ferramentas = EXCLUDED.ferramentas, limites = EXCLUDED.limites, ativo = EXCLUDED.ativo, updated_at = now()`);
       res.json({ ok: true, id: b.id });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
