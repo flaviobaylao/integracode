@@ -187,6 +187,7 @@ export default function AcessosEDelegacoes() {
   const { data: delegs = [] } = useQuery<any[]>({ queryKey: ["/api/delegations"] });
   const { data: sobDelegacao = [] } = useQuery<any[]>({ queryKey: ["/api/delegations/clientes-sob-delegacao"] });
   const [buscaSob, setBuscaSob] = useState("");
+  const [buscaUser, setBuscaUser] = useState("");
 
   // Somente usuários ATIVOS (status "Ativo" em Gerenciamento de Usuários)
   const activeUsers = useMemo(() => users.filter(u => u.isActive), [users]);
@@ -370,15 +371,30 @@ export default function AcessosEDelegacoes() {
         <TabsContent value="usuarios" className="grid lg:grid-cols-[300px_1fr] gap-6 mt-4">
           <Card className="p-4">
             <h3 className="font-bold mb-2">Usuários ativos</h3>
-            <div className="space-y-1 max-h-[560px] overflow-y-auto">
-              {activeUsers.map(u => (
-                <button key={u.id} onClick={() => setSelUserId(u.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg border ${selUser?.id===u.id?"border-indigo-400 bg-indigo-50":"border-transparent hover:bg-gray-50"}`}>
-                  <div className="text-sm font-semibold text-gray-800">{u.firstName} {u.lastName}</div>
-                  <div className="text-[11px] text-gray-500">{ROLE_LABEL[u.role||""]}</div>
-                </button>
-              ))}
-            </div>
+            <input
+              value={buscaUser}
+              onChange={(e) => setBuscaUser(e.target.value)}
+              placeholder="Buscar usuário…"
+              className="w-full border rounded px-3 py-1.5 text-sm mb-2"
+            />
+            {(() => {
+              const q = buscaUser.trim().toLowerCase();
+              const lista = activeUsers.filter(u =>
+                !q || `${u.firstName || ""} ${u.lastName || ""} ${ROLE_LABEL[u.role || ""] || ""}`.toLowerCase().includes(q)
+              );
+              return (
+                <div className="space-y-1 max-h-[560px] overflow-y-auto">
+                  {lista.length === 0 && <p className="text-xs text-gray-400 px-1 py-2">Nenhum usuário encontrado.</p>}
+                  {lista.map(u => (
+                    <button key={u.id} onClick={() => setSelUserId(u.id)}
+                      className={`w-full text-left px-3 py-2 rounded-lg border ${selUser?.id===u.id?"border-indigo-400 bg-indigo-50":"border-transparent hover:bg-gray-50"}`}>
+                      <div className="text-sm font-semibold text-gray-800">{u.firstName} {u.lastName}</div>
+                      <div className="text-[11px] text-gray-500">{ROLE_LABEL[u.role||""]}</div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </Card>
 
           <Card className="p-5">
