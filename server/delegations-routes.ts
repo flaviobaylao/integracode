@@ -192,14 +192,52 @@ export async function runDelegationReturns(): Promise<void> {
   }
 }
 
+// Ativação: quando a delegação entra no período (agendada -> ativa), MOVE a
+// carteira para os delegados (customers.sellerId = destinatário). Roda uma vez
+// por delegação (a transição de status impede repetir).
+export async function runDelegationActivations(): Promise<void> {
+  try {
+    const now = new Date();
+    const due = await db.select().from(delegations).where(and(
+      eq(delegations.status, "agendada"),
+      inArray(delegations.type, ["carteira_transferencia", "carteira_rateio"]),
+      lte(delegations.startsAt, now),
+      gte(delegations.endsAt, now),
+    ));
+    for (const d of due) {
+      const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, d.id));
+      let ok = 0, fail = 0;
+      for (const c of rows) {
+        try {
+          await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
+          ok++;
+        } catch (e: any) {
+          fail++;
+          console.error("[acessos-delegacoes] ativação falhou p/ cliente", c.customerId, e?.message);
+        }
+      }
+      await db.update(delegations).set({ status: "ativa", updatedAt: now }).where(eq(delegations.id, d.id));
+      console.log(`[acessos-delegacoes] ativação delegação ${d.id}: ${ok} movidos p/ delegados, ${fail} falhas`);
+    }
+  } catch (e: any) {
+    console.error("[acessos-delegacoes] runDelegationActivations:", e?.message);
+  }
+}
+
+// tick combinado: ativa as que entraram no período e devolve as que expiraram
+export async function tickDelegationCarteiras(): Promise<void> {
+  await runDelegationActivations();
+  await runDelegationReturns();
+}
+
 // agendador: roda o executor logo após o boot e a cada 15 minutos (guardado p/ não duplicar)
 export function startAutoReturnScheduler(): void {
   const g = globalThis as any;
   if (g.__delegAutoReturnStarted) return;
   g.__delegAutoReturnStarted = true;
-  setTimeout(() => { void ensureModuleTables().then(runDelegationReturns); }, 20_000);
-  setInterval(() => { void runDelegationReturns(); }, 15 * 60 * 1000);
-  console.log("[acessos-delegacoes] agendador de devolução automática iniciado (a cada 15 min).");
+  setTimeout(() => { void ensureModuleTables().then(tickDelegationCarteiras); }, 20_000);
+  setInterval(() => { void tickDelegationCarteiras(); }, 15 * 60 * 1000);
+  console.log("[acessos-delegacoes] agendador de carteiras iniciado (ativa no início, devolve no fim; a cada 15 min).");
 }
 
 export function registerDelegationRoutes(app: Express) {
@@ -270,6 +308,16 @@ export function registerDelegationRoutes(app: Express) {
           await db.insert(delegationCustomers).values(
             r.cs.map((c) => ({ delegationId: deleg.id, customerId: c.id, toUserId: r.toUserId }))
           );
+      }
+    }
+
+    // Se a delegação JÁ está no período, move a carteira para os delegados agora.
+    // (Se for agendada p/ o futuro, o agendador move quando começar.)
+    if (b.type !== "acesso_funcao" && starts <= new Date()) {
+      const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, deleg.id));
+      for (const c of rows) {
+        try { await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId)); }
+        catch (e: any) { console.error("[acessos-delegacoes] move imediato falhou p/ cliente", c.customerId, e?.message); }
       }
     }
     res.status(201).json(deleg);
@@ -344,9 +392,9 @@ export function registerDelegationRoutes(app: Express) {
     res.json({ ok: true });
   }));
 
-  // Executa a devolução AGORA (manual), respeitando o mesmo executor idempotente
+  // Executa o tick AGORA (manual): ativa as que começaram e devolve as que expiraram
   app.post("/api/delegations/run-returns", authenticateAdmin, safe(async (_req, res) => {
-    await runDelegationReturns();
+    await tickDelegationCarteiras();
     res.json({ ok: true });
   }));
 
