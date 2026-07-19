@@ -16,7 +16,7 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp
+  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -34,6 +34,8 @@ interface BillingPipelineItem {
   saleValue: string | null;
   fiscalStatus?: string | null;
   fiscalError?: string | null;
+  source?: string | null;
+  paidOnline?: boolean;
   paymentMethod: string | null;
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
@@ -1495,6 +1497,18 @@ function KanbanCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          {item.source === 'hotsite' && (
+            <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-700 bg-orange-50" title="Pedido recebido pelo Hotsite (loja online)">
+              <Globe className="h-2.5 w-2.5 mr-0.5" />
+              HOTSITE
+            </Badge>
+          )}
+          {item.paidOnline && (
+            <Badge variant="outline" className="text-[10px] border-green-400 text-green-700 bg-green-100 font-semibold" title="Pagamento confirmado na loja (cartão/Google Pay/PIX)">
+              <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+              Pago
+            </Badge>
+          )}
           {stage.key === 'agendado' && item.scheduledBillingDate && (
             <Badge variant="outline" className="text-[10px] border-cyan-300 text-cyan-800 bg-cyan-50">
               <Clock className="h-2.5 w-2.5 mr-0.5" />
