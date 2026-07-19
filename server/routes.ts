@@ -21598,8 +21598,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //   - operação = VENDA (Troca/Amostra/Devolução/etc. contam só como atendimento, não pedido;
       //     legado sem operation_type é tratado como venda)
       //   - AGENDADO para o dia da rota: scheduled_date (America/Sao_Paulo) = routeDate
-      //     (usar SÓ scheduled_date: completed/attendance de outras datas trazia cards duplicados de
-      //      cadeias de recorrência, inflando o valor).
+      //     (evita cards duplicados de cadeias de recorrência).
+      //   - CONCLUÍDO NO DIA DA ROTA: completed_date (America/Sao_Paulo) = routeDate.
+      //     Sem isso, cards "permanentes" já concluídos no passado (scheduled_date deprecated/dinâmico
+      //     que cai no dia da rota) vazavam como "pedido do dia" — inclusive em rotas FUTURAS, que não
+      //     têm venda nenhuma. A conclusão real grava completed_date = data da venda, então a venda
+      //     concluída em outro dia (ou inexistente, no futuro) não conta mais aqui.
       //   - DISTINCT ON (customer_id): 1 card por cliente (o de maior valor), evita duplicatas.
       // Só adiciona clientes que NÃO têm pedido no billing (billing tem prioridade; evita dobrar valor).
       const scOrdersResult = await db.execute(sql`
@@ -21609,6 +21613,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND COALESCE(sale_value::numeric, 0) > 0
           AND status = 'completed'
           AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
+          AND completed_date IS NOT NULL
+          AND DATE(completed_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
           AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
         ORDER BY customer_id, sale_value::numeric DESC
       `);
