@@ -3181,6 +3181,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🚫 Inativação em massa (admin/coordenador/administrativo). Mesma semântica da individual:
+  // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
+  app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
+      const result = await storage.bulkInactivateCustomers(ids.map((x: any) => String(x)));
+      // 📜 Auditoria: registra "Ativo: Sim → Não" para os que estavam ativos
+      const u = req.currentUser;
+      const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
+      for (const cid of (result.inactivatedIds || [])) {
+        try { await logCustomerChanges({ customerId: cid, before: { isActive: true }, changes: { isActive: false }, actor, source: 'bulk' }); } catch (_e) {}
+      }
+      res.json({ ok: true, ...result });
+    } catch (error: any) {
+      console.error("Error bulk inactivating customers:", error);
+      res.status(500).json({ message: "Falha na inativação em massa: " + String(error?.message || error) });
+    }
+  });
+
   // 📜 Histórico das últimas alterações de um cliente (rezoneamento, periodicidade, etc.)
   app.get('/api/customers/:id/change-history', authenticateUser, async (req: any, res) => {
     try {
