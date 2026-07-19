@@ -218,6 +218,8 @@ export default function BillingPipeline() {
   });
 
   const isFlavio = (currentUser as any)?.email === 'flavio@bebahonest.com.br';
+  // REGRA (Flavio): trocar o vendedor de um pedido so admin (role) + 3 admins + Lanucy.
+  const canEditSeller = String((currentUser as any)?.role || '') === 'admin' || ['cinthiamarque90@gmail.com','flaviobaylao@gmail.com','flavio@bebahonest.com.br','lanucy@bebahonest.com.br'].includes(String((currentUser as any)?.email || '').toLowerCase());
   // Bloqueio manual de pedido: apenas os 3 admins (mesma lista da Rota do Dia).
   const canBlockOrders = ['cinthiamarque90@gmail.com', 'flaviobaylao@gmail.com', 'flavio@bebahonest.com.br']
     .includes(String((currentUser as any)?.email || '').toLowerCase());
@@ -1083,7 +1085,7 @@ export default function BillingPipeline() {
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
-                    {editMode ? (
+                    {editMode && canEditSeller ? (
                       <select value={editData?.sellerId ?? ''} onChange={(e) => { const u = (usersList as any[]).find((x) => x.id === e.target.value); setEditData((d: any) => ({ ...d, sellerId: e.target.value, sellerName: u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : d.sellerName })); }} className="w-full border rounded px-2 py-1 text-sm">
                         <option value="">{editData?.sellerName || '-'}</option>
                         {(usersList as any[]).filter((u) => u.isActive).map((u) => (<option key={u.id} value={u.id}>{`${u.firstName || ''} ${u.lastName || ''}`.trim()}</option>))}
