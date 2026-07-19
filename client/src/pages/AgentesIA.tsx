@@ -14,6 +14,7 @@ type Agente = {
   nome: string;
   modelo: string;
   system_prompt?: string;
+  base_conhecimento?: string;
   ferramentas: string[];
   limites: Record<string, any>;
   ativo: boolean;
@@ -85,6 +86,7 @@ function AgenteEditor({
         nome: a.nome,
         modelo: a.modelo,
         system_prompt: a.system_prompt,
+        base_conhecimento: a.base_conhecimento || "",
         ferramentas,
         limites,
         ativo: a.ativo,
@@ -174,6 +176,19 @@ function AgenteEditor({
             value={ferramentasTxt}
             onChange={(e) => setFerramentasTxt(e.target.value)}
           />
+        </div>
+
+        <div>
+          <Label className="text-sm">Base de Conhecimento (fatos da Honest — produtos, sabores, preços de referência, região/entrega, como virar revenda, FAQs)</Label>
+          <Textarea
+            rows={14}
+            placeholder="Ex.: A Honest é uma fábrica de sucos em Goiânia-GO. Sabores: ... Onde comprar: ... Entrega: atendemos ... Revenda: pedido mínimo ... FAQ: ..."
+            value={a.base_conhecimento || ""}
+            onChange={(e) => setA({ ...a, base_conhecimento: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            O agente responde <b>só</b> com o que estiver aqui + na Base Comum. Se faltar, ele oferece transferir para uma pessoa. Salva no banco (sem deploy).
+          </p>
         </div>
 
         <div>
