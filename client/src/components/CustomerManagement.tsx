@@ -79,6 +79,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 
 export default function CustomerManagement() {
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
   const [showOmieImport, setShowOmieImport] = useState(false);
   const [showOmieSync, setShowOmieSync] = useState(false);
@@ -122,6 +123,23 @@ export default function CustomerManagement() {
   });
 
   const isAdmin = user?.role === 'admin';
+
+  const bulkInactivateMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedIds);
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
+      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+    },
+    onSuccess: (res: any) => {
+      const extra: string[] = [];
+      if (res.alreadyInactive) extra.push(`${res.alreadyInactive} já estavam inativos`);
+      if (res.deletedCards) extra.push(`${res.deletedCards} agendamento(s) futuro(s) removido(s)`);
+      toast({ title: "Inativação em massa concluída", description: `${res.inactivated ?? 0} cliente(s) inativado(s)${extra.length ? ' · ' + extra.join(' · ') : ''}.` });
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+    },
+    onError: (e: any) => { toast({ title: "Erro na inativação em massa", description: e?.message || String(e), variant: "destructive" }); },
+  });
 
   const deleteCustomerMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -273,6 +291,10 @@ export default function CustomerManagement() {
     return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone && matchesCoords;
   }) || [];
   if (sortAZ) filteredCustomers.sort((a: any, b: any) => String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || '')));
+  const selectableIds = filteredCustomers.map((c: any) => c.id).filter(Boolean) as string[];
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  const toggleSelect = (id?: string) => { if (!id) return; setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
+  const toggleSelectAll = () => { setSelectedIds((prev) => { if (selectableIds.length > 0 && selectableIds.every((id) => prev.has(id))) return new Set(); return new Set(selectableIds); }); };
   const segmentFilterOptions = [
     ...(Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b))) as string[]),
     ...((customers || []).some((c: any) => !c.segmentoPrincipal) ? ['(Sem segmento)'] : []),
@@ -556,6 +578,17 @@ export default function CustomerManagement() {
             <div className="text-sm text-gray-600 flex items-center ml-1">
               {filteredCustomers.length} cliente(s)
             </div>
+            {selectedIds.size > 0 && (
+              <Button
+                size="sm"
+                className="bg-red-600 hover:bg-red-700 text-white h-9 ml-1"
+                onClick={() => { if (window.confirm(`Inativar ${selectedIds.size} cliente(s) selecionado(s)?\n\nEles ficarão inativos, sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos.`)) bulkInactivateMutation.mutate(); }}
+                disabled={bulkInactivateMutation.isPending}
+                data-testid="button-bulk-inactivate"
+              >
+                🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedIds.size})`}
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -567,6 +600,9 @@ export default function CustomerManagement() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-4 text-left w-8">
+                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="Selecionar todos" data-testid="checkbox-select-all" />
+                  </th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Nome Fantasia</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Dias da Semana</th>
@@ -582,6 +618,9 @@ export default function CustomerManagement() {
                   filteredCustomers.map((customer: CustomerWithSeller) => (
                     <Fragment key={customer.id}>
                     <tr className="hover:bg-gray-50">
+                      <td className="px-4 py-4 w-8">
+                        <input type="checkbox" checked={selectedIds.has(customer.id)} onChange={() => toggleSelect(customer.id)} aria-label="Selecionar cliente" data-testid={`checkbox-select-${customer.id}`} />
+                      </td>
                       <td className="px-6 py-4">
                         <div>
                           <button
@@ -708,7 +747,7 @@ export default function CustomerManagement() {
                     </tr>
                     {historyOpenId === customer.id && (
                       <tr className="bg-gray-50">
-                        <td colSpan={8} className="px-6 py-1">
+                        <td colSpan={9} className="px-6 py-1">
                           <CustomerHistoryBox customerId={customer.id} />
                         </td>
                       </tr>
@@ -717,7 +756,7 @@ export default function CustomerManagement() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={9} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
                     </td>
                   </tr>
