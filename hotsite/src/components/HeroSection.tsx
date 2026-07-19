@@ -13,11 +13,11 @@ export default function HeroSection() {
   useEffect(() => {
     const day = new Date().getDay(); // 0=Sun … 6=Sat
     if (day === 1 || day === 2) {
-      setUrgency('🔥 Novo lote disponível esta semana — quantidade limitada!');
+      setUrgency('🔥 Produção fresca todo dia — peça agora, entrega em até 48h!');
     } else if (day === 3 || day === 4) {
-      setUrgency('⚡ Últimas unidades do lote desta semana!');
+      setUrgency('⚡ Sucos produzidos hoje — quantidade do dia é limitada!');
     } else {
-      setUrgency('🌱 Próximo lote fresco chega na segunda-feira!');
+      setUrgency('🌱 Produção diária, sempre fresco — direto da fazenda pra você!');
     }
   }, []);
 
