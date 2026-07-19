@@ -603,7 +603,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       />
                       <div className="flex-1">
                         <div className="font-semibold">Cartão de Crédito/Débito</div>
-                        <div className="text-sm text-gray-600">Parcelamento disponível</div>
+                        <div className="text-sm text-gray-600">Pagamento à vista</div>
                       </div>
                       <span className="text-2xl">💳</span>
                     </label>
