@@ -11,7 +11,7 @@
 //   3) Delegar Acessos      — delegar acessos de uma função por período
 //   4) Delegações Ativas
 // =============================================================================
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -109,6 +109,30 @@ const ROLE_LABEL: Record<string,string> = {
 const acessosDaFuncao = (role: string) => ACCESS_MATRIX.filter(a => a[2].includes(role));
 const fmtBRL = (n: number) => n.toLocaleString("pt-BR", { style:"currency", currency:"BRL", maximumFractionDigits:0 });
 
+// ---- rótulos / helpers da aba "Delegações Ativas" ----------------------------
+const TIPO_LABEL: Record<string,string> = {
+  carteira_transferencia: "Transferência de carteira",
+  carteira_rateio: "Rateio de carteira",
+  acesso_funcao: "Delegação de acessos",
+};
+const STATUS_META: Record<string,{label:string,cls:string}> = {
+  ativa:    { label:"Ativa",    cls:"bg-green-100 text-green-700" },
+  agendada: { label:"Agendada", cls:"bg-blue-100 text-blue-700" },
+  expirada: { label:"Expirada", cls:"bg-gray-100 text-gray-500" },
+  revogada: { label:"Revogada", cls:"bg-red-100 text-red-600" },
+};
+function restanteStr(endsAt: string) {
+  const ms = new Date(endsAt).getTime() - Date.now();
+  if (ms <= 0) return "encerrada";
+  const d = Math.floor(ms/86400000), h = Math.floor((ms%86400000)/3600000), mi = Math.floor((ms%3600000)/60000);
+  if (d > 0) return `faltam ${d}d ${h}h`;
+  if (h > 0) return `faltam ${h}h ${mi}min`;
+  return `faltam ${mi}min`;
+}
+function fmtDT(s: string){
+  return new Date(s).toLocaleString("pt-BR",{ day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
 // ---- Permissões granulares por usuário --------------------------------------
 type CapKey = "ver" | "criar" | "editar" | "excluir" | "exportar";
 const CAPS: { k: CapKey; label: string }[] = [
@@ -168,6 +192,17 @@ export default function AcessosEDelegacoes() {
     () => activeUsers.filter(u => ["vendedor","telemarketing"].includes(u.role || "")),
     [activeUsers]
   );
+
+  // nome legível por id de usuário (para a aba Delegações Ativas)
+  const nameById = useMemo(() => {
+    const m: Record<string,string> = {};
+    users.forEach(u => { m[u.id] = `${u.firstName||""} ${u.lastName||""}`.trim() || u.id; });
+    return m;
+  }, [users]);
+  const nomeUsuario = (id?: string) => (id && nameById[id]) || id || "—";
+  // ticker: atualiza a contagem regressiva a cada minuto
+  const [, setNowTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setNowTick(x => x + 1), 60000); return () => clearInterval(t); }, []);
 
   // ---- estado da aba Carteira ----
   const [modo, setModo] = useState<"transferencia"|"rateio">("transferencia");
@@ -504,20 +539,76 @@ export default function AcessosEDelegacoes() {
         </TabsContent>
 
         {/* ============ ATIVAS ============ */}
-        <TabsContent value="ativas" className="grid md:grid-cols-2 gap-4 mt-4">
-          {delegs.length === 0 && <p className="text-sm text-gray-400">Nenhuma delegação.</p>}
-          {delegs.map((d: any) => (
-            <Card key={d.id} className="p-4">
-              <div className="flex justify-between items-center mb-2">
-                <Badge>{d.status}</Badge>
-                <Button size="sm" variant="ghost" className="text-red-500" onClick={() => revokeMut.mutate(d.id)}>Revogar</Button>
-              </div>
-              <div className="text-sm font-semibold">{d.type}</div>
-              <div className="text-xs text-gray-500">
-                {new Date(d.startsAt).toLocaleDateString("pt-BR")} – {new Date(d.endsAt).toLocaleDateString("pt-BR")}
-              </div>
-            </Card>
-          ))}
+        <TabsContent value="ativas" className="mt-4 space-y-6">
+          {(() => {
+            const ativas = delegs.filter((d: any) => d.status === "ativa" || d.status === "agendada");
+            const historico = delegs.filter((d: any) => d.status === "expirada" || d.status === "revogada");
+            const card = (d: any) => {
+              const total = (d.targets || []).reduce((s: number, t: any) => s + (t.customerCount || 0), 0);
+              const isCarteira = d.type !== "acesso_funcao";
+              const st = STATUS_META[d.status] || { label: d.status, cls: "bg-gray-100 text-gray-600" };
+              const borda = d.status === "ativa" ? "#16a34a" : d.status === "agendada" ? "#2563eb" : "#9ca3af";
+              return (
+                <Card key={d.id} className="p-4 border-l-4" style={{ borderLeftColor: borda }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.cls}`}>{st.label}</span>
+                        <span className="text-sm font-semibold">{TIPO_LABEL[d.type] || d.type}</span>
+                      </div>
+                      {isCarteira
+                        ? <div className="text-sm text-gray-600 mt-1">Titular: <strong>{nomeUsuario(d.fromUserId)}</strong> · {total} cliente{total !== 1 ? "s" : ""}</div>
+                        : <div className="text-sm text-gray-600 mt-1">Função: <strong>{ROLE_LABEL[d.originRole || ""] || d.originRole || "—"}</strong> · {(d.accesses || []).length} acesso(s)</div>}
+                    </div>
+                    <div className="text-right shrink-0">
+                      {(d.status === "ativa" || d.status === "agendada") &&
+                        <div className="text-xs font-semibold text-amber-600 whitespace-nowrap"><i className="fas fa-hourglass-half mr-1" />{restanteStr(d.endsAt)}</div>}
+                      <Button size="sm" variant="ghost" className="text-red-500 mt-1" onClick={() => revokeMut.mutate(d.id)} disabled={revokeMut.isPending}>Revogar</Button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    <i className="far fa-calendar mr-1" />{fmtDT(d.startsAt)} → {fmtDT(d.endsAt)}
+                    {d.autoReturn && <span className="ml-2 text-gray-400">· na devolução, todos voltam ao titular</span>}
+                  </div>
+                  {isCarteira && (d.targets || []).length > 0 && (
+                    <div className="mt-3 border-t pt-2">
+                      <div className="text-xs text-gray-400 mb-1">Distribuição atual entre destinatários:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(d.targets || []).slice().sort((a: any, b: any) => (b.customerCount || 0) - (a.customerCount || 0)).map((t: any) => (
+                          <span key={t.id || t.toUserId} className="text-xs bg-gray-100 rounded px-2 py-0.5">
+                            {nomeUsuario(t.toUserId)}: <strong>{t.customerCount}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {d.reason && <div className="text-xs text-gray-400 mt-2 italic">{d.reason}</div>}
+                </Card>
+              );
+            };
+            return (
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Delegações vigentes ({ativas.length})</h3>
+                  {ativas.length === 0 && <p className="text-sm text-gray-400">Nenhuma delegação vigente no momento.</p>}
+                  <div className="space-y-3">{ativas.map(card)}</div>
+                </div>
+                {historico.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 mb-2">Histórico ({historico.length})</h3>
+                    <div className="space-y-2">
+                      {historico.map((d: any) => (
+                        <div key={d.id} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-2">
+                          <span><span className="text-gray-400">{STATUS_META[d.status]?.label || d.status}</span> · {TIPO_LABEL[d.type] || d.type} · {nomeUsuario(d.fromUserId)}</span>
+                          <span className="text-gray-400">{fmtDT(d.endsAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 
