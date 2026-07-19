@@ -96,7 +96,7 @@ export default function IngredientsSection() {
 
         <div className="mt-16 text-center">
           <div className="inline-block bg-honest-green text-white px-8 py-4 rounded-full text-lg font-semibold">
-            ✓ Frutas Frescas &nbsp;&nbsp; ✓ Sem Adição de Açúcar &nbsp;&nbsp; ✓ Sem Conservantes
+            ✓ Frutas Frescas &nbsp;&nbsp; ✓ Sem Adição de Açúcar &nbsp;&nbsp; ✓ Sem Adição de Conservantes
           </div>
         </div>
       </div>
