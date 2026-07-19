@@ -220,20 +220,19 @@ export default function Dashboard() {
     return weeks;
   }, [bounds.today]);
   const sellerDaily = useMemo(() => {
-    const rows = data?.visitSummary?.rows;
+    // REGRA (Flavio): credita o faturamento pelo vendedor que COLOCOU o pedido (billing_pipeline.seller_name),
+    // servido em visitSummary.sellerDaily, e nao pelo dono atual do cliente.
+    const src = data?.visitSummary?.sellerDaily;
     const map = new Map<string, any>();
-    if (Array.isArray(rows)) {
-      for (const N of rows) {
-        const nm = (N.sellerName || "Sem vendedor").trim();
+    if (Array.isArray(src)) {
+      for (const N of src) {
+        const nm = (N.seller || "Sem vendedor").trim();
         const S = nm.toLowerCase();
         let w = map.get(S);
         if (!w) { w = { sellerId: S, sellerName: nm, dates: new Map<string, number>() }; map.set(S, w); }
-        for (const v of N.visits || []) {
-          if (!v.hasOrder) continue;
-          const val = Number(v.orderValue) || 0;
-          if (val <= 0) continue;
-          w.dates.set(v.date, (w.dates.get(v.date) || 0) + val);
-        }
+        const val = Number(N.v) || 0;
+        if (val <= 0) continue;
+        w.dates.set(N.d, (w.dates.get(N.d) || 0) + val);
       }
     }
     const arr: any[] = [];
