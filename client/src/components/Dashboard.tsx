@@ -227,7 +227,7 @@ export default function Dashboard() {
     if (Array.isArray(src)) {
       for (const N of src) {
         const nm = (N.seller || "Sem vendedor").trim();
-        const S = nm.toLowerCase();
+        const S = nm.toLowerCase().replace(/\s+/g, " ").replace(/\.+$/, "").trim();
         let w = map.get(S);
         if (!w) { w = { sellerId: S, sellerName: nm, dates: new Map<string, number>() }; map.set(S, w); }
         const val = Number(N.v) || 0;
