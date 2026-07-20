@@ -19798,6 +19798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND next_contact_date IS NOT NULL
               AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${date}::date
               AND assigned_to = ${sellerId}
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
