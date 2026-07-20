@@ -44,7 +44,10 @@ function formatCurrency(value: string | number | null | undefined) {
 
 function formatDate(date: string | null | undefined) {
   if (!date) return '-';
-  return new Date(date).toLocaleDateString('pt-BR');
+  // Datas "de calendário" (vencimento, emissão, competência) são gravadas como
+  // meia-noite UTC. Renderizar no fuso local (BRT, UTC-3) puxava o dia para trás
+  // (ex.: 2026-07-20 aparecia como 19/07). Fixar timeZone UTC mostra o dia correto.
+  return new Date(date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
 }
 
 function formatDateTime(date: string | null | undefined) {
@@ -315,7 +318,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   useEffect(() => {
     if (unifySel.length > 0 && !unifyDate) {
       const ds = receivables.filter((r: any) => unifySel.includes(r.id)).map((r: any) => r.dueDate).filter(Boolean).map((d: any) => new Date(d)).sort((a: any, b: any) => a.getTime() - b.getTime());
-      if (ds[0]) { const d: Date = ds[0]; setUnifyDate(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)); }
+      if (ds[0]) { const d: Date = ds[0]; setUnifyDate(d.toISOString().slice(0, 10)); }
     }
     if (unifySel.length === 0 && unifyDate) setUnifyDate('');
   }, [unifySel]);
@@ -538,7 +541,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <div><MultiSelect label="Vendedor" options={sellerOptions} groups={sellerGroups} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-receivables" /></div>
           </div>
           <div className="flex gap-2 items-end">
-            <ExportExcelButton testId="export-receivables" onClick={() => exportToExcel(filtered.map((r: any) => ({ Titulo: r.titleNumber, Cliente: r.customerName, Vendedor: resolveSeller(r.sellerName), Categoria: r.category, Descricao: r.description, Valor: Number(r.amount || 0), ValorPago: Number(r.amountPaid || 0), Status: r.status, Vencimento: r.dueDate ? new Date(r.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-receber")} />
+            <ExportExcelButton testId="export-receivables" onClick={() => exportToExcel(filtered.map((r: any) => ({ Titulo: r.titleNumber, Cliente: r.customerName, Vendedor: resolveSeller(r.sellerName), Categoria: r.category, Descricao: r.description, Valor: Number(r.amount || 0), ValorPago: Number(r.amountPaid || 0), Status: r.status, Vencimento: r.dueDate ? new Date(r.dueDate).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : "" })), "contas-a-receber")} />
           </div>
         <div>
           <Label className="text-xs">Status</Label>
@@ -1209,7 +1212,7 @@ function PayablesTab() {
           </div>
         </div>
           <div className="flex gap-2 items-end">
-            <ExportExcelButton testId="export-payables" onClick={() => exportToExcel(filtered.map((p: any) => ({ Titulo: p.titleNumber, Fornecedor: p.supplierName, Documento: p.supplierDocument, Descricao: p.description, Valor: Number(p.amount || 0), ValorPago: Number(p.amountPaid || 0), Status: p.status, Vencimento: p.dueDate ? new Date(p.dueDate).toLocaleDateString("pt-BR") : "" })), "contas-a-pagar")} />
+            <ExportExcelButton testId="export-payables" onClick={() => exportToExcel(filtered.map((p: any) => ({ Titulo: p.titleNumber, Fornecedor: p.supplierName, Documento: p.supplierDocument, Descricao: p.description, Valor: Number(p.amount || 0), ValorPago: Number(p.amountPaid || 0), Status: p.status, Vencimento: p.dueDate ? new Date(p.dueDate).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : "" })), "contas-a-pagar")} />
           </div>
         <div>
           <Label className="text-xs block mb-1">Status</Label>
@@ -1496,7 +1499,7 @@ function PayablesTab() {
           {dupInfo?.existing && (
             <div className="text-sm rounded border border-amber-300 bg-amber-50 p-3 space-y-1">
               <div><span className="text-gray-500">Valor:</span> R$ {Number(dupInfo.existing.amount || 0).toFixed(2).replace('.', ',')}</div>
-              <div><span className="text-gray-500">Vencimento:</span> {dupInfo.existing.dueDate ? new Date(dupInfo.existing.dueDate).toLocaleDateString('pt-BR') : '—'}</div>
+              <div><span className="text-gray-500">Vencimento:</span> {dupInfo.existing.dueDate ? new Date(dupInfo.existing.dueDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '—'}</div>
               <div><span className="text-gray-500">Situação:</span> {({ paga: 'Paga', a_vencer: 'A vencer', vencida: 'Atrasada', cancelada: 'Cancelada' } as any)[dupInfo.existing.status] || dupInfo.existing.status}</div>
             </div>
           )}
