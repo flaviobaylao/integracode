@@ -828,6 +828,18 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 Registrar / Editar Pedido
               </Button>
             )}
+            {/* Não Venda também disponível com pedido registrado (revisita sem compra no dia). */}
+            {onStartNoSale && (
+              <Button
+                onClick={() => { if (onStartNoSale && displayCard) onStartNoSale(displayCard); }}
+                variant="outline"
+                className="w-full border-red-600 text-red-600 hover:bg-red-50"
+                data-testid="button-no-sale-completed"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Não Venda
+              </Button>
+            )}
             {card.status === 'completed' && (
               <Button
                 onClick={handleDuplicateLastOrder}
