@@ -1962,6 +1962,7 @@ export default function DeliveryManagement() {
                       ...prev,
                       latitude: e.target.value ? parseFloat(e.target.value) : null
                     }))}
+                    onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setDeliveryConfigForm(prev => ({ ...prev, latitude: parseFloat(p[1]), longitude: parseFloat(p[2]) })); } }}
                     placeholder="-16.719458"
                     data-testid="input-latitude"
                   />
@@ -1977,6 +1978,7 @@ export default function DeliveryManagement() {
                       ...prev,
                       longitude: e.target.value ? parseFloat(e.target.value) : null
                     }))}
+                    onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setDeliveryConfigForm(prev => ({ ...prev, latitude: parseFloat(p[1]), longitude: parseFloat(p[2]) })); } }}
                     placeholder="-49.299370"
                     data-testid="input-longitude"
                   />
