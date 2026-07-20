@@ -568,7 +568,8 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
     return { orgId: _umblerTalkCfg.orgId, fromPhone: _umblerTalkCfg.fromPhone };
   }
   let orgId = process.env.UMBLER_TALK_ORG_ID || '';
-  let fromPhone = process.env.UMBLER_TALK_FROM_PHONE || '';
+  const envFromPhone = String(process.env.UMBLER_TALK_FROM_PHONE || '').replace(/\D/g, '');
+  let fromPhone = '';
   try {
     if (!orgId) {
       const meResp = await umblerTalkFetch('/v1/members/me/');
@@ -579,21 +580,29 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
       orgId = (first && (first.id || first.organizationId || (first.organization && first.organization.id))) || '';
       if (!orgId) return { error: 'Nao foi possivel resolver organizationId via members/me' };
     }
-    if (!fromPhone) {
+    // Sempre buscar canais para GARANTIR que o remetente esteja CONECTADO (Live).
+    // Um numero fixado por env (UMBLER_TALK_FROM_PHONE) so e respeitado se estiver Live;
+    // caso contrario, cai para um canal Live (preferindo HONEST5).
+    {
       const chResp = await umblerTalkFetch('/v1/channels/?organizationId=' + encodeURIComponent(orgId));
       if (!chResp.ok) return { error: `channels HTTP ${chResp.status}: ${(await chResp.text()).slice(0, 160)}` };
       const chans: any = await chResp.json();
       const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
       const wa = (list || []).filter((c: any) => c && c.phoneNumber);
-      // Preferir canal CONECTADO (nao usar offline) e fixar no numero preferido (env ou HONEST5).
       const _isLive = (c: any) => /live|online|connected|conectad|ativo/i.test(String((c.status || c.connectionStatus || c.state || (c.isConnected ? 'connected' : '')) || ''));
-      const _pref = String(process.env.UMBLER_TALK_FROM_PHONE || '5562993227169').replace(/\D/g, '');
       const _liveWa = wa.filter(_isLive);
-      const _pool = _liveWa.length ? _liveWa : wa;
-      const pick = _pool.find((c: any) => String(c.phoneNumber).replace(/\D/g, '') === _pref)
-        || _pool.find((c: any) => /whats/i.test(String(c._t || c.channelType || c.name || '')))
-        || _pool[0];
-      fromPhone = pick ? String(pick.phoneNumber).replace(/\D/g, '') : '';
+      const _digits = (c: any) => String(c.phoneNumber).replace(/\D/g, '');
+      const HONEST5 = '5562993227169';
+      const envLive = envFromPhone && _liveWa.find((c: any) => _digits(c) === envFromPhone);
+      if (envLive) {
+        fromPhone = envFromPhone;
+      } else {
+        const _pool = _liveWa.length ? _liveWa : wa;
+        const pick = _pool.find((c: any) => _digits(c) === HONEST5)
+          || _pool.find((c: any) => /whats/i.test(String(c._t || c.channelType || c.name || '')))
+          || _pool[0];
+        fromPhone = pick ? _digits(pick) : '';
+      }
       if (!fromPhone) return { error: 'Nenhum canal com phoneNumber encontrado' };
     }
     _umblerTalkCfg = { orgId, fromPhone, at: Date.now() };
