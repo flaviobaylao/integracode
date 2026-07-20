@@ -1069,6 +1069,7 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Ação do Adm</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e]"></span>Repescagem</span>
+          <span className="flex items-center gap-1.5"><span className="text-[10px] font-semibold text-amber-700 border border-amber-300 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded-full whitespace-nowrap">sob delegação</span>Cliente em delegação temporária de carteira (volta ao titular quando a delegação encerra)</span>
         </div>
       </div>
 
