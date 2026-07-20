@@ -2033,7 +2033,8 @@ export class DatabaseStorage implements IStorage {
           const result = calculateNextVisitDate({
             weekdays: parsedWeekdays as any[],
             periodicity: customer.visitPeriodicity as any,
-            lastCompletedDate: parentCard.completedDate || parentCard.scheduledDate
+            lastCompletedDate: parentCard.completedDate || parentCard.scheduledDate,
+            serviceStartDate: customer.serviceStartDate ? new Date(customer.serviceStartDate) : undefined
           });
           nextDate = result.nextDate;
         } else {
