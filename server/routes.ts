@@ -20090,6 +20090,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn(`⚠️ Erro ao buscar clientes virtuais:`, virtualError);
       }
 
+      // Posiciona os RETORNOS DE LEAD dentro da sequencia da rota pela COORDENADA
+      // (cheapest insertion), em vez de deixa-los no fim. Mantem a ordem dos clientes e
+      // insere cada lead no ponto que menos aumenta a distancia da rota. Vale por rota do
+      // dia (cada data tem sua sequencia). Paradas sem coordenada (ex.: virtuais) ficam no fim.
+      try {
+        const { calculateDistance: _cd } = await import('./routeOptimizationService');
+        const hasCoords = (v: any) => v && v.customerLatitude != null && v.customerLongitude != null
+          && !isNaN(parseFloat(v.customerLatitude)) && !isNaN(parseFloat(v.customerLongitude));
+        const isGeoLead = (v: any) => v && v.visitType === 'lead' && hasCoords(v);
+        const leadStops = (visits as any[]).filter(isGeoLead);
+        if (leadStops.length > 0) {
+          const base = (visits as any[]).filter((v: any) => !isGeoLead(v)); // clientes + virtuais na ordem atual
+          const homeLat = parseFloat(route.startLatitude), homeLon = parseFloat(route.startLongitude);
+          const homeOk = !isNaN(homeLat) && !isNaN(homeLon);
+          const LA = (v: any) => parseFloat(v.customerLatitude), LO = (v: any) => parseFloat(v.customerLongitude);
+          for (const lead of leadStops) {
+            const llat = LA(lead), llon = LO(lead);
+            const anchors: number[] = [];
+            for (let i = 0; i < base.length; i++) if (hasCoords(base[i])) anchors.push(i);
+            let bestPos = base.length; // default: fim (sem ancoras geograficas)
+            let bestCost = Infinity;
+            for (let k = 0; k <= anchors.length; k++) {
+              const prevIdx = k === 0 ? -1 : anchors[k - 1];
+              const nextIdx = k < anchors.length ? anchors[k] : -1;
+              const prevLat = prevIdx < 0 ? homeLat : LA(base[prevIdx]);
+              const prevLon = prevIdx < 0 ? homeLon : LO(base[prevIdx]);
+              if (prevIdx < 0 && !homeOk) continue; // sem casa e sem ancora anterior: pula
+              let cost: number;
+              if (nextIdx < 0) {
+                cost = _cd(prevLat, prevLon, llat, llon)
+                  + (homeOk ? (_cd(llat, llon, homeLat, homeLon) - _cd(prevLat, prevLon, homeLat, homeLon)) : 0);
+              } else {
+                const nLat = LA(base[nextIdx]), nLon = LO(base[nextIdx]);
+                cost = _cd(prevLat, prevLon, llat, llon) + _cd(llat, llon, nLat, nLon) - _cd(prevLat, prevLon, nLat, nLon);
+              }
+              if (cost < bestCost) { bestCost = cost; bestPos = nextIdx < 0 ? (prevIdx + 1) : nextIdx; }
+            }
+            base.splice(bestPos, 0, lead);
+          }
+          visits.length = 0;
+          (visits as any[]).push(...base);
+          console.log(`📍 [LEAD-ORDER] ${leadStops.length} lead(s) posicionado(s) por coordenada na rota ${date}`);
+        }
+      } catch (leadOrderErr) {
+        console.warn('⚠️ [LEAD-ORDER] Falha ao posicionar leads por coordenada:', leadOrderErr);
+      }
+
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
       const segments = [];
