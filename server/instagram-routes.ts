@@ -18,6 +18,10 @@ import { storage } from "./storage";
 
 const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
+// Buffer em memoria dos ultimos webhooks recebidos (diagnostico; sobrevive so ate o restart).
+const recentHooks: any[] = [];
+function recordHook(e: any) { try { recentHooks.unshift(e); if (recentHooks.length > 30) recentHooks.length = 30; } catch {} }
+
 // Resolve o @username do IGSID (best-effort; requer permissao). Se falhar, retorna null.
 async function resolveUsername(igsid: string): Promise<string | null> {
   try {
@@ -152,17 +156,30 @@ export function registerInstagram(app: Express) {
     res.sendStatus(200);
     try {
       const raw = (req as any).rawBody ? String((req as any).rawBody) : JSON.stringify(req.body || {});
+      const body: any = req.body || {};
+      recordHook({ at: new Date().toISOString(), object: body.object, raw: raw.slice(0, 2000) });
       if (!validSignature(req, raw)) {
         console.warn("[IG-HOOK] assinatura invalida - ignorado");
         return;
       }
-      const body: any = req.body || {};
       if (body.object !== "instagram") return;
       for (const entry of body.entry || []) {
+        // formato Messenger-style: entry.messaging[]
         for (const ev of entry.messaging || []) {
           const msg = ev.message;
           if (!msg || msg.is_echo) continue; // ignora echo (mensagens que a propria conta enviou)
           const igsid = ev.sender && ev.sender.id;
+          const text = msg.text;
+          const mid = msg.mid;
+          if (igsid && text) handleInbound(String(igsid), String(text), String(mid || "")).catch(() => {});
+        }
+        // formato changes/field: entry.changes[] com field=messages
+        for (const ch of entry.changes || []) {
+          if (ch.field && ch.field !== "messages") continue;
+          const v = ch.value || {};
+          const msg = v.message || {};
+          if (msg.is_echo) continue;
+          const igsid = v.sender && v.sender.id;
           const text = msg.text;
           const mid = msg.mid;
           if (igsid && text) handleInbound(String(igsid), String(text), String(mid || "")).catch(() => {});
@@ -181,6 +198,12 @@ export function registerInstagram(app: Express) {
       hasPageToken: !!process.env.IG_PAGE_TOKEN,
       hasAppSecret: !!process.env.IG_APP_SECRET,
       graphVersion: process.env.GRAPH_VERSION || "v21.0",
+      hooksRecebidos: recentHooks.length,
     });
+  });
+
+  // Diagnostico: ultimos payloads crus recebidos no webhook (sem segredos).
+  app.get("/api/instagram/debug", (_req: Request, res: Response) => {
+    res.json({ count: recentHooks.length, recent: recentHooks });
   });
 }
