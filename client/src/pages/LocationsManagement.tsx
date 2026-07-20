@@ -435,6 +435,7 @@ export default function LocationsManagement() {
                   step="any"
                   required
                   defaultValue={editingLocation?.latitude || ''}
+                  onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); const la = document.getElementById('latitude') as HTMLInputElement | null; const lo = document.getElementById('longitude') as HTMLInputElement | null; if (la) la.value = p[1]; if (lo) lo.value = p[2]; } }}
                   placeholder="-23.5505"
                   data-testid="input-latitude"
                 />
@@ -449,6 +450,7 @@ export default function LocationsManagement() {
                   step="any"
                   required
                   defaultValue={editingLocation?.longitude || ''}
+                  onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); const la = document.getElementById('latitude') as HTMLInputElement | null; const lo = document.getElementById('longitude') as HTMLInputElement | null; if (la) la.value = p[1]; if (lo) lo.value = p[2]; } }}
                   placeholder="-46.6333"
                   data-testid="input-longitude"
                 />
