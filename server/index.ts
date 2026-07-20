@@ -3356,11 +3356,16 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
       // 4) Vendas por dia no período (para gráfico)
       const porDia: any = await db.execute(sql`
-        SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS dia,
+        SELECT to_char(date_trunc('day', bp.created_at), 'YYYY-MM-DD') AS dia,
                count(*)::int AS pedidos,
-               coalesce(sum(sale_value), 0)::float AS valor
-        FROM billing_pipeline
-        WHERE created_at > now() - make_interval(days => ${dias}::int)
+               coalesce(sum(bp.sale_value), 0)::float AS valor
+        FROM billing_pipeline bp
+        WHERE bp.created_at > now() - make_interval(days => ${dias}::int)
+          AND EXISTS (
+            SELECT 1 FROM fiscal_invoices fi
+            WHERE fi.status = 'authorized'
+              AND fi.invoice_number = NULLIF(regexp_replace(coalesce(bp.invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint
+          )
         GROUP BY 1 ORDER BY 1
       `);
 
