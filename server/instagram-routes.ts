@@ -206,4 +206,42 @@ export function registerInstagram(app: Express) {
   app.get("/api/instagram/debug", (_req: Request, res: Response) => {
     res.json({ count: recentHooks.length, recent: recentHooks });
   });
+
+  // Politica de Privacidade (pagina publica; exigida pela Meta para publicar o app).
+  app.get("/politica-de-privacidade", (_req: Request, res: Response) => {
+    res.set("content-type", "text/html; charset=utf-8").send(PRIVACY_HTML);
+  });
 }
+
+const PRIVACY_HTML = [
+  '<!DOCTYPE html>',
+  '<html lang="pt-BR"><head><meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width, initial-scale=1">',
+  '<title>Politica de Privacidade - Honest Atendimento</title>',
+  '<style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.6;color:#222;max-width:820px;margin:0 auto;padding:32px 20px}h1{color:#0b7a3b}h2{margin-top:28px;color:#0b7a3b;font-size:1.15rem}a{color:#0b7a3b}small{color:#666}</style>',
+  '</head><body>',
+  '<h1>Politica de Privacidade</h1>',
+  '<p><small>Honest Sucos Naturais - Aplicativo &quot;Honest Atendimento&quot; (Instagram Direct). Ultima atualizacao: 20 de julho de 2026.</small></p>',
+  '<p>Esta Politica de Privacidade descreve como a Honest Sucos Naturais (&quot;Honest&quot;, &quot;nos&quot;) coleta, usa e protege as informacoes de pessoas que entram em contato conosco pelo Instagram Direct por meio do nosso atendente virtual.</p>',
+  '<h2>1. Quem somos</h2>',
+  '<p>Honest Sucos Naturais, sediada em Goiania-GO, Brasil. Contato: flaviobaylao@gmail.com.</p>',
+  '<h2>2. Dados que coletamos</h2>',
+  '<p>Quando voce nos envia uma mensagem no Instagram Direct, coletamos: o conteudo das mensagens que voce envia; seu nome de usuario e identificador do Instagram; e a data e hora das interacoes. Nao coletamos senhas nem dados de pagamento por este canal.</p>',
+  '<h2>3. Como usamos os dados</h2>',
+  '<p>Utilizamos esses dados exclusivamente para: responder as suas mensagens e duvidas; prestar atendimento e informar sobre nossos produtos; e encaminhar seu atendimento a um atendente humano quando necessario. Um assistente de inteligencia artificial pode gerar as respostas automaticas.</p>',
+  '<h2>4. Base legal (LGPD)</h2>',
+  '<p>Tratamos seus dados com base na execucao de atendimento por voce solicitado, no legitimo interesse de responder contatos e, quando aplicavel, no seu consentimento, nos termos da Lei Geral de Protecao de Dados (Lei 13.709/2018).</p>',
+  '<h2>5. Compartilhamento</h2>',
+  '<p>Nao vendemos seus dados. Compartilhamos informacoes apenas com prestadores de servico necessarios para operar o atendimento, tais como a Meta/Instagram (plataforma de mensagens), provedores de infraestrutura de nuvem e provedores de tecnologia de IA que processam as mensagens para gerar respostas, sempre limitados a finalidade descrita nesta politica.</p>',
+  '<h2>6. Retencao</h2>',
+  '<p>Mantemos os dados das conversas pelo tempo necessario para o atendimento e para cumprir obrigacoes legais, apos o que sao eliminados ou anonimizados.</p>',
+  '<h2>7. Seus direitos</h2>',
+  '<p>Voce pode solicitar acesso, correcao, portabilidade ou exclusao dos seus dados, bem como revogar consentimento, entrando em contato pelo e-mail flaviobaylao@gmail.com.</p>',
+  '<h2>8. Exclusao de dados</h2>',
+  '<p>Para solicitar a exclusao dos dados coletados pelo nosso atendimento no Instagram, envie um e-mail para flaviobaylao@gmail.com com o assunto &quot;Exclusao de dados&quot; informando seu nome de usuario do Instagram. Atenderemos a solicitacao no prazo previsto em lei.</p>',
+  '<h2>9. Seguranca</h2>',
+  '<p>Adotamos medidas tecnicas e organizacionais razoaveis para proteger os dados contra acesso nao autorizado, perda ou uso indevido.</p>',
+  '<h2>10. Contato</h2>',
+  '<p>Duvidas sobre esta politica ou sobre seus dados: flaviobaylao@gmail.com.</p>',
+  '</body></html>',
+].join("\n");
