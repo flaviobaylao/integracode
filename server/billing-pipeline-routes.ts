@@ -843,6 +843,64 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Busca o PAYLOAD de um pedido da loja pelo TELEFONE do cliente nas tabelas de pagamento
+  // (PIX/cartao), em QUALQUER status (inclusive awaiting_payment/expired) — util quando o card
+  // nao foi criado e precisamos recuperar o carrinho. {apply:true} recria o pedido a partir do
+  // payload e envia ao pipeline (so nas linhas SEM card valido). Match por ultimos 8 digitos.
+  app.post('/api/admin/hotsite/find-order-by-phone', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const phoneDigits = String(req.body?.phone || '').replace(/\D/g, '');
+      if (phoneDigits.length < 8) return res.status(400).json({ message: 'telefone invalido (min 8 digitos)' });
+      const last8 = phoneDigits.slice(-8);
+      const apply = req.body?.apply === true;
+      const daysRaw = Number(req.body?.days);
+      const days = Number.isFinite(daysRaw) && daysRaw > 0 && daysRaw <= 365 ? Math.floor(daysRaw) : 45;
+      const INTERNAL_BASE = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+      const out: any = { phone: phoneDigits, last8, apply, days, matches: [] };
+
+      const cardExists = async (id: string | null): Promise<boolean> => {
+        if (!id) return false;
+        try { const c: any = await db.execute(sql`SELECT 1 FROM sales_cards WHERE id = ${id} LIMIT 1`); return ((c.rows || c) as any[]).length > 0; } catch { return false; }
+      };
+
+      for (const tbl of ['hotsite_pending_pix', 'hotsite_card_payments'] as const) {
+        let rows: any[] = [];
+        try {
+          const r: any = await db.execute(sql.raw(`SELECT id, status, order_id, order_number, amount, created_at, payload, error FROM ${tbl} WHERE created_at > now() - interval '${days} days' ORDER BY created_at DESC LIMIT 500`));
+          rows = (r.rows || r) as any[];
+        } catch (e: any) { out[tbl + '_err'] = e?.message || String(e); continue; }
+
+        for (const row of rows) {
+          let pl: any = null;
+          try { pl = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload; } catch {}
+          const plPhone = String(pl?.customer?.phone || '').replace(/\D/g, '');
+          if (!plPhone || plPhone.slice(-8) !== last8) continue;
+          const hasCard = await cardExists(row.order_id);
+          const m: any = {
+            table: tbl, id: row.id, status: row.status, order_id: row.order_id || null, order_number: row.order_number || null,
+            amount: row.amount, created_at: row.created_at, hasCard, error: row.error || null,
+            customer: pl?.customer ? { name: pl.customer.name, phone: pl.customer.phone, cpfCnpj: pl.customer.cpfCnpj, address: pl.customer.address } : null,
+            items: (pl?.items || []).map((i: any) => `${i.productName} x${i.quantity}`), paymentMethod: pl?.paymentMethod, total: pl?.totalAmount,
+          };
+          if (apply && !hasCard && pl?.items) {
+            try {
+              const resp = await fetch(`${INTERNAL_BASE}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pl) });
+              const data: any = await resp.json();
+              if (!resp.ok || !data?.orderId) throw new Error(data?.message || `HTTP ${resp.status}`);
+              if (tbl === 'hotsite_pending_pix') await db.execute(sql`UPDATE hotsite_pending_pix SET status='paid', order_id=${data.orderId}, order_number=${data.orderNumber || null}, updated_at=now() WHERE id=${row.id}`);
+              else await db.execute(sql`UPDATE hotsite_card_payments SET status='paid', order_id=${data.orderId}, order_number=${data.orderNumber || null}, updated_at=now() WHERE id=${row.id}`);
+              try { await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n[RECUPERADO] pedido da loja recriado por admin via telefone (pagamento ' + String(row.id) + ').'} WHERE id = ${data.orderId}`); } catch {}
+              try { const rr = await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] }); m.pipeline = rr; } catch (e2: any) { m.pipelineError = e2?.message || String(e2); }
+              m.recovered = { newOrderId: data.orderId, newOrderNumber: data.orderNumber };
+            } catch (e: any) { m.recoverError = e?.message || String(e); }
+          } else if (!hasCard) { m.wouldRecover = true; }
+          out.matches.push(m);
+        }
+      }
+      res.json({ ok: true, ...out });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Envia UM card especifico (por id) para o pipeline de faturamento. Idempotente
   // (dedup por sales_card_id) e respeita as regras de bloqueio (debito/tipo de operacao).
   // Util para reconciliar pontualmente um pedido orfao (ex.: pedido do hotsite finalizado
