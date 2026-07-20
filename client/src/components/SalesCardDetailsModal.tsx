@@ -748,9 +748,9 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             </Card>
           )}
 
-          {/* Integração Omie */}
+          {/* Integração Omie — oculto no mobile (telas pequenas); visível só no desktop (md+). */}
           {card.status === 'completed' && card.saleValue && parseFloat(card.saleValue) > 0 && (
-            <Card>
+            <Card className="hidden md:block">
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
                   <Send className="h-5 w-5 text-orange-600" />
