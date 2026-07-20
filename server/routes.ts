@@ -6504,8 +6504,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Parse date string to Date object (UTC midnight)
       const targetDate = new Date(`${date}T00:00:00.000Z`);
       
-      // Buscar todos os sales cards daquele dia
-      const cardsOnDate = await storage.getSalesCardsByDate(targetDate);
+      // Buscar SÓ os sales cards deste cliente naquele dia (filtro no SQL — evita carregar
+      // todos os cards da data, que causava timeout/503 ao abrir o card em rotas grandes).
+      const cardsOnDate = await storage.getSalesCardsByDate(targetDate, undefined, customerId);
 
       // Cards do cliente naquele dia. PREFERIR um card ATENDÍVEL (aberto/pendente) a um já
       // finalizado: quando existe um card 'completed'/'no_sale' junto com um aberto para a mesma
