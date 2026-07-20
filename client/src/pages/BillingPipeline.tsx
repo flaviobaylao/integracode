@@ -82,29 +82,38 @@ const OPERATION_LABELS: Record<string, string> = {
 };
 
 // Categoria de "Tipo de Operação" exibida no card (cancelado = status fiscal; senão o operationType do pedido)
-const CANCELLED_FISCAL = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'];
+const RETURNED_FISCAL = ['returned', 'devolvida', 'devolvido'];
+const CANCELLED_ONLY_FISCAL = ['cancelled', 'canceled', 'cancelada'];
+const RED_FISCAL = [...CANCELLED_ONLY_FISCAL, ...RETURNED_FISCAL];
+const ERROR_FISCAL = ['rejected', 'rejeitada', 'denied', 'draft'];
+function isItemReturned(item: any): boolean {
+  return RETURNED_FISCAL.includes((item?.fiscalStatus || '').toLowerCase());
+}
 function isItemCancelled(item: any): boolean {
-  return CANCELLED_FISCAL.includes((item?.fiscalStatus || '').toLowerCase());
+  return CANCELLED_ONLY_FISCAL.includes((item?.fiscalStatus || '').toLowerCase());
 }
 function operationCategory(item: any): string | null {
   if (isItemCancelled(item)) return 'cancelado';
+  if (isItemReturned(item)) return 'devolvida';
   return item?.operationType || null;
 }
 const CATEGORY_LABELS: Record<string, string> = {
   venda: 'Venda',
   cancelado: 'Cancelado',
+  devolvida: 'Devolvida',
   devolucao: 'Devolução',
   amostra: 'Amostra',
   bonificacao: 'Bonificação',
   troca: 'Troca',
   reposicao: 'Reposição',
 };
-const CATEGORY_ORDER = ['venda', 'cancelado', 'devolucao', 'amostra', 'bonificacao', 'troca', 'reposicao'];
+const CATEGORY_ORDER = ['venda', 'cancelado', 'devolvida', 'devolucao', 'amostra', 'bonificacao', 'troca', 'reposicao'];
 // Cores das tags: Venda=verde, Cancelado=vermelho escuro, Devolução=vermelho claro, Amostra=azul, Troca=amarelo
 // (correspondência por texto para tolerar variações de chave, ex.: 'devolucao'/'devolução')
 function operationBadgeClass(cat: string | null): string {
   const c = normName(cat || '');
   if (c.includes('cancel')) return 'border-red-600 text-red-900 bg-red-100';
+  if (c === 'devolvida') return 'border-red-600 text-red-900 bg-red-100';
   if (c.includes('devolu')) return 'border-red-200 text-red-400 bg-red-50';
   if (c.includes('venda')) return 'border-green-300 text-green-700 bg-green-50';
   if (c.includes('amostra')) return 'border-blue-300 text-blue-700 bg-blue-50';
@@ -1445,15 +1454,18 @@ function KanbanCard({
   const isBlocked = stage.key === 'bloqueado';
   // "Cancelado" é só status fiscal real — NÃO estar na coluna Bloqueados. Assim o card bloqueado
   // mostra a tag de Tipo de Operação (Venda/Amostra) registrada no pedido, não "Cancelado".
-  const isCancelled = ['cancelled', 'canceled', 'rejected', 'denied', 'cancelada', 'rejeitada'].includes(fs);
-  const isBilledOk = !isCancelled && !isBlocked && (fs === 'authorized' || fs === 'autorizada' || !!item.invoiceNumber);
+  const isRed = RED_FISCAL.includes(fs);
+  const isBillingError = !isRed && !isBlocked && (ERROR_FISCAL.includes(fs) || !!item.fiscalError);
+  const isBilledOk = !isRed && !isBillingError && !isBlocked && (fs === 'authorized' || fs === 'autorizada' || !!item.invoiceNumber);
   const statusBg = selected
     ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20'
-    : (isCancelled || isBlocked)
+    : (isRed || isBlocked)
       ? 'bg-red-50 dark:bg-red-900/20 border border-red-300'
-      : isBilledOk
-        ? 'bg-green-50 dark:bg-green-900/20 border border-green-300'
-        : '';
+      : isBillingError
+        ? 'bg-orange-50 dark:bg-orange-900/20 border border-orange-300'
+        : isBilledOk
+          ? 'bg-green-50 dark:bg-green-900/20 border border-green-300'
+          : '';
   return (
     <Card
       className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${statusBg}`}
@@ -1541,16 +1553,16 @@ function KanbanCard({
           {formatDate(item.createdAt)}
         </div>
 
-        {canEdit && stage.key !== 'bloqueado' && (['rejected', 'rejeitada', 'denied', 'draft'].includes(fs) || !!item.fiscalError) && (
-          <div className="rounded bg-red-50 dark:bg-red-900/20 border border-red-200 p-1.5 space-y-1">
-            <p className="text-[10px] text-red-700 leading-snug">
+        {canEdit && isBillingError && (
+          <div className="rounded bg-orange-50 dark:bg-orange-900/20 border border-orange-200 p-1.5 space-y-1">
+            <p className="text-[10px] text-orange-700 leading-snug">
               <span className="font-semibold">Falha no faturamento:</span>{' '}
               {item.fiscalError || 'NF-e não autorizada (ficou em rascunho).'}
             </p>
             <Button
               size="sm"
               variant="outline"
-              className="h-6 w-full text-[11px] border-red-300 text-red-700 hover:bg-red-100"
+              className="h-6 w-full text-[11px] border-orange-300 text-orange-700 hover:bg-orange-100"
               disabled={isRetrying}
               onClick={(e) => { e.stopPropagation(); onRetryInvoice(); }}
             >
