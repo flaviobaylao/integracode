@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { compareSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
+import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +83,7 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const delegMarks = useCustomerMarks();
   const navigate = useLocation()[1];
   
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
@@ -1622,6 +1624,7 @@ export default function RotaDoDia() {
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
                               </p>
+                              <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                               <OmieInstanceBadge instanceId={(visit as any).omieInstanceId} />
                               {isLead && (
                                 <Badge variant="outline" className="text-xs border-amber-500 text-amber-700 dark:text-amber-400">
@@ -1925,6 +1928,7 @@ export default function RotaDoDia() {
                                       <Phone className="h-4 w-4" />
                                       {visit.customerName}
                                     </p>
+                                    <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                     {/* Mostrar pedidos do dia */}
                                     {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
                                       <Badge 

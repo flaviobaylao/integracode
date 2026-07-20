@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, Fragment } from "react";
 import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
 import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -202,6 +203,7 @@ export default function ActiveCustomers() {
   const [, navigate] = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  const delegMarks = useCustomerMarks();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const [selectedSeller, setSelectedSeller] = useState<string>("");
@@ -1582,6 +1584,7 @@ export default function ActiveCustomers() {
                                 {ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude) && (
                                   <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap" title="Sem coordenadas no cadastro - nao entra na rota do dia">SEM COORDENADA</span>
                                 )}
+                                <SobDelegacaoBadge show={delegMarks.has(((ac.customer as any)?.id ?? ac.customerId) as string)} />
                               </div>
                               {ac.customer?.address && (
                                 <div className="text-xs text-muted-foreground truncate max-w-[200px]">

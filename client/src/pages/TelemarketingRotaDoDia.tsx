@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { orderedActiveSellers } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
+import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +51,7 @@ function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
 export default function TelemarketingRotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const delegMarks = useCustomerMarks();
   const navigate = useLocation()[1];
   
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
@@ -381,6 +383,7 @@ export default function TelemarketingRotaDoDia() {
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-1">
                                 <span className="font-medium text-gray-900">{visit.customerName}</span>
+                                <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                 {isCompleted && (
                                   <Badge className="bg-green-500 text-white text-xs">Atendido</Badge>
                                 )}
