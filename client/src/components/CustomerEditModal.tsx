@@ -567,6 +567,7 @@ export default function CustomerEditModal({
                 name="latitude"
                 value={formData.latitude}
                 onChange={handleChange}
+                onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData((prev) => ({ ...prev, latitude: p[1], longitude: p[2] })); } }}
                 placeholder="-23.550520"
                 data-testid="input-customer-latitude"
               />
@@ -578,6 +579,7 @@ export default function CustomerEditModal({
                 name="longitude"
                 value={formData.longitude}
                 onChange={handleChange}
+                onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData((prev) => ({ ...prev, latitude: p[1], longitude: p[2] })); } }}
                 placeholder="-46.633308"
                 data-testid="input-customer-longitude"
               />
