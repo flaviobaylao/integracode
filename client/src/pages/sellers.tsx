@@ -636,7 +636,7 @@ export default function Sellers() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="homeLongitude">Longitude (casa)</Label>
-              <Input id="homeLongitude" value={form.homeLongitude} onChange={(e) => setField('homeLongitude', e.target.value)} inputMode="decimal" placeholder="-49.278349" data-testid="input-home-longitude" />
+              <Input id="homeLongitude" value={form.homeLongitude} onChange={(e) => setField('homeLongitude', e.target.value)} onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setForm((f) => ({ ...f, homeLatitude: p[1], homeLongitude: p[2] })); } }} inputMode="decimal" placeholder="-49.278349" data-testid="input-home-longitude" />
             </div>
 
             <div className="space-y-2">
