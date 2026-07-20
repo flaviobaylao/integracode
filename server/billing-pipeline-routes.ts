@@ -783,6 +783,66 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // DIAGNOSTICO + RECUPERACAO de pedidos PAGOS na loja (PIX/cartao/GooglePay) que NAO viraram
+  // sales_card — ex.: pagamento aprovado mas o POST /api/public/orders falhou (status
+  // 'paid_order_error'), ou o card foi criado e depois sumiu. dryRun por padrao (so relata);
+  // {apply:true} recria o pedido a partir do PAYLOAD salvo na linha de pagamento e o envia ao
+  // pipeline. Idempotente por linha (so age em linhas SEM card valido).
+  app.post('/api/admin/hotsite/recover-paid-orders', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.body?.apply === true;
+      const hoursRaw = Number(req.body?.hours);
+      const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 && hoursRaw <= 2160 ? Math.floor(hoursRaw) : 72;
+      const INTERNAL_BASE = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+      const report: any = { apply, hours, pix: [], card: [], orphansPix: 0, orphansCard: 0 };
+
+      const cardExists = async (id: string | null): Promise<boolean> => {
+        if (!id) return false;
+        try { const c: any = await db.execute(sql`SELECT 1 FROM sales_cards WHERE id = ${id} LIMIT 1`); return ((c.rows || c) as any[]).length > 0; } catch { return false; }
+      };
+
+      const scan = async (table: 'pix' | 'card') => {
+        const tbl = table === 'pix' ? 'hotsite_pending_pix' : 'hotsite_card_payments';
+        let rows: any[] = [];
+        try {
+          const r: any = await db.execute(sql.raw(
+            `SELECT id, status, order_id, order_number, amount, created_at, payload, error FROM ${tbl} ` +
+            `WHERE created_at > now() - interval '${hours} hours' AND status IN ('paid','paid_order_error','error','finalizing') ` +
+            `ORDER BY created_at DESC LIMIT 200`));
+          rows = (r.rows || r) as any[];
+        } catch (e: any) { report[table + 'Err'] = e?.message || String(e); return; }
+
+        for (const row of rows) {
+          const hasCard = await cardExists(row.order_id);
+          const entry: any = { id: row.id, status: row.status, order_id: row.order_id || null, order_number: row.order_number || null, amount: row.amount, created_at: row.created_at, hasCard, error: row.error || null };
+          if (!hasCard) {
+            report[table === 'pix' ? 'orphansPix' : 'orphansCard']++;
+            if (apply) {
+              try {
+                const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+                if (!payload || !payload.items) throw new Error('payload ausente/invalido');
+                const resp = await fetch(`${INTERNAL_BASE}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const data: any = await resp.json();
+                if (!resp.ok || !data?.orderId) throw new Error(data?.message || `HTTP ${resp.status}`);
+                if (table === 'pix') await db.execute(sql`UPDATE hotsite_pending_pix SET status='paid', order_id=${data.orderId}, order_number=${data.orderNumber || null}, updated_at=now() WHERE id=${row.id}`);
+                else await db.execute(sql`UPDATE hotsite_card_payments SET status='paid', order_id=${data.orderId}, order_number=${data.orderNumber || null}, updated_at=now() WHERE id=${row.id}`);
+                try { await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n[RECUPERADO] pedido pago na loja recriado por admin (pagamento ' + String(row.id) + ').'} WHERE id = ${data.orderId}`); } catch {}
+                try { const rr = await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] }); entry.pipeline = rr; } catch (e2: any) { entry.pipelineError = e2?.message || String(e2); }
+                entry.recovered = { newOrderId: data.orderId, newOrderNumber: data.orderNumber };
+                console.log(`♻️ [RECOVER] Pedido pago recriado: ${data.orderNumber} (pagamento ${table} ${row.id})`);
+              } catch (e: any) { entry.recoverError = e?.message || String(e); }
+            } else { entry.wouldRecover = true; }
+          }
+          report[table].push(entry);
+        }
+      };
+
+      await scan('pix');
+      await scan('card');
+      res.json({ ok: true, ...report });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Envia UM card especifico (por id) para o pipeline de faturamento. Idempotente
   // (dedup por sales_card_id) e respeita as regras de bloqueio (debito/tipo de operacao).
   // Util para reconciliar pontualmente um pedido orfao (ex.: pedido do hotsite finalizado
