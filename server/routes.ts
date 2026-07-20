@@ -8998,10 +8998,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const TM_AUTOREGEN_KEY = 'telemarketing_last_autoregen';
   const TM_AUTOREGEN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 
-  async function runTelemarketingRegen(): Promise<any> {
+  async function runTelemarketingRegen(sellerIdsFilter?: string[]): Promise<any> {
     const { calculateNextVisitDate } = await import('../shared/visitSchedule');
-    const tm = await db.execute(sql`SELECT id FROM users WHERE role = 'telemarketing'`);
-    const sellerIds = (tm.rows as any[]).map(r => String(r.id)).filter(Boolean);
+    // Escopo opcional: se sellerIdsFilter vier preenchido, regenera SÓ esses vendedores
+    // (não toca nos demais). Sem filtro, roda para todos os telemarketing (auto-regen semanal).
+    let sellerIds: string[];
+    if (Array.isArray(sellerIdsFilter) && sellerIdsFilter.length > 0) {
+      sellerIds = sellerIdsFilter.map((s) => String(s)).filter(Boolean);
+    } else {
+      const tm = await db.execute(sql`SELECT id FROM users WHERE role = 'telemarketing'`);
+      sellerIds = (tm.rows as any[]).map(r => String(r.id)).filter(Boolean);
+    }
     if (sellerIds.length === 0) return { message: 'Nenhum vendedor telemarketing', custProcessed: 0 };
 
     const custRes = await db.execute(sql`
@@ -9099,7 +9106,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/telemarketing/regenerate-schedule', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
-      const result = await runTelemarketingRegen();
+      // Opcional: body.sellerIds = [ ... ] regenera SÓ esses vendedores (escopo). Sem isso, todos.
+      const scoped = Array.isArray(req.body?.sellerIds) && req.body.sellerIds.length ? req.body.sellerIds : undefined;
+      const result = await runTelemarketingRegen(scoped);
       res.json(result);
     } catch (error: any) {
       console.error('Erro na regeneração telemarketing:', error);
