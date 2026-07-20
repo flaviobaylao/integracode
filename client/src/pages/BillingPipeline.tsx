@@ -581,7 +581,7 @@ export default function BillingPipeline() {
           if (fr.ok) { const invs: DanfeInvoice[] = await fr.json(); for (const inv of invs) { danfeByNum.set(String(inv.invoiceNumber), inv); } }
         } catch (e) {}
       }
-      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, boleto: r.boleto, pix: r.pix, danfe }; });
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, observation: it.notes, boleto: r.boleto, pix: r.pix, danfe }; });
       const n = await generateCompletoPdf(list);
       toast({ title: n + ' pedido(s) impresso(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
