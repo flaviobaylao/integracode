@@ -9,6 +9,7 @@ export interface CobrancaData {
   invoiceNumber?: string;
   saleValue?: string | number;
   products?: any;
+  observation?: string | null;
   boleto?: any | null;
   pix?: any | null;
   danfe?: DanfeInvoice | null;
@@ -145,6 +146,36 @@ function renderPedido(doc: jsPDF, c: CobrancaData, logo: string | null) {
   doc.setFontSize(11); doc.setFont('helvetica', 'bold');
   doc.text('Valor Total do Pedido: ' + BRL(c.saleValue ?? totVal), 198, fy + 8, { align: 'right' });
   doc.setFont('helvetica', 'normal');
+
+  // ── Rodapé: ENDEREÇO COMPLETO DO CLIENTE + OBSERVAÇÃO DO PEDIDO ──────────────
+  // Endereço vem da NF-e vinculada (logradouro/nº, bairro, cidade/UF, CEP);
+  // a observação é o campo "Observações" do pedido (item.notes do pipeline).
+  const fullAddr = [
+    d.customerAddress,
+    bairro !== '-' ? bairro : '',
+    cidade !== '-' ? (cidade + (uf ? '/' + uf : '')) : '',
+    d.customerCep ? 'CEP ' + d.customerCep : '',
+  ].filter((p) => p && String(p).trim() && String(p).trim() !== '-').join(' · ');
+  const obsText = (c.observation && String(c.observation).trim()) ? String(c.observation).trim() : 'Sem observação';
+
+  const pageH = (doc as any).internal.pageSize.getHeight ? (doc as any).internal.pageSize.getHeight() : 297;
+  const addrLines = doc.splitTextToSize(fullAddr || '-', 186);
+  const obsLines = doc.splitTextToSize(obsText, 186);
+  const footerBlockH = 10 + addrLines.length * 4 + obsLines.length * 4;
+  let footY = Math.max(fy + 18, pageH - 12 - footerBlockH);
+
+  doc.setDrawColor(...GREEN); doc.setLineWidth(0.5); doc.line(12, footY, 198, footY);
+  doc.setLineWidth(0.2); doc.setDrawColor(0);
+  footY += 5;
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+  doc.text('ENDEREÇO COMPLETO DO CLIENTE', 12, footY);
+  doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(addrLines, 12, footY + 4.5);
+  let obsY = footY + 4.5 + addrLines.length * 4 + 3;
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+  doc.text('OBSERVAÇÃO DO PEDIDO', 12, obsY);
+  doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(obsLines, 12, obsY + 4.5);
 }
 
 // ── BOLETO (padrao Banco do Brasil) ─────────────────────────────────────────
