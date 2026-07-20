@@ -9047,10 +9047,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const dt of dates) {
         const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
-        // Só cria ocorrências FUTURAS (>= amanhã). Nunca recria hoje/passado,
-        // preservando o que já está agendado para o dia corrente.
-        if (ds.getTime() < tomorrow.getTime()) continue;
+        if (ds.getTime() < today.getTime()) continue;
         const iso = ds.toISOString();
+        if (ds.getTime() < tomorrow.getTime()) {
+          const exToday: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${c.id} AND DATE(scheduled_date) = ${iso.slice(0, 10)}::date LIMIT 1`);
+          if ((exToday.rows || []).length > 0) continue;
+          await db.execute(sql`
+            INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+            VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
+          agendaCreated++;
+          continue;
+        }
         await db.execute(sql`
           INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
           VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
@@ -9147,6 +9154,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .catch((e: any) => console.warn('[MIGR dom→seg] regen falhou:', e?.message));
     } catch (e: any) {
       console.error('[MIGR dom→seg] falha (não marcada como concluída; tentará no próximo boot):', e?.message);
+    }
+  })();
+
+  // MIGRACAO ONE-SHOT: forca UMA regeneracao de telemarketing com a logica corrigida
+  // (a regeneracao agora tambem acrescenta a ocorrencia que vence HOJE). Idempotente via chave.
+  (async () => {
+    const MIGR_KEY = 'migr_today_virtual_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      runTelemarketingRegen()
+        .then((r: any) => console.log(`[MIGR today-virtual] regen ok: ${r.custProcessed} clientes, ${r.agendaCreated} agendas`))
+        .catch((e: any) => console.warn('[MIGR today-virtual] regen falhou:', e?.message));
+    } catch (e: any) {
+      console.error('[MIGR today-virtual] falha:', e?.message);
     }
   })();
 
@@ -19775,7 +19798,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND next_contact_date IS NOT NULL
               AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${date}::date
               AND assigned_to = ${sellerId}
-              AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
