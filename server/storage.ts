@@ -8499,13 +8499,17 @@ export class DatabaseStorage implements IStorage {
           for (const s of scs as any[]) srcById.set(String(s.id), String(s.source || ''));
           for (const r of rowsB) { const s = srcById.get(String(r.salesCardId)); if (s) (r as any).source = s; }
         } catch {}
+        // IN (...) via sql.join: o drizzle EXPANDE ${array} em ($1,$2,...), entao
+        // ANY(${array}::text[]) vira ANY(($1,$2)::text[]) (SQL invalido, lanca e o
+        // try/catch engolia -> paidOnline nunca marcava). sql.join gera IN ($1,$2,...) valido.
+        const cardIdList = sql.join(cardIds2.map((c: any) => sql`${c}`), sql`, `);
         const paidSet = new Set<string>();
         try {
-          const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id = ANY(${cardIds2}::text[])`);
+          const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id IN (${cardIdList})`);
           for (const x of (pc.rows || pc) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
         } catch {}
         try {
-          const pp: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_pending_pix WHERE status = 'paid' AND order_id = ANY(${cardIds2}::text[])`);
+          const pp: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_pending_pix WHERE status = 'paid' AND order_id IN (${cardIdList})`);
           for (const x of (pp.rows || pp) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
         } catch {}
         for (const r of rowsB) if (paidSet.has(String(r.salesCardId))) (r as any).paidOnline = true;
