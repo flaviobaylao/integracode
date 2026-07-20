@@ -16,7 +16,7 @@ import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { storage } from "./storage";
 
-const GRAPH = () => `https://graph.facebook.com/${process.env.GRAPH_VERSION || "v21.0"}`;
+const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
 // Resolve o @username do IGSID (best-effort; requer permissao). Se falhar, retorna null.
 async function resolveUsername(igsid: string): Promise<string | null> {
