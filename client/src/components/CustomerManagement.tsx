@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -78,6 +79,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 }
 
 export default function CustomerManagement() {
+  const delegMarks = useCustomerMarks();
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -646,6 +648,7 @@ export default function CustomerManagement() {
                             {(customer as any).fantasyName || customer.name}
                           </button>
                           <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
+                          <SobDelegacaoBadge show={delegMarks.has(customer.id)} />
                         </div>
                       </td>
                       <td className="px-6 py-4">
