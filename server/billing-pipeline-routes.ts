@@ -1732,6 +1732,17 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     } catch { /* mantém CFOP/natureza padrão de transferência */ }
   }
 
+  // BSB (CNPJ 28295493000315, filial DF, Simples Nacional sob ST): a VENDA
+  // onerosa sai como contribuinte SUBSTITUIDO - CFOP 5405 (interno DF) / 6404
+  // (interestadual) e CSOSN 500 (ICMS-ST ja recolhido). Espelha a regra de
+  // bsbStSaleOverride() do sefaz-service para o registro salvo + DANFE nascerem
+  // iguais ao XML. So afeta a venda padrao (5102/6102); bonificacao/amostra/
+  // troca/transferencia mantem o CFOP proprio.
+  const _isBsbIssuer = String(issuerCnpj || '').replace(/\D/g, '') === '28295493000315';
+  if (_isBsbIssuer && /^[56]102$/.test(cfop)) {
+    cfop = isWithinState ? '5405' : '6404';
+  }
+
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
 
   // Ambiente de emissao POR CNPJ EMITENTE (system_settings fiscal_env_<instanceId>).
@@ -1786,7 +1797,9 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   }, '1', issuerCnpj);
 
   // CSOSN do cliente (Simples): padrao '102'; '101' se marcado no cadastro. pCredSN (p/ 101) vem de system_settings 'fiscal_pcredsn'.
-  const custCsosn = ((customer as any)?.icmsCsosn === '101') ? '101' : '102';
+  // BSB sob ST -> CSOSN 500 (ICMS cobrado anteriormente por ST); demais
+  // instancias seguem o padrao Simples: '102' (ou '101' com credito).
+  const custCsosn = _isBsbIssuer ? '500' : (((customer as any)?.icmsCsosn === '101') ? '101' : '102');
   let custPcred = '0';
   if (custCsosn === '101') {
     try {
