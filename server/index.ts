@@ -3323,6 +3323,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         FROM billing_pipeline bp
         LEFT JOIN users u ON (u.omie_vendor_code = bp.seller_id OR u.omie_vendor_code = replace(coalesce(bp.seller_id,''), 'omie-vendor-', ''))
         WHERE bp.created_at > now() - make_interval(days => ${dias}::int)
+          AND EXISTS (
+            SELECT 1 FROM fiscal_invoices fi
+            WHERE fi.status = 'authorized'
+              AND fi.invoice_number = NULLIF(regexp_replace(coalesce(bp.invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint
+          )
         GROUP BY 1 ORDER BY valor_total DESC
       `);
       const vendasRows = (vendas.rows || []) as any[];
