@@ -6506,10 +6506,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Buscar todos os sales cards daquele dia
       const cardsOnDate = await storage.getSalesCardsByDate(targetDate);
-      
-      // Filtrar pelo customerId (pode ser customerId ou leadId)
-      const existingCard = cardsOnDate.find(card => card.customerId === customerId);
-      
+
+      // Cards do cliente naquele dia. PREFERIR um card ATENDÍVEL (aberto/pendente) a um já
+      // finalizado: quando existe um card 'completed'/'no_sale' junto com um aberto para a mesma
+      // visita, o vendedor precisa do aberto (para check-in / Não Venda), não do finalizado —
+      // que traz os produtos do pedido anterior e esconde os botões de atendimento.
+      const custCards = cardsOnDate.filter(card => card.customerId === customerId);
+      const ATTENDABLE_STATUS = ['open', 'pending', 'in_progress', 'scheduled'];
+      const existingCard = custCards.find(c => ATTENDABLE_STATUS.includes((c as any).status)) || custCards[0];
+
       if (existingCard) {
         return res.json(existingCard);
       }
