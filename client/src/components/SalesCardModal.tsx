@@ -772,6 +772,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                     type="text"
                     value={formData.customerLatitude}
                     onChange={(e) => setFormData(prev => ({ ...prev, customerLatitude: e.target.value }))}
+                    onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData(prev => ({ ...prev, customerLatitude: p[1], customerLongitude: p[2] })); } }}
                     placeholder="Ex: -23.550520"
                     data-testid="input-latitude"
                   />
@@ -783,6 +784,7 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                     type="text"
                     value={formData.customerLongitude}
                     onChange={(e) => setFormData(prev => ({ ...prev, customerLongitude: e.target.value }))}
+                    onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData(prev => ({ ...prev, customerLatitude: p[1], customerLongitude: p[2] })); } }}
                     placeholder="Ex: -46.633309"
                     data-testid="input-longitude"
                   />
