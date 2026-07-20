@@ -231,6 +231,7 @@ export default function MissingCoordinatesModal({
                           placeholder="-16.123456"
                           value={coords.lat}
                           onChange={(e) => handleUpdateCoord(item.customerId, 'lat', e.target.value)}
+                          onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setCoordinates(prev => ({ ...prev, [item.customerId]: { lat: p[1], lng: p[2] } })); } }}
                           data-testid={`input-latitude-${item.customerId}`}
                         />
                       </div>
@@ -242,6 +243,7 @@ export default function MissingCoordinatesModal({
                           placeholder="-49.123456"
                           value={coords.lng}
                           onChange={(e) => handleUpdateCoord(item.customerId, 'lng', e.target.value)}
+                          onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setCoordinates(prev => ({ ...prev, [item.customerId]: { lat: p[1], lng: p[2] } })); } }}
                           data-testid={`input-longitude-${item.customerId}`}
                         />
                       </div>
