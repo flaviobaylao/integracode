@@ -262,7 +262,7 @@ export default function CheckInModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Check-in no Cliente</DialogTitle>
         </DialogHeader>
