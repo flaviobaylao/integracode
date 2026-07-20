@@ -21569,10 +21569,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       console.error('Erro ao calcular distância real:', error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: 'Erro ao calcular distância real',
-        error: error.message 
+        error: error.message
       });
+    }
+  });
+
+  // Km RODADA (real/executada) acumulada por vendedor: dia, semana (a partir de segunda) e mês,
+  // sempre até a data de referência (inclusive). Soma daily_routes.total_actual_distance (em km).
+  // Semana = ISO (date_trunc('week') = segunda). Cumulativo = do início do período até ${date}.
+  app.get('/api/daily-routes/:sellerId/km-cumulative', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { sellerId } = req.params;
+      const date = String(req.query.date || getBrazilDateString());
+      // Vendedor só pode ver a própria métrica.
+      if (user.role === 'vendedor' && sellerId !== user.id) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+      const r: any = await db.execute(sql`
+        SELECT
+          COALESCE(SUM(CASE WHEN DATE(route_date) = ${date}::date THEN COALESCE(total_actual_distance::numeric, 0) ELSE 0 END), 0) AS dia,
+          COALESCE(SUM(CASE WHEN DATE(route_date) >= date_trunc('week', ${date}::date)::date THEN COALESCE(total_actual_distance::numeric, 0) ELSE 0 END), 0) AS semana,
+          COALESCE(SUM(COALESCE(total_actual_distance::numeric, 0)), 0) AS mes
+        FROM daily_routes
+        WHERE seller_id = ${sellerId}
+          AND DATE(route_date) >= LEAST(date_trunc('week', ${date}::date)::date, date_trunc('month', ${date}::date)::date)
+          AND DATE(route_date) <= ${date}::date
+      `);
+      const row = (r?.rows || [])[0] || {};
+      res.json({
+        date,
+        dia: Number(row.dia || 0),
+        semana: Number(row.semana || 0),
+        mes: Number(row.mes || 0),
+      });
+    } catch (error: any) {
+      console.error('Erro ao calcular km acumulada:', error);
+      res.status(500).json({ message: 'Erro ao calcular km acumulada', error: error?.message });
     }
   });
 
