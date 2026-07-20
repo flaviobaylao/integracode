@@ -9104,6 +9104,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // ===================================================================================
+  // MIGRAÇÃO ONE-SHOT (guardada em system_settings), roda no boot e é idempotente:
+  //   (1) TODOS os clientes com "Dom" (domingo) no dia de rota → "Seg" (segunda), dedupe;
+  //   (2) remove agenda PENDENTE agendada em DOMINGO (hoje/futuro) — limpa entradas indevidas;
+  //   (3) regenera a agenda de telemarketing (reancorar na carteira já corrigida), em background.
+  // Nunca derruba o boot (try/catch); se falhar, não marca concluída e tenta no próximo boot.
+  // ===================================================================================
+  (async () => {
+    const MIGR_KEY = 'migr_dom_to_seg_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+
+      // (1) customers.weekdays: Dom -> Seg (dedupe), só nas linhas que contêm domingo
+      const rows: any = await db.execute(sql`SELECT id, weekdays FROM customers WHERE weekdays ILIKE '%dom%'`);
+      let fixedCustomers = 0;
+      for (const r of (rows?.rows || [])) {
+        let codes: string[];
+        try { codes = normalizeWeekdayInput(r.weekdays); } catch { continue; }
+        if (!codes.includes('Dom')) continue;
+        const mapped = Array.from(new Set(codes.map((d) => (d === 'Dom' ? 'Seg' : d))));
+        await db.execute(sql`UPDATE customers SET weekdays = ${JSON.stringify(mapped)} WHERE id = ${r.id}`);
+        fixedCustomers++;
+      }
+
+      // (2) remove agenda pendente em DOMINGO (hoje/futuro); scheduled_date é gravado ao meio-dia,
+      //     então EXTRACT(DOW) reflete o dia de calendário correto (0 = domingo).
+      await db.execute(sql`
+        DELETE FROM visit_agenda
+        WHERE visit_status = 'pending'
+          AND EXTRACT(DOW FROM scheduled_date) = 0
+          AND scheduled_date >= (CURRENT_DATE - INTERVAL '1 day')`);
+
+      // Marca concluída ANTES de disparar o regen pesado (evita repetir em reboots e corrida entre instâncias).
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      console.log(`✅ [MIGR dom→seg] ${fixedCustomers} cliente(s) com domingo corrigido(s) para segunda; agenda de domingo removida.`);
+
+      // (3) regenera telemarketing (todos) em background — reagenda os clientes agora em dia útil.
+      runTelemarketingRegen()
+        .then((r: any) => console.log(`🔄 [MIGR dom→seg] regen concluída: ${r.custProcessed} clientes, ${r.agendaCreated} agendas`))
+        .catch((e: any) => console.warn('[MIGR dom→seg] regen falhou:', e?.message));
+    } catch (e: any) {
+      console.error('[MIGR dom→seg] falha (não marcada como concluída; tentará no próximo boot):', e?.message);
+    }
+  })();
+
   app.post('/api/telemarketing/regenerate-schedule', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
       // Opcional: body.sellerIds = [ ... ] regenera SÓ esses vendedores (escopo). Sem isso, todos.
