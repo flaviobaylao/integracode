@@ -947,6 +947,7 @@ export default function LeadsManagement() {
                   step="0.000001"
                   value={formData.latitude}
                   onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+                  onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData({ ...formData, latitude: p[1], longitude: p[2] }); } }}
                   placeholder="-3.745678"
                   data-testid="input-latitude"
                 />
@@ -960,6 +961,7 @@ export default function LeadsManagement() {
                   step="0.000001"
                   value={formData.longitude}
                   onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+                  onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData({ ...formData, latitude: p[1], longitude: p[2] }); } }}
                   placeholder="-38.523456"
                   data-testid="input-longitude"
                 />
