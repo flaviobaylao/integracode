@@ -190,17 +190,24 @@ async function syncTable(
   // Full reset (since=epoch): use OFFSET pagination; delta: use date cursor
 const isFullReset = since.getTime() === 0;
 let offset = 0;
+// ANTI-DUPLICACAO (20/jul): nao importar do 1.0 os cards-filhos de recorrencia
+// (parent_card_id IS NOT NULL). O 1.0 gera o proximo card ja "completed" com os
+// produtos/valor do ciclo anterior; ao ser importado no 2.0 ele vira um PEDIDO
+// duplicado que era faturado em dobro (NF-e dupla). O 2.0 ja gera seu proprio
+// proximo card de recorrencia. Pedidos reais/novos NAO tem parent_card_id, entao
+// este filtro nao afeta pedidos legitimos vindos do 1.0.
+const extraFilter = cfg.table === 'sales_cards' ? ' AND parent_card_id IS NULL' : '';
 
 while (true) {
 let dataRes;
 if (isFullReset) {
 dataRes = await source.query(
-`SELECT * FROM "${cfg.table}" ORDER BY "${cfg.pk}" LIMIT ${FETCH_LIMIT} OFFSET $1`,
+`SELECT * FROM "${cfg.table}" WHERE TRUE${extraFilter} ORDER BY "${cfg.pk}" LIMIT ${FETCH_LIMIT} OFFSET $1`,
 [offset]
 );
 } else {
 dataRes = await source.query(
-`SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1 ORDER BY ${dateCol} ASC LIMIT ${FETCH_LIMIT}`,
+`SELECT * FROM "${cfg.table}" WHERE ${dateCol} > $1${extraFilter} ORDER BY ${dateCol} ASC LIMIT ${FETCH_LIMIT}`,
 [currentSince]
 );
 }
