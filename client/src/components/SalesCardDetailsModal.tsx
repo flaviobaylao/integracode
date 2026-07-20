@@ -800,6 +800,24 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         {/* Botões para Pedidos Finalizados (venda concluída OU não-venda) */}
         {(card.status === 'completed' || card.status === 'no_sale') && (
           <div className="border-t pt-4 space-y-3">
+            {/* Check-in continua disponível mesmo com pedido registrado, enquanto não houver check-in.
+                (Antes o botão só existia nos status open/pending/... e sumia ao registrar o pedido.) */}
+            {!displayCard?.checkInTime && !card.customer?.virtualService && (
+              <Button
+                onClick={handleCheckIn}
+                disabled={isCheckingIn}
+                variant="outline"
+                className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
+                data-testid="button-check-in-completed"
+              >
+                {isCheckingIn ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4 mr-2" />
+                )}
+                Check-in
+              </Button>
+            )}
             {onStartSale && (
               <Button
                 onClick={() => onStartSale(card)}
