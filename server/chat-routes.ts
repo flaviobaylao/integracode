@@ -585,7 +585,14 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
       const chans: any = await chResp.json();
       const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
       const wa = (list || []).filter((c: any) => c && c.phoneNumber);
-      const pick = wa.find((c: any) => /whats/i.test(String(c._t || c.channelType || c.name || ''))) || wa[0];
+      // Preferir canal CONECTADO (nao usar offline) e fixar no numero preferido (env ou HONEST5).
+      const _isLive = (c: any) => /live|online|connected|conectad|ativo/i.test(String((c.status || c.connectionStatus || c.state || (c.isConnected ? 'connected' : '')) || ''));
+      const _pref = String(process.env.UMBLER_TALK_FROM_PHONE || '5562993227169').replace(/\D/g, '');
+      const _liveWa = wa.filter(_isLive);
+      const _pool = _liveWa.length ? _liveWa : wa;
+      const pick = _pool.find((c: any) => String(c.phoneNumber).replace(/\D/g, '') === _pref)
+        || _pool.find((c: any) => /whats/i.test(String(c._t || c.channelType || c.name || '')))
+        || _pool[0];
       fromPhone = pick ? String(pick.phoneNumber).replace(/\D/g, '') : '';
       if (!fromPhone) return { error: 'Nenhum canal com phoneNumber encontrado' };
     }
