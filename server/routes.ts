@@ -23865,6 +23865,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
+    // BLINDAGEM ANTI-PERDA: grava o payload do pedido ASSIM QUE CHEGA (antes de validar/criar),
+    // para que NENHUM pedido da loja se perca — mesmo se a criacao do card falhar ou o card for
+    // excluido depois. A recuperacao roda em /api/admin/hotsite/recover-lost-orders. Best-effort:
+    // envolto em try/catch para NUNCA quebrar a criacao do pedido.
+    let __hsIntakeId: any = null;
+    try {
+      await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS hotsite_order_intake (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), order_number varchar, sales_card_id varchar, phone varchar, source varchar, status varchar NOT NULL DEFAULT 'received', payload text, error text, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())`));
+      const __ph = String(req.body?.customer?.phone || '').replace(/\D/g, '');
+      const __ins: any = await db.execute(sql`INSERT INTO hotsite_order_intake (phone, source, payload, status) VALUES (${__ph}, ${String(req.body?.source || 'hotsite')}, ${JSON.stringify(req.body || {})}, 'received') RETURNING id`);
+      __hsIntakeId = ((__ins.rows || __ins)[0] || {}).id;
+    } catch (__e) { /* intake e best-effort; nunca quebra o pedido */ }
     try {
       // Inicializar serviço Omie
       const omieService = getOmieService(storage);
@@ -24218,6 +24229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
       const salesCard = await storage.createSalesCard(orderData);
+      try { if (__hsIntakeId) await db.execute(sql`UPDATE hotsite_order_intake SET sales_card_id = ${salesCard.id}, order_number = ${orderNumber}, status = 'created', updated_at = now() WHERE id = ${__hsIntakeId}`); } catch {}
 
     try {
       if (_refMode === 'code') {
@@ -24242,7 +24254,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
     } catch (error: any) {
       console.error('❌ Erro ao criar pedido público:', error);
-      
+      try { if (__hsIntakeId) await db.execute(sql`UPDATE hotsite_order_intake SET status = 'failed', error = ${String(error?.message || error).slice(0, 500)}, updated_at = now() WHERE id = ${__hsIntakeId}`); } catch {}
+
       if (error.name === 'ZodError') {
         return res.status(400).json({
           message: 'Dados inválidos',
