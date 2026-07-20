@@ -1607,6 +1607,15 @@ function ChatCenterInner() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs flex-1"
                       />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm("")}
+                          className="h-8 px-2 text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 shrink-0 whitespace-nowrap"
+                          title="Limpar filtro"
+                          data-testid="button-clear-search"
+                        >✕ Limpar</button>
+                      )}
                     </div>
                   </div>
                   <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
@@ -1690,6 +1699,15 @@ function ChatCenterInner() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs"
                       />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm("")}
+                          className="text-xs text-gray-500 hover:text-red-600 shrink-0 px-1"
+                          title="Limpar filtro"
+                          data-testid="button-clear-search"
+                        >✕</button>
+                      )}
                     </div>
                   </div>
                   <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
@@ -1739,6 +1757,15 @@ function ChatCenterInner() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="h-8 text-xs"
                       />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm("")}
+                          className="text-xs text-gray-500 hover:text-red-600 shrink-0 px-1"
+                          title="Limpar filtro"
+                          data-testid="button-clear-search"
+                        >✕</button>
+                      )}
                     </div>
                   </div>
                   <div className="px-4 pb-4 overflow-y-auto" style={{ height: 'calc(100vh - 180px)' }}>
