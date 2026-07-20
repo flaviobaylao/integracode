@@ -1200,11 +1200,13 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                       placeholder="Latitude"
                       value={customerLocation.latitude}
                       onChange={(e) => setCustomerLocation(prev => ({ ...prev, latitude: e.target.value }))}
+                      onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setCustomerLocation(prev => ({ ...prev, latitude: p[1], longitude: p[2] })); } }}
                     />
                     <Input
                       placeholder="Longitude"
                       value={customerLocation.longitude}
                       onChange={(e) => setCustomerLocation(prev => ({ ...prev, longitude: e.target.value }))}
+                      onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setCustomerLocation(prev => ({ ...prev, latitude: p[1], longitude: p[2] })); } }}
                     />
                   </div>
                   <Button 
