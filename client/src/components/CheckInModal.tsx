@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +33,7 @@ export default function CheckInModal({
   const [photoData, setPhotoData] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Calcular distância usando Haversine
@@ -91,9 +92,10 @@ export default function CheckInModal({
         setDistance(dist);
       }
 
-      // Ir para o próximo passo (foto)
+      // Ir para o próximo passo (foto). A câmera é ligada por um useEffect quando o passo
+      // vira 'photo' — assim o elemento <video> já está montado antes de receber o stream
+      // (antes a câmera era iniciada cedo demais e o preview às vezes nunca aparecia).
       setStep('photo');
-      startCamera();
     } catch (error: any) {
       const code = error?.code;
       const description =
@@ -109,52 +111,88 @@ export default function CheckInModal({
     }
   };
 
-  // Iniciar câmera
-  const startCamera = async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' } // Câmera traseira
-      });
-      setStream(mediaStream);
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
+  // Liga a câmera ao vivo APENAS quando o passo é 'photo' e ainda não há foto — e só
+  // depois que o <video> já está montado (efeito roda pós-render). Isso corrige o caso
+  // em que a câmera era iniciada antes do elemento existir e o preview ficava preto.
+  useEffect(() => {
+    if (!isOpen || step !== 'photo' || photoData) return;
+    let cancelled = false;
+    let localStream: MediaStream | null = null;
+    (async () => {
+      setCameraError(false);
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Câmera não disponível neste navegador');
+        }
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }, // câmera traseira
+          audio: false,
+        });
+        if (cancelled) { localStream.getTracks().forEach((t) => t.stop()); return; }
+        setStream(localStream);
+        const v = videoRef.current;
+        if (v) {
+          v.srcObject = localStream;
+          v.muted = true; // autoplay em mobile exige muted
+          v.setAttribute('playsinline', 'true');
+          try { await v.play(); } catch { /* alguns navegadores exigem gesto; preview ainda aparece */ }
+        }
+      } catch (err) {
+        if (!cancelled) setCameraError(true); // cai no caminho de captura nativa (fallback)
       }
-    } catch (error) {
-      toast({
-        title: "Erro ao acessar câmera",
-        description: error instanceof Error ? error.message : "Erro desconhecido",
-        variant: "destructive"
-      });
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+      if (localStream) localStream.getTracks().forEach((t) => t.stop());
+    };
+  }, [isOpen, step, photoData]);
 
-  // Tirar foto
+  // Tirar foto (a partir do preview ao vivo)
   const takePhoto = () => {
-    if (!videoRef.current) return;
-
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) {
+      toast({
+        title: "Câmera ainda não está pronta",
+        description: 'Aguarde o preview aparecer ou use "Tirar foto pela câmera do aparelho".',
+        variant: "destructive",
+      });
+      return;
+    }
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
     const ctx = canvas.getContext('2d');
-    
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0);
+      ctx.drawImage(v, 0, 0);
       const photo = canvas.toDataURL('image/jpeg');
       setPhotoData(photo);
-      
-      // Parar câmera
+      // Parar câmera (o useEffect também limpa ao sair do passo)
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
         setStream(null);
       }
     }
   };
 
-  // Refazer foto
+  // Captura pela câmera nativa do aparelho (input file com capture) — funciona mesmo
+  // quando o preview ao vivo falha. Força a câmera (não a galeria) via capture="environment".
+  const onNativeCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setPhotoData(ev.target?.result as string);
+        if (stream) { stream.getTracks().forEach((t) => t.stop()); setStream(null); }
+      };
+      reader.readAsDataURL(f);
+    }
+    (e.target as HTMLInputElement).value = '';
+  };
+
+  // Refazer foto — limpa a foto; o useEffect religa a câmera automaticamente.
   const retakePhoto = () => {
     setPhotoData(null);
-    startCamera();
+    setCameraError(false);
   };
 
   // Enviar check-in
@@ -218,6 +256,7 @@ export default function CheckInModal({
     setDistance(null);
     setPhotoData(null);
     setNotes('');
+    setCameraError(false);
     onClose();
   };
 
@@ -253,22 +292,48 @@ export default function CheckInModal({
                 </div>
               )}
               
-              <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                  data-testid="video-camera"
+              {!cameraError ? (
+                <>
+                  <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                      data-testid="video-camera"
+                    />
+                  </div>
+
+                  <Button onClick={takePhoto} className="w-full" data-testid="button-take-photo">
+                    <Camera className="mr-2 h-4 w-4" />
+                    Tirar Foto
+                  </Button>
+                </>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 text-center">
+                  Não foi possível abrir a câmera ao vivo neste aparelho. Toque no botão abaixo para tirar a foto pela câmera do celular.
+                </div>
+              )}
+
+              {/* 📸 Captura pela câmera do aparelho — SEMPRE disponível (garantia caso o
+                  preview ao vivo não abra). capture="environment" força a câmera (não a galeria). */}
+              <label
+                className={`w-full inline-flex items-center justify-center gap-2 text-sm rounded-md px-3 py-2 cursor-pointer ${cameraError ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border border-blue-300 text-blue-700 hover:bg-blue-50'}`}
+                data-testid="native-capture-checkin-photo"
+              >
+                <Camera className="h-4 w-4" />
+                {cameraError ? 'Tirar foto (câmera do aparelho)' : 'Câmera não abriu? Tirar foto pelo app do celular'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={onNativeCapture}
                 />
-              </div>
+              </label>
 
-              <Button onClick={takePhoto} className="w-full" data-testid="button-take-photo">
-                <Camera className="mr-2 h-4 w-4" />
-                Tirar Foto
-              </Button>
-
-              {/* 📤 Upload de foto do arquivo — SOMENTE administradores */}
+              {/* 📤 Upload de foto do arquivo (galeria) — SOMENTE administradores */}
               {isCheckinAdmin && (
                 <label
                   className="w-full inline-flex items-center justify-center gap-2 text-sm border border-purple-300 text-purple-700 rounded-md px-3 py-2 cursor-pointer hover:bg-purple-50"
@@ -279,18 +344,7 @@ export default function CheckInModal({
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) {
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                          setPhotoData(ev.target?.result as string);
-                          if (stream) { stream.getTracks().forEach((t) => t.stop()); setStream(null); }
-                        };
-                        reader.readAsDataURL(f);
-                      }
-                      (e.target as HTMLInputElement).value = '';
-                    }}
+                    onChange={onNativeCapture}
                   />
                 </label>
               )}
