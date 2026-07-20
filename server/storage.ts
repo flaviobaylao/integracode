@@ -255,7 +255,7 @@ export interface IStorage {
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
   deleteSalesCard(id: string): Promise<void>;
   deleteAllSalesCards(): Promise<number>;
-  getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]>;
+  getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
   duplicateSalesCard(id: string, newDate: Date): Promise<SalesCard>;
   getOrCreatePermanentCard(customerId: string, sellerId: string): Promise<SalesCard>;
@@ -2399,14 +2399,14 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount || 0;
   }
 
-  async getSalesCardsByDate(date: Date, sellerId?: string): Promise<SalesCardWithRelations[]> {
+  async getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]> {
     // Formatar data como YYYY-MM-DD para comparação
     const targetDate = date.toISOString().split('T')[0];
-    
+
     // Converter timestamptz para date no timezone de São Paulo
     // Sintaxe correta: (col AT TIME ZONE 'America/Sao_Paulo')::date
     let whereConditions;
-    
+
     if (sellerId) {
       whereConditions = and(
         or(
@@ -2449,6 +2449,12 @@ export class DatabaseStorage implements IStorage {
       );
     }
     
+    // PERFORMANCE: quando um customerId é informado, filtra por ele DIRETO no SQL — evita
+    // carregar TODOS os cards da data (o que causava timeout/503 ao abrir 1 card em rotas grandes).
+    if (customerId) {
+      whereConditions = and(whereConditions, eq(salesCards.customerId, customerId));
+    }
+
     const result = await db
       .select()
       .from(salesCards)
@@ -2456,8 +2462,8 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(salesCards.sellerId, users.id))
       .where(whereConditions)
       .orderBy(desc(salesCards.scheduledDate));
-    
-    console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}`);
+
+    console.log(`📊 getSalesCardsByDate: Encontrados ${result.length} cards para ${date.toLocaleDateString('pt-BR')} ${sellerId ? `(vendedor: ${sellerId})` : ''}${customerId ? ` (cliente: ${customerId})` : ''}`);
     
     // Filtrar cards com customer inválido para evitar erros
     return result
