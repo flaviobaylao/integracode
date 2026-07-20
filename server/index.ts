@@ -11,6 +11,7 @@ import "./scheduler";
 import { startSyncWorker, runSync, resetSyncTimestamp } from "./sync-1.0";
 import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
+import { registerOfficialDispatch } from "./official-dispatch";
 import { enviarAlertaPositivacaoVendedores } from './positivacao-alert';
 import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
 import { ensureFinancialAuditSchema } from './financial-audit';
@@ -30,6 +31,7 @@ import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
 import { calculateNextVisitDate } from "../shared/visitSchedule";
 
 const app = express();
+registerOfficialDispatch(app);
 
 // MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas
 app.use((req, res, next) => {
