@@ -875,7 +875,8 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
         weekdays: customerWeekdays,
         periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
         lastCompletedDate: lastCompletedDate,
-        referenceDate: nowBrazil()
+        referenceDate: nowBrazil(),
+        serviceStartDate: customerData.serviceStartDate ? new Date(customerData.serviceStartDate) : undefined
       });
       
       const oldNextVisit = card.nextVisitDate ? new Date(card.nextVisitDate).toLocaleDateString('pt-BR') : 'N/A';
