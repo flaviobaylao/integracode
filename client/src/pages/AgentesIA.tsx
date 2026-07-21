@@ -566,6 +566,20 @@ export default function AgentesIA() {
       </div>
 
       <RuntimeControl agentes={agentes} />
+      <Card>
+     <CardHeader>
+       <CardTitle className="flex items-center gap-2">
+         <i className="fas fa-paper-plane text-muted-foreground" /> Disparos 1841 (WhatsApp API oficial)
+       </CardTitle>
+     </CardHeader>
+     <CardContent>
+       <iframe
+         src="/api/admin/oficial/painel"
+         style={{ width: "100%", height: "820px", border: 0, borderRadius: 12 }}
+         title="Painel de Disparos 1841"
+       />
+     </CardContent>
+   </Card>
 
       <Card>
         <CardHeader>
