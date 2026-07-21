@@ -2970,6 +2970,26 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  // TEMP (Claude) linhagem de dados legado (Omie/1.0) — leitura, token. REMOVER apos uso.
+  app.all('/api/tmp/claude-lin', async (req: any, res) => {
+    try {
+      const t = String((req.query && req.query.t) || '');
+      if (t !== 'cllin_55f501e4eb09923330') return res.status(403).json({ error: 'forbidden' });
+      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const FYEAR = "(COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')";
+      const FSALE = "status='authorized' AND COALESCE(operation_type,'saida')<>'entrada' AND COALESCE(fin_nfe,'1')<>'4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%'";
+      // 1) faturamento (NF-e venda) por mes, separando importado vs nativo
+      const fiscalMes = await q("SELECT to_char(date_trunc('month'," + FYEAR + "),'YYYY-MM') AS m, CASE WHEN import_origin IS NULL OR TRIM(import_origin)='' THEN 'nativo' ELSE 'importado' END AS origem, COUNT(*)::int AS n, COALESCE(SUM(total_invoice),0)::float AS v FROM fiscal_invoices WHERE " + FSALE + " AND " + FYEAR + " >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo')) GROUP BY 1,2 ORDER BY 1,2");
+      // 2) valores distintos de import_origin (NF-e)
+      const fiscalOrig = await q("SELECT COALESCE(NULLIF(TRIM(import_origin),''),'(nativo/sem origem)') AS origem, COUNT(*)::int AS n, COALESCE(SUM(total_invoice),0)::float AS v, MIN(created_at)::text AS primeiro, MAX(created_at)::text AS ultimo FROM fiscal_invoices WHERE status='authorized' GROUP BY 1 ORDER BY n DESC");
+      // 3) billing_pipeline por mes de criacao (para achar o backfill inicial)
+      const bpMes = await q("SELECT to_char(date_trunc('month',(created_at AT TIME ZONE 'America/Sao_Paulo')),'YYYY-MM') AS m, COUNT(*)::int AS n, COALESCE(SUM(sale_value),0)::float AS v FROM billing_pipeline GROUP BY 1 ORDER BY 1");
+      // 4) billing_pipeline por created_by (quem/como criou)
+      const bpCb = await q("SELECT COALESCE(NULLIF(created_by,''),'(sem)') AS cb, COUNT(*)::int AS n, MIN(created_at)::text AS primeiro, MAX(created_at)::text AS ultimo FROM billing_pipeline GROUP BY 1 ORDER BY n DESC LIMIT 20");
+      return res.json({ fiscalMes, fiscalOrig, bpMes, bpCb });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 400) }); }
+  });
+
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
