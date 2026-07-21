@@ -15,6 +15,8 @@
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { storage } from "./storage";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
@@ -82,7 +84,21 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     const username = await resolveUsername(igsid);
     const displayName = username ? "@" + username : "Instagram " + igsid.slice(-6);
 
-    let conversation = await storage.getChatConversationByPhone(phoneKey);
+    // Busca a conversa MAIS RECENTE desse contato (ordenada; evita loop ao reiniciar).
+    let conversation: any = (await db.execute(sql`SELECT id, customer_id AS "customerId", unread_count AS "unreadCount", last_message_time AS "lastMessageTime", status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
+
+    // Reinicio por inatividade: se a conversa existente estiver resolvida OU parada ha mais
+    // tempo que o limite (IG_RESET_MINUTES), finaliza a antiga e comeca uma NOVA (dialogo do zero).
+    if (conversation) {
+      const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
+      const idleMin = (Date.now() - new Date(conversation.lastMessageTime || 0).getTime()) / 60000;
+      const resolved = String(conversation.status || "") === "resolved";
+      if (resolved || (resetMin > 0 && idleMin >= resetMin)) {
+        try { if (!resolved) await storage.updateChatConversation(conversation.id, { status: "resolved" } as any); } catch {}
+        conversation = undefined;
+      }
+    }
+
     if (!conversation) {
       let customer = await storage.getChatCustomerByPhone(phoneKey);
       if (!customer) {
@@ -139,6 +155,20 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
 }
 
 export function registerInstagram(app: Express) {
+  // Varredura periodica: finaliza (status 'resolved') conversas de Instagram inativas apos
+  // IG_RESET_MINUTES sem novas mensagens. Mantem a fila limpa; na volta do cliente uma nova
+  // conversa e criada, reiniciando o dialogo. Roda a cada 10 min (nao afeta a inicializacao).
+  try {
+    setInterval(async () => {
+      try {
+        const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
+        if (resetMin > 0) {
+          await db.execute(sql`UPDATE chat_conversations SET status = 'resolved' WHERE customer_phone LIKE 'ig:%' AND status <> 'resolved' AND last_message_time < NOW() - make_interval(mins => ${resetMin})`);
+        }
+      } catch (e: any) { console.error("[IG-SWEEP]", e?.message || e); }
+    }, 10 * 60 * 1000);
+  } catch {}
+
   // Verificacao do webhook (Meta chama isso 1x ao configurar).
   app.get("/api/instagram/webhook", (req: Request, res: Response) => {
     const mode = req.query["hub.mode"];
