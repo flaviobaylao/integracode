@@ -98,7 +98,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
   useEffect(() => {
     if (card) {
-      setProducts(card.products || []);
+      // Card ja finalizado (completed/blocked) abre SEM os produtos do pedido antigo, para evitar
+      // que o pedido concluido reapareca em tela e seja reenviado (duplicata de pedido).
+      const _jaRegistrado = ((card as any).status === 'completed' || (card as any).status === 'blocked');
+      setProducts(_jaRegistrado ? [] : (card.products || []));
       setPaymentMethod(card.paymentMethod || 'a_vista');
       setOperationType(card.operationType || 'venda');
       setNotes(card.notes || '');
