@@ -25,6 +25,7 @@ interface BillingPipelineItem {
   salesCardId: string;
   customerId: string;
   customerName: string;
+  customerAltName?: string | null; // nome alternativo (ex.: razão social) — usado só na busca
   customerDocument: string | null;
   sellerId: string | null;
   sellerName: string | null;
@@ -215,11 +216,15 @@ export default function BillingPipeline() {
   const [editData, setEditData] = useState<any>(null);
   const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
   const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
+  const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
   const [prodSearch, setProdSearch] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  // Agendamento de faturamento ("Faturar em"): ao mover p/ "Agendado" pedimos a data antes de mover.
+  const [scheduleTarget, setScheduleTarget] = useState<{ item: BillingPipelineItem; stage: string } | null>(null);
+  const [scheduleDate, setScheduleDate] = useState('');
   const [isPrintingDanfe, setIsPrintingDanfe] = useState(false);
   const [isPrintingCobranca, setIsPrintingCobranca] = useState(false);
   const [isPrintingCompleto, setIsPrintingCompleto] = useState(false);
@@ -238,13 +243,39 @@ export default function BillingPipeline() {
   // SOMENTE de leitura (consulta + filtros). As mutações também são bloqueadas no backend.
   const canEdit = ['admin', 'coordinator', 'administrative'].includes(String((currentUser as any)?.role || ''));
 
-  const { data: items = [], isLoading } = useQuery<BillingPipelineItem[]>({
+  const { data: rawItems = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
   });
 
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
   });
+
+  // Mapas para resolver SEMPRE o Nome Fantasia no card (independe do que veio gravado em customer_name —
+  // ex.: itens reconciliados por NF trazem a razão social da nota). Resolve por id e, como reforço,
+  // por CNPJ/CPF (cobre itens com customerId sintético 'omie-client-…').
+  const onlyDigits = (s: any) => String(s || '').replace(/\D/g, '');
+  const customerById = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const c of (customersList as any[])) if (c?.id) m.set(c.id, c);
+    return m;
+  }, [customersList]);
+  const customerByDoc = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const c of (customersList as any[])) { const d = onlyDigits(c?.cnpj) || onlyDigits(c?.cpf); if (d) m.set(d, c); }
+    return m;
+  }, [customersList]);
+  const resolveCustomer = (i: any) => customerById.get(i?.customerId) || customerByDoc.get(onlyDigits(i?.customerDocument));
+
+  // Regra: TODO card do pipeline exibe o NOME FANTASIA do cliente (fallback: razão social do cadastro;
+  // depois o que veio gravado). O nome original vira customerAltName, para a busca também encontrá-lo.
+  const items = useMemo(() => (rawItems as BillingPipelineItem[]).map((i) => {
+    const c = resolveCustomer(i);
+    const fantasy = ((c?.fantasyName || '').trim()) || ((c?.name || '').trim());
+    return (fantasy && fantasy !== i.customerName)
+      ? { ...i, customerName: fantasy, customerAltName: i.customerName }
+      : i;
+  }), [rawItems, customerById, customerByDoc]);
 
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
     queryKey: ['/api/billing-pipeline/mode'],
@@ -288,8 +319,10 @@ export default function BillingPipeline() {
   });
 
   const moveStageMutation = useMutation({
-    mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
-      return await apiRequest('PATCH', `/api/billing-pipeline/${id}/stage`, { stage });
+    mutationFn: async ({ id, stage, scheduledBillingDate }: { id: string; stage: string; scheduledBillingDate?: string }) => {
+      const body: any = { stage };
+      if (scheduledBillingDate !== undefined) body.scheduledBillingDate = scheduledBillingDate || null;
+      return await apiRequest('PATCH', `/api/billing-pipeline/${id}/stage`, body);
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
@@ -451,8 +484,10 @@ export default function BillingPipeline() {
           id: b.id,
           salesCardId: b.salesCardId,
           customerId: b.customerId,
-          customerName: b.customer?.name ?? b.customerName ?? 'Cliente',
-          customerDocument: b.customer?.document ?? null,
+          // Rotula o card bloqueado pelo NOME FANTASIA (igual ao resto do board), com fallback p/ razão social.
+          customerName: (customerById.get(b.customerId)?.fantasyName || '').trim() || b.customer?.fantasyName || b.customer?.name || b.customerName || 'Cliente',
+          customerAltName: b.customer?.name ?? customerById.get(b.customerId)?.name ?? null, // razão social — para a busca também encontrar
+          customerDocument: b.customer?.cnpj ?? b.customer?.cpf ?? b.customer?.document ?? null,
           sellerId: b.sellerId ?? null,
           sellerName: b.seller ? ((b.seller.firstName || '') + ' ' + (b.seller.lastName || '')).trim() : (b.sellerId ?? null),
           stage: 'bloqueado',
@@ -473,7 +508,7 @@ export default function BillingPipeline() {
       }
     }
     return groups;
-  }, [items, blockedOrders]);
+  }, [items, blockedOrders, customerById]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -597,6 +632,18 @@ export default function BillingPipeline() {
     finally { setIsPrintingCompleto(false); }
   }, [selectedItems]);
 
+  // Abre o modal p/ capturar a data "Faturar em" antes de mover o pedido para "Agendado".
+  const openSchedule = (item: BillingPipelineItem, stage: string) => {
+    setScheduleTarget({ item, stage });
+    setScheduleDate(item.scheduledBillingDate ? String(item.scheduledBillingDate).slice(0, 10) : '');
+  };
+  const closeSchedule = () => { setScheduleTarget(null); setScheduleDate(''); };
+  const confirmSchedule = () => {
+    if (!scheduleTarget) return;
+    moveStageMutation.mutate({ id: scheduleTarget.item.id, stage: scheduleTarget.stage, scheduledBillingDate: scheduleDate || undefined });
+    closeSchedule();
+  };
+
   const moveItem = (item: BillingPipelineItem, direction: 'forward' | 'backward') => {
     // Card da coluna 'Bloqueados' nao e item do pipeline: avancar = LIBERAR (release), nao PATCH /stage.
     if (item.stage === 'bloqueado') {
@@ -614,6 +661,8 @@ export default function BillingPipeline() {
       if (window.confirm(`Bloquear o pedido de ${item.customerName}? Ele vai para a coluna "Bloqueados".`)) blockOrderMutation.mutate({ id: item.id });
       return;
     }
+    // Mover para "Agendado" pede a data de faturamento ("Faturar em") antes de concluir.
+    if (targetStage === 'agendado') { openSchedule(item, targetStage); return; }
     moveStageMutation.mutate({ id: item.id, stage: targetStage });
   };
 
@@ -629,6 +678,8 @@ export default function BillingPipeline() {
       if (window.confirm(`Bloquear o pedido de ${item.customerName}? Ele vai para a coluna "Bloqueados" e so sai de la por liberacao manual.`)) blockOrderMutation.mutate({ id: item.id });
       return;
     }
+    // Mover para "Agendado" pede a data de faturamento ("Faturar em") antes de concluir.
+    if (stage === 'agendado') { openSchedule(item, stage); return; }
     moveStageMutation.mutate({ id: item.id, stage });
   };
 
@@ -912,10 +963,13 @@ export default function BillingPipeline() {
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
-              // (1) Busca por cliente ou NF
+              // (1) Busca por cliente (nome fantasia OU razão social), CNPJ/CPF ou NF
+              const _qDigits = _q.replace(/\D/g, '');
               const matchesText = !_q
                 || (i.customerName || '').toLowerCase().includes(_q)
-                || (i.invoiceNumber || '').toLowerCase().includes(_q);
+                || ((i as any).customerAltName || '').toLowerCase().includes(_q)
+                || (i.invoiceNumber || '').toLowerCase().includes(_q)
+                || (_qDigits.length >= 3 && (i.customerDocument || '').replace(/\D/g, '').includes(_qDigits));
               // (2) Vendedor (nome canônico) — múltipla seleção
               const matchesSeller = sellerFilter.size === 0 || sellerFilter.has(canonicalSeller(i));
               // (3) Tipo de Operação — múltipla seleção
@@ -1322,6 +1376,30 @@ export default function BillingPipeline() {
         </DialogContent>
       </Dialog>
 
+      {/* Agendar faturamento ("Faturar em") ao mover para a etapa Agendado */}
+      <Dialog open={!!scheduleTarget} onOpenChange={(o) => { if (!o) closeSchedule(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Agendar faturamento</DialogTitle>
+            <DialogDescription>
+              Escolha a data em que o pedido de <strong>{scheduleTarget?.item.customerName}</strong> deve ser faturado.
+              A data aparece no card e no detalhe, e o pedido volta sozinho para "Pedido" nesse dia.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <label className="text-[11px] uppercase tracking-wider text-gray-500 font-medium">Faturar em</label>
+            <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" data-testid="input-agendar-faturar-em" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeSchedule}>Cancelar</Button>
+            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
+              {moveStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Clock className="h-4 w-4 mr-1" />}
+              Agendar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Batch Stage Confirm */}
       <Dialog open={!!batchStageTarget} onOpenChange={() => setBatchStageTarget(null)}>
         <DialogContent>
@@ -1521,10 +1599,10 @@ function KanbanCard({
               Pago
             </Badge>
           )}
-          {stage.key === 'agendado' && item.scheduledBillingDate && (
-            <Badge variant="outline" className="text-[10px] border-cyan-300 text-cyan-800 bg-cyan-50">
-              <Clock className="h-2.5 w-2.5 mr-0.5" />
-              Agendado para {String(item.scheduledBillingDate).slice(0, 10).split('-').reverse().join('/')}
+          {item.scheduledBillingDate && (
+            <Badge variant="outline" className="text-[10px] border-cyan-300 text-cyan-800 bg-cyan-50 font-semibold" title="Data programada para faturamento (Faturar em)">
+              <Calendar className="h-2.5 w-2.5 mr-0.5" />
+              Faturar em {String(item.scheduledBillingDate).slice(0, 10).split('-').reverse().join('/')}
             </Badge>
           )}
           {(() => {
