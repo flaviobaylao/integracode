@@ -319,6 +319,51 @@ export function registerReconciliation(app: Express) {
     }
   });
 
+  // ---- Livro único da conta: 1 linha por transação (canônica), TODOS os status
+  // Read-only. É a visão principal do modelo "livro único por conta": cada lançamento
+  // do extrato aparece UMA única vez (mirror_of IS NULL = canônico; as reimportações
+  // do mesmo lançamento entram como espelho e NÃO reaparecem aqui), com seu status.
+  // Não emite nada; matches (p/ conciliados) e sugestões (p/ pendentes) vêm juntos.
+  app.get("/api/reconciliation/ledger", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      const accountId = (req.query.accountId as string) || null;
+      const instanceId = (req.query.instanceId as string) || null;
+      const r = await db.execute(sql`
+        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
+               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
+               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
+               i.match_confidence, i.notes, s.file_name, fa.name AS account_name
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE i.mirror_of IS NULL
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+          AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
+        ORDER BY i.transaction_date DESC, i.id
+        LIMIT 5000`);
+      const items = rowsOf(r);
+      const canonIds = items.map((i: any) => i.id);
+      const matchesByItem: Record<string, any[]> = {};
+      if (canonIds.length) {
+        const mR = await db.execute(sql`
+          SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount, m.match_kind,
+                 m.title_amount_settled, m.interest, m.discount,
+                 r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due,
+                 p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due
+          FROM bank_statement_item_matches m
+          LEFT JOIN receivables r ON r.id = m.receivable_id
+          LEFT JOIN payables p ON p.id = m.payable_id
+          WHERE m.bank_statement_item_id IN (${inList(canonIds)})`);
+        for (const m of rowsOf(mR)) (matchesByItem[m.bank_statement_item_id] ||= []).push(m);
+      }
+      const suggestions = await buildSuggestions(items);
+      res.json({ items, matchesByItem, suggestions });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   // ---- Itens de um extrato + matches + sugestões --------------------------
   app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
@@ -1011,14 +1056,12 @@ export function registerReconciliation(app: Express) {
       const stmtId = stmt?.id;
       if (!stmtId) return res.status(500).json({ error: "falha ao criar o extrato (sem id)" });
 
+      // IMPORTACAO READ-ONLY: todo lancamento novo entra como 'pending'. Nada e
+      // ignorado, baixado ou conciliado automaticamente na importacao. O extrato e
+      // apenas espelhado; qualquer baixa vem da conciliacao MANUAL de cada item, e
+      // tarifas/PIX/COBRANCA sao tratados por acao explicita do operador (botoes).
       let inserted = 0;
-      let autoIgnorados = 0;
       for (const t of toInsert) {
-        // FASE 3.4c/d - credito "COBRANCA" (repasse da baixa de boletos, ja tratados
-        // pelo webhook) e marcadores "SALDO DO DIA"/"SALDO ANTERIOR" entram ignorados.
-        const ndT = normDesc(t.description);
-        const ehSaldo = ["saldododia", "saldoanterior"].includes(ndT);
-        const ehCobranca = (t.type === "C" && ["cobranca", "cobrana", "cobranaa"].includes(ndT)) || ehSaldo;
         const vm: Record<string, any> = {
           statement_id: stmtId,
           transaction_date: t.date,
@@ -1027,10 +1070,9 @@ export function registerReconciliation(app: Express) {
           description: t.description,
           document: t.document,
           origin_name: t.name || null,
-          reconciliation_status: ehCobranca ? "ignored" : "pending",
+          reconciliation_status: "pending",
           created_by: by,
         };
-        if (ehCobranca) { vm.notes = ehSaldo ? "Ignorado automaticamente: marcador de saldo do extrato" : "Ignorado automaticamente: repasse de COBRANCA (boletos baixados via webhook)"; vm.matched_by = by; vm.matched_at = new Date().toISOString(); autoIgnorados++; }
         if (fitCol) vm[fitCol] = t.fitid || null;
         await insertDynamic("bank_statement_items", itCols, vm);
         inserted++;
@@ -1059,30 +1101,11 @@ export function registerReconciliation(app: Express) {
         espelhados++;
       }
 
-      // FASE 3.4d - varredura pos-importacao: ignora tambem pendentes ANTIGOS com
-      // descricao COBRANCA (credito) ou SALDO DO DIA / SALDO ANTERIOR.
-      let varreduraIgnorados = 0;
-      try {
-        const uv: any = await db.execute(sql`
-          UPDATE bank_statement_items
-          SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
-              notes = 'Ignorado automaticamente na importacao (COBRANCA / SALDO DO DIA / SALDO ANTERIOR)'
-          WHERE (reconciliation_status IS NULL OR reconciliation_status = 'pending')
-            AND ((type = 'C' AND regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa'))
-                 OR regexp_replace(lower(COALESCE(description, '')), '[^a-z]', '', 'g') IN ('saldododia', 'saldoanterior'))`);
-        varreduraIgnorados = Number((uv as any)?.rowCount ?? 0);
-      } catch {}
-
-      // FASE 3.4f - concilia automaticamente as tarifas bancarias do BB pendentes.
-      let tarifas: any = { candidatos: 0, conciliados: 0, erros: [] };
-      try { tarifas = await conciliarTarifasBB(by, false); } catch {}
-
-      // FASE 3.4q - PIX recebidos ja baixados via webhook BB: vincula ao titulo ja
-      // quitado e marca conciliado, SEM gerar nova baixa (o titulo ja esta recebido).
-      let pixWebhook: any = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] };
-      try { pixWebhook = await conciliarPixWebhook(by, false); } catch {}
-
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, autoIgnorados, varreduraIgnorados, tarifas, pixWebhook, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // Importacao READ-ONLY: NENHUMA rotina automatica roda aqui. Tarifas do BB,
+      // PIX-recebidos ja baixados e COBRANCA/SALDO sao conciliados/ignorados por ACAO
+      // EXPLICITA do operador (endpoints /conciliar-tarifas, /conciliar-pix-webhook,
+      // /ignore-cobranca). Assim a importacao nunca emite lancamento nem esconde nada.
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
