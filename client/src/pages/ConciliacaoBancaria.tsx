@@ -40,10 +40,12 @@ function StatusBadge({ s }: { s: string | null }) {
     reconciled: "bg-green-100 text-green-700",
     ignored: "bg-gray-200 text-gray-600",
     pending: "bg-amber-100 text-amber-700",
+    mirror: "bg-slate-100 text-slate-500",
   };
-  const label: Record<string, string> = { reconciled: "Conciliado", ignored: "Ignorado", pending: "Pendente" };
+  const label: Record<string, string> = { reconciled: "Conciliado", ignored: "Ignorado", pending: "Pendente", mirror: "Já importado" };
   const k = s || "pending";
-  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[k] || map.pending}`}>{label[k] || "Pendente"}</span>;
+  const txt = label[k] || (k.charAt(0).toUpperCase() + k.slice(1));
+  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[k] || map.pending}`}>{txt}</span>;
 }
 
 export default function ConciliacaoBancaria() {
@@ -152,7 +154,11 @@ export default function ConciliacaoBancaria() {
       .catch(() => setStatements([]))
       .finally(() => setLoadingList(false));
   };
-  useEffect(() => { loadStatements(); if (selected?.id === "__pendentes__") loadDetail(selected); }, [instance, account]);
+  useEffect(() => {
+    loadStatements();
+    if (selected?.id === "__pendentes__" || selected?.id === "__ledger__") loadDetail(selected);
+    else if (account) openLedger(); // livro da conta é a visão padrão ao escolher a conta
+  }, [instance, account]);
 
   const accountOptions = useMemo(
     () => accounts.filter((a) => !instance || a.omie_instance_id === instance),
@@ -161,8 +167,11 @@ export default function ConciliacaoBancaria() {
 
   const loadDetail = (s: Statement) => {
     setLoadingDetail(true);
-    const url = s.id === "__pendentes__"
-      ? "/api/reconciliation/pending-items?" + new URLSearchParams({ ...(instance ? { instanceId: instance } : {}), ...(account ? { accountId: account } : {}) }).toString()
+    const qs = new URLSearchParams({ ...(instance ? { instanceId: instance } : {}), ...(account ? { accountId: account } : {}) }).toString();
+    const url = s.id === "__ledger__"
+      ? "/api/reconciliation/ledger?" + qs
+      : s.id === "__pendentes__"
+      ? "/api/reconciliation/pending-items?" + qs
       : `/api/reconciliation/statements/${s.id}/items`;
     return fetch(url, { credentials: "include" })
       .then((r) => r.json())
@@ -171,6 +180,8 @@ export default function ConciliacaoBancaria() {
       .finally(() => setLoadingDetail(false));
   };
   const openStatement = (s: Statement) => { setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
+  // Livro único da conta: cada lançamento uma vez, todos os status (visão padrão).
+  const openLedger = () => openStatement({ id: "__ledger__", file_name: "Livro da conta — todos os lançamentos" } as any);
   // FASE 3.4b - visao consolidada: pendentes de todos os extratos da conta
   const openPendentes = () => openStatement({ id: "__pendentes__", file_name: "Pendentes — todos os extratos" } as any);
   const refresh = async () => { if (selected) await loadDetail(selected); await loadStatements(); };
@@ -249,6 +260,22 @@ export default function ConciliacaoBancaria() {
     setBusy(item.id);
     try { await post(`/api/reconciliation/items/${item.id}/undo`, { by: me }); await refresh(); }
     catch (e: any) { alert("Erro ao desfazer: " + e.message); }
+    finally { setBusy(""); }
+  };
+
+  // ---- ações em lote MANUAIS (não rodam na importação) ----
+  // Prévia (dryRun) → confirma → aplica. Dá baixa nos títulos correspondentes.
+  const runBatch = async (endpoint: string, label: string) => {
+    setBusy("batch");
+    try {
+      const prev = await post(endpoint, { by: me, dryRun: true });
+      const n = Number(prev.conciliados || prev.candidatos || 0);
+      if (!n) { alert(`${label}: nenhum lançamento pendente elegível agora.`); return; }
+      if (!window.confirm(`${label}: ${n} lançamento(s) elegível(is). Conciliar agora? Isso dá baixa nos títulos correspondentes.`)) return;
+      const r = await post(endpoint, { by: me, dryRun: false });
+      alert(`${label}: ${Number(r.conciliados || 0)} conciliado(s).` + (r.ambiguos ? ` ${r.ambiguos} ambíguo(s).` : "") + (r.erros?.length ? ` ${r.erros.length} erro(s).` : ""));
+      await refresh();
+    } catch (e: any) { alert(`Erro (${label}): ` + e.message); }
     finally { setBusy(""); }
   };
 
@@ -392,6 +419,8 @@ export default function ConciliacaoBancaria() {
           {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <div className="flex-1" />
+        <button onClick={() => runBatch("/api/reconciliation/conciliar-tarifas", "Conciliar tarifas do BB")} disabled={busy === "batch"} title="Concilia (dá baixa) as tarifas bancárias do BB pendentes — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧾 Conciliar tarifas BB</button>
+        <button onClick={() => runBatch("/api/reconciliation/conciliar-pix-webhook", "Conciliar PIX recebidos")} disabled={busy === "batch"} title="Vincula os PIX recebidos já baixados via webhook aos títulos — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">↔ Conciliar PIX recebidos</button>
         <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
         <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
         <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border text-gray-500 cursor-not-allowed">🏦 Importar via BB API</button>
@@ -403,6 +432,12 @@ export default function ConciliacaoBancaria() {
           <div className="max-h-[74vh] overflow-auto divide-y">
             {loadingList && <div className="p-4 text-sm text-gray-400">Carregando…</div>}
             {!loadingList && statements.length === 0 && <div className="p-4 text-sm text-gray-400">Nenhum extrato.</div>}
+            {!loadingList && (
+              <button onClick={openLedger} className={`w-full text-left px-4 py-3 hover:bg-green-100 ${selected?.id === "__ledger__" ? "bg-green-100" : "bg-green-50"}`}>
+                <div className="text-sm font-medium">📒 Livro da conta — todos os lançamentos</div>
+                <div className="text-xs text-gray-500 mt-0.5">Cada lançamento uma única vez, com status (visão fiel do extrato){account ? " da conta selecionada" : " — selecione a conta"}</div>
+              </button>
+            )}
             {!loadingList && statements.length > 0 && (
               <button onClick={openPendentes} className={`w-full text-left px-4 py-3 hover:bg-amber-100 ${selected?.id === "__pendentes__" ? "bg-amber-100" : "bg-amber-50"}`}>
                 <div className="text-sm font-medium">⏳ Pendentes — todos os extratos</div>
