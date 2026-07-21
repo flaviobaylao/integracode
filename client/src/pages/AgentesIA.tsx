@@ -586,11 +586,8 @@ export default function AgentesIA() {
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           🤖 Auto-resposta dos Agentes — mostrar/ocultar
         </summary>
-        <div className="mt-2">
+     <div className="mt-2 space-y-6">
           <RuntimeControl agentes={agentes} />
-        </div>
-      </details>
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -652,7 +649,9 @@ export default function AgentesIA() {
             <AgenteEditor key={ag.id} inicial={ag} onSaved={() => refetch()} />
           ))}
         </div>
-      )}
+)}
+        </div>
+      </details>
     </div>
   );
 }
