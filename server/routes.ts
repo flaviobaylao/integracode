@@ -3827,7 +3827,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pipelineRevenueResult: any = await db.execute(sql`
         SELECT seller_key AS seller_id, omie_instance_id, COALESCE(SUM(total_invoice), 0) AS total
         FROM (
-          SELECT COALESCE(NULLIF(sc.seller_id, ''), bp.bp_seller_id) AS seller_key, fi.omie_instance_id AS omie_instance_id, fi.total_invoice AS total_invoice
+          SELECT COALESCE(NULLIF(bp.bp_seller_id, ''), sc.seller_id) AS seller_key, fi.omie_instance_id AS omie_instance_id, fi.total_invoice AS total_invoice
           FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi
           LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id
           LEFT JOIN (SELECT DISTINCT ON (inv_num) inv_num, bp_seller_id FROM (SELECT NULLIF(regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint AS inv_num, seller_id AS bp_seller_id, created_at FROM billing_pipeline WHERE regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g') <> '') t ORDER BY inv_num, created_at DESC) bp ON bp.inv_num = fi.invoice_number
