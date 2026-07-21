@@ -279,6 +279,23 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
 
+  // ---- limpeza de duplicatas legadas (colapsa em uma linha; reversível) ----
+  const runDedup = async () => {
+    setBusy("batch");
+    try {
+      const prev = await post("/api/reconciliation/dedup-canonical", { by: me, dryRun: true, accountId: account || null });
+      const n = Number(prev.linhasParaEspelhar || 0);
+      const gm = Number(prev.gruposMultiReconciliadas || 0);
+      if (!n && !gm) { alert("Nenhuma duplicata legada encontrada."); return; }
+      if (!n) { alert(`Nenhuma linha a colapsar. ${gm} grupo(s) com mais de uma conciliada precisam de conferência manual (possível baixa dupla).`); return; }
+      if (!window.confirm(`Deduplicar: ${prev.gruposDuplicados} grupo(s) duplicado(s); ${n} linha(s) viram "já importado" (espelho). Não apaga nada e é reversível.` + (gm ? `\n${gm} grupo(s) com >1 conciliada serão PULADOS p/ conferência manual.` : "") + `\nAplicar?`)) return;
+      const r = await post("/api/reconciliation/dedup-canonical", { by: me, dryRun: false, accountId: account || null });
+      alert(`Deduplicação: ${Number(r.espelhados || 0)} linha(s) colapsada(s).` + (r.gruposMultiReconciliadas ? ` ${r.gruposMultiReconciliadas} grupo(s) p/ conferência manual.` : ""));
+      await refresh();
+    } catch (e: any) { alert("Erro (deduplicar): " + e.message); }
+    finally { setBusy(""); }
+  };
+
   // ---- modal de conciliação (carrinho) ----
   const openModal = (it: Item) => {
     setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
@@ -421,6 +438,7 @@ export default function ConciliacaoBancaria() {
         <div className="flex-1" />
         <button onClick={() => runBatch("/api/reconciliation/conciliar-tarifas", "Conciliar tarifas do BB")} disabled={busy === "batch"} title="Concilia (dá baixa) as tarifas bancárias do BB pendentes — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧾 Conciliar tarifas BB</button>
         <button onClick={() => runBatch("/api/reconciliation/conciliar-pix-webhook", "Conciliar PIX recebidos")} disabled={busy === "batch"} title="Vincula os PIX recebidos já baixados via webhook aos títulos — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">↔ Conciliar PIX recebidos</button>
+        <button onClick={runDedup} disabled={busy === "batch"} title="Colapsa duplicatas legadas (mesma transação em várias linhas) em uma só — reversível, não apaga nada" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧹 Deduplicar</button>
         <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
         <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
         <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border text-gray-500 cursor-not-allowed">🏦 Importar via BB API</button>
