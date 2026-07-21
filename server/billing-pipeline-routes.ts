@@ -253,11 +253,14 @@ export async function evaluateOrderBlock(
 export async function insertBlockedOrderIdempotent(
   salesCard: any,
   blk: { reason: string; details: string },
-): Promise<void> {
-  if (!salesCard?.id) return;
+): Promise<boolean> {
+  // Retorna true SOMENTE quando o bloqueio foi inserido agora (novo); false se já existia.
+  // Usado para notificar o vendedor 1x só (pedido bloqueado não entra no pipeline e não tem o
+  // dedup normal; sem isso a mensagem repetiria a cada reprocessamento do autoSend).
+  if (!salesCard?.id) return false;
   const already = await db.select().from(blockedOrders)
     .where(and(eq(blockedOrders.salesCardId, salesCard.id), eq(blockedOrders.status, 'blocked'))).limit(1);
-  if (already.length > 0) return;
+  if (already.length > 0) return false;
   await db.insert(blockedOrders).values({
     salesCardId: salesCard.id,
     customerId: salesCard.customerId,
@@ -270,6 +273,7 @@ export async function insertBlockedOrderIdempotent(
     totalAmount: String(parseFloat(String(salesCard.saleValue)) || 0),
     products: (salesCard.products as any) || [],
   } as any);
+  return true;
 }
 
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null }) {
@@ -305,10 +309,39 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     if (!opts?.skipDebtCheck) {
       const blk = await evaluateOrderBlock(salesCard, customer);
       if (blk) {
-        try { await insertBlockedOrderIdempotent(salesCard, blk); }
+        let blkIsNew = false;
+        try { blkIsNew = await insertBlockedOrderIdempotent(salesCard, blk); }
         catch (e: any) { console.warn('⚠️ [BILLING-PIPELINE] Erro ao registrar bloqueio (segue):', e?.message); }
         await logOrderAudit(salesCard.id, blk.reason === 'overdue_debt' ? 'blocked_overdue_debt' : 'blocked_operation_type');
         console.log(`🚫 [BILLING-PIPELINE] Pedido ${salesCard.id} BLOQUEADO (${blk.reason}: ${(customer as any)?.fantasyName || (customer as any)?.name || salesCard.customerId}) - coluna Bloqueados`);
+
+        // NOTIFICAÇÃO (mesma automação 'pedido.criado' da implantação), agora TAMBÉM quando o
+        // pedido nasce BLOQUEADO — com um aviso de bloqueio em CAIXA ALTA anexado à mesma mensagem.
+        // Dispara só quando o bloqueio é NOVO (blkIsNew), para não repetir a cada reprocessamento.
+        if (blkIsNew) {
+          try {
+            const _cbeB = String(createdByEmail || '').trim();
+            let regUserB: any = null;
+            if (_cbeB && !/^(system|auto|reconcile)/i.test(_cbeB)) { try { regUserB = await storage.getUserByEmail(_cbeB); } catch {} }
+            const sellerB = regUserB || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
+            const motivoUp = blk.reason === 'overdue_debt'
+              ? 'DÉBITO VENCIDO DO CLIENTE'
+              : 'OPERAÇÃO REQUER LIBERAÇÃO MANUAL (AMOSTRA / TROCA / BONIFICAÇÃO)';
+            const blockNotice = `🚫 *PEDIDO BLOQUEADO — ${motivoUp}.*\n${String(blk.details || '').toUpperCase()}\nESTE PEDIDO NÃO SERÁ FATURADO ATÉ A LIBERAÇÃO.`;
+            void fireAutomation('pedido.criado', {
+              customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
+              order: {
+                id: `INT-${String(salesCard.id).substring(0, 8)}`,
+                value: (Number(salesCard.saleValue) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+              },
+              seller: { name: sellerB ? `${sellerB.firstName || ''} ${sellerB.lastName || ''}`.trim() : '' },
+              sellerPhone: (sellerB as any)?.phone || null,
+              blocked: true,
+              blockReason: blk.reason,
+              blockNotice,
+            });
+          } catch (e: any) { console.warn('⚠️ [BILLING-PIPELINE] Falha ao notificar bloqueio (segue):', e?.message); }
+        }
         return null;
       }
     }
