@@ -186,6 +186,17 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     if (!hist.length || hist[hist.length - 1].role !== 'user') hist.push({ role: 'user', content: opts.incomingText });
     let chosenId = (!isIG && routing === 'keyword') ? pickAgentByKeyword(opts.incomingText, defId) : defId;
     try { const chk: any = await db.execute(sql`SELECT id FROM agentes_config WHERE id = ${chosenId} AND ativo = true LIMIT 1`); if (!chk.rows?.[0]) chosenId = defId; } catch { chosenId = defId; }
+    // Resposta a um disparo de rota do dia -> agente "Rota do Dia"
+    try {
+      const rd: any = await db.execute(sql`SELECT 1 FROM official_dispatches
+        WHERE customer_phone = ${phone} AND use_case = 'rota_do_dia'
+          AND created_at > now() - interval '24 hours' LIMIT 1`);
+      if (rd.rows?.[0]) {
+        const ra: any = await db.execute(sql`SELECT id FROM agentes_config
+          WHERE id = 'Rota_do_Dia' AND ativo = true LIMIT 1`);
+        if (ra.rows?.[0]) chosenId = 'Rota_do_Dia';
+      }
+    } catch {}
     const gen = await generateAgentReply(chosenId, hist, ctx);
     if (!gen.ok || !gen.reply) return;
     const sent = await opts.sendText(opts.phone, gen.reply);
