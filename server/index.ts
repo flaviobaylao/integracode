@@ -2970,26 +2970,6 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
-  // TEMP (Claude) linhagem de dados legado (Omie/1.0) — leitura, token. REMOVER apos uso.
-  app.all('/api/tmp/claude-lin', async (req: any, res) => {
-    try {
-      const t = String((req.query && req.query.t) || '');
-      if (t !== 'cllin_55f501e4eb09923330') return res.status(403).json({ error: 'forbidden' });
-      const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
-      const FYEAR = "(COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')";
-      const FSALE = "status='authorized' AND COALESCE(operation_type,'saida')<>'entrada' AND COALESCE(fin_nfe,'1')<>'4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%'";
-      // 1) faturamento (NF-e venda) por mes, separando importado vs nativo
-      const fiscalMes = await q("SELECT to_char(date_trunc('month'," + FYEAR + "),'YYYY-MM') AS m, CASE WHEN import_origin IS NULL OR TRIM(import_origin)='' THEN 'nativo' ELSE 'importado' END AS origem, COUNT(*)::int AS n, COALESCE(SUM(total_invoice),0)::float AS v FROM fiscal_invoices WHERE " + FSALE + " AND " + FYEAR + " >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo')) GROUP BY 1,2 ORDER BY 1,2");
-      // 2) valores distintos de import_origin (NF-e)
-      const fiscalOrig = await q("SELECT COALESCE(NULLIF(TRIM(import_origin),''),'(nativo/sem origem)') AS origem, COUNT(*)::int AS n, COALESCE(SUM(total_invoice),0)::float AS v, MIN(created_at)::text AS primeiro, MAX(created_at)::text AS ultimo FROM fiscal_invoices WHERE status='authorized' GROUP BY 1 ORDER BY n DESC");
-      // 3) billing_pipeline por mes de criacao (para achar o backfill inicial)
-      const bpMes = await q("SELECT to_char(date_trunc('month',(created_at AT TIME ZONE 'America/Sao_Paulo')),'YYYY-MM') AS m, COUNT(*)::int AS n, COALESCE(SUM(sale_value),0)::float AS v FROM billing_pipeline GROUP BY 1 ORDER BY 1");
-      // 4) billing_pipeline por created_by (quem/como criou)
-      const bpCb = await q("SELECT COALESCE(NULLIF(created_by,''),'(sem)') AS cb, COUNT(*)::int AS n, MIN(created_at)::text AS primeiro, MAX(created_at)::text AS ultimo FROM billing_pipeline GROUP BY 1 ORDER BY n DESC LIMIT 20");
-      return res.json({ fiscalMes, fiscalOrig, bpMes, bpCb });
-    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 400) }); }
-  });
-
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
@@ -3006,7 +2986,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const stats = { todaySales: statsRows[0]?.today_sales ?? 0, lastWeekSameDaySales: statsRows[0]?.last_week_same_day_sales ?? 0, yesterdaySales: statsRows[0]?.yesterday_sales ?? 0, weekSales: statsRows[0]?.week_sales ?? 0, monthSales: statsRows[0]?.month_sales ?? 0 };
       // FIX (18/jul): número grande de "Faturamento do Mês" = NF-e autorizada do mês (faturamento real, = dashboard2/all),
       // para bater com a barra do mês vigente do gráfico anual. Dia/semana seguem em billing_pipeline (já validados).
-      const fiscalMonthRows = await q2(`SELECT COALESCE(SUM(total_invoice),0) AS v FROM fiscal_invoices WHERE status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))`);
+      const fiscalMonthRows = await q2(`SELECT COALESCE(SUM(total_invoice),0) AS v FROM fiscal_invoices WHERE status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND (import_origin IS NULL OR TRIM(import_origin) = '') AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))`);
       stats.monthSales = fiscalMonthRows[0]?.v ?? stats.monthSales;
       // Séries para os mini gráficos do dashboard (faturamento = billing_pipeline.sale_value):
       //  - daily: faturamento por dia do MÊS corrente; monthly: por mês do ANO corrente.
@@ -3014,7 +2994,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // FIX (18/jul): "Faturamento do Mês" (gráfico anual) passa a usar NF-e AUTORIZADA por mês de emissão/autorização
       // (faturamento real), e não SUM(billing_pipeline.sale_value) por created_at — que inflava meses de importação/backfill
       // (ex.: mai/26 aparecia R$777k por causa de pedidos criados/sincronizados em maio, não faturamento real do mês).
-      const monthlySeriesRows = await q2(`SELECT to_char(date_trunc('month', (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')), 'YYYY-MM') AS m, COALESCE(SUM(total_invoice),0) AS v FROM fiscal_invoices WHERE status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('year', (now() AT TIME ZONE 'America/Sao_Paulo')) GROUP BY m ORDER BY m`);
+      const monthlySeriesRows = await q2(`SELECT to_char(date_trunc('month', (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo')), 'YYYY-MM') AS m, COALESCE(SUM(total_invoice),0) AS v FROM fiscal_invoices WHERE status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND (import_origin IS NULL OR TRIM(import_origin) = '') AND (COALESCE(emission_date,authorization_date,created_at) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('year', (now() AT TIME ZONE 'America/Sao_Paulo')) GROUP BY m ORDER BY m`);
       const series = { daily: dailySeriesRows.map((r: any) => ({ d: r.d, v: Number(r.v) || 0 })), monthly: monthlySeriesRows.map((r: any) => ({ m: r.m, v: Number(r.v) || 0 })) };
       const vendasEfetivasMes: any = { label: null, value: 0, approx: true };
       const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked' ORDER BY bo.blocked_at DESC NULLS LAST`);
