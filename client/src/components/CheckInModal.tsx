@@ -147,8 +147,30 @@ export default function CheckInModal({
     };
   }, [isOpen, step, photoData]);
 
+  // Comprime/redimensiona a foto p/ upload confiavel no mobile (evita estourar o limite de 10MB
+  // do servidor e acelera o envio em conexao fraca). Max 1280px no maior lado, JPEG ~0,72.
+  const compressImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
+    new Promise((resolve) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          const cx = c.getContext('2d');
+          if (!cx) { resolve(src); return; }
+          cx.drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = () => resolve(src);
+        img.src = src;
+      } catch { resolve(src); }
+    });
+
   // Tirar foto (a partir do preview ao vivo)
-  const takePhoto = () => {
+  const takePhoto = async () => {
     const v = videoRef.current;
     if (!v || !v.videoWidth || !v.videoHeight) {
       toast({
@@ -164,7 +186,7 @@ export default function CheckInModal({
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(v, 0, 0);
-      const photo = canvas.toDataURL('image/jpeg');
+      const photo = await compressImage(canvas.toDataURL('image/jpeg'));
       setPhotoData(photo);
       // Parar câmera (o useEffect também limpa ao sair do passo)
       if (stream) {
@@ -180,8 +202,9 @@ export default function CheckInModal({
     const f = e.target.files?.[0];
     if (f) {
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        setPhotoData(ev.target?.result as string);
+      reader.onload = async (ev) => {
+        const photo = await compressImage(ev.target?.result as string);
+        setPhotoData(photo);
         if (stream) { stream.getTracks().forEach((t) => t.stop()); setStream(null); }
       };
       reader.readAsDataURL(f);
