@@ -565,21 +565,31 @@ export default function AgentesIA() {
         </p>
       </div>
 
-      <RuntimeControl agentes={agentes} />
-      <Card>
-     <CardHeader>
-       <CardTitle className="flex items-center gap-2">
-         <i className="fas fa-paper-plane text-muted-foreground" /> Disparos 1841 (WhatsApp API oficial)
-       </CardTitle>
-     </CardHeader>
-     <CardContent>
-       <iframe
-         src="/api/admin/oficial/painel"
-         style={{ width: "100%", height: "820px", border: 0, borderRadius: 12 }}
-         title="Painel de Disparos 1841"
-       />
-     </CardContent>
-   </Card>
+  {/* Disparos 1841 — agora ACIMA, com mostrar/ocultar */}
+      <details open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
+          📣 Disparos 1841 (WhatsApp API oficial) — mostrar/ocultar
+        </summary>
+        <Card className="mt-2">
+          <CardContent>
+            <iframe
+              src="/api/admin/oficial/painel"
+              style={{ width: "100%", height: "820px", border: 0, borderRadius: 12 }}
+              title="Painel de Disparos 1841"
+            />
+          </CardContent>
+        </Card>
+      </details>
+
+      {/* Auto-resposta dos Agentes — agora ABAIXO, com mostrar/ocultar */}
+      <details open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
+          🤖 Auto-resposta dos Agentes — mostrar/ocultar
+        </summary>
+        <div className="mt-2">
+          <RuntimeControl agentes={agentes} />
+        </div>
+      </details>
 
       <Card>
         <CardHeader>
