@@ -8207,9 +8207,9 @@ export class DatabaseStorage implements IStorage {
     if (conditions.length > 0) {
       return db.select(listCols).from(fiscalInvoices)
         .where(and(...conditions))
-        .orderBy(desc(fiscalInvoices.createdAt)) as any;
+        .orderBy(desc(fiscalInvoices.createdAt)).limit(1000) as any;
     }
-    return db.select(listCols).from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)) as any;
+    return db.select(listCols).from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)).limit(1000) as any;
   }
 
   async getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined> {
