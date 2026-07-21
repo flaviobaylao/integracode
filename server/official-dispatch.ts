@@ -84,21 +84,7 @@ export async function sendOfficialTemplate(toPhone: string, umblerTemplateId: st
     return { success: true, chatId, messageId: id };
   } catch (e: any) { return { success: false, chatId, error: e?.message || String(e) }; }
 }
-// Envia TEXTO LIVRE pelo 1841 (dentro da janela de 24h é grátis)
-export async function sendOfficialText(toPhone: string, text: string): Promise<{ success: boolean; error?: string }> {
-  if (!process.env.UMBLER_TALK_TOKEN) return { success: false, error: 'token ausente' };
-  const contactId = await resolveContactId(toPhone);
-  if (!contactId) return { success: false, error: 'contato nao resolvido' };
-  const chatId = await resolveChatId(contactId);
-  if (!chatId) return { success: false, error: 'chat nao resolvido' };
-  try {
-    const resp = await umblerFetch('/v1/messages/', { method: 'POST', body: JSON.stringify({ organizationId: orgId(), chatId, message: text }) });
-    const raw = await resp.text();
-    console.log(`[OFICIAL-TEXTO] to=${normalizeBrPhone(toPhone)} chat=${chatId} http=${resp.status}`);
-    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0,150)}` };
-    return { success: true };
-  } catch (e: any) { return { success: false, error: e?.message || String(e) }; }
-}
+
 export async function enqueueOfficialDispatch(item: {
   customerId?: string; customerPhone: string; templateLabel: string; params: string[];
   useCase: string; campaign?: string; postbackTexts?: {index:number;text:string}[]; category?: string;
