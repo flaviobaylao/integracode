@@ -203,13 +203,17 @@ run();
   app.post('/api/admin/automations/mode', async (req, res) => {
     try {
       const mode = String(req.body?.mode || '').toLowerCase();
-      if (!['off', 'test', 'on'].includes(mode)) return res.status(400).json({ error: "mode deve ser off|test|on" });
-      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('automations_mode', ${mode}, 'automations') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
-      if (req.body?.testNumber) {
+      // mode é OPCIONAL: permite salvar só o número de teste (sem trocar o modo).
+      if (mode && !['off', 'test', 'on'].includes(mode)) return res.status(400).json({ error: "mode deve ser off|test|on" });
+      if (mode) await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('automations_mode', ${mode}, 'automations') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      if (req.body?.testNumber !== undefined) {
         const tn = String(req.body.testNumber).replace(/\D/g, '');
         await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('automations_test_number', ${tn}, 'automations') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
       }
-      res.json({ ok: true, mode });
+      const _m: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'automations_mode'`);
+      const _t: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'automations_test_number'`);
+      const _strip = (v: any) => v == null ? null : String(v).replace(/^"(.*)"$/, '$1');
+      res.json({ ok: true, mode: _strip(_m?.rows?.[0]?.value) || 'off', testNumber: _strip(_t?.rows?.[0]?.value) || '5562995782812' });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.post('/api/admin/automations/test', async (req, res) => {
