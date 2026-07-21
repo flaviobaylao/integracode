@@ -15,8 +15,6 @@
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { storage } from "./storage";
-import { db } from "./db";
-import { sql } from "drizzle-orm";
 
 const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
@@ -84,53 +82,22 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     const username = await resolveUsername(igsid);
     const displayName = username ? "@" + username : "Instagram " + igsid.slice(-6);
 
-    // Busca a conversa MAIS RECENTE desse contato (ordenada; evita loop ao reiniciar).
-    let conversation: any = (await db.execute(sql`SELECT id, customer_id AS "customerId", unread_count AS "unreadCount", last_message_time AS "lastMessageTime", status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
-
-    // Reinicio por inatividade: se a conversa existente estiver resolvida OU parada ha mais
-    // tempo que o limite (IG_RESET_MINUTES), finaliza a antiga e comeca uma NOVA (dialogo do zero).
-    let reuseCustomerId: string | null = null;
-    if (conversation) {
-      const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
-      const idleMin = (Date.now() - new Date(conversation.lastMessageTime || 0).getTime()) / 60000;
-      const resolved = String(conversation.status || "") === "resolved";
-      if (resolved || (resetMin > 0 && idleMin >= resetMin)) {
-        reuseCustomerId = conversation.customerId || null; // reaproveita o cliente existente (evita duplicar telefone no reset)
-        try { if (!resolved) await storage.updateChatConversation(conversation.id, { status: "resolved" } as any); } catch {}
-        conversation = undefined;
-      }
-    }
-
+    let conversation = await storage.getChatConversationByPhone(phoneKey);
     if (!conversation) {
-      let customerId: string | null = reuseCustomerId;
-      let customerName: string = displayName;
-      if (!customerId) {
-        let customer: any = await storage.getChatCustomerByPhone(phoneKey);
-        // fallback: match EXATO pelo telefone (mesma coluna do unique constraint). A busca
-        // normalizada nao acha o telefone com prefixo "ig:", o que causava INSERT duplicado.
-        if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0]; } catch {} }
-        if (!customer) {
-          try {
-            customer = await storage.createChatCustomer({
-              name: displayName,
-              phone: phoneKey,
-              email: null,
-              notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""),
-              tags: "instagram",
-              avatar: null,
-            } as any);
-          } catch (e) {
-            // corrida/telefone duplicado: recarrega o existente em vez de derrubar o handleInbound
-            customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0];
-            if (!customer) throw e;
-          }
-        }
-        customerId = customer.id;
-        if (customer.name) customerName = customer.name;
+      let customer = await storage.getChatCustomerByPhone(phoneKey);
+      if (!customer) {
+        customer = await storage.createChatCustomer({
+          name: displayName,
+          phone: phoneKey,
+          email: null,
+          notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""),
+          tags: "instagram",
+          avatar: null,
+        } as any);
       }
       conversation = await storage.createChatConversation({
-        customerId: customerId,
-        customerName: customerName,
+        customerId: customer.id,
+        customerName: customer.name,
         customerPhone: phoneKey,
         status: "new",
         agentId: null,
@@ -172,20 +139,6 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
 }
 
 export function registerInstagram(app: Express) {
-  // Varredura periodica: finaliza (status 'resolved') conversas de Instagram inativas apos
-  // IG_RESET_MINUTES sem novas mensagens. Mantem a fila limpa; na volta do cliente uma nova
-  // conversa e criada, reiniciando o dialogo. Roda a cada 10 min (nao afeta a inicializacao).
-  try {
-    setInterval(async () => {
-      try {
-        const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
-        if (resetMin > 0) {
-          await db.execute(sql`UPDATE chat_conversations SET status = 'resolved' WHERE customer_phone LIKE 'ig:%' AND status <> 'resolved' AND last_message_time < NOW() - make_interval(mins => ${resetMin})`);
-        }
-      } catch (e: any) { console.error("[IG-SWEEP]", e?.message || e); }
-    }, 10 * 60 * 1000);
-  } catch {}
-
   // Verificacao do webhook (Meta chama isso 1x ao configurar).
   app.get("/api/instagram/webhook", (req: Request, res: Response) => {
     const mode = req.query["hub.mode"];
