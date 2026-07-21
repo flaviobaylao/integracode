@@ -50,6 +50,17 @@ export function registerReconciliation(app: Express) {
     __mirrorColReady = true;
   }
 
+  // Garante a coluna do FITID (identificador unico do lancamento no extrato do BB).
+  // O dedup usa FITID como chave primaria; se a tabela nao tiver coluna de FITID,
+  // criamos 'fitid' para que a deduplicacao por FITID passe a valer (sem ela o dedup
+  // caia so na chave composta, que e fragil). Idempotente.
+  let __fitidColReady = false;
+  async function ensureFitidColumn() {
+    if (__fitidColReady) return;
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS fitid text`); } catch {}
+    __fitidColReady = true;
+  }
+
   // Trilha de auditoria (append-only) de TODAS as conciliacoes e estornos, para
   // rastreabilidade do processo mesmo se o item for reimportado/duplicado/desfeito.
   let __auditReady = false;
@@ -983,13 +994,17 @@ export function registerReconciliation(app: Express) {
       if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
       const instanceId = acc.omie_instance_id || null;
       await ensureMirrorColumn();
+      await ensureFitidColumn();
 
       const parsed = parseOfx(ofxText);
       if (!parsed.transactions.length) return res.status(400).json({ error: "nenhuma transacao (STMTTRN) encontrada no arquivo" });
 
       const stCols = await tableColInfo("bank_statements");
       const itCols = await tableColInfo("bank_statement_items");
-      const fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
+      let fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
+      // ensureFitidColumn() ja garantiu 'fitid'; se nenhuma coluna de FITID existia,
+      // adota 'fitid' para que o dedup por FITID valha (evita cair so na chave composta).
+      if (!fitCol) { itCols.set("fitid", { nullable: true, hasDefault: false, dtype: "text" } as any); fitCol = "fitid"; }
 
       // Dedup / espelho contra itens já existentes na MESMA conta.
       // Lancamento ja importado em OUTRO extrato NAO e descartado: entra como
@@ -1002,29 +1017,37 @@ export function registerReconciliation(app: Express) {
       // MESMA conta. Assim, reimportar um extrato sem FITID NAO recria o lancamento
       // como novo pendente -> evita a "conciliacao que volta a pendente" e a baixa
       // em duplicidade do titulo.
+      // Chaves de dedup calculadas NO BANCO (robustas a formato de data/valor/acento):
+      //   data = transaction_date::date, valor = round(amount,2), tipo, e descricao
+      //   normalizada = lower + remocao de tudo que nao for [a-z0-9]. A MESMA
+      //   normalizacao e aplicada as transacoes novas (compKey), casando 1:1. O bug
+      //   anterior usava String(Date).slice(0,10) (virava "Fri Jun 09"), o que fazia
+      //   a chave composta NUNCA casar quando o FITID faltava -> duplicava.
+      const compKey = (dateStr: string, amount: number, type: string, desc: string) =>
+        `${dateStr}|${amount.toFixed(2)}|${type}|${String(desc || "").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
       const canonByFit: Record<string, string> = {};
       const canonByKey: Record<string, string> = {};
       {
         const er = await db.execute(sql`
-          SELECT i.id, i.mirror_of, i.transaction_date, i.amount, i.type, i.description${fitCol ? sql.raw(', i."' + fitCol + '" AS fit') : sql``}
+          SELECT COALESCE(i.mirror_of, i.id) AS canonical, i.mirror_of AS mirror_of,
+                 to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+                 round(i.amount::numeric, 2)::text AS amt, i.type AS type,
+                 regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd
+                 ${fitCol ? sql.raw(', i."' + fitCol + '" AS fit') : sql``}
           FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
           WHERE s.financial_account_id = ${accountId}`);
         for (const x of rowsOf(er)) {
-          const kk = `${String(x.transaction_date).slice(0, 10)}|${money(x.amount)}|${x.type}|${normDesc(x.description)}`;
-          if (!x.mirror_of) canonByKey[kk] = String(x.id);
-          else if (!canonByKey[kk]) canonByKey[kk] = String(x.mirror_of || x.id);
+          const kk = `${x.d}|${x.amt}|${x.type}|${x.nd}`;
+          if (!x.mirror_of) canonByKey[kk] = String(x.canonical);
+          else if (!canonByKey[kk]) canonByKey[kk] = String(x.canonical);
           const fv = (x as any).fit;
-          if (fitCol && fv) {
-            const f = String(fv);
-            if (!x.mirror_of) canonByFit[f] = String(x.id);
-            else if (!canonByFit[f]) canonByFit[f] = String(x.mirror_of || x.id);
-          }
+          if (fv) { const f = String(fv); if (!x.mirror_of) canonByFit[f] = String(x.canonical); else if (!canonByFit[f]) canonByFit[f] = String(x.canonical); }
         }
       }
       {
         const seen = new Set<string>();
         for (const t of parsed.transactions) {
-          const compK = `${t.date}|${money(t.amount)}|${t.type}|${normDesc(t.description)}`;
+          const compK = compKey(t.date, t.amount, t.type, t.description);
           const dedK = t.fitid || compK;
           if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO arquivo
           seen.add(dedK);
@@ -1399,6 +1422,59 @@ export function registerReconciliation(app: Express) {
         RETURNING t.id`));
       const atualizados = u.length;
       res.json({ dryRun, candidatos: atualizados, atualizados });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // ---- Deduplicacao de CANONICOS legados (limpeza) -------------------------
+  // Duplicatas ANTIGAS: a MESMA transacao economica (conta|data|valor|tipo|descricao
+  // normalizada) existe em MAIS DE UMA linha canonica (mirror_of IS NULL) - restos de
+  // importacoes cumulativas feitas antes do recurso de espelho. Colapsa cada grupo em
+  // UMA linha canonica (preferindo a conciliada; senao a de menor id) e transforma as
+  // demais NAO-conciliadas em espelho (mirror_of -> canonica). NAO altera linhas
+  // 'reconciled' (nao desfaz baixa) e NAO colapsa grupos com >1 conciliada (possivel
+  // baixa dupla -> reporta p/ conferencia manual). dryRun por padrao. Reversivel.
+  app.post("/api/reconciliation/dedup-canonical", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const accountId = (req.body?.accountId as string) || null;
+      await ensureMirrorColumn();
+      const rows = rowsOf(await db.execute(sql`
+        SELECT i.id, s.financial_account_id AS acc,
+               to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+               round(i.amount::numeric, 2)::text AS amt, i.type AS type,
+               regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
+               i.reconciliation_status AS st
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.mirror_of IS NULL
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})`));
+      const groups: Record<string, any[]> = {};
+      for (const r of rows) { const k = [r.acc || "", r.d, r.amt, r.type, r.nd].join("|"); (groups[k] ||= []).push(r); }
+      const toMirror: Array<{ id: string; canonical: string }> = [];
+      let gruposDup = 0, multiReconciliadas = 0;
+      for (const g of Object.values(groups)) {
+        if (g.length < 2) continue;
+        gruposDup++;
+        const reconc = g.filter((x) => x.st === "reconciled");
+        if (reconc.length > 1) { multiReconciliadas++; continue; } // nao colapsa: risco de baixa dupla
+        const keep = reconc.length === 1 ? reconc[0]
+          : g.slice().sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))[0];
+        for (const x of g) { if (String(x.id) !== String(keep.id)) toMirror.push({ id: String(x.id), canonical: String(keep.id) }); }
+      }
+      if (dryRun) return res.json({ dryRun: true, gruposDuplicados: gruposDup, linhasParaEspelhar: toMirror.length, gruposMultiReconciliadas: multiReconciliadas });
+      let espelhados = 0;
+      for (let i = 0; i < toMirror.length; i += 300) {
+        const lote = toMirror.slice(i, i + 300);
+        const vals = lote.map((m) => sql`(${m.id}, ${m.canonical})`);
+        const u: any = await db.execute(sql`
+          UPDATE bank_statement_items t
+          SET mirror_of = v.canon, reconciliation_status = 'mirror', matched_by = ${by}, matched_at = now(),
+              notes = 'Duplicata legada colapsada (dedup-canonical) - reversivel'
+          FROM (VALUES ${sql.join(vals, sql`, `)}) AS v(id, canon)
+          WHERE t.id::text = v.id AND t.mirror_of IS NULL AND t.reconciliation_status IS DISTINCT FROM 'reconciled'`);
+        espelhados += Number((u as any)?.rowCount ?? 0);
+      }
+      res.json({ dryRun: false, gruposDuplicados: gruposDup, gruposMultiReconciliadas: multiReconciliadas, espelhados });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
