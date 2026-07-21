@@ -316,22 +316,27 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
            conv.status === 'assigned' ? 'Atribuída' :
            conv.status === 'in-progress' ? 'Em andamento' : 'Resolvida'}
         </Badge>
-        {isAdmin && conv.assignedAgentName && (
-          <span 
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{ 
-              backgroundColor: conv.assignedAgentColor ? `${conv.assignedAgentColor}20` : '#e5e7eb',
-              color: conv.assignedAgentColor || '#6b7280'
-            }}
-          >
-            {conv.assignedAgentName}
-          </span>
-        )}
-        {!isAdmin && (
-          <span className="text-[10px] text-gray-400 truncate">
-            Atendente: {conv.assignedAgentName || conv.agentName || "Ninguém"}
-          </span>
-        )}
+        {(() => {
+          const atendente = conv.assignedAgentName || conv.agentName || null;
+          return atendente ? (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{
+                backgroundColor: conv.assignedAgentColor ? `${conv.assignedAgentColor}20` : '#e5e7eb',
+                color: conv.assignedAgentColor || '#6b7280'
+              }}
+              title={`Atendente: ${atendente}`}
+              data-testid={`conv-attendant-${conv.id}`}
+            >
+              <User className="h-2.5 w-2.5" />
+              {atendente}
+            </span>
+          ) : (
+            <span className="text-[10px] text-gray-400 truncate" title="Nenhum atendente atribuído" data-testid={`conv-attendant-${conv.id}`}>
+              Sem atendente
+            </span>
+          );
+        })()}
       </div>
     </div>
   );
