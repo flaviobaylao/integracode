@@ -179,7 +179,7 @@ import {
   type InsertSpedExport,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like } from "drizzle-orm";
+import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like, getTableColumns } from "drizzle-orm";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 import { nowBrazil } from './brazilTimezone';
@@ -8198,12 +8198,18 @@ export class DatabaseStorage implements IStorage {
     if (filters?.customerId) conditions.push(eq(fiscalInvoices.customerId, filters.customerId));
     if (filters?.environment) conditions.push(eq(fiscalInvoices.environment, filters.environment));
 
+    // PERFORMANCE (21/jul): a LISTAGEM nao seleciona os XMLs (xml_envio/retorno/autorizacao).
+    // Sao 3 colunas text grandes; com ~60k notas o SELECT * gerava payload de centenas de MB,
+    // travando a tela e estourando a cota do service worker. O XML e buscado sob demanda por
+    // nota (GET /api/fiscal-invoices/:id/xml).
+    const { xmlEnvio, xmlRetorno, xmlAutorizacao, ...listCols } = getTableColumns(fiscalInvoices);
+
     if (conditions.length > 0) {
-      return db.select().from(fiscalInvoices)
+      return db.select(listCols).from(fiscalInvoices)
         .where(and(...conditions))
-        .orderBy(desc(fiscalInvoices.createdAt));
+        .orderBy(desc(fiscalInvoices.createdAt)) as any;
     }
-    return db.select().from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt));
+    return db.select(listCols).from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)) as any;
   }
 
   async getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined> {
