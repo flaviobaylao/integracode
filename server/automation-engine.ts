@@ -112,7 +112,12 @@ export async function fireAutomation(triggerEvent: string, ctx: any): Promise<vo
     const testNumber = mode === "test" ? normalizeBrPhone(await getSetting("automations_test_number", "5562995782812")) : null;
 
     for (const a of rows) {
-      const msg = renderTemplate(a.message_template, ctx);
+      let msg = renderTemplate(a.message_template, ctx);
+      // Aviso de BLOQUEIO (caixa alta) anexado à MESMA mensagem de implantação quando o pedido
+      // nasce bloqueado. Vale para qualquer template: se ele não usar {{blockNotice}}, anexamos ao final.
+      if (ctx?.blockNotice && !msg.includes(String(ctx.blockNotice))) {
+        msg = (msg ? msg + "\n\n" : "") + String(ctx.blockNotice);
+      }
       let recipients = await resolveRecipients(a, ctx);
       if (mode === "test") recipients = testNumber ? [testNumber] : [];
 
