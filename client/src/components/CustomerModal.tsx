@@ -204,7 +204,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || '',
         companyName: (customer as any).companyName || '',
         fantasyName: (customer as any).fantasyName || '',
-        phone: customer.phone || '',
+        phone: formatPhone(customer.phone || ''),
         email: customer.email || '',
         address: customer.address || '',
         city: (customer as any).city || '',
@@ -583,7 +583,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   };
 
   const formatPhone = (value: string) => {
-    const phone = value.replace(/\D/g, '');
+    // Apenas UM número (fixo ≤10 díg. ou celular 11 díg.); descarta barra e 2º número.
+    const phone = value.replace(/\D/g, '').slice(0, 11);
     if (phone.length <= 10) {
       return phone.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
     }
@@ -861,7 +862,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                       <FormItem>
                         <FormLabel className="flex items-center space-x-1">
                           <Phone className="h-4 w-4" />
-                          <span>Telefone *</span>
+                          <span>Telefone do Comprador *</span>
                         </FormLabel>
                         <FormControl>
                           <Input
