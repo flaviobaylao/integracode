@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -517,6 +517,215 @@ function RuntimeControl({ agentes }: { agentes: Agente[] }) {
   );
 }
 
+// ============================================================================
+// Gestão de Notificações (Automações de Comunicação) — CRUD + testar + modo global.
+// ============================================================================
+function recipientFlags(rt: string) {
+  const s = String(rt || "");
+  return { toSeller: s.includes("vendedor_pedido"), toFixed: s.includes("fixo"), toUser: s.includes("usuario") };
+}
+function recipientLabel(a: any, users: any[]) {
+  const f = recipientFlags(a.recipient_type);
+  const parts: string[] = [];
+  if (f.toSeller) parts.push("Vendedor do pedido");
+  if (f.toFixed) parts.push("Fixo: " + (a.recipient_fixed_phone || "—"));
+  if (f.toUser) { const u = users.find((x) => x.id === a.recipient_user_id); parts.push("Usuário: " + (u?.name || a.recipient_user_id || "—")); }
+  return parts.join(" · ") || "—";
+}
+
+function NotificacoesManager() {
+  const [list, setList] = useState<any[]>([]);
+  const [meta, setMeta] = useState<any>({ mode: "off", testNumber: "", triggers: [], placeholders: [], users: [] });
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [edit, setEdit] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [a, m] = await Promise.all([apiGet("/api/admin/automations"), apiGet("/api/admin/automations/meta")]);
+      setList(a.automations || []);
+      setMeta(m);
+    } catch (e: any) { setMsg("Erro: " + e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const blank = () => ({ id: "", name: "", description: "", trigger_event: "pedido.criado", message_template: "", is_active: true, toSeller: true, toFixed: false, toUser: false, recipient_fixed_phone: "", recipient_user_id: "" });
+  const startEdit = (a: any) => setEdit({ ...a, ...recipientFlags(a.recipient_type), recipient_fixed_phone: a.recipient_fixed_phone || "", recipient_user_id: a.recipient_user_id || "" });
+
+  const insertPlaceholder = (tok: string) => {
+    setEdit((e: any) => {
+      if (!e) return e;
+      const ta = taRef.current;
+      const cur = e.message_template || "";
+      if (ta && typeof ta.selectionStart === "number") {
+        const s = ta.selectionStart, en = ta.selectionEnd;
+        return { ...e, message_template: cur.slice(0, s) + tok + cur.slice(en) };
+      }
+      return { ...e, message_template: cur + tok };
+    });
+  };
+
+  const save = async () => {
+    if (!edit) return;
+    if (!String(edit.name || "").trim()) { setMsg("Erro: informe um nome"); return; }
+    if (!String(edit.message_template || "").trim()) { setMsg("Erro: escreva a mensagem"); return; }
+    setBusy(true); setMsg("");
+    try {
+      const body: any = {
+        name: edit.name, description: edit.description, trigger_event: edit.trigger_event,
+        message_template: edit.message_template, is_active: edit.is_active,
+        toSeller: !!edit.toSeller, toFixed: !!edit.toFixed, toUser: !!edit.toUser,
+        recipient_fixed_phone: edit.recipient_fixed_phone, recipient_user_id: edit.recipient_user_id,
+      };
+      if (edit.id) await apiSend("/api/admin/automations/" + edit.id, "PATCH", body);
+      else await apiSend("/api/admin/automations", "POST", body);
+      setEdit(null); setMsg("✓ salvo"); await load();
+    } catch (e: any) { setMsg("Erro: " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  const toggleActive = async (a: any) => {
+    try { await apiSend("/api/admin/automations/" + a.id, "PATCH", { is_active: !a.is_active }); await load(); }
+    catch (e: any) { setMsg("Erro: " + e.message); }
+  };
+  const remove = async (a: any) => {
+    if (!window.confirm(`Excluir a automação "${a.name}"? Esta ação não pode ser desfeita.`)) return;
+    try { await apiSend("/api/admin/automations/" + a.id, "DELETE", {}); setMsg("✓ excluída"); await load(); }
+    catch (e: any) { setMsg("Erro: " + e.message); }
+  };
+  const test = async (a: any) => {
+    setMsg("Enviando teste...");
+    try { const r = await apiSend("/api/admin/automations/" + a.id + "/test", "POST", {}); setMsg(r.ok ? `✓ teste enviado para ${r.to}` : `Falha no teste: ${r.error || "?"}`); }
+    catch (e: any) { setMsg("Erro: " + e.message); }
+  };
+  const setMode = async (mode: string) => {
+    if (mode === "on" && !window.confirm("Ligar o modo ON faz TODAS as automações ativas enviarem WhatsApp de verdade. Confirmar?")) return;
+    try { const r = await apiSend("/api/admin/automations/mode", "POST", { mode }); setMeta((m: any) => ({ ...m, mode: r.mode })); setMsg("✓ modo: " + r.mode); }
+    catch (e: any) { setMsg("Erro: " + e.message); }
+  };
+  const saveTestNumber = async () => {
+    try { const r = await apiSend("/api/admin/automations/mode", "POST", { testNumber: meta.testNumber }); setMeta((m: any) => ({ ...m, testNumber: r.testNumber })); setMsg("✓ número de teste salvo"); }
+    catch (e: any) { setMsg("Erro: " + e.message); }
+  };
+
+  const modeColor = (m: string) => m === "on" ? "bg-green-600" : m === "test" ? "bg-amber-500" : "bg-gray-400";
+
+  return (
+    <div className="space-y-4">
+      {/* Modo global */}
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">Modo global:</span>
+            <Badge className={modeColor(meta.mode) + " text-white"}>{(meta.mode || "off").toUpperCase()}</Badge>
+            <div className="flex gap-1">
+              {["off", "test", "on"].map((m) => (
+                <Button key={m} size="sm" variant={meta.mode === m ? "default" : "outline"} onClick={() => setMode(m)}>{m.toUpperCase()}</Button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground">OFF = não envia · TEST = só p/ número de teste · ON = envia de verdade</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm">Número de teste:</Label>
+            <Input className="max-w-[220px]" value={meta.testNumber || ""} onChange={(e) => setMeta((m: any) => ({ ...m, testNumber: e.target.value }))} placeholder="5562999999999" />
+            <Button size="sm" variant="outline" onClick={saveTestNumber}>Salvar número</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Automações {loading ? "" : "(" + list.length + ")"}</h3>
+        <Button size="sm" variant="outline" onClick={() => setEdit(blank())}><i className="fas fa-plus mr-2" /> Nova notificação</Button>
+      </div>
+      {msg && <div className={"text-sm " + (msg.startsWith("Erro") || msg.startsWith("Falha") ? "text-red-600" : "text-green-600")}>{msg}</div>}
+
+      {/* Editor */}
+      {edit && (
+        <Card className="border-primary">
+          <CardHeader><CardTitle className="text-base">{edit.id ? "Editar notificação" : "Nova notificação"}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <Label>Nome</Label>
+                <Input value={edit.name} onChange={(e) => setEdit((x: any) => ({ ...x, name: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Gatilho</Label>
+                <select className="w-full border rounded px-2 py-2 text-sm bg-background" value={edit.trigger_event} onChange={(e) => setEdit((x: any) => ({ ...x, trigger_event: e.target.value }))}>
+                  {(meta.triggers || []).map((t: any) => (<option key={t.event} value={t.event}>{t.event}{t.fired ? "" : " (não disparado)"}</option>))}
+                  {!(meta.triggers || []).some((t: any) => t.event === edit.trigger_event) && edit.trigger_event && (<option value={edit.trigger_event}>{edit.trigger_event}</option>)}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">{((meta.triggers || []).find((t: any) => t.event === edit.trigger_event) || {}).label || ""}</p>
+              </div>
+            </div>
+            <div>
+              <Label>Descrição (opcional)</Label>
+              <Input value={edit.description || ""} onChange={(e) => setEdit((x: any) => ({ ...x, description: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Mensagem</Label>
+              <Textarea ref={taRef} rows={5} value={edit.message_template} onChange={(e) => setEdit((x: any) => ({ ...x, message_template: e.target.value }))} className="font-mono text-xs" />
+              <div className="flex flex-wrap gap-1 mt-1">
+                {(meta.placeholders || []).map((p: any) => (
+                  <button key={p.token} type="button" title={p.desc} onClick={() => insertPlaceholder(p.token)} className="text-[11px] px-2 py-0.5 rounded border border-primary/40 text-primary hover:bg-primary/10">{p.token}</button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Destinatários</Label>
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.toSeller} onChange={(e) => setEdit((x: any) => ({ ...x, toSeller: e.target.checked }))} /> Vendedor do pedido</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.toFixed} onChange={(e) => setEdit((x: any) => ({ ...x, toFixed: e.target.checked }))} /> Número fixo</label>
+                {edit.toFixed && (<Input className="max-w-[200px]" placeholder="55629..." value={edit.recipient_fixed_phone || ""} onChange={(e) => setEdit((x: any) => ({ ...x, recipient_fixed_phone: e.target.value }))} />)}
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.toUser} onChange={(e) => setEdit((x: any) => ({ ...x, toUser: e.target.checked }))} /> Usuário</label>
+                {edit.toUser && (
+                  <select className="border rounded px-2 py-1 text-sm bg-background max-w-[220px]" value={edit.recipient_user_id || ""} onChange={(e) => setEdit((x: any) => ({ ...x, recipient_user_id: e.target.value }))}>
+                    <option value="">— escolha —</option>
+                    {(meta.users || []).map((u: any) => (<option key={u.id} value={u.id}>{u.name}{u.phone ? "" : " (sem telefone)"}</option>))}
+                  </select>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm"><Switch checked={!!edit.is_active} onCheckedChange={(v) => setEdit((x: any) => ({ ...x, is_active: v }))} /> Ativa</label>
+              <div className="flex-1" />
+              <Button variant="outline" onClick={() => setEdit(null)}>Cancelar</Button>
+              <Button onClick={save} disabled={busy}>{busy ? "Salvando..." : "Salvar"}</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Lista */}
+      <div className="space-y-2">
+        {list.map((a) => (
+          <Card key={a.id}>
+            <CardContent className="pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Switch checked={!!a.is_active} onCheckedChange={() => toggleActive(a)} />
+                <span className="font-semibold">{a.name || "(sem nome)"}</span>
+                <Badge variant="outline">{a.trigger_event}</Badge>
+                <span className="text-xs text-muted-foreground">{recipientLabel(a, meta.users || [])}</span>
+                <div className="flex-1" />
+                <span className="text-[11px] text-muted-foreground">env: {a.sent_count ?? 0} · falhas: {a.failed_count ?? 0}</span>
+                <Button size="sm" variant="outline" onClick={() => test(a)}>Testar</Button>
+                <Button size="sm" variant="outline" onClick={() => startEdit(a)}>Editar</Button>
+                <Button size="sm" variant="outline" className="text-red-600 border-red-300 hover:bg-red-50" onClick={() => remove(a)}>Excluir</Button>
+              </div>
+              {a.message_template && (<p className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap line-clamp-2">{a.message_template}</p>)}
+            </CardContent>
+          </Card>
+        ))}
+        {!loading && list.length === 0 && (<p className="text-sm text-muted-foreground">Nenhuma automação cadastrada. Clique em "Nova notificação".</p>)}
+      </div>
+    </div>
+  );
+}
+
 export default function AgentesIA() {
   const { data, isLoading, refetch } = useQuery<{ baseComum: string | null; agentes: Agente[] }>({
     queryKey: ["/api/admin/agentes"],
@@ -579,6 +788,16 @@ export default function AgentesIA() {
             />
           </CardContent>
         </Card>
+      </details>
+
+      {/* Notificações (Automações de Comunicação) — gestão completa */}
+      <details open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
+          🔔 Notificações (Automações de Comunicação) — mostrar/ocultar
+        </summary>
+        <div className="mt-2">
+          <NotificacoesManager />
+        </div>
       </details>
 
       {/* Auto-resposta dos Agentes — agora ABAIXO, com mostrar/ocultar */}
