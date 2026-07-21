@@ -1168,7 +1168,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Move item to next/specific stage
   app.patch('/api/billing-pipeline/:id/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
-      const { stage } = req.body;
+      const { stage, scheduledBillingDate } = req.body;
       if (!stage || !BILLING_STAGES.includes(stage)) {
         return res.status(400).json({ message: `Stage inválido. Valores aceitos: ${BILLING_STAGES.join(', ')}` });
       }
@@ -1246,6 +1246,14 @@ export function registerBillingPipelineRoutes(app: Express) {
 
       const updateData: any = { stage, stageHistory: history };
       if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
+
+      // "Faturar em" (scheduled_billing_date): ao mover o pedido para "Agendado" pela tela,
+      // gravamos a data escolhida. Antes o /stage só gravava a etapa e a data ficava NULL
+      // (card e detalhe mostravam "-"). Aceita 'YYYY-MM-DD'; vazio/invalido limpa a data.
+      if (scheduledBillingDate !== undefined) {
+        const __s = String(scheduledBillingDate || '').slice(0, 10);
+        updateData.scheduledBillingDate = /^\d{4}-\d{2}-\d{2}$/.test(__s) ? new Date(`${__s}T12:00:00-03:00`) : null;
+      }
 
       const updated = await storage.updateBillingPipelineItem(req.params.id, updateData);
 
