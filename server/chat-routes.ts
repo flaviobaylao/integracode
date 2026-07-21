@@ -2159,7 +2159,9 @@ export function registerChatRoutes(app: Express): void {
         messageType: finalMessageType,
         mediaUrl: storedMediaUrl,
         externalId: messageId,
-        isRead: true
+        // Mensagem do cliente entra como NÃO lida (aguardando visualização);
+        // mensagem nossa (isFromMe) já entra como lida.
+        isRead: isFromMe
       });
 
       // 🎤 Transcricao de audio recebido (OpenAI Whisper) — fire-and-forget, atualiza a mensagem
@@ -3488,6 +3490,16 @@ export function registerChatRoutes(app: Express): void {
         }
       } catch (e) { /* coluna ainda não existe — ignora */ }
 
+      // 🔔 Contagem de mensagens NÃO LIDAS por conversa (mensagens do cliente com is_read=false).
+      // É a "marcação de respostas aguardando visualização" exibida no card.
+      const unreadByConv: Record<string, number> = {};
+      try {
+        const urRows: any = await db.execute(sql`SELECT conversation_id, COUNT(*)::int AS cnt FROM chat_messages WHERE sender_type = 'customer' AND is_read = false GROUP BY conversation_id`);
+        for (const r of (urRows?.rows || [])) {
+          unreadByConv[String(r.conversation_id)] = Number(r.cnt) || 0;
+        }
+      } catch (e) { /* ignora */ }
+
       // 🔐 Filtrar conversas - admins veem TODAS, agents veem só suas atribuídas
       let filteredConversations = conversations;
       if (!isAdmin && currentUser?.id) {
@@ -3547,8 +3559,8 @@ export function registerChatRoutes(app: Express): void {
           priority: conv.priority,
           lastMessageTime: conv.lastMessageTime,
           createdAt: conv.createdAt,
-          unreadCount: 0,
-          hasUnread: false
+          unreadCount: unreadByConv[conv.id] || 0,
+          hasUnread: (unreadByConv[conv.id] || 0) > 0
         };
       });
 
@@ -3809,25 +3821,15 @@ export function registerChatRoutes(app: Express): void {
       const { conversationId } = req.params;
       const messages = await storage.getChatMessages(conversationId) || [];
       
-      // Marcar TODAS as mensagens de clientes como lidas ao abrir a conversa (DESATIVADO)
-      /*
+      // Marcar mensagens do cliente como lidas ao abrir a conversa (limpa o badge de não lidas).
       const unreadMessages = messages.filter(m => m.senderType === "customer" && !m.isRead);
       if (unreadMessages.length > 0) {
-        console.log(`📖 [UNREAD-MARK] Marcando ${unreadMessages.length} mensagens como lidas...`);
         for (const msg of unreadMessages) {
           await storage.updateChatMessage(msg.id, { isRead: true });
         }
-        
-        // 🟢 Resetar contador de unread da conversa
-        try {
-          await storage.resetUnreadCount(conversationId);
-          console.log(`🟢 [UNREAD-RESET] Contador resetado para conversa ${conversationId}`);
-        } catch (err) {
-          console.warn(`⚠️  [UNREAD-RESET] Erro ao resetar contador:`, err);
-        }
+        try { await storage.resetUnreadCount(conversationId); } catch (err) { /* ignora */ }
       }
-      */
-      
+
       // Buscar mensagens novamente após marcar como lidas
       const updatedMessages = await storage.getChatMessages(conversationId) || [];
       
