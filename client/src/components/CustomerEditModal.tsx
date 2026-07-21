@@ -240,6 +240,16 @@ export default function CustomerEditModal({
     }
   };
 
+  // Telefone do Comprador: aceita APENAS um número (fixo ≤10 díg. ou celular 11 díg.).
+  // Remove barra "/" e qualquer segundo número — só o primeiro telefone é mantido.
+  const formatPhone = (value: string) => {
+    const phone = String(value || "").replace(/\D/g, "").slice(0, 11);
+    if (phone.length <= 10) {
+      return phone.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
+    }
+    return phone.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
+  };
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
@@ -337,7 +347,7 @@ export default function CustomerEditModal({
         cnpj: customer.cnpj || "",
         stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || "",
         email: customer.email || "",
-        phone: customer.phone || "",
+        phone: formatPhone(customer.phone || ""),
         address: customer.address || "",
         city: customer.city || "",
         state: customer.state || "",
@@ -499,12 +509,13 @@ export default function CustomerEditModal({
               />
             </div>
             <div>
-              <Label htmlFor="phone">Telefone *</Label>
+              <Label htmlFor="phone">Telefone do Comprador *</Label>
               <Input
                 id="phone"
                 name="phone"
                 value={formData.phone}
-                onChange={handleChange}
+                onChange={(e) => setFormData((prev) => ({ ...prev, phone: formatPhone(e.target.value) }))}
+                maxLength={15}
                 required
                 data-testid="input-customer-phone"
               />
