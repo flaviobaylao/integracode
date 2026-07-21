@@ -1843,6 +1843,7 @@ export function registerChatRoutes(app: Express): void {
                 messageTimestamp: Math.floor(Date.now() / 1000),
               };
               (debugInfo as any).umblerTalk = true;
+              (data as any).__channelId = (chat.Channel && (chat.Channel.Id || chat.Channel.id)) || null;
               debugInfo.steps.push('umbler-talk-normalized');
             }
           }
@@ -2071,7 +2072,18 @@ export function registerChatRoutes(app: Express): void {
         // Atualizar nome na conversa se mudou na agenda
         await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
       }
-
+// 1841: etiqueta de canal + janela 24h + opt-out (canal oficial)
+   if (!isFromMe && (data as any).__channelId === 'ajqNf-Vjp4yjcaJf') {
+     try {
+       await db.execute(sql`UPDATE chat_conversations SET last_inbound_channel='oficial_1841', window_open_until = now() + interval '24 hours' WHERE id = ${conversation.id}`);
+       const _txt = (finalContent || '').trim().toLowerCase();
+       if (['sair','parar','descadastrar','cancelar','remover'].includes(_txt)) {
+         await db.execute(sql`UPDATE chat_customers SET whatsapp_opt_out = true, whatsapp_opt_out_at = now() WHERE id = ${customer.id}`);
+         console.log('[OFICIAL-OPTOUT] ' + normalizedPhone + ' pediu SAIR');
+       }
+       console.log('[OFICIAL-INBOUND] canal 1841 -> janela 24h aberta, conversa ' + conversation.id);
+     } catch (e) { console.error('[OFICIAL-INBOUND] erro', e); }
+   }
       // 2. Verificar duplicidade (externalId)
       debugInfo.steps.push('8-check-duplicate');
       const existingMessages = await storage.getChatMessages(conversation.id);
