@@ -6131,6 +6131,9 @@ export class DatabaseStorage implements IStorage {
   // Encerrar conversas inativas (timeout configurável, padrão 30 min)
   // Retorna objeto com conversas fechadas para envio de mensagem de finalização
   async closeInactiveConversations(): Promise<{ count: number; conversations: Array<{ id: string; customerPhone: string; customerName: string }> }> {
+    // ⛔ SUSPENSO: finalização automática por inatividade desativada.
+    // As conversas só são finalizadas por ação do usuário (botão "Finalizar").
+    return { count: 0, conversations: [] };
     try {
       // Buscar configurações de timeout.
       // Regra: uma conversa em andamento só é finalizada automaticamente após 60 min
