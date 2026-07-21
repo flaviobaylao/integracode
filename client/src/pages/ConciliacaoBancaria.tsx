@@ -181,7 +181,8 @@ export default function ConciliacaoBancaria() {
   };
   const openStatement = (s: Statement) => { setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
   // Livro único da conta: cada lançamento uma vez, todos os status (visão padrão).
-  const openLedger = () => openStatement({ id: "__ledger__", file_name: "Livro da conta — todos os lançamentos" } as any);
+  // Abre SEMPRE ordenado por data decrescente -> 1ª página = último lançamento.
+  const openLedger = () => { setSortKey("date"); setSortDir("desc"); openStatement({ id: "__ledger__", file_name: "Livro da conta — todos os lançamentos" } as any); };
   // FASE 3.4b - visao consolidada: pendentes de todos os extratos da conta
   const openPendentes = () => openStatement({ id: "__pendentes__", file_name: "Pendentes — todos os extratos" } as any);
   const refresh = async () => { if (selected) await loadDetail(selected); await loadStatements(); };
