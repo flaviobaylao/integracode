@@ -300,21 +300,9 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       status: isFromMe ? conversation.status : 'new'
     });
 
-// Runtime de Agentes de IA — responde pelo 1841 se a janela 24h estiver aberta, senão HONEST2
+    // Runtime de Agentes de IA (auto-resposta) — gate de seguranca interno (system_settings agents_runtime_mode: off/test/on)
     if (!isFromMe && finalContent && finalContent.trim()) {
-      const replyVia = async (toPhone: string, text: string) => {
-        try {
-          const c: any = await db.execute(sql`SELECT last_inbound_channel, window_open_until FROM chat_conversations WHERE id = ${conversation.id} LIMIT 1`);
-          const row = c.rows?.[0];
-          if (row && row.last_inbound_channel === 'oficial_1841' && row.window_open_until && new Date(row.window_open_until) > new Date()) {
-            const { sendOfficialText } = await import('./official-dispatch');
-            const r = await sendOfficialText(toPhone, text);
-            if (r && r.success) return r;
-          }
-        } catch {}
-        return sendUmblerTalkText(toPhone, text);
-      };
-      import('./agent-runtime').then(({ maybeRunAgent }) => maybeRunAgent({ phone: normalizedPhone, conversationId: conversation.id, incomingText: finalContent, sendText: replyVia })).catch(() => {});
+      import('./agent-runtime').then(({ maybeRunAgent }) => maybeRunAgent({ phone: normalizedPhone, conversationId: conversation.id, incomingText: finalContent, sendText: sendUmblerTalkText })).catch(() => {});
     }
 
     console.log(`✅ [PROCESS] Mensagem salva: ${normalizedPhone} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
