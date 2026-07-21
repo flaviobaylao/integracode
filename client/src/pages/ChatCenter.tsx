@@ -233,6 +233,13 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
       }`}
       data-testid={`conversation-item-${conv.id}`}
     >
+      {(conv.unreadCount || 0) > 0 && (
+        <span
+          className="absolute bottom-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center shadow-sm z-10"
+          title={`${conv.unreadCount} resposta(s) aguardando visualização`}
+          data-testid={`unread-badge-${conv.id}`}
+        >{conv.unreadCount}</span>
+      )}
       {isAdmin && conv.assignedAgentColor && (
         <div 
           className="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg"
@@ -717,6 +724,7 @@ function ChatCenterInner() {
 
   // ===== Etiquetas (labels) das conversas =====
   const [labelFilter, setLabelFilter] = useState<string>('all');
+  const [unreadFilter, setUnreadFilter] = useState<'all' | 'unread'>('all');
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
@@ -743,9 +751,12 @@ function ChatCenterInner() {
   });
   const labelsForConv = (convId: string) => (labelIdsByConv.get(convId) || []).map(id => labelById.get(id)).filter(Boolean);
   // Lista final de conversas: busca + filtro por etiqueta selecionada
-  const filteredConversations = labelFilter === 'all'
+  const labelFilteredConversations = labelFilter === 'all'
     ? searchedConversations
     : searchedConversations.filter((c: any) => (labelIdsByConv.get(c.id) || []).includes(labelFilter));
+  const filteredConversations = unreadFilter === 'unread'
+    ? labelFilteredConversations.filter((c: any) => (c.unreadCount || 0) > 0)
+    : labelFilteredConversations;
   const invalidateLabels = () => queryClient.invalidateQueries({ queryKey: ['/api/chat/labels'] });
   const createLabelMutation = useMutation({
     mutationFn: async () => await apiRequest('POST', '/api/chat/labels', { name: newLabelName, color: newLabelColor }),
@@ -1580,6 +1591,15 @@ function ChatCenterInner() {
                       </Button>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Select value={unreadFilter} onValueChange={(v) => setUnreadFilter(v as 'all' | 'unread')}>
+                        <SelectTrigger className="h-8 text-xs w-[120px] shrink-0" data-testid="select-unread-filter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas</SelectItem>
+                          <SelectItem value="unread">Não Lidas</SelectItem>
+                        </SelectContent>
+                      </Select>
                       {labels.length > 0 && (
                         <Select value={labelFilter} onValueChange={setLabelFilter}>
                           <SelectTrigger className="h-8 text-xs w-[150px] shrink-0" data-testid="select-label-filter">
