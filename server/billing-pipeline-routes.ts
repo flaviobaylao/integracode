@@ -447,6 +447,7 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
         WHERE sc.status = 'pending'
           AND sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
           AND sc.products IS NOT NULL AND jsonb_array_length(sc.products) > 0
+          AND sc.parent_card_id IS NULL
           AND sc.updated_at < (now() - (${minAge} * interval '1 minute'))
           AND NOT EXISTS (SELECT 1 FROM billing_pipeline bp WHERE bp.sales_card_id = sc.id)`);
       ids = (q.rows || []).map((r: any) => r.id);
