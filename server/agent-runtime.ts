@@ -43,8 +43,72 @@ const TOOL_DEFS: any[] = [
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
 ];
 
+// Ferramenta EXTRA (só habilitada no canal Instagram): registra um pedido no pipeline de faturamento.
+const ORDER_TOOL: any = {
+  name: 'registrar_pedido',
+  description: 'Registra um PEDIDO no pipeline de faturamento. O pedido entra como PENDENTE e NÃO é faturado automaticamente — a equipe confirma antes. Use SOMENTE quando o cliente confirmar que quer comprar E você já tiver coletado TODOS os dados do pedido completo. Você NÃO define o preço: o sistema calcula pela tabela oficial conforme o tipo de cliente (consumidor: varejo até R$200 / atacado acima; revenda: por região). Na triagem, descubra se o cliente é consumidor final ou revendedor; para revenda, pergunte a região (Goiânia, interior de Goiás ou Brasília/entorno). Se faltar qualquer dado, NÃO chame esta ferramenta: pergunte ao cliente primeiro.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      tipo_cliente: { type: 'string', enum: ['consumidor', 'revenda'], description: 'perfil do cliente definido na triagem' },
+      regiao: { type: 'string', enum: ['goiania', 'interior', 'brasilia'], description: 'obrigatório para revenda: goiania=Goiânia; interior=interior de Goiás; brasilia=Brasília e entorno' },
+      itens: { type: 'array', description: 'itens do pedido', items: { type: 'object', properties: { produto: { type: 'string', description: 'nome do produto do catálogo' }, quantidade: { type: 'number' } }, required: ['produto', 'quantidade'] } },
+      nome: { type: 'string', description: 'nome completo do cliente' },
+      documento: { type: 'string', description: 'CPF ou CNPJ' },
+      telefone: { type: 'string' },
+      endereco: { type: 'string', description: 'rua/avenida e número' },
+      bairro: { type: 'string' },
+      cidade: { type: 'string' },
+      cep: { type: 'string' },
+      forma_pagamento: { type: 'string', description: 'pix, dinheiro, cartão, boleto ou a prazo' },
+      dia_entrega: { type: 'string', description: 'dia preferido de entrega (ex: segunda, amanhã)' },
+      horario: { type: 'string' },
+      observacoes: { type: 'string' },
+    },
+    required: ['tipo_cliente', 'itens', 'nome', 'documento', 'endereco', 'bairro', 'cidade', 'forma_pagamento', 'dia_entrega'],
+  },
+};
+
 function brl(v: any) { const n = Number(v); return isNaN(n) ? String(v) : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 function onlyDigits(s: any) { return String(s || '').replace(/\D/g, ''); }
+
+// ===== Helpers do registrar_pedido =====
+function rid() { return Math.random().toString(36).slice(2, 10); }
+function _num(v: any) { const n = Number(v); return isNaN(n) ? 0 : n; }
+// Consumidor: varejo (< R$200) ou atacado (>= R$200). Fallback para price padrão.
+function priceConsumer(p: any, table: 'retail' | 'wholesale') {
+  if (table === 'wholesale') return _num(p.wholesale_price != null ? p.wholesale_price : p.price);
+  return _num(p.retail_price != null ? p.retail_price : p.price);
+}
+// Revenda: tabela por região (Goiânia / interior GO / Brasília). Fallback para price padrão.
+function priceRevenda(p: any, regiao: string) {
+  if (regiao === 'interior') return _num(p.resale_interior_price != null ? p.resale_interior_price : p.price);
+  if (regiao === 'brasilia') return _num(p.resale_brasilia_price != null ? p.resale_brasilia_price : p.price);
+  return _num(p.resale_goiania_price != null ? p.resale_goiania_price : p.price);
+}
+// paymentMethodEnum só aceita a_vista|boleto|pix. Demais (dinheiro/cartão/a prazo) -> a_vista; intenção real fica nas notas.
+function mapPayment(v: any): string {
+  const s = String(v || '').toLowerCase();
+  if (s.includes('pix')) return 'pix';
+  if (s.includes('boleto')) return 'boleto';
+  return 'a_vista';
+}
+// routeDay em forma longa (segunda..domingo). hoje/amanhã relativos ao fuso de Brasília (UTC-3).
+function mapWeekday(dateStr: any): string {
+  const l = String(dateStr || '').toLowerCase();
+  if (l.includes('segunda')) return 'segunda';
+  if (l.includes('terca') || l.includes('terça')) return 'terca';
+  if (l.includes('quarta')) return 'quarta';
+  if (l.includes('quinta')) return 'quinta';
+  if (l.includes('sexta')) return 'sexta';
+  if (l.includes('sabado') || l.includes('sábado')) return 'sabado';
+  if (l.includes('domingo')) return 'domingo';
+  const days = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+  const dowBR = new Date(Date.now() - 3 * 3600 * 1000).getUTCDay();
+  if (l.includes('hoje')) return days[dowBR];
+  if (l.includes('amanha') || l.includes('amanhã')) return days[(dowBR + 1) % 7];
+  return 'segunda';
+}
 
 async function resolveCustomerId(ctx: any, documento?: string): Promise<string | null> {
   if (documento) {
@@ -95,8 +159,124 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
+    if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     return 'Ferramenta desconhecida.';
   } catch (e: any) { return 'Erro ao executar ferramenta: ' + (e?.message || String(e)).slice(0, 120); }
+}
+
+// Registra um pedido no pipeline de faturamento (PENDENTE; confirmação humana antes de faturar).
+// Preço SEMPRE pela tabela oficial do catálogo conforme o perfil (consumidor varejo/atacado; revenda por região).
+async function registrarPedido(input: any, ctx: any): Promise<string> {
+  try {
+    const inp = input || {};
+    const tipo = String(inp.tipo_cliente || '').toLowerCase();
+    const regiao = String(inp.regiao || '').toLowerCase();
+    const itens: any[] = Array.isArray(inp.itens) ? inp.itens : [];
+    // Completude (o produto pediu "pedido completo" antes de registrar).
+    const faltando: string[] = [];
+    if (!itens.length) faltando.push('itens (produto + quantidade)');
+    if (!String(inp.nome || '').trim()) faltando.push('nome');
+    if (!onlyDigits(inp.documento)) faltando.push('CPF/CNPJ');
+    if (!String(inp.endereco || '').trim()) faltando.push('endereço (rua e número)');
+    if (!String(inp.bairro || '').trim()) faltando.push('bairro');
+    if (!String(inp.cidade || '').trim()) faltando.push('cidade');
+    if (!String(inp.forma_pagamento || '').trim()) faltando.push('forma de pagamento');
+    if (!String(inp.dia_entrega || '').trim()) faltando.push('dia de entrega');
+    if (tipo !== 'consumidor' && tipo !== 'revenda') faltando.push('tipo de cliente (consumidor ou revenda)');
+    if (tipo === 'revenda' && !['goiania', 'interior', 'brasilia'].includes(regiao)) faltando.push('região da revenda (goiania, interior ou brasilia)');
+    if (faltando.length) return 'Ainda faltam dados para registrar o pedido: ' + faltando.join('; ') + '. Pergunte ao cliente e só registre quando tiver tudo.';
+
+    // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
+    const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const _stop = new Set(['de', 'da', 'do', 'com', 'e', 'a', 'o', 'os', 'as', 'para', 'por', 'sabor', 'ml', 'l', 'un', 'und', 'suco', 'sucos']);
+    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock FROM products WHERE is_active=true ORDER BY name`);
+    const catalog: any[] = _all.rows || [];
+    const matchP = (termo: string) => {
+      const toks = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
+      return catalog.filter((p: any) => { const n = _norm(p.name); return toks.length ? toks.every((t: string) => n.includes(t)) : n.includes(_norm(termo)); });
+    };
+
+    const resolved: Array<{ p: any; qtd: number }> = [];
+    const naoEnc: string[] = [];
+    const ambig: string[] = [];
+    for (const it of itens) {
+      const termo = String(it?.produto || '').trim();
+      const qtd = Math.max(1, parseInt(String(it?.quantidade || '1'), 10) || 1);
+      if (!termo) continue;
+      const m = matchP(termo);
+      if (!m.length) { naoEnc.push(termo); continue; }
+      if (m.length > 1) {
+        const exact = m.find((p: any) => _norm(p.name) === _norm(termo));
+        if (exact) { resolved.push({ p: exact, qtd }); continue; }
+        ambig.push(`"${termo}" pode ser: ${m.slice(0, 5).map((p: any) => p.name).join(' / ')}`);
+        continue;
+      }
+      resolved.push({ p: m[0], qtd });
+    }
+    if (naoEnc.length) return 'Não encontrei no catálogo: ' + naoEnc.join('; ') + '. Confirme o nome exato com o cliente (use consultar_produto) e tente de novo.';
+    if (ambig.length) return 'Itens ambíguos, peça ao cliente para especificar: ' + ambig.join(' | ');
+    if (!resolved.length) return 'Nenhum item válido para registrar.';
+
+    // Tabela de preço.
+    let table: string;
+    if (tipo === 'revenda') table = regiao;
+    else { let sub = 0; for (const r of resolved) sub += priceConsumer(r.p, 'retail') * r.qtd; table = sub >= 200 ? 'wholesale' : 'retail'; }
+    const tabelaLabel: Record<string, string> = { retail: 'Varejo (consumidor)', wholesale: 'Atacado (consumidor a partir de R$200)', goiania: 'Revenda Goiânia', interior: 'Revenda Interior GO', brasilia: 'Revenda Brasília/Entorno' };
+
+    const products = resolved.map((r) => {
+      const unit = tipo === 'revenda' ? priceRevenda(r.p, table) : priceConsumer(r.p, table as any);
+      return { id: rid(), name: r.p.name, quantity: r.qtd, unitPrice: unit, totalPrice: Number((unit * r.qtd).toFixed(2)) };
+    });
+    const total = products.reduce((s, p) => s + p.totalPrice, 0);
+    if (!(total > 0)) return 'Não consegui calcular o valor (tabela de preço sem valor para esses itens). Melhor transferir para um atendente humano.';
+
+    const { storage } = await import('./storage');
+    // Cliente (best-effort). Se não existir, humano cadastra/vincula na confirmação (dados vão nas notas).
+    let customer: any = null;
+    const doc = onlyDigits(inp.documento);
+    if (doc) { try { customer = await storage.getCustomerByCnpj(doc); } catch {} }
+    if (!customer && inp.telefone) { try { customer = await storage.getCustomerByPhone(onlyDigits(inp.telefone)); } catch {} }
+    if (!customer && ctx?.phone) { try { customer = await storage.getCustomerByPhone(onlyDigits(ctx.phone)); } catch {} }
+
+    const notes = [
+      'PEDIDO via Instagram Direct (atendente IA) — PENDENTE de confirmação humana',
+      'Cliente: ' + inp.nome,
+      'CPF/CNPJ: ' + inp.documento,
+      'Contato: ' + (inp.telefone || ctx?.phone || '-') + (ctx?.username ? ' (@' + ctx.username + ')' : ''),
+      'Perfil: ' + (tipo === 'revenda' ? 'Revenda' : 'Consumidor') + ' | Tabela de preço: ' + (tabelaLabel[table] || table),
+      'Endereço: ' + inp.endereco + ', ' + inp.bairro + ', ' + inp.cidade + (inp.cep ? ' - CEP ' + inp.cep : ''),
+      'Pagamento (informado): ' + inp.forma_pagamento,
+      'Entrega (preferida): ' + inp.dia_entrega + (inp.horario ? ' às ' + inp.horario : ''),
+      inp.observacoes ? 'Obs: ' + inp.observacoes : '',
+      customer ? ('Cliente cadastrado: ' + (customer.fantasyName || customer.name || customer.id)) : '** Cliente NÃO cadastrado — vincular/cadastrar antes de faturar **',
+    ].filter(Boolean).join('\n');
+
+    const card: any = await storage.createSalesCard({
+      customerId: customer?.id || ('ig-order-' + rid()),
+      sellerId: 'chatgpt-ai',
+      status: 'pending',
+      source: 'instagram',
+      operationType: 'venda',
+      saleValue: total.toFixed(2),
+      products,
+      notes,
+      routeDay: mapWeekday(inp.dia_entrega),
+      recurrenceType: 'semanal',
+      paymentMethod: mapPayment(inp.forma_pagamento),
+      isRecurring: false,
+      isPermanent: false,
+      exclusiveVehicle: false,
+      vehicleTypes: ['carro'],
+    } as any);
+
+    try { const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes'); await autoSendToBillingPipeline(card, 'chatgpt-ai'); } catch (e: any) { console.error('[IG-ORDER] autoSend', e?.message || e); }
+
+    console.log(`[IG-ORDER] pedido card=${card?.id} total=${total.toFixed(2)} tabela=${table} conv=${ctx?.conversationId}`);
+    return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
+  } catch (e: any) {
+    console.error('[IG-ORDER]', e?.message || e);
+    return 'Não consegui registrar o pedido agora (erro interno). Transfira para um atendente humano.';
+  }
 }
 
 async function callAnthropic(model: string, system: string, messages: any[], tools?: any[]): Promise<{ ok: boolean; status: number; j: any }> {
@@ -132,7 +312,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     while (conv.length && conv[0].role !== 'user') conv.shift();
     if (!conv.length) return { ok: false, error: 'sem mensagem de usuario' };
     const model = normModel(agent.modelo);
-    const tools = ctx ? TOOL_DEFS : undefined;
+    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL] : TOOL_DEFS) : undefined;
     const usedTools: string[] = [];
     for (let i = 0; i < 4; i++) {
       const { ok, status, j } = await callAnthropic(model, systemPrompt, conv, tools);
@@ -179,7 +359,7 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     // contexto do cliente (p/ ferramentas)
     let customerId: string | null = null;
     try { const c: any = await db.execute(sql`SELECT customer_id FROM chat_conversations WHERE id=${opts.conversationId} LIMIT 1`); customerId = c.rows?.[0]?.customer_id || null; } catch {}
-    const ctx = { conversationId: opts.conversationId, customerId, phone };
+    const ctx = { conversationId: opts.conversationId, customerId, phone, channel, username: handle };
     // histórico recente (10)
     const h: any = await db.execute(sql`SELECT sender_type, content FROM chat_messages WHERE conversation_id = ${opts.conversationId} ORDER BY created_at DESC LIMIT 10`);
     const hist = (h.rows || []).reverse().map((m: any) => ({ role: m.sender_type === 'customer' ? 'user' : 'assistant', content: String(m.content || '') }));
