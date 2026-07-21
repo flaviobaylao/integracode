@@ -89,31 +89,48 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
 
     // Reinicio por inatividade: se a conversa existente estiver resolvida OU parada ha mais
     // tempo que o limite (IG_RESET_MINUTES), finaliza a antiga e comeca uma NOVA (dialogo do zero).
+    let reuseCustomerId: string | null = null;
     if (conversation) {
       const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
       const idleMin = (Date.now() - new Date(conversation.lastMessageTime || 0).getTime()) / 60000;
       const resolved = String(conversation.status || "") === "resolved";
       if (resolved || (resetMin > 0 && idleMin >= resetMin)) {
+        reuseCustomerId = conversation.customerId || null; // reaproveita o cliente existente (evita duplicar telefone no reset)
         try { if (!resolved) await storage.updateChatConversation(conversation.id, { status: "resolved" } as any); } catch {}
         conversation = undefined;
       }
     }
 
     if (!conversation) {
-      let customer = await storage.getChatCustomerByPhone(phoneKey);
-      if (!customer) {
-        customer = await storage.createChatCustomer({
-          name: displayName,
-          phone: phoneKey,
-          email: null,
-          notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""),
-          tags: "instagram",
-          avatar: null,
-        } as any);
+      let customerId: string | null = reuseCustomerId;
+      let customerName: string = displayName;
+      if (!customerId) {
+        let customer: any = await storage.getChatCustomerByPhone(phoneKey);
+        // fallback: match EXATO pelo telefone (mesma coluna do unique constraint). A busca
+        // normalizada nao acha o telefone com prefixo "ig:", o que causava INSERT duplicado.
+        if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0]; } catch {} }
+        if (!customer) {
+          try {
+            customer = await storage.createChatCustomer({
+              name: displayName,
+              phone: phoneKey,
+              email: null,
+              notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""),
+              tags: "instagram",
+              avatar: null,
+            } as any);
+          } catch (e) {
+            // corrida/telefone duplicado: recarrega o existente em vez de derrubar o handleInbound
+            customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0];
+            if (!customer) throw e;
+          }
+        }
+        customerId = customer.id;
+        if (customer.name) customerName = customer.name;
       }
       conversation = await storage.createChatConversation({
-        customerId: customer.id,
-        customerName: customer.name,
+        customerId: customerId,
+        customerName: customerName,
         customerPhone: phoneKey,
         status: "new",
         agentId: null,
