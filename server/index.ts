@@ -1,3 +1,4 @@
+import { registerOfficialPanel } from "./official-panel";
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
 import { registerDelegationRoutes } from "./delegations-routes";
 import { registerHotsitePix } from "./hotsite-pix";
@@ -32,6 +33,7 @@ import { calculateNextVisitDate } from "../shared/visitSchedule";
 
 const app = express();
 registerOfficialDispatch(app);
+registerOfficialPanel(app);
 
 // MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas
 app.use((req, res, next) => {
