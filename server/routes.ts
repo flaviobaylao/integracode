@@ -24088,11 +24088,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Normalizar CPF para comparação
       const cpfLimpo = validatedData.customer.cpfCnpj ? validatedData.customer.cpfCnpj.replace(/\D/g, '') : null;
       
-      const existingCustomer = customersData.find(c => 
-        (validatedData.customer.email && c.email?.toLowerCase() === validatedData.customer.email.toLowerCase()) ||
-        (validatedData.customer.phone && c.phone === validatedData.customer.phone) ||
-        (cpfLimpo && ((c.cpf && c.cpf.replace(/\D/g, '') === cpfLimpo) || (c.cnpj && c.cnpj.replace(/\D/g, '') === cpfLimpo)))
-      );
+      // CHAVE = SOMENTE CPF/CNPJ (20/jul): casar por email/telefone colava o pedido
+      // num cliente DIFERENTE (telefone/placeholder repetido ou email coincidente),
+      // gravando a venda no nome errado e sobrescrevendo o cadastro alheio. Agora so
+      // casa por documento; sem documento ou sem correspondente => cadastra cliente
+      // novo (nunca associa a outro cliente).
+      const existingCustomer = cpfLimpo
+        ? customersData.find(c =>
+            (c.cpf && c.cpf.replace(/\D/g, '') === cpfLimpo) ||
+            (c.cnpj && c.cnpj.replace(/\D/g, '') === cpfLimpo))
+        : undefined;
       
       if (existingCustomer) {
         customerId = existingCustomer.id;
