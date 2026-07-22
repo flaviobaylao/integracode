@@ -11696,14 +11696,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(blockedOrders)
         .where(eq(blockedOrders.status, 'blocked'));
       
+      // ORIGEM (hotsite) e PAGAMENTO ONLINE p/ os selos HOTSITE/Pago também nos cards
+      // bloqueados (o mesmo enriquecimento do billing_pipeline, que não roda aqui).
+      const scIds = Array.from(new Set(blockedOrdersData.map((o: any) => o.salesCardId).filter(Boolean)));
+      const srcById = new Map<string, string>();
+      const paidSet = new Set<string>();
+      if (scIds.length) {
+        try {
+          const scs = await db.select({ id: salesCards.id, source: salesCards.source })
+            .from(salesCards).where(inArray(salesCards.id, scIds as any));
+          for (const s of scs as any[]) if (s.source) srcById.set(String(s.id), String(s.source));
+        } catch {}
+        const idList = sql.join(scIds.map((c: any) => sql`${c}`), sql`, `);
+        try {
+          const pp: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_pending_pix WHERE status = 'paid' AND order_id IN (${idList})`);
+          for (const x of (pp.rows || pp) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
+        } catch {}
+        try {
+          const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id IN (${idList})`);
+          for (const x of (pc.rows || pc) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
+        } catch {}
+      }
+
       // Buscar dados relacionados (cliente e vendedor)
       const enrichedOrders = await Promise.all(
         blockedOrdersData.map(async (order) => {
           const customer = await storage.getCustomer(order.customerId);
           const seller = await storage.getUser(order.sellerId);
-          
+
           return {
             ...order,
+            source: srcById.get(String(order.salesCardId)) || null,
+            paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
               fantasyName: customer?.fantasyName || null,
