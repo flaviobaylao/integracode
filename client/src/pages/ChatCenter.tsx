@@ -1493,7 +1493,7 @@ function ChatCenterInner() {
               {showAgentsPanel ? 'Ocultar Atendentes' : 'Mostrar Atendentes'}
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setShowTemplatesPanel(v => !v)} className="gap-1.5 h-7 text-xs" data-testid="toggle-templates-panel" title={showTemplatesPanel ? 'Ocultar painel de Templates' : 'Mostrar painel de Templates'}>
+          <Button variant="outline" size="sm" onClick={() => setShowTemplatesPanel(v => !v)} className="gap-1.5 h-7 text-xs ml-auto" data-testid="toggle-templates-panel" title={showTemplatesPanel ? 'Ocultar painel de Templates' : 'Mostrar painel de Templates'}>
             <BookOpen className="w-3.5 h-3.5" />
             {showTemplatesPanel ? 'Ocultar Templates' : 'Mostrar Templates'}
           </Button>
