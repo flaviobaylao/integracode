@@ -64,6 +64,8 @@ const STAGES = [
   { key: 'aguardando_rota', label: 'Aguardando Rota', icon: Clock, color: 'bg-gray-500', badgeColor: 'bg-gray-100 text-gray-800' },
   { key: 'em_rota', label: 'Em Rota', icon: Truck, color: 'bg-indigo-500', badgeColor: 'bg-indigo-100 text-indigo-800' },
   { key: 'entregue', label: 'Entregue', icon: CheckCircle2, color: 'bg-green-500', badgeColor: 'bg-green-100 text-green-800' },
+  // Etapa final: cards "excluidos" vem para ca em vez de sumir. Restauravel.
+  { key: 'lixeira', label: 'Lixeira', icon: Trash2, color: 'bg-gray-700', badgeColor: 'bg-gray-200 text-gray-700' },
 ] as const;
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -430,10 +432,22 @@ export default function BillingPipeline() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setDeleteConfirm(null);
-      toast({ title: 'Item removido do pipeline' });
+      toast({ title: 'Card enviado para a Lixeira', description: 'Nada é apagado — você pode restaurá-lo pela coluna Lixeira.' });
     },
     onError: (error: any) => {
-      toast({ title: 'Erro ao remover', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao mover para a Lixeira', description: error.message, variant: 'destructive' });
+    }
+  });
+
+  // Restaura um card da Lixeira para a etapa anterior (sem re-disparar faturamento).
+  const restoreMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('POST', `/api/billing-pipeline/${id}/restore`, {}),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: 'Card restaurado', description: res?.restoredTo ? `Voltou para a etapa "${res.restoredTo}".` : undefined });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Erro ao restaurar', description: error.message, variant: 'destructive' });
     }
   });
 
@@ -652,10 +666,14 @@ export default function BillingPipeline() {
       }
       return;
     }
+    // Card na Lixeira: qualquer seta = RESTAURAR (única saída; não re-fatura).
+    if (item.stage === 'lixeira') { restoreMutation.mutate(item.id); return; }
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
     if (nextIdx < 0 || nextIdx >= STAGES.length) return;
     const targetStage = STAGES[nextIdx].key;
+    // Não "cair" na Lixeira ao avançar de Entregue: exclusão é só pelo botão de lixeira.
+    if (targetStage === 'lixeira') return;
     // Mover para "Bloqueados" NAO e mudanca de stage: e BLOQUEAR (tabela blocked_orders via /block).
     if (targetStage === 'bloqueado') {
       if (window.confirm(`Bloquear o pedido de ${item.customerName}? Ele vai para a coluna "Bloqueados".`)) blockOrderMutation.mutate({ id: item.id });
@@ -667,6 +685,14 @@ export default function BillingPipeline() {
   };
 
   const moveToStage = (item: BillingPipelineItem, stage: string) => {
+    // Card na Lixeira: sair de lá = RESTAURAR (para a etapa anterior; não re-fatura),
+    // independentemente do destino escolhido.
+    if (item.stage === 'lixeira') { restoreMutation.mutate(item.id); return; }
+    // Mover PARA a Lixeira = exclusão (soft): confirma e envia para a Lixeira, sem apagar.
+    if (stage === 'lixeira') {
+      if (window.confirm(`Enviar o card de ${item.customerName} para a Lixeira? Nada é apagado — dá para restaurar depois.`)) deleteMutation.mutate(item.id);
+      return;
+    }
     // Card da coluna 'Bloqueados' nao e item do pipeline: alterar a etapa = LIBERAR (release).
     // O pedido liberado entra na etapa "Pedido" e dali pode ser movido normalmente.
     if (item.stage === 'bloqueado') {
