@@ -511,6 +511,8 @@ export default function BillingPipeline() {
           paymentMethod: b.paymentMethod ?? null,
           operationType: b.operationType ?? null,
           products: b.products ?? null,
+          source: b.source ?? undefined,
+          paidOnline: b.paidOnline ?? undefined,
           notes: b.blockDetails ?? b.blockReason ?? null,
           omieInstanceId: null,
           omieInstanceName: null,
@@ -1625,7 +1627,7 @@ function KanbanCard({
             </Badge>
           )}
           {item.paidOnline ? (
-            <Badge variant="outline" className="text-[10px] border-green-400 text-green-700 bg-green-100 font-semibold" title="Pagamento confirmado na loja (cartão/Google Pay/PIX)">
+            <Badge variant="outline" className="text-[10px] border-red-400 text-red-700 bg-red-100 font-semibold" title="Pagamento confirmado na loja (cartão/Google Pay/PIX)">
               <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
               Pago
             </Badge>
