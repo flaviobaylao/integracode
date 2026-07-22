@@ -206,8 +206,9 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       toast({
-        title: "Sucesso",
-        description: "Pedido duplicado! Abrindo para edição...",
+        title: "Pedido aberto para conferência",
+        description: "Copiamos os produtos e quantidades do pedido anterior. Confira, edite se precisar e envie.",
+        duration: 5000,
       });
       onClose();
       // Abrir o novo card para edição
