@@ -1015,7 +1015,7 @@ function PayablesTab() {
   const { data: payableAttachments = [], refetch: refetchAttachments } = useQuery<any[]>({
     queryKey: ['/api/financial/payables', selectedItem?.id, 'attachments'],
     queryFn: async () => { if (!selectedItem?.id) return []; const r = await fetch(`/api/financial/payables/${selectedItem.id}/attachments`, { credentials: 'include' }); return r.ok ? r.json() : []; },
-    enabled: !!(showDetail && selectedItem?.id),
+    enabled: !!((showDetail || showEdit) && selectedItem?.id),
   });
   const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve(String(rd.result).split(',')[1] || ''); rd.onerror = reject; rd.readAsDataURL(file); });
   const uploadPayableAttachments = async (payableId: string) => {
@@ -1300,7 +1300,7 @@ function PayablesTab() {
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setDanfeFile(null); setBoletoFiles([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a pagar?')) deleteMutation.mutate(p.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
                   </TableCell>
@@ -1556,6 +1556,49 @@ function PayablesTab() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          </div>
+          <div className="border-t pt-3 mt-1">
+            <Label className="text-sm font-semibold">Anexos (DANFE / Boletos)</Label>
+            {(payableAttachments as any[]).length > 0 && (
+              <div className="space-y-1 mt-2">
+                {(payableAttachments as any[]).map((a: any) => (
+                  <div key={a.id} className="flex items-center justify-between border rounded px-2 py-1 text-sm gap-2">
+                    <a href={`/api/financial/payable-attachments/${a.id}/download`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate">
+                      {a.kind === 'danfe' ? '📄 DANFE' : a.kind === 'boleto' ? '🧾 Boleto' : '📎 Anexo'} — {a.file_name}
+                    </a>
+                    <button title="Remover anexo" onClick={async () => { if (!confirm('Remover este anexo?')) return; await fetch(`/api/financial/payable-attachments/${a.id}`, { method: 'DELETE', credentials: 'include' }); refetchAttachments(); }} className="text-red-500 shrink-0">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-2 mt-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">DANFE (PDF ou XML)</Label>
+                <Input type="file" accept=".pdf,.xml,application/pdf,text/xml" onChange={(e) => setDanfeFile(e.target.files?.[0] || null)} />
+                {danfeFile && <p className="text-xs text-green-700 mt-1">✓ {danfeFile.name}</p>}
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Boleto(s) (PDF — pode selecionar vários)</Label>
+                <Input type="file" accept=".pdf,application/pdf" multiple onChange={(e) => setBoletoFiles(Array.from(e.target.files || []))} />
+                {boletoFiles.length > 0 && <p className="text-xs text-green-700 mt-1">✓ {boletoFiles.length} boleto(s): {boletoFiles.map((f) => f.name).join(', ')}</p>}
+              </div>
+              {(danfeFile || boletoFiles.length > 0) && (
+                <Button type="button" variant="outline" size="sm" disabled={attBusy} onClick={async () => {
+                  if (!selectedItem?.id) return;
+                  setAttBusy(true);
+                  try {
+                    await uploadPayableAttachments(selectedItem.id);
+                    setDanfeFile(null); setBoletoFiles([]);
+                    refetchAttachments();
+                    toast({ title: 'Anexo(s) enviado(s)' });
+                  } catch (e: any) {
+                    toast({ title: 'Falha ao anexar', description: e?.message || String(e), variant: 'destructive' });
+                  } finally { setAttBusy(false); }
+                }}>
+                  {attBusy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Anexar selecionado(s)
+                </Button>
+              )}
             </div>
           </div>
           <DialogFooter>
