@@ -158,7 +158,8 @@ export default function Dashboard() {
   const [end, setEnd] = useState<string>(bounds.today);
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
   const [pnfSeller, setPnfSeller] = useState<string[]>([]);
-  const [modal, setModal] = useState<{ title: string; names: string[] } | null>(null);
+  const [modal, setModal] = useState<{ title: string; names: string[]; searchable?: boolean } | null>(null);
+  const [modalSearch, setModalSearch] = useState<string>("");
   const [sortKey, setSortKey] = useState<string>("fatMes");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -404,7 +405,7 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle><InfoDot text="Valor dos pedidos colocados no pipeline na semana vigente (a partir de segunda-feira). Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div><button type="button" onClick={() => setModal({ title: "Clientes faturados na semana - Total " + brl(billedWeek.total), names: billedWeek.list })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados na semana</button></CardContent>
+          <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div><button type="button" onClick={() => setModal({ title: "Clientes faturados na semana - Total " + brl(billedWeek.total), names: billedWeek.list, searchable: true })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados na semana</button></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle><InfoDot text="NF-e de VENDA autorizadas no mes vigente (nota fiscal real), ja excluindo devolucao, amostra, troca e transferencia, e sem os dados legados importados. Fonte: notas fiscais (fiscal_invoices)." /></div></CardHeader>
@@ -565,25 +566,35 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setModal(null)}>
+      {modal && (() => {
+        const _q = modalSearch.trim().toLowerCase();
+        const _names = modal.searchable && _q ? modal.names.filter((n) => n.toLowerCase().includes(_q)) : modal.names;
+        const _close = () => { setModal(null); setModalSearch(""); };
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={_close}>
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b">
-              <h3 className="font-semibold text-sm text-gray-800">{modal.title} ({modal.names.length})</h3>
-              <button type="button" onClick={() => setModal(null)} className="text-sm px-2 py-1 border rounded hover:bg-gray-100">Fechar</button>
+              <h3 className="font-semibold text-sm text-gray-800">{modal.title} ({_names.length}{modal.searchable && _q ? " de " + modal.names.length : ""})</h3>
+              <button type="button" onClick={_close} className="text-sm px-2 py-1 border rounded hover:bg-gray-100">Fechar</button>
             </div>
+            {modal.searchable && (
+              <div className="px-4 pt-3">
+                <input type="text" value={modalSearch} onChange={(e) => setModalSearch(e.target.value)} placeholder="Buscar cliente..." className="w-full text-sm border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400" autoFocus />
+              </div>
+            )}
             <div className="overflow-auto p-4 space-y-1">
-              {modal.names.length === 0 ? (
-                <div className="text-sm text-gray-400">Nenhum cliente no periodo.</div>
+              {_names.length === 0 ? (
+                <div className="text-sm text-gray-400">{modal.searchable && _q ? "Nenhum cliente encontrado." : "Nenhum cliente no periodo."}</div>
               ) : (
-                modal.names.map((n, i) => (
+                _names.map((n, i) => (
                   <div key={i} className="text-sm text-gray-800 border-b border-gray-100 py-1">{n}</div>
                 ))
               )}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
