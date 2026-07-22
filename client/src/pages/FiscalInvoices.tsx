@@ -1,5 +1,5 @@
 import { exportToExcel, ExportExcelButton, DateRangeFilter, dateInRange, useTableSort, SortableTh } from "@/lib/tableTools";
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
@@ -190,6 +190,12 @@ export default function FiscalInvoices() {
   const [envFilter, setEnvFilter] = useState('all');
   const [issuerFilter, setIssuerFilter] = useState('all'); // CNPJ (só dígitos) do emitente/filial, ou 'all'
   const [nfSearch, setNfSearch] = useState('');
+  // Busca no SERVIDOR (tabela inteira, não só as 1000 recentes) com debounce.
+  const [nfSearchServer, setNfSearchServer] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setNfSearchServer(nfSearch.trim()), 400);
+    return () => clearTimeout(t);
+  }, [nfSearch]);
   const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const [dtStart, setDtStart] = useState('');
   const [dtEnd, setDtEnd] = useState('');
@@ -286,12 +292,13 @@ export default function FiscalInvoices() {
     const params = new URLSearchParams();
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (envFilter !== 'all') params.set('environment', envFilter);
+    if (nfSearchServer) params.set('search', nfSearchServer);
     const qs = params.toString();
     return `/api/fiscal-invoices${qs ? `?${qs}` : ''}`;
   };
 
   const { data: invoices, isLoading: loadingInvoices } = useQuery<FiscalInvoice[]>({
-    queryKey: ['/api/fiscal-invoices', statusFilter, envFilter],
+    queryKey: ['/api/fiscal-invoices', statusFilter, envFilter, nfSearchServer],
     queryFn: () => fetch(buildInvoiceUrl(), { credentials: 'include' }).then(r => r.json()),
   });
   // Emitente (CNPJ/filial): cada CNPJ tem numeração PRÓPRIA na SEFAZ, então o mesmo número
