@@ -198,19 +198,10 @@ export default function RotaEntrega() {
     setIsSubmitting(true);
     
     try {
-      // Primeiro obter localização
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if ('geolocation' in navigator) {
-          navigator.geolocation.getCurrentPosition(resolve, reject);
-        } else {
-          reject(new Error('Geolocalização não suportada'));
-        }
-      });
-
+      // Entrega NÃO exige GPS: envia só a foto e conclui (evita travar quando o sinal
+      // está ruim dentro do estabelecimento). As coordenadas ficam opcionais no backend.
       const formData = new FormData();
       formData.append('photo', capturedPhoto);
-      formData.append('latitude', position.coords.latitude.toString());
-      formData.append('longitude', position.coords.longitude.toString());
 
       // Fazer check-in e check-out automaticamente (entrega direta)
       const checkoutResponse = await fetch(`/api/delivery-routes/stops/${pendingDeliveryStop}/complete-delivery`, {
@@ -256,18 +247,9 @@ export default function RotaEntrega() {
     setIsSubmitting(true);
     
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if ('geolocation' in navigator) {
-          navigator.geolocation.getCurrentPosition(resolve, reject);
-        } else {
-          reject(new Error('Geolocalização não suportada'));
-        }
-      });
-
+      // Devolução NÃO exige GPS: envia motivo (+ foto opcional) e conclui.
       const formData = new FormData();
       formData.append('reason', returnReason.trim());
-      formData.append('latitude', position.coords.latitude.toString());
-      formData.append('longitude', position.coords.longitude.toString());
       if (returnPhoto) {
         formData.append('photo', returnPhoto);
       }
