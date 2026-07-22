@@ -17,6 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PhonebookPanel } from "@/components/PhonebookPanel";
 import { TemplatesPanel } from "@/components/TemplatesPanel";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
@@ -1555,8 +1556,10 @@ function ChatCenterInner() {
             </div>
           )}
           
-          {/* Lista de Conversas + Agenda Telefônica */}
-          <div className={`min-w-0 ${(() => { const span = (isAdmin ? 12 : 10) - 5 - ((isAdmin && showAgentsPanel) ? 2 : 0) - (showTemplatesPanel ? 2 : 0); return span >= 7 ? 'lg:col-span-7' : span === 5 ? 'lg:col-span-5' : 'lg:col-span-3'; })()}`}>
+          {/* Conversas + Chat com divisor arrastável (arraste a barra central para ajustar as larguras) */}
+          <div className={`min-w-0 ${(() => { const span = (isAdmin ? 12 : 10) - ((isAdmin && showAgentsPanel) ? 2 : 0) - (showTemplatesPanel ? 2 : 0); return span >= 12 ? 'lg:col-span-12' : span === 10 ? 'lg:col-span-10' : 'lg:col-span-8'; })()}`} style={{ minHeight: 'calc(100vh - 180px)' }}>
+            <ResizablePanelGroup direction="horizontal" autoSaveId="central-conversas-chat" className="h-full">
+              <ResizablePanel defaultSize={38} minSize={22} className="min-w-0 pr-1">
             <Tabs defaultValue="conversas" className="h-full">
               <Card>
                 <CardHeader className="pb-3">
@@ -1859,10 +1862,12 @@ function ChatCenterInner() {
                 </TabsContent>
               </Card>
             </Tabs>
-          </div>
+              </ResizablePanel>
 
-          {/* Chat - Coluna expandida para mais espaço */}
-          <div className={`${isAdmin ? "lg:col-span-5" : "lg:col-span-5"} space-y-3`}>
+              <ResizableHandle withHandle className="mx-1 bg-gray-200 hover:bg-green-400 transition-colors" />
+
+              {/* Chat - largura ajustável pelo divisor */}
+              <ResizablePanel defaultSize={62} minSize={30} className="min-w-0 pl-1 space-y-3 overflow-y-auto">
             {selectedChat ? (
               <>
                 {/* Info do Cliente */}
@@ -2392,6 +2397,8 @@ function ChatCenterInner() {
                 </div>
               </Card>
             )}
+              </ResizablePanel>
+            </ResizablePanelGroup>
           </div>
 
           {/* Painel de Templates à direita */}
