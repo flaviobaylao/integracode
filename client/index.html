@@ -74,6 +74,24 @@
   <body>
     <div id="root"></div>
 
+    <!-- Trava de reload: impede o auto-reload (SW/atualização) de recarregar o app enquanto
+         há trabalho em andamento (ex.: entregador tirando a foto do comprovante). Sem isso,
+         ao voltar da câmera o visibilitychange/controllerchange recarregava o app na home e
+         a foto/entrega era perdida. Quando a trava é liberada, um reload pendente é aplicado. -->
+    <script>
+      window.__HOLD_RELOAD = false;
+      window.__pendingReload = false;
+      window.__safeReload = function () {
+        if (window.__HOLD_RELOAD) { window.__pendingReload = true; return false; }
+        window.location.reload();
+        return true;
+      };
+      window.__setReloadHold = function (v) {
+        window.__HOLD_RELOAD = !!v;
+        if (!v && window.__pendingReload) { window.__pendingReload = false; window.location.reload(); }
+      };
+    </script>
+
     <!-- Service Worker Registration -->
     <script>
       if ('serviceWorker' in navigator) {
@@ -93,7 +111,7 @@
           navigator.serviceWorker.addEventListener('controllerchange', function() {
             if (!swRefreshing) {
               swRefreshing = true;
-              window.location.reload();
+              if (!window.__safeReload()) { swRefreshing = false; } // adiado se houver entrega em andamento
             }
           });
         });
@@ -120,6 +138,8 @@
             var latest = m ? m[0] : null;
             var current = currentBundle();
             if (latest && current && latest !== current) {
+              // Não recarrega no meio de uma entrega/foto — adia até a trava ser liberada.
+              if (window.__HOLD_RELOAD) { window.__pendingReload = true; return; }
               reloading = true;
               try { if (window.caches) { var ks = await caches.keys(); await Promise.all(ks.map(function (k) { return caches.delete(k); })); } } catch (e) {}
               location.reload();
