@@ -8193,24 +8193,41 @@ export class DatabaseStorage implements IStorage {
   // FISCAL INVOICES
   // ============================================================================
 
-  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]> {
+  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string }): Promise<FiscalInvoice[]> {
     const conditions = [];
     if (filters?.status) conditions.push(eq(fiscalInvoices.status, filters.status));
     if (filters?.customerId) conditions.push(eq(fiscalInvoices.customerId, filters.customerId));
     if (filters?.environment) conditions.push(eq(fiscalInvoices.environment, filters.environment));
+
+    // BUSCA textual (cliente / numero da NF / documento): consulta a tabela INTEIRA, nao
+    // apenas as 1000 mais recentes. Sem isso, notas ANTIGAS ficavam invisiveis na busca —
+    // ex.: a NF-105021 (mais antiga que as 1000 recentes) nao aparecia ao buscar "vipi".
+    const q = String(filters?.search || '').trim();
+    if (q) {
+      const digits = q.replace(/\D/g, '');
+      const ors: any[] = [ sql`lower(coalesce(${fiscalInvoices.customerName}, '')) LIKE ${'%' + q.toLowerCase() + '%'}` ];
+      if (digits) {
+        ors.push(sql`regexp_replace(coalesce(${fiscalInvoices.customerCnpjCpf}, ''), '[^0-9]', '', 'g') LIKE ${'%' + digits + '%'}`);
+        if (digits.length <= 9) ors.push(sql`${fiscalInvoices.invoiceNumber} = ${Number(digits)}`);
+      }
+      conditions.push(or(...ors));
+    }
 
     // PERFORMANCE (21/jul): a LISTAGEM nao seleciona os XMLs (xml_envio/retorno/autorizacao).
     // Sao 3 colunas text grandes; com ~60k notas o SELECT * gerava payload de centenas de MB,
     // travando a tela e estourando a cota do service worker. O XML e buscado sob demanda por
     // nota (GET /api/fiscal-invoices/:id/xml).
     const { xmlEnvio, xmlRetorno, xmlAutorizacao, ...listCols } = getTableColumns(fiscalInvoices);
+    // Com busca ativa o resultado ja e restrito pelo filtro -> teto de 500; sem busca,
+    // mantem as 1000 mais recentes (visao padrao rapida).
+    const lim = q ? 500 : 1000;
 
     if (conditions.length > 0) {
       return db.select(listCols).from(fiscalInvoices)
         .where(and(...conditions))
-        .orderBy(desc(fiscalInvoices.createdAt)).limit(1000) as any;
+        .orderBy(desc(fiscalInvoices.createdAt)).limit(lim) as any;
     }
-    return db.select(listCols).from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)).limit(1000) as any;
+    return db.select(listCols).from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)).limit(lim) as any;
   }
 
   async getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined> {
