@@ -1593,10 +1593,20 @@ function KanbanCard({
               HOTSITE
             </Badge>
           )}
-          {item.paidOnline && (
+          {item.source === 'instagram' && (
+            <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-700 bg-purple-100 font-semibold" title="Pedido recebido pelo Instagram Direct (atendente IA)">
+              INSTAGRAM
+            </Badge>
+          )}
+          {item.paidOnline ? (
             <Badge variant="outline" className="text-[10px] border-green-400 text-green-700 bg-green-100 font-semibold" title="Pagamento confirmado na loja (cartão/Google Pay/PIX)">
               <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
               Pago
+            </Badge>
+          ) : (item.source === 'hotsite' || item.source === 'instagram' || item.sellerId === 'chatgpt-ai' || String(item.createdBy || '').includes('chatgpt')) && (
+            <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50 font-semibold" title="Pagamento ainda não confirmado">
+              <Ban className="h-2.5 w-2.5 mr-0.5" />
+              Não pago
             </Badge>
           )}
           {item.scheduledBillingDate && (
