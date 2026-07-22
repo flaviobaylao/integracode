@@ -703,7 +703,10 @@ export function registerBillingPipelineRoutes(app: Express) {
           products: (item.products as any) || [],
         } as any);
       }
-      await storage.deleteBillingPipelineItem(id);
+      // Bloqueio = mudanca de representacao: o pedido passa a viver em blocked_orders
+      // (coluna "Bloqueados") e volta ao pipeline na liberacao. Remove a linha do
+      // pipeline SEM ir para a Lixeira (evita card duplicado em duas colunas).
+      await storage.hardRemoveBillingPipelineItem(id);
       try { await logOrderAudit(item.salesCardId, 'blocked_manual', details); } catch {}
       console.log(`🚫 [BILLING-PIPELINE] Pedido ${id} BLOQUEADO MANUALMENTE por ${req.currentUser.email}`);
       res.json({ ok: true });

@@ -610,6 +610,7 @@ export interface IStorage {
   createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline>;
   updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline>;
   deleteBillingPipelineItem(id: string): Promise<void>;
+  hardRemoveBillingPipelineItem(id: string): Promise<void>;
 
   // Financial Module - Chart of Accounts
   getChartOfAccounts(instanceId?: string): Promise<ChartOfAccount[]>;
@@ -8566,6 +8567,14 @@ export class DatabaseStorage implements IStorage {
             'changedBy', 'exclusao'
           )::jsonb
       WHERE id = ${id} AND stage <> 'lixeira'`);
+  }
+
+  // Remocao REAL da linha do pipeline. Uso restrito: mudanca de REPRESENTACAO em que
+  // o pedido continua existindo em OUTRA tabela (ex.: bloqueio -> blocked_orders, que
+  // aparece na coluna "Bloqueados" e volta ao pipeline na liberacao). NAO usar para
+  // "excluir" do usuario (isso e o soft-delete acima, que vai para a Lixeira).
+  async hardRemoveBillingPipelineItem(id: string): Promise<void> {
+    await db.delete(billingPipeline).where(eq(billingPipeline.id, id));
   }
 
   // ============================================================================
