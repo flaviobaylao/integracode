@@ -730,6 +730,8 @@ function ChatCenterInner() {
   // ===== Etiquetas (labels) das conversas =====
   const [labelFilter, setLabelFilter] = useState<string>('all');
   const [unreadFilter, setUnreadFilter] = useState<'all' | 'unread'>('all');
+  const [showAgentsPanel, setShowAgentsPanel] = useState(true);
+  const [showTemplatesPanel, setShowTemplatesPanel] = useState(true);
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
@@ -1260,12 +1262,16 @@ function ChatCenterInner() {
     return meta.pushName || meta.senderName || selectedChat?.customerName || 'Cliente';
   };
 
-  // Scroll automático para a última mensagem
+  // Scroll automático para a última mensagem — rola SOMENTE o container de mensagens,
+  // nunca a janela inteira (evita a tela "subir" e esconder o box de digitação ao enviar).
   useEffect(() => {
-    // Usar setTimeout para garantir que o DOM foi atualizado
     const timer = setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      const root = scrollRef.current;
+      const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      } else if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ block: 'end' });
       }
     }, 100);
     return () => clearTimeout(timer);
@@ -1478,8 +1484,22 @@ function ChatCenterInner() {
           </div>
         </div>
 
-        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-12" : "lg:grid-cols-10"} gap-4`} style={{ minHeight: 'calc(100vh - 160px)' }}>
+        {/* Controles de exibição dos painéis laterais */}
+        <div className="mb-2 flex items-center gap-2">
           {isAdmin && (
+            <Button variant="outline" size="sm" onClick={() => setShowAgentsPanel(v => !v)} className="gap-1.5 h-7 text-xs" data-testid="toggle-agents-panel" title={showAgentsPanel ? 'Ocultar painel de Atendentes' : 'Mostrar painel de Atendentes'}>
+              <Users className="w-3.5 h-3.5" />
+              {showAgentsPanel ? 'Ocultar Atendentes' : 'Mostrar Atendentes'}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => setShowTemplatesPanel(v => !v)} className="gap-1.5 h-7 text-xs" data-testid="toggle-templates-panel" title={showTemplatesPanel ? 'Ocultar painel de Templates' : 'Mostrar painel de Templates'}>
+            <BookOpen className="w-3.5 h-3.5" />
+            {showTemplatesPanel ? 'Ocultar Templates' : 'Mostrar Templates'}
+          </Button>
+        </div>
+
+        <div className={`grid grid-cols-1 ${isAdmin ? "lg:grid-cols-12" : "lg:grid-cols-10"} gap-4`} style={{ minHeight: 'calc(100vh - 160px)' }}>
+          {isAdmin && showAgentsPanel && (
             // Sidebar esquerda com stats de agentes
             <div className="lg:col-span-2">
               <Card className="h-full">
@@ -1536,7 +1556,7 @@ function ChatCenterInner() {
           )}
           
           {/* Lista de Conversas + Agenda Telefônica */}
-          <div className={`${isAdmin ? "lg:col-span-3" : "lg:col-span-3"}`}>
+          <div className={`min-w-0 ${(() => { const span = (isAdmin ? 12 : 10) - 5 - ((isAdmin && showAgentsPanel) ? 2 : 0) - (showTemplatesPanel ? 2 : 0); return span >= 7 ? 'lg:col-span-7' : span === 5 ? 'lg:col-span-5' : 'lg:col-span-3'; })()}`}>
             <Tabs defaultValue="conversas" className="h-full">
               <Card>
                 <CardHeader className="pb-3">
@@ -2375,6 +2395,7 @@ function ChatCenterInner() {
           </div>
 
           {/* Painel de Templates à direita */}
+          {showTemplatesPanel && (
           <div className="lg:col-span-2 hidden lg:block" style={{ height: 'calc(100vh - 180px)' }}>
             <TemplatesPanel
               onSelectTemplate={(template) => {
@@ -2402,6 +2423,7 @@ function ChatCenterInner() {
               hasActiveConversation={!!selectedConversation}
             />
           </div>
+          )}
         </div>
 
         {/* Dialog para iniciar nova conversa */}
