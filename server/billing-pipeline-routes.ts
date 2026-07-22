@@ -244,16 +244,39 @@ export async function evaluateOrderBlock(
     if (doc) {
       const overdueDebt = await storage.getOverdueDebtByDocument(doc);
       if (overdueDebt) {
-        return {
-          reason: 'overdue_debt',
-          details: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
-        };
+        // Pedido PRÉ-PAGO na loja (PIX/cartão/Google Pay já confirmado) NÃO é bloqueado
+        // por débito vencido: o valor já entrou, não há risco de crédito. O bloqueio por
+        // amostra/troca/bonificação (acima) continua valendo mesmo para pré-pagos.
+        if (await isOrderPrepaidOnline(salesCard?.id)) {
+          console.log(`💰 [BILLING-PIPELINE] Pedido ${salesCard?.id} pré-pago na loja — ignorando bloqueio por débito vencido.`);
+        } else {
+          return {
+            reason: 'overdue_debt',
+            details: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
+          };
+        }
       }
     }
   } catch (e: any) {
     console.warn('⚠️ [BILLING-PIPELINE] evaluateOrderBlock: erro ao checar debito (segue sem bloquear por debito):', e?.message);
   }
   return null;
+}
+
+// Pedido pré-pago na loja online: existe pagamento CONFIRMADO ('paid') vinculado ao card
+// em hotsite_pending_pix (PIX) ou hotsite_card_payments (cartão/Google Pay). Consulta cada
+// tabela isoladamente (try/catch) para tolerar ambiente onde uma delas ainda não existe.
+async function isOrderPrepaidOnline(salesCardId: string): Promise<boolean> {
+  if (!salesCardId) return false;
+  try {
+    const r: any = await db.execute(sql`SELECT 1 FROM hotsite_pending_pix WHERE status = 'paid' AND order_id = ${salesCardId} LIMIT 1`);
+    if (((r.rows || r || []) as any[]).length > 0) return true;
+  } catch { /* tabela pode não existir ainda */ }
+  try {
+    const r: any = await db.execute(sql`SELECT 1 FROM hotsite_card_payments WHERE status = 'paid' AND order_id = ${salesCardId} LIMIT 1`);
+    if (((r.rows || r || []) as any[]).length > 0) return true;
+  } catch { /* tabela pode não existir ainda */ }
+  return false;
 }
 
 // Insere o pedido em blocked_orders de forma IDEMPOTENTE (não duplica um bloqueio
