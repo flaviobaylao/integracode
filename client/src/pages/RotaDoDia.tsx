@@ -43,6 +43,17 @@ const HIDDEN_ROUTE_SELLER_IDS = new Set<string>([
   'omie-vendor-4324270246',               // Lorenna Pina
 ]);
 
+// Ocultados por PREFIXO DE NOME (não são rota de vendedor). "Honest 3" é o canal de
+// Fornecedores/Clientes Internos/Colaboradores — não deve aparecer no seletor da Rota do Dia.
+// Precisos o suficiente para NÃO afetar "Honest 1" e "Honest 2".
+const HIDDEN_ROUTE_SELLER_NAME_PREFIXES = ['honest 3'];
+
+const isHiddenRouteSeller = (s: any): boolean => {
+  if (HIDDEN_ROUTE_SELLER_IDS.has(s.id)) return true;
+  const nm = `${s.firstName || ''} ${s.lastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
+  return HIDDEN_ROUTE_SELLER_NAME_PREFIXES.some(p => nm.startsWith(p));
+};
+
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
   if (!weekdaysJson) return '';
@@ -1116,7 +1127,7 @@ export default function RotaDoDia() {
                   <SelectValue placeholder="Selecione um vendedor" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(isAdmin ? (sellers || []).filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !HIDDEN_ROUTE_SELLER_IDS.has(s.id)).sort(compareSellersByType) : COVERAGE_GRANT.sellers).map((seller) => (
+                  {(isAdmin ? (sellers || []).filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !isHiddenRouteSeller(s)).sort(compareSellersByType) : COVERAGE_GRANT.sellers).map((seller) => (
                     <SelectItem key={seller.id} value={seller.id}>
                       {seller.firstName} {seller.lastName}
                     </SelectItem>
