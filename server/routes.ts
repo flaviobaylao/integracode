@@ -11705,6 +11705,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Diagnóstico das credenciais Cielo (admin) — não expõe segredos; ver server/hotsite-card.ts.
+  app.get('/api/admin/cielo-diag', authenticateUser, requireRole(['admin']), async (_req: any, res) => {
+    try {
+      const { cieloDiag } = await import('./hotsite-card.js');
+      res.json(await cieloDiag());
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   // Blocked orders routes
   app.get('/api/blocked-orders', authenticateUser, async (req: any, res) => {
     try {
