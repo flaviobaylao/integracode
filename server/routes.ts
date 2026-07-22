@@ -11882,7 +11882,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log(`✓ Pedido encontrado e bloqueado: salesCardId=${order.salesCardId}`);
           
-          // Deletar pedido bloqueado
+          // Excluir um pedido bloqueado NAO apaga: preserva o card na LIXEIRA do pipeline
+          // (restauravel) e o remove da coluna Bloqueados. Antes ele era apagado de vez -> sumia.
+          // 1) Garante o valor 'lixeira' no enum de stage (idempotente).
+          try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch {}
+          // 2) customer_name e NOT NULL no billing_pipeline; resolve nome do cliente e do vendedor.
+          const cust = await storage.getCustomer(order.customerId).catch(() => null);
+          const customerName = (cust as any)?.name || 'Cliente';
+          const seller = order.sellerId ? await storage.getUser(order.sellerId).catch(() => null) : null;
+          const sellerName = seller ? ([(seller as any).firstName, (seller as any).lastName].filter(Boolean).join(' ').trim() || null) : null;
+          const histJson = JSON.stringify([{ stage: 'lixeira', changedAt: nowBrazil().toISOString(), changedBy: `${req.currentUser?.email || 'sistema'} (excluido de bloqueados)` }]);
+          const prodJson = order.products ? JSON.stringify(order.products) : null;
+          // 3) Cria o card direto na Lixeira (snapshot do bloqueio). O pedido nunca some do sistema.
+          await db.execute(sql`
+            INSERT INTO billing_pipeline (sales_card_id, customer_id, customer_name, seller_id, seller_name, stage, sale_value, payment_method, operation_type, products, stage_history, created_by, notes)
+            VALUES (${order.salesCardId}, ${order.customerId}, ${customerName}, ${order.sellerId || null}, ${sellerName},
+                    'lixeira', ${order.totalAmount ?? null}, ${order.paymentMethod || null}, ${order.operationType || null},
+                    ${prodJson}::jsonb, ${histJson}::jsonb, ${req.currentUser?.email || 'sistema'},
+                    ${'Excluido da coluna Bloqueados. Motivo original do bloqueio: ' + (order.blockReason || '-')})`);
+          // 4) Remove a linha de bloqueio (dados preservados no card da Lixeira).
           await db.delete(blockedOrders)
             .where(eq(blockedOrders.id, orderId));
           
