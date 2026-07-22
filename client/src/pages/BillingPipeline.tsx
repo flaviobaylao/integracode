@@ -423,9 +423,10 @@ export default function BillingPipeline() {
     mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/reject', { orderIds }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
-      toast({ title: 'Pedido rejeitado', description: 'Pedido bloqueado removido.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: 'Card enviado para a Lixeira', description: 'Nada é apagado — o pedido bloqueado pode ser restaurado pela coluna Lixeira.' });
     },
-    onError: (error: any) => { toast({ title: 'Erro ao rejeitar', description: error.message, variant: 'destructive' }); }
+    onError: (error: any) => { toast({ title: 'Erro ao excluir', description: error.message, variant: 'destructive' }); }
   });
 
   const deleteMutation = useMutation({
@@ -1084,7 +1085,7 @@ export default function BillingPipeline() {
                       onMoveBackward={() => moveItem(item, 'backward')}
                       onViewDetail={() => setDetailItem(item)}
                       onDelete={() => stage.key === 'bloqueado'
-                        ? (window.confirm(`Rejeitar (excluir) o pedido bloqueado de ${item.customerName}?`) && rejectBlockedMutation.mutate([item.id]))
+                        ? (window.confirm(`Enviar o pedido bloqueado de ${item.customerName} para a Lixeira? Nada é apagado — dá para restaurar depois.`) && rejectBlockedMutation.mutate([item.id]))
                         : setDeleteConfirm(item.id)}
                       isFirst={stage.key === STAGES[0].key}
                       isLast={stage.key === STAGES[STAGES.length - 1].key}
