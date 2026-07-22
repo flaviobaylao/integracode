@@ -299,6 +299,8 @@ export default function AcessosEDelegacoes() {
     onSuccess: () => {
       setConfirmSaveOpen(false);
       setSuccessOpen(true); // popup de sucesso
+      // recarrega o salvo do servidor para a tela refletir exatamente o que persistiu
+      queryClient.invalidateQueries({ queryKey: ["/api/user-permissions", selUser?.id] });
       toast({ title: "Acessos atualizados", description: `As novas configurações de ${selUser?.firstName} estão vigentes.` });
     },
     onError: () => {
