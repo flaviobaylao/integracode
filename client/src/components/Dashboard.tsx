@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 
@@ -79,6 +80,17 @@ function monthLabel(d = new Date()): string {
 const brDate = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
 // Mini gráfico de barras (somente barras, sem eixos/valores) para os boxes do topo.
+function InfoDot({ text }: { text: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" aria-label="Como este numero e calculado" className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-gray-400 text-[10px] font-bold leading-none hover:bg-gray-100 hover:text-gray-600">i</button>
+      </PopoverTrigger>
+      <PopoverContent align="end" side="bottom" className="w-72 text-xs leading-relaxed text-gray-700">{text}</PopoverContent>
+    </Popover>
+  );
+}
+
 function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, labelEvery = 1, labelSize = "text-[7px]", captions, format }: { values: number[]; highlight?: number; color?: string; height?: number; labels?: string[]; labelEvery?: number; labelSize?: string; captions?: string[]; format?: (n: number) => string }) {
   const nums = values.map((v) => Number(v) || 0);
   const max = Math.max(1, ...nums);
@@ -381,7 +393,7 @@ export default function Dashboard() {
     <div className="space-y-6 p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Vendas Hoje</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Vendas Hoje</CardTitle><InfoDot text="Pedidos ainda a faturar no pipeline (etapas Pedido e A Faturar, de qualquer data) somados as NF-e emitidas hoje. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
@@ -391,15 +403,15 @@ export default function Dashboard() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento da Semana</CardTitle><InfoDot text="Valor dos pedidos colocados no pipeline na semana vigente (a partir de segunda-feira). Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.weekSales)}</div><div className="text-xs mt-1 text-gray-400">Semana vigente</div><MiniBars values={weekBars.arr} highlight={weekBars.curWeek} color="#0ea5e9" labels={weekLabels} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Semanas do mês</div><button type="button" onClick={() => setModal({ title: "Clientes faturados na semana - Total " + brl(billedWeek.total), names: billedWeek.list })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados na semana</button></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento do Mes</CardTitle><InfoDot text="NF-e de VENDA autorizadas no mes vigente (nota fiscal real), ja excluindo devolucao, amostra, troca e transferencia, e sem os dados legados importados. Fonte: notas fiscais (fiscal_invoices)." /></div></CardHeader>
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle><InfoDot text="Compara o total de pedidos de hoje com o do mesmo dia da semana passada. Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
           <CardContent>
             {(() => {
               const pair = [
