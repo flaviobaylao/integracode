@@ -61,6 +61,25 @@ export async function cieloDiag(): Promise<any> {
     if (Array.isArray(data)) out.cieloRetorno = data.map((d: any) => ({ Code: d.Code, Message: d.Message }));
     else if (data && data.Payment) out.cieloRetorno = { Status: data.Payment.Status, ReturnCode: data.Payment.ReturnCode, ReturnMessage: data.Payment.ReturnMessage };
     else out.cieloRetorno = data;
+    // Segunda sonda: replica EXATAMENTE o corpo do checkout de produção (createCardSale):
+    // Capture=true, SoftDescriptor, Customer.Identity(CPF)+IdentityType, Brand — para ver se
+    // algum desses campos dispara a recusa de credencial que a sonda mínima não reproduz.
+    try {
+      const rf = await cieloFetch(`${cfg.apiUrl}/1/sales`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', MerchantId: cfg.merchantId, MerchantKey: cfg.merchantKey },
+        body: JSON.stringify({
+          MerchantOrderId: 'DIAGF' + Date.now(),
+          Customer: { Name: 'DIAG FULL', Identity: '00000000000', IdentityType: 'CPF' },
+          Payment: { Type: 'CreditCard', Amount: 700, Installments: 1, SoftDescriptor: 'HONESTSUCOS', Capture: true, CreditCard: { CardNumber: '4111111111111111', Holder: 'DIAG FULL', ExpirationDate: '12/2032', SecurityCode: '123', Brand: 'Visa' } },
+        }),
+      }, 20000);
+      out.fullHttpStatus = rf.status;
+      const df: any = await rf.json().catch(() => null);
+      if (Array.isArray(df)) out.fullRetorno = df.map((d: any) => ({ Code: d.Code, Message: d.Message }));
+      else if (df && df.Payment) out.fullRetorno = { Status: df.Payment.Status, ReturnCode: df.Payment.ReturnCode, ReturnMessage: df.Payment.ReturnMessage };
+      else out.fullRetorno = df;
+    } catch (e: any) { out.fullProbeError = String(e?.message || e); }
     // Leitura: httpStatus 400/401 com mensagem de credencial => credenciais/ambiente errados.
     // Payment com Status/ReturnCode (mesmo recusado por cartão inválido) => credenciais OK.
     out.diagnostico = (out.httpStatus >= 200 && out.httpStatus < 300 && out.cieloRetorno && 'Status' in out.cieloRetorno)
