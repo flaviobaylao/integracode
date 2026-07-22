@@ -217,6 +217,9 @@ export default function BillingPipeline() {
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
+  // Pick-list de Vendedor (edição do card): SOMENTE vendedores ativos do módulo Vendedores
+  // (role vendedor/telemarketing, ativos, sem nomes de sistema) — não todos os usuários.
+  const { data: sellersList = [] } = useQuery<any[]>({ queryKey: ['/api/sellers/active'] });
   const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
   const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
   const [prodSearch, setProdSearch] = useState('');
@@ -1179,9 +1182,9 @@ export default function BillingPipeline() {
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
                     {editMode && canEditSeller ? (
-                      <select value={editData?.sellerId ?? ''} onChange={(e) => { const u = (usersList as any[]).find((x) => x.id === e.target.value); setEditData((d: any) => ({ ...d, sellerId: e.target.value, sellerName: u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : d.sellerName })); }} className="w-full border rounded px-2 py-1 text-sm">
+                      <select value={editData?.sellerId ?? ''} onChange={(e) => { const u = (sellersList as any[]).find((x) => x.id === e.target.value); setEditData((d: any) => ({ ...d, sellerId: e.target.value, sellerName: u ? u.name : d.sellerName })); }} className="w-full border rounded px-2 py-1 text-sm">
                         <option value="">{editData?.sellerName || '-'}</option>
-                        {(usersList as any[]).filter((u) => u.isActive).map((u) => (<option key={u.id} value={u.id}>{`${u.firstName || ''} ${u.lastName || ''}`.trim()}</option>))}
+                        {(sellersList as any[]).map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
                       </select>
                     ) : (<p className="text-sm">{detailItem.sellerName || '-'}</p>)}
                   </div>
