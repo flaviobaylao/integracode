@@ -11,7 +11,7 @@
 //   3) Delegar Acessos      — delegar acessos de uma função por período
 //   4) Delegações Ativas
 // =============================================================================
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -279,17 +279,28 @@ export default function AcessosEDelegacoes() {
   // permissões efetivas do usuário: { [cardLabel]: Flags }
   const [permMap, setPermMap] = useState<Record<string, Flags>>({});
 
-  // carrega permissões salvas + pré-marca pelo padrão da função ao trocar de usuário
+  // carrega permissões salvas + pré-marca pelo padrão da função ao trocar de usuário.
+  // refetchOnWindowFocus:false evita que um refetch em segundo plano dispare a
+  // reinicialização abaixo e apague edições ainda não salvas.
   const { data: savedPerms } = useQuery<Record<string, Flags>>({
     queryKey: ["/api/user-permissions", selUser?.id],
     enabled: !!selUser?.id,
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
   });
-  useMemo(() => {
-    if (!selUser) return;
+  // Reinicializa o permMap APENAS ao trocar de usuário (ou quando o salvo daquele
+  // usuário chega pela 1ª vez). NÃO reinicializa a cada refetch do mesmo usuário —
+  // era isso que apagava as alterações do admin antes de ele clicar em "Salvar acessos".
+  const permInitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selUser?.id) return;
+    if (savedPerms === undefined) return;            // ainda carregando o salvo
+    if (permInitRef.current === selUser.id) return;  // já inicializado p/ este usuário
     const base: Record<string, Flags> = {};
     ACCESS_MATRIX.forEach(c => { base[c[1]] = flagsPadrao(c, selUser.role || ""); });
     setPermMap({ ...base, ...(savedPerms || {}) }); // override do salvo sobre o padrão
-  }, [selUser?.id, savedPerms]);
+    permInitRef.current = selUser.id;
+  }, [selUser?.id, selUser?.role, savedPerms]);
 
   // popups de confirmação (antes) e sucesso (depois) ao salvar acessos
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
