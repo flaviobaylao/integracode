@@ -273,8 +273,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     onSuccess: (duplicatedCard: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       toast({
-        title: "Sucesso",
-        description: "Último pedido duplicado! Abrindo novo card para edição...",
+        title: "Pedido aberto para conferência",
+        description: "Copiamos os produtos e quantidades do pedido anterior. Confira, edite se precisar e envie.",
+        duration: 5000,
       });
       onClose();
     },
