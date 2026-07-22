@@ -39,6 +39,7 @@ export default function UserManagement() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [editPhone, setEditPhone] = useState<string>("");
   const [filterRole, setFilterRole] = useState<string>("all");
+  const [searchName, setSearchName] = useState<string>("");
 
   const { data: users = [], isLoading } = useQuery<User[]>({
     queryKey: ['/api/users', filterRole],
@@ -51,6 +52,14 @@ export default function UserManagement() {
       if (!response.ok) throw new Error('Failed to fetch users');
       return response.json();
     }
+  });
+
+  // Busca por nome (client-side, sobre a lista já filtrada por perfil): casa nome+sobrenome.
+  const filteredUsers = users.filter((u) => {
+    const q = searchName.trim().toLowerCase();
+    if (!q) return true;
+    const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase().trim();
+    return fullName.includes(q);
   });
 
   const form = useForm<UserFormData>({
@@ -614,6 +623,14 @@ export default function UserManagement() {
           <div className="flex items-center justify-between">
             <CardTitle>Lista de Usuários</CardTitle>
             <div className="flex items-center space-x-2">
+              <Input
+                type="text"
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+                placeholder="Buscar por nome..."
+                className="w-56"
+                data-testid="input-search-user"
+              />
               <Label htmlFor="role-filter" className="text-sm">Filtrar por perfil:</Label>
               <Select value={filterRole} onValueChange={setFilterRole}>
                 <SelectTrigger className="w-48" id="role-filter" data-testid="select-filter-role">
@@ -647,7 +664,14 @@ export default function UserManagement() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.map((user) => (
+              {!isLoading && filteredUsers.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-sm text-gray-500 py-6">
+                    Nenhum usuário encontrado.
+                  </TableCell>
+                </TableRow>
+              )}
+              {filteredUsers.map((user) => (
                 <TableRow key={user.id} data-testid={`row-user-${user.id}`}>
                   <TableCell className="font-medium">
                     {user.firstName} {user.lastName}
