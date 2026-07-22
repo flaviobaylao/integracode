@@ -768,7 +768,7 @@ export default function BillingPipeline() {
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
 
   return (
-    <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
+    <div className="bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
       <div className="p-4 flex flex-col flex-1 min-h-0">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
