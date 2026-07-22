@@ -15,16 +15,59 @@ import { computeServerTotal } from './hotsite-pix';
 const INTERNAL_BASE = 'http://127.0.0.1:' + (process.env.PORT || '8080');
 
 function cieloConfig() {
-  const env = String(process.env.CIELO_ENV || 'production').toLowerCase();
+  // .trim() blinda contra espaço/quebra-de-linha coladas por engano nas variáveis do Railway,
+  // causa comum de "Credenciais Inválidas" retornado pela Cielo.
+  const env = String(process.env.CIELO_ENV || 'production').toLowerCase().trim();
   const sandbox = env === 'sandbox';
   return {
-    merchantId: process.env.CIELO_MERCHANT_ID || '',
-    merchantKey: process.env.CIELO_MERCHANT_KEY || '',
+    merchantId: (process.env.CIELO_MERCHANT_ID || '').trim(),
+    merchantKey: (process.env.CIELO_MERCHANT_KEY || '').trim(),
     apiUrl: sandbox ? 'https://apisandbox.cieloecommerce.cielo.com.br' : 'https://api.cieloecommerce.cielo.com.br',
     queryUrl: sandbox ? 'https://apiquerysandbox.cieloecommerce.cielo.com.br' : 'https://apiquery.cieloecommerce.cielo.com.br',
     sandbox,
     maxInstallments: 1, // parcelamento desativado na loja (a vista)
   };
+}
+
+// Diagnóstico seguro das credenciais Cielo (NUNCA expõe os valores; só metadados +
+// o retorno cru da Cielo a uma venda-sonda com cartão inválido e Capture=false).
+export async function cieloDiag(): Promise<any> {
+  const cfg = cieloConfig();
+  const rawId = process.env.CIELO_MERCHANT_ID || '';
+  const rawKey = process.env.CIELO_MERCHANT_KEY || '';
+  const out: any = {
+    envVar: process.env.CIELO_ENV ? String(process.env.CIELO_ENV) : '(não definido → produção)',
+    ambiente: cfg.sandbox ? 'SANDBOX' : 'PRODUÇÃO',
+    apiUrl: cfg.apiUrl,
+    merchantId_mascarado: cfg.merchantId ? cfg.merchantId.slice(0, 8) + '…' : '(vazio)',
+    merchantId_tamanho: cfg.merchantId.length,
+    merchantKey_tamanho: cfg.merchantKey.length,
+    merchantId_tinha_espacos: rawId !== rawId.trim() || /\s/.test(rawId),
+    merchantKey_tinha_espacos: rawKey !== rawKey.trim() || /\s/.test(rawKey),
+  };
+  if (!cfg.merchantId || !cfg.merchantKey) { out.erro = 'MerchantId/MerchantKey vazios'; return out; }
+  try {
+    const resp = await cieloFetch(`${cfg.apiUrl}/1/sales`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', MerchantId: cfg.merchantId, MerchantKey: cfg.merchantKey },
+      body: JSON.stringify({
+        MerchantOrderId: 'DIAG' + Date.now(),
+        Customer: { Name: 'DIAG' },
+        Payment: { Type: 'CreditCard', Amount: 100, Installments: 1, Capture: false, CreditCard: { CardNumber: '0000000000000001', Holder: 'DIAG', ExpirationDate: '12/2030', SecurityCode: '123', Brand: 'Visa' } },
+      }),
+    }, 20000);
+    out.httpStatus = resp.status;
+    const data: any = await resp.json().catch(() => null);
+    if (Array.isArray(data)) out.cieloRetorno = data.map((d: any) => ({ Code: d.Code, Message: d.Message }));
+    else if (data && data.Payment) out.cieloRetorno = { Status: data.Payment.Status, ReturnCode: data.Payment.ReturnCode, ReturnMessage: data.Payment.ReturnMessage };
+    else out.cieloRetorno = data;
+    // Leitura: httpStatus 400/401 com mensagem de credencial => credenciais/ambiente errados.
+    // Payment com Status/ReturnCode (mesmo recusado por cartão inválido) => credenciais OK.
+    out.diagnostico = (out.httpStatus >= 200 && out.httpStatus < 300 && out.cieloRetorno && 'Status' in out.cieloRetorno)
+      ? 'CREDENCIAIS OK (Cielo aceitou a autenticação; a recusa anterior era do cartão/decline, não das credenciais)'
+      : 'CREDENCIAIS/AMBIENTE RECUSADOS pela Cielo (ver cieloRetorno)';
+  } catch (e: any) { out.probeError = String(e?.message || e); }
+  return out;
 }
 
 function onlyDigits(s: any): string { return String(s || '').replace(/\D/g, ''); }
