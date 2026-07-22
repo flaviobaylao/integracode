@@ -67,6 +67,64 @@ const vehicleIcons: Record<string, string> = {
   moto: '🏍️'
 };
 
+// Persistência da entrega em andamento (sobrevive a um reinício do app no celular).
+const PENDING_DELIVERY_KEY = 'integra_pending_delivery_v1';
+
+// Lê um File como dataURL (base64).
+function fileToDataUrl(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(r.error);
+    r.onloadend = () => resolve(r.result as string);
+    r.readAsDataURL(f);
+  });
+}
+
+// Reduz a foto (máx. 1280px, JPEG ~0.7) antes de guardar/enviar: menos memória (evita que o
+// Android mate o app com a câmera aberta) e upload muito mais leve (melhor com sinal ruim).
+// Se algo falhar, cai no arquivo original.
+async function compressImage(file: File): Promise<{ file: File; dataUrl: string }> {
+  try {
+    const src = await fileToDataUrl(file);
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = rej;
+      im.src = src;
+    });
+    const MAX = 1280;
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    if (w > MAX || h > MAX) {
+      if (w >= h) { h = Math.round((h * MAX) / w); w = MAX; }
+      else { w = Math.round((w * MAX) / h); h = MAX; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { file, dataUrl: src };
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    const blob: Blob | null = await new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', 0.7));
+    const out = blob ? new File([blob], 'comprovante.jpg', { type: 'image/jpeg' }) : file;
+    return { file: out, dataUrl };
+  } catch {
+    try { return { file, dataUrl: await fileToDataUrl(file) }; } catch { return { file, dataUrl: '' }; }
+  }
+}
+
+// Reconstrói um File a partir de um dataURL persistido (para reenviar após restaurar).
+function dataUrlToFile(dataUrl: string, name = 'comprovante.jpg'): File | null {
+  try {
+    const [head, b64] = dataUrl.split(',');
+    const mime = (head.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name, { type: mime });
+  } catch { return null; }
+}
+
 export default function RotaEntrega() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -110,6 +168,7 @@ export default function RotaEntrega() {
 
   const closeDeliveryModal = () => {
     if (isSubmitting) return;
+    try { localStorage.removeItem(PENDING_DELIVERY_KEY); } catch {}
     setShowDeliveryModal(false);
     setPendingDeliveryStop(null);
     setCapturedPhoto(null);
@@ -146,7 +205,7 @@ export default function RotaEntrega() {
     refetchInterval: 30000,
   });
 
-  const allDeliveries = routes.flatMap(route => 
+  const allDeliveries = routes.flatMap(route =>
     (route.stops || []).map(stop => ({
       ...stop,
       routeId: route.id,
@@ -154,6 +213,37 @@ export default function RotaEntrega() {
       vehicleType: route.vehicleType
     }))
   ).sort((a, b) => a.stopOrder - b.stopOrder);
+
+  // Restaura uma entrega em andamento após reinício do app: se houver foto persistida (recente)
+  // de uma parada ainda pendente, reabre o modal já com a foto — o entregador só confirma.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || isLoading) return;
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(PENDING_DELIVERY_KEY); } catch {}
+    if (!raw) return;
+    restoredRef.current = true;
+    try {
+      const p = JSON.parse(raw);
+      const fresh = p && p.ts && (Date.now() - p.ts) < 30 * 60 * 1000;
+      const stop = allDeliveries.find(d => d.id === p.stopId);
+      const pending = stop && !['efetuada', 'devolvida'].includes(String(stop.status));
+      if (fresh && p.dataUrl && stop && pending) {
+        const f = dataUrlToFile(p.dataUrl);
+        if (f) {
+          setPendingDeliveryStop(p.stopId);
+          setCapturedPhoto(f);
+          setPhotoPreview(p.dataUrl);
+          setShowDeliveryModal(true);
+          toast({ title: 'Entrega recuperada', description: 'A foto foi restaurada — toque em Confirmar para concluir.' });
+          return;
+        }
+      }
+      try { localStorage.removeItem(PENDING_DELIVERY_KEY); } catch {}
+    } catch {
+      try { localStorage.removeItem(PENDING_DELIVERY_KEY); } catch {}
+    }
+  }, [isLoading, allDeliveries]);
 
   const startRouteMutation = useMutation({
     mutationFn: async (routeId: string) => {
@@ -172,28 +262,29 @@ export default function RotaEntrega() {
     },
   });
 
-  const handlePhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoCapture = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setCapturedPhoto(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (event.target) event.target.value = ''; // permite re-selecionar a mesma foto
+    if (!file) return;
+    const { file: cfile, dataUrl } = await compressImage(file);
+    setCapturedPhoto(cfile);
+    setPhotoPreview(dataUrl);
+    // Persiste a entrega em andamento: se o app for reiniciado (ex.: Android matar por memória),
+    // ao voltar à Rota de Entrega a foto é restaurada e o entregador só confirma.
+    try {
+      if (pendingDeliveryStop && dataUrl) {
+        localStorage.setItem(PENDING_DELIVERY_KEY, JSON.stringify({ stopId: pendingDeliveryStop, dataUrl, ts: Date.now() }));
+      }
+    } catch {}
   };
-  
-  const handleReturnPhotoCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
+
+  const handleReturnPhotoCapture = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setReturnPhoto(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setReturnPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (event.target) event.target.value = '';
+    if (!file) return;
+    const { file: cfile, dataUrl } = await compressImage(file);
+    setReturnPhoto(cfile);
+    setReturnPhotoPreview(dataUrl);
   };
 
   // Entrega efetuada com foto
@@ -226,8 +317,10 @@ export default function RotaEntrega() {
       }
 
       const data = await checkoutResponse.json();
-      
-      toast({ 
+
+      try { localStorage.removeItem(PENDING_DELIVERY_KEY); } catch {}
+
+      toast({
         title: data.routeCompleted ? "🎉 Rota concluída!" : "Entrega registrada com sucesso!",
         description: data.routeCompleted ? "Todas as entregas foram concluídas!" : undefined,
       });
