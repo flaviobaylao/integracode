@@ -160,42 +160,44 @@ const upload = multer({
 
 // Helper function to upload photo to Object Storage
 async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: string): Promise<string | null> {
-  try {
-    // Usar diretório PÚBLICO para que as imagens sejam acessíveis
-    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
-    const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    
-    // Determinar qual diretório usar
-    let baseDirEnv = publicPaths || privateDir;
-    if (!baseDirEnv) {
-      console.log('⚠️ [PHOTO-UPLOAD] PUBLIC_OBJECT_SEARCH_PATHS e PRIVATE_OBJECT_DIR not set');
+  // Fallback duravel no banco (Railway nao tem Object Storage do Replit: objectStorageClient e null sem REPL_ID).
+  // Serve via GET /api/photo-media/:id. Mesmo padrao usado pela midia do chat (chat_media).
+  const saveToDb = async (): Promise<string | null> => {
+    try {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS photo_media (id text PRIMARY KEY, mimetype text, folder text, data text, created_at timestamptz DEFAULT now())`);
+      const id = nanoid(16);
+      const b64 = buffer.toString('base64');
+      await db.execute(sql`INSERT INTO photo_media (id, mimetype, folder, data) VALUES (${id}, ${mimetype}, ${folder}, ${b64})`);
+      const url = `/api/photo-media/${id}`;
+      console.log(`[PHOTO-UPLOAD] Salvo no banco (fallback): ${url}`);
+      return url;
+    } catch (e: any) {
+      console.error('[PHOTO-UPLOAD] Falha no fallback DB:', e?.message || e);
       return null;
     }
-    
-    // PUBLIC_OBJECT_SEARCH_PATHS pode ser uma lista separada por vírgula, pegar o primeiro
+  };
+  try {
+    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
+    const privateDir = process.env.PRIVATE_OBJECT_DIR;
+    let baseDirEnv = publicPaths || privateDir;
+    if (!baseDirEnv || !objectStorageClient) {
+      console.log('[PHOTO-UPLOAD] Object Storage nao configurado - usando fallback no banco');
+      return await saveToDb();
+    }
     const baseDir = baseDirEnv.split(',')[0].trim();
-    
     const { bucketName, objectName: basePath } = parseObjectStoragePath(baseDir);
     const photoId = nanoid(12);
     const ext = mimetype.includes('png') ? 'png' : (mimetype.includes('gif') ? 'gif' : (mimetype.includes('webp') ? 'webp' : 'jpg'));
     const objectName = `${basePath}/${folder}/${photoId}.${ext}`;
-    
     const bucket = objectStorageClient.bucket(bucketName);
     const file = bucket.file(objectName);
-    
-    await file.save(buffer, {
-      contentType: mimetype,
-      resumable: false,
-    });
-    
-    // Retornar URL que passa pelo nosso servidor (endpoint /api/storage-image/*)
-    // Isso garante que a imagem seja acessível mesmo se o bucket for privado
+    await file.save(buffer, { contentType: mimetype, resumable: false });
     const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
-    console.log(`✅ [PHOTO-UPLOAD] Foto salva: ${serverUrl}`);
+    console.log(`[PHOTO-UPLOAD] Foto salva: ${serverUrl}`);
     return serverUrl;
   } catch (error) {
-    console.error('❌ [PHOTO-UPLOAD] Erro ao fazer upload:', error);
-    return null;
+    console.error('[PHOTO-UPLOAD] Erro no Object Storage, tentando fallback no banco:', error);
+    return await saveToDb();
   }
 }
 
@@ -3145,6 +3147,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('❌ [STORAGE-IMAGE] Erro ao servir imagem:', error);
       res.status(500).json({ message: "Erro ao carregar imagem" });
+    }
+  });
+
+  // Serve fotos guardadas no banco (entregas/check-in) - fallback do Railway sem Object Storage do Replit.
+  // Espelha /api/chat-media/:id. Sem auth para permitir <img src> direto (cookie same-origin acompanha).
+  app.get('/api/photo-media/:id', async (req: any, res: any) => {
+    try {
+      const { id } = req.params;
+      const r: any = await db.execute(sql`SELECT mimetype, data FROM photo_media WHERE id = ${id} LIMIT 1`);
+      const row = (r as any)?.rows?.[0];
+      if (!row || !row.data) return res.status(404).send('not found');
+      const buf = Buffer.from(String(row.data), 'base64');
+      res.setHeader('Content-Type', row.mimetype || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.send(buf);
+    } catch (e: any) {
+      console.error('[PHOTO-MEDIA] Erro ao servir imagem:', e?.message || e);
+      return res.status(500).send('erro');
     }
   });
 
