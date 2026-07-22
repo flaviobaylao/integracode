@@ -85,30 +85,34 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     const displayName = username ? "@" + username : "Instagram " + igsid.slice(-6);
 
     // Busca a conversa MAIS RECENTE desse contato (ordenada; evita loop ao reiniciar).
-    let conversation: any = (await db.execute(sql`SELECT id, customer_id AS "customerId", unread_count AS "unreadCount", last_message_time AS "lastMessageTime", status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
+    // Le em snake_case cru + helpers tolerantes ao casing do driver (customer_id vs customerId).
+    let conversation: any = (await db.execute(sql`SELECT id, customer_id, unread_count, last_message_time, status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
+    const _cid = (o: any) => o && (o.customer_id ?? o.customerId ?? o.customerid);
+    const _lmt = (o: any) => o && (o.last_message_time ?? o.lastMessageTime ?? o.last_messagetime);
+    const _unr = (o: any) => { const v = o && (o.unread_count ?? o.unreadCount ?? o.unreadcount); return Number(v) || 0; };
 
     // Reinicio por inatividade: se a conversa existente estiver resolvida OU parada ha mais
     // tempo que o limite (IG_RESET_MINUTES), finaliza a antiga e comeca uma NOVA (dialogo do zero).
     let reuseCustomerId: string | null = null;
     if (conversation) {
       const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
-      const idleMin = (Date.now() - new Date(conversation.lastMessageTime || 0).getTime()) / 60000;
+      const idleMin = (Date.now() - new Date(_lmt(conversation) || 0).getTime()) / 60000;
       const resolved = String(conversation.status || "") === "resolved";
       if (resolved || (resetMin > 0 && idleMin >= resetMin)) {
-        reuseCustomerId = conversation.customerId || null; // reaproveita o cliente existente (evita duplicar telefone no reset)
+        reuseCustomerId = _cid(conversation) || null; // reaproveita o cliente da conversa antiga (evita duplicar telefone)
         try { if (!resolved) await storage.updateChatConversation(conversation.id, { status: "resolved" } as any); } catch {}
         conversation = undefined;
       }
     }
 
     if (!conversation) {
+      // Resolve o cliente sem NUNCA derrubar o handleInbound (telefone pode estar salvo normalizado, sem "ig:").
       let customerId: string | null = reuseCustomerId;
       let customerName: string = displayName;
       if (!customerId) {
-        let customer: any = await storage.getChatCustomerByPhone(phoneKey);
-        // fallback: match EXATO pelo telefone (mesma coluna do unique constraint). A busca
-        // normalizada nao acha o telefone com prefixo "ig:", o que causava INSERT duplicado.
-        if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0]; } catch {} }
+        let customer: any = null;
+        try { customer = await storage.getChatCustomerByPhone(phoneKey); } catch {}
+        if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {} }
         if (!customer) {
           try {
             customer = await storage.createChatCustomer({
@@ -119,15 +123,15 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
               tags: "instagram",
               avatar: null,
             } as any);
-          } catch (e) {
-            // corrida/telefone duplicado: recarrega o existente em vez de derrubar o handleInbound
-            customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} LIMIT 1`)).rows?.[0];
-            if (!customer) throw e;
+          } catch {
+            // telefone duplicado/normalizado: recarrega o existente (varios formatos) em vez de derrubar
+            try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {}
           }
         }
-        customerId = customer.id;
-        if (customer.name) customerName = customer.name;
+        customerId = (customer && customer.id) || null;
+        if (customer && customer.name) customerName = customer.name;
       }
+      if (!customerId) customerId = "ig-cust-" + igsid; // fallback final: garante um id e nunca falha
       conversation = await storage.createChatConversation({
         customerId: customerId,
         customerName: customerName,
@@ -140,7 +144,7 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     } else {
       await storage.updateChatConversation(conversation.id, {
         lastMessageTime: new Date(),
-        unreadCount: (conversation.unreadCount || 0) + 1,
+        unreadCount: _unr(conversation) + 1,
       } as any);
     }
 
