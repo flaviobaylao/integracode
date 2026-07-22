@@ -31,7 +31,15 @@ async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; 
 
 // Etapas VÁLIDAS do funil de faturamento (billing_pipeline.stage). NÃO inclui 'bloqueado':
 // bloquear é feito pela tabela blocked_orders via POST /:id/block, não por mudança de stage.
-const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue'] as const;
+const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue', 'lixeira'] as const;
+
+// Garante (idempotente, 1x por processo) o valor 'lixeira' no enum do Postgres.
+let __lixeiraStageReady = false;
+async function ensureLixeiraStage() {
+  if (__lixeiraStageReady) return;
+  try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch {}
+  __lixeiraStageReady = true;
+}
 
 // Faturamento interno e a UNICA via (Omie descontinuado). O motor ja forca isso via
 // isInternalBillingModeActive()===true; aqui o default do indicador tambem fica ON para
@@ -706,11 +714,23 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
 
-  // Remove os itens criados pela reconciliacao (pedidos fantasmas: ja faturados/entregues no 1.0)
+  // Move para a LIXEIRA os itens criados pela reconciliacao (pedidos fantasmas).
+  // NAO apaga: um card nunca some do pipeline. Vao para 'lixeira' (restauravel) —
+  // assim, se um desses cards foi de fato faturado depois (ex.: Figueira Branca /
+  // NF105209), ele nao e perdido; fica na Lixeira e pode ser restaurado.
   app.post('/api/admin/pipeline/remove-reconciled', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
-      const r: any = await db.execute(sql`DELETE FROM billing_pipeline WHERE created_by ILIKE '%reconcile%'`);
-      res.json({ ok: true, removed: r?.rowCount ?? null });
+      await ensureLixeiraStage();
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline
+        SET stage = 'lixeira', updated_at = now(),
+            stage_history = COALESCE(stage_history, '[]'::jsonb) || jsonb_build_object(
+              'stage', 'lixeira',
+              'changedAt', to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS'),
+              'changedBy', 'remove-reconciled'
+            )::jsonb
+        WHERE created_by ILIKE '%reconcile%' AND stage <> 'lixeira'`);
+      res.json({ ok: true, movedToLixeira: r?.rowCount ?? null });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
@@ -1360,8 +1380,37 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Delete item from pipeline
   app.delete('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
+      await ensureLixeiraStage();
+      // Soft-delete: move para a Lixeira (nunca apaga a linha). Restauravel.
       await storage.deleteBillingPipelineItem(req.params.id);
-      res.json({ success: true });
+      res.json({ success: true, movedTo: 'lixeira' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Restaurar um card da LIXEIRA de volta para a etapa que ele tinha antes de ser
+  // excluido (ou 'pedido' como padrao). UPDATE direto -> NAO re-dispara faturamento/NF.
+  app.post('/api/billing-pipeline/:id/restore', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      await ensureLixeiraStage();
+      const item: any = await storage.getBillingPipelineItem(req.params.id);
+      if (!item) return res.status(404).json({ message: 'Item não encontrado' });
+      if (item.stage !== 'lixeira') return res.status(400).json({ message: 'Item não está na Lixeira' });
+      const hist = (item.stageHistory as any[]) || [];
+      let prev = 'pedido';
+      for (let i = hist.length - 1; i >= 0; i--) {
+        const s = hist[i]?.stage;
+        if (s && s !== 'lixeira') { prev = s; break; }
+      }
+      if (!(BILLING_STAGES as readonly string[]).includes(prev) || prev === 'lixeira') prev = 'pedido';
+      const user = req.currentUser || req.user;
+      const newHist = [...hist, { stage: prev, changedAt: nowBrazil().toISOString(), changedBy: `${user?.email || 'sistema'} (restaurado da lixeira)` }];
+      await db.execute(sql`
+        UPDATE billing_pipeline
+        SET stage = ${prev}::billing_pipeline_stage, updated_at = now(), stage_history = ${JSON.stringify(newHist)}::jsonb
+        WHERE id = ${req.params.id}`);
+      res.json({ ok: true, restoredTo: prev });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

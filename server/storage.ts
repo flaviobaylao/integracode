@@ -180,6 +180,8 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like, getTableColumns } from "drizzle-orm";
+// Garante uma unica vez por processo o valor 'lixeira' no enum billing_pipeline_stage.
+let __lixeiraEnumReady = false;
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 import { nowBrazil } from './brazilTimezone';
@@ -8548,7 +8550,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteBillingPipelineItem(id: string): Promise<void> {
-    await db.delete(billingPipeline).where(eq(billingPipeline.id, id));
+    // NUNCA remove a linha: um card nao pode desaparecer do pipeline. "Excluir" =
+    // mover para a etapa 'lixeira' (etapa final), preservando o card e o historico.
+    // Restauravel. Garante o valor 'lixeira' no enum antes de usar (idempotente).
+    if (!__lixeiraEnumReady) {
+      try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch {}
+      __lixeiraEnumReady = true;
+    }
+    await db.execute(sql`
+      UPDATE billing_pipeline
+      SET stage = 'lixeira', updated_at = now(),
+          stage_history = COALESCE(stage_history, '[]'::jsonb) || jsonb_build_object(
+            'stage', 'lixeira',
+            'changedAt', to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS'),
+            'changedBy', 'exclusao'
+          )::jsonb
+      WHERE id = ${id} AND stage <> 'lixeira'`);
   }
 
   // ============================================================================
