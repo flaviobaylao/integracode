@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -97,6 +97,16 @@ export default function RotaEntrega() {
   // Modal para visualização de foto em tamanho completo
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [selectedPhotoCustomer, setSelectedPhotoCustomer] = useState<string>('');
+
+  // Enquanto o entregador está registrando entrega/devolução (modal aberto, indo/voltando
+  // da câmera), trava o auto-reload do app (SW/atualização). Sem isso, ao voltar da câmera
+  // o app recarregava na home e a foto/entrega era perdida. Ao fechar, libera (e aplica
+  // um reload que tenha ficado pendente). Guardas definidas em client/index.html.
+  useEffect(() => {
+    const hold = showDeliveryModal || showReturnModal || isSubmitting;
+    try { (window as any).__setReloadHold?.(hold); } catch {}
+    return () => { try { (window as any).__setReloadHold?.(false); } catch {} };
+  }, [showDeliveryModal, showReturnModal, isSubmitting]);
 
   const closeDeliveryModal = () => {
     if (isSubmitting) return;
