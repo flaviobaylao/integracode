@@ -42,6 +42,53 @@ function formatCurrency(value: string | number | null | undefined) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
 }
 
+// Ordenação das listas financeiras (Contas a Receber / a Pagar).
+type SortField = 'name' | 'amount' | 'dueDate' | 'status';
+interface SortConfig { field: SortField; dir: 'asc' | 'desc' }
+const DEFAULT_SORT: SortConfig = { field: 'dueDate', dir: 'desc' }; // vencimento, data mais avançada primeiro
+// Rank de status (menor = aparece primeiro no modo asc): pendências antes de quitados/cancelados.
+const STATUS_RANK: Record<string, number> = {
+  vencida: 0, vencido: 0, atrasada: 0, atrasado: 0,
+  a_vencer: 1, a_pagar: 1, pendente: 1, aberta: 1, aberto: 1,
+  parcial: 2, parcialmente_paga: 2, parcialmente_pago: 2,
+  paga: 3, pago: 3, recebida: 3, recebido: 3, quitada: 3, quitado: 3,
+  cancelada: 4, cancelado: 4,
+};
+function nextSort(s: SortConfig, field: SortField): SortConfig {
+  if (s.field === field) return { field, dir: s.dir === 'asc' ? 'desc' : 'asc' };
+  return { field, dir: field === 'name' ? 'asc' : 'desc' };
+}
+// Aplica a ordenação in-place e devolve a MESMA lista (encadeável). nameKey = campo do nome (cliente/fornecedor).
+function applyFinancialSort<T extends Record<string, any>>(list: T[], sort: SortConfig, nameKey: string): T[] {
+  const dir = sort.dir === 'asc' ? 1 : -1;
+  const t = (d: any) => (d ? new Date(d).getTime() || 0 : 0);
+  list.sort((a, b) => {
+    let cmp = 0;
+    if (sort.field === 'name') cmp = String(a[nameKey] || '').localeCompare(String(b[nameKey] || ''), 'pt-BR', { sensitivity: 'base' });
+    else if (sort.field === 'amount') cmp = (Number(a.amount) || 0) - (Number(b.amount) || 0);
+    else if (sort.field === 'status') cmp = (STATUS_RANK[String(a.status)] ?? 99) - (STATUS_RANK[String(b.status)] ?? 99);
+    else cmp = t(a.dueDate) - t(b.dueDate); // dueDate
+    if (cmp === 0 && sort.field !== 'dueDate') cmp = t(a.dueDate) - t(b.dueDate); // desempate por vencimento
+    return cmp * dir;
+  });
+  return list;
+}
+function SortableHead({ label, field, sort, onSort, align }: { label: string; field: SortField; sort: SortConfig; onSort: (f: SortField) => void; align?: 'right' }) {
+  const active = sort.field === field;
+  return (
+    <TableHead className={align === 'right' ? 'text-right' : undefined}>
+      <button
+        onClick={() => onSort(field)}
+        className={`flex items-center gap-1 hover:text-primary transition-colors ${align === 'right' ? 'ml-auto' : ''}`}
+        data-testid={`sort-${field}`}
+      >
+        {label}
+        {active ? (sort.dir === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />) : <ArrowUpDown className="h-4 w-4 opacity-50" />}
+      </button>
+    </TableHead>
+  );
+}
+
 function formatDate(date: string | null | undefined) {
   if (!date) return '-';
   // Datas "de calendário" (vencimento, emissão, competência) são gravadas como
@@ -374,7 +421,8 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   });
 
   const { sellerOptions, sellerGroups, resolveSeller } = useActiveSellers();
-  const [nameSort, setNameSort] = useState<'asc' | 'desc' | null>(null);
+  const [sortConfig, setSortConfig] = useState<SortConfig>(DEFAULT_SORT);
+  const onSort = (field: SortField) => setSortConfig((s) => nextSort(s, field));
   const filtered = receivables.filter((r: any) => {
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
@@ -387,7 +435,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     if (valueMax !== '' && Number(r.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
-  if (nameSort) filtered.sort((a: any, b: any) => { const cmp = String(a.customerName || '').localeCompare(String(b.customerName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
+  applyFinancialSort(filtered, sortConfig, 'customerName');
 
   // Totais: no modo paginado usa o RESUMO do servidor (sobre todas as contas); com filtro
   // do cliente ativo, soma sobre o conjunto completo carregado (filtered).
@@ -612,28 +660,15 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <TableHeader>
               <TableRow>
                 <TableHead>Título</TableHead>
-                <TableHead>
-                  <button
-                    onClick={() => setNameSort((s) => (s === 'asc' ? 'desc' : 'asc'))}
-                    className="flex items-center gap-1 hover:text-primary transition-colors"
-                    data-testid="sort-name-receivables"
-                  >
-                    Cliente
-                    {nameSort ? (
-                      nameSort === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
-                    ) : (
-                      <ArrowUpDown className="h-4 w-4 opacity-50" />
-                    )}
-                  </button>
-                </TableHead>
+                <SortableHead label="Cliente" field="name" sort={sortConfig} onSort={onSort} />
                 <TableHead>Vendedor</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Descrição</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
+                <SortableHead label="Valor" field="amount" sort={sortConfig} onSort={onSort} align="right" />
                 <TableHead className="text-right">Valor Pago</TableHead>
-                <TableHead>Status</TableHead>
+                <SortableHead label="Status" field="status" sort={sortConfig} onSort={onSort} />
                 <TableHead>Lançamento</TableHead>
-                <TableHead>Vencimento</TableHead>
+                <SortableHead label="Vencimento" field="dueDate" sort={sortConfig} onSort={onSort} />
                 <TableHead>Forma Pgto</TableHead>
                 <TableHead>Instância</TableHead>
                 <TableHead>Ações</TableHead>
@@ -1110,7 +1145,8 @@ function PayablesTab() {
   // Conta financeira "CAIXINHA" (dinheiro a vista) — usada na baixa imediata do lancamento manual.
   const caixinhaAccount = (accounts as any[]).find((a: any) => String(a.name || '').trim().toUpperCase() === 'CAIXINHA');
 
-  const [nameSort, setNameSort] = useState<'asc' | 'desc' | null>(null);
+  const [sortConfig, setSortConfig] = useState<SortConfig>(DEFAULT_SORT);
+  const onSort = (field: SortField) => setSortConfig((s) => nextSort(s, field));
   const [valueMin, setValueMin] = useState('');
   const [valueMax, setValueMax] = useState('');
   const filtered = payables.filter((p: any) => {
@@ -1127,7 +1163,7 @@ function PayablesTab() {
     if (valueMax !== '' && Number(p.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
     return true;
   });
-  if (nameSort) filtered.sort((a: any, b: any) => { const cmp = String(a.supplierName || '').localeCompare(String(b.supplierName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
+  applyFinancialSort(filtered, sortConfig, 'supplierName');
 
   // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
   const { data: dreAccounts = [] } = useQuery<any[]>({
@@ -1253,27 +1289,14 @@ function PayablesTab() {
               <TableRow>
                 <TableHead className="w-8"><input type="checkbox" className="h-4 w-4 cursor-pointer" aria-label="Selecionar todos" checked={filtered.length > 0 && filtered.slice(0, 300).every((p: any) => selectedIds.includes(p.id))} onChange={e => { const vis = filtered.slice(0, 300).map((p: any) => p.id); setSelectedIds(e.target.checked ? Array.from(new Set([...selectedIds, ...vis])) : selectedIds.filter(id => !vis.includes(id))); }} /></TableHead>
                 <TableHead>Título</TableHead>
-                <TableHead>
-                  <button
-                    onClick={() => setNameSort((s) => (s === 'asc' ? 'desc' : 'asc'))}
-                    className="flex items-center gap-1 hover:text-primary transition-colors"
-                    data-testid="sort-name-payables"
-                  >
-                    Fornecedor
-                    {nameSort ? (
-                      nameSort === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
-                    ) : (
-                      <ArrowUpDown className="h-4 w-4 opacity-50" />
-                    )}
-                  </button>
-                </TableHead>
+                <SortableHead label="Fornecedor" field="name" sort={sortConfig} onSort={onSort} />
                 <TableHead>CNPJ/CPF</TableHead>
                 <TableHead>Descrição</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
+                <SortableHead label="Valor" field="amount" sort={sortConfig} onSort={onSort} align="right" />
                 <TableHead className="text-right">Valor Pago</TableHead>
-                <TableHead>Status</TableHead>
+                <SortableHead label="Status" field="status" sort={sortConfig} onSort={onSort} />
                 <TableHead>Lançamento</TableHead>
-                <TableHead>Vencimento</TableHead>
+                <SortableHead label="Vencimento" field="dueDate" sort={sortConfig} onSort={onSort} />
                 <TableHead>Origem</TableHead>
                 <TableHead>Instância</TableHead>
                 <TableHead>Ações</TableHead>
