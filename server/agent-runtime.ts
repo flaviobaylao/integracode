@@ -231,12 +231,37 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     if (!(total > 0)) return 'Não consegui calcular o valor (tabela de preço sem valor para esses itens). Melhor transferir para um atendente humano.';
 
     const { storage } = await import('./storage');
-    // Cliente (best-effort). Se não existir, humano cadastra/vincula na confirmação (dados vão nas notas).
+    // Cliente: procura por CPF/CNPJ (e telefone). Se NAO existir, CADASTRA automaticamente
+    // (nome, documento, endereco) e vincula ao pedido — assim o card entra no pipeline com os
+    // dados corretos do cliente cadastrado, em vez de um id sintetico.
     let customer: any = null;
     const doc = onlyDigits(inp.documento);
-    if (doc) { try { customer = await storage.getCustomerByCnpj(doc); } catch {} }
+    if (doc) { try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
     if (!customer && inp.telefone) { try { customer = await storage.getCustomerByPhone(onlyDigits(inp.telefone)); } catch {} }
-    if (!customer && ctx?.phone) { try { customer = await storage.getCustomerByPhone(onlyDigits(ctx.phone)); } catch {} }
+    if (!customer && doc) {
+      const isPJ = doc.length === 14;
+      const enderecoFull = String(inp.endereco || '').trim() + (inp.bairro ? ', ' + inp.bairro : '') + (inp.cidade ? ', ' + inp.cidade : '') + (inp.cep ? ' - CEP ' + inp.cep : '');
+      try {
+        customer = await storage.createCustomer({
+          name: String(inp.nome || 'Cliente Instagram').trim(),
+          customerType: isPJ ? 'pessoa_juridica' : 'pessoa_fisica',
+          cpf: isPJ ? null : doc,
+          cnpj: isPJ ? doc : null,
+          fantasyName: isPJ ? String(inp.nome || '').trim() : null,
+          phone: onlyDigits(inp.telefone) || onlyDigits(ctx?.phone) || '',
+          address: enderecoFull || 'A confirmar',
+          city: String(inp.cidade || '').trim() || null,
+          neighborhood: String(inp.bairro || '').trim() || null,
+          zipCode: onlyDigits(inp.cep) || null,
+          sellerId: 'chatgpt-ai',
+          weekdays: JSON.stringify([mapWeekday(inp.dia_entrega)]),
+          visitPeriodicity: 'semanal',
+          isConsumerClient: tipo !== 'revenda',
+          isLead: true,
+        } as any);
+      } catch {
+        try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
+    }
 
     const notes = [
       'PEDIDO via Instagram Direct (atendente IA) — PENDENTE de confirmação humana',
