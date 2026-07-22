@@ -288,10 +288,17 @@ export default function Dashboard() {
     return Object.keys(m).sort().map((d) => ({ d, v: m[d] }));
   }, [data]);
 
-  // Vendas Hoje = total "a Faturar" + total das "NFs emitidas hoje"
-  const today = ((ov.aFaturar || ov.unbilled || []) as any[]).reduce((a, x) => a + (Number(x.sale_value) || 0), 0)
-    + ((ov.nfsHoje || ov.todayInvoices || []) as any[]).reduce((a, x) => a + (Number(x.total_invoice) || 0), 0);
-  const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
+  // Vendas Hoje = pedidos implantados no dia no pipeline (mesma logica do Comparativo por Vendedor:
+  // ja excluidos bloqueados, amostras, trocas e cancelamentos). Fonte: visitSummary.sellerDaily.
+  const pipelineDailyMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    const src = data?.visitSummary?.sellerDaily;
+    if (Array.isArray(src)) for (const N of src) { const v = Number(N.v) || 0; if (v > 0) m[N.d] = (m[N.d] || 0) + v; }
+    return m;
+  }, [data]);
+  const today = pipelineDailyMap[bounds.today] || 0;
+  const _lwDay = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
+  const lastWeekSameDay = pipelineDailyMap[_lwDay] || 0;
   const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
   // Faturamento diário: vendas de HOJE vs MESMO DIA da semana passada (billing_pipeline)
@@ -335,8 +342,7 @@ export default function Dashboard() {
   const yy = bounds.today.slice(2, 4);
   const mm = Number(bounds.today.slice(5, 7));
   const weekDayBars = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const r of (series.daily || [])) map[String(r.d)] = Number(r.v) || 0;
+    const map: Record<string, number> = pipelineDailyMap;
     const base = new Date(bounds.today + "T12:00:00");
     const dow = (base.getDay() + 6) % 7;
     const monday = new Date(base); monday.setDate(base.getDate() - dow);
@@ -348,7 +354,7 @@ export default function Dashboard() {
       arr.push(map[ds] || 0); labels.push(wd[i]); captions.push(wd[i] + " " + brDate(ds));
     }
     return { arr, labels, captions, todayIdx: dow };
-  }, [series.daily, bounds.today]);
+  }, [pipelineDailyMap, bounds.today]);
   const dayLabels = useMemo(() => monthDailyBars.arr.map((_, i) => String(i + 1)), [monthDailyBars.arr]);
   const weekLabels = useMemo(() => monthWeeks.map((wk: any) => wk.label), [monthWeeks]);
   const monthLabels = useMemo(() => yearMonthBars.arr.map((_, i) => `${MONTH_ABBR[i] || ''}/${yy}`), [yearMonthBars.arr, yy]);
@@ -394,7 +400,7 @@ export default function Dashboard() {
     <div className="space-y-6 p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Vendas Hoje</CardTitle><InfoDot text="Pedidos ainda a faturar no pipeline (etapas Pedido e A Faturar, de qualquer data) somados as NF-e emitidas hoje. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Vendas Hoje</CardTitle><InfoDot text="Total dos pedidos implantados hoje no pipeline (mesma logica do Comparativo por Vendedor), ja excluindo bloqueados, amostras, trocas e cancelamentos. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
