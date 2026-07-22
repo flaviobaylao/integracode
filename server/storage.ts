@@ -2561,6 +2561,11 @@ export class DatabaseStorage implements IStorage {
       throw new Error('Sales card not found');
     }
     
+    // CÓPIA INDEPENDENTE (04/2026): a duplicação passa a copiar TODOS os produtos e o valor
+    // do pedido de origem, abrindo o card novo já preenchido para conferência/edição/envio.
+    // NÃO gravamos mais `duplicatedFromId`: o card novo fica DESVINCULADO do original — assim
+    // o pedido duplicado não soma nem mescla com o que deu origem à duplicação (bug relatado:
+    // formulário vinha em branco e, ao salvar, somava com o antigo).
     const [newCard] = await db
       .insert(salesCards)
       .values({
@@ -2568,7 +2573,8 @@ export class DatabaseStorage implements IStorage {
         sellerId: originalCard.sellerId,
         status: 'pending',
         scheduledDate: newDate,
-        duplicatedFromId: id,
+        products: (originalCard.products as any) ?? [],
+        saleValue: originalCard.saleValue ?? null,
         notes: originalCard.notes,
         routeDay: originalCard.routeDay,
         recurrenceType: originalCard.recurrenceType,
