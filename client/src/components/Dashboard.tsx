@@ -302,8 +302,8 @@ export default function Dashboard() {
   const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
   // Faturamento diário: vendas de HOJE vs MESMO DIA da semana passada (billing_pipeline)
-  const dailyTodaySales = Number(stats.todaySales) || 0;
-  const dailyLastWeek = Number(stats.lastWeekSameDaySales) || 0;
+  const dailyTodaySales = pipelineDailyMap[bounds.today] || 0;
+  const dailyLastWeek = pipelineDailyMap[_lwDay] || 0;
   const dailyPct = dailyLastWeek > 0 ? Math.round(((dailyTodaySales - dailyLastWeek) / dailyLastWeek) * 100) : null;
   const todayISO = bounds.today;
   const lastWeekISO = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
@@ -418,7 +418,7 @@ export default function Dashboard() {
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle><InfoDot text="Compara o total de pedidos de hoje com o do mesmo dia da semana passada. Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Diario (mes)</CardTitle><InfoDot text="Compara o total de pedidos implantados hoje com o do mesmo dia da semana passada, pela mesma logica do Comparativo por Vendedor (ja excluidos bloqueados, amostras, trocas e cancelamentos). Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
           <CardContent>
             {(() => {
               const pair = [
