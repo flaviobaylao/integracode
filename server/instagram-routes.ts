@@ -84,69 +84,65 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     const username = await resolveUsername(igsid);
     const displayName = username ? "@" + username : "Instagram " + igsid.slice(-6);
 
-    // Busca a conversa MAIS RECENTE desse contato (ordenada; evita loop ao reiniciar).
-    // Le em snake_case cru + helpers tolerantes ao casing do driver (customer_id vs customerId).
-    let conversation: any = (await db.execute(sql`SELECT id, customer_id, unread_count, last_message_time, status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
+    // Busca a conversa MAIS RECENTE desse contato. Le em snake_case cru + helper tolerante ao casing.
+    let existing: any = (await db.execute(sql`SELECT id, customer_id, unread_count, status FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
     const _cid = (o: any) => o && (o.customer_id ?? o.customerId ?? o.customerid);
-    const _lmt = (o: any) => o && (o.last_message_time ?? o.lastMessageTime ?? o.last_messagetime);
     const _unr = (o: any) => { const v = o && (o.unread_count ?? o.unreadCount ?? o.unreadcount); return Number(v) || 0; };
 
-    // Reinicio por inatividade: se a conversa existente estiver resolvida OU parada ha mais
-    // tempo que o limite (IG_RESET_MINUTES), finaliza a antiga e comeca uma NOVA (dialogo do zero).
-    let reuseCustomerId: string | null = null;
-    if (conversation) {
-      const resetMin = parseInt(process.env.IG_RESET_MINUTES || "120", 10);
-      const idleMin = (Date.now() - new Date(_lmt(conversation) || 0).getTime()) / 60000;
-      const resolved = String(conversation.status || "") === "resolved";
-      if (resolved || (resetMin > 0 && idleMin >= resetMin)) {
-        reuseCustomerId = _cid(conversation) || null; // reaproveita o cliente da conversa antiga (evita duplicar telefone)
-        try { if (!resolved) await storage.updateChatConversation(conversation.id, { status: "resolved" } as any); } catch {}
-        conversation = undefined;
+    // ATENCAO: existe UNIQUE(customer_phone) em chat_conversations — NAO da pra ter duas conversas
+    // com o mesmo telefone. Por isso, quando ja existe conversa desse contato, a gente REABRE ela
+    // (se estava 'resolved' pela varredura de inatividade, volta pra fila como 'new') e adiciona a
+    // mensagem. So cria conversa nova no PRIMEIRO contato do telefone. Isso elimina a colisao de
+    // chave duplicada que derrubava a resposta quando o cliente voltava a falar.
+    let convId: string | null = null;
+    let convCustomerId: string | null = null;
+    if (existing) {
+      convId = existing.id;
+      convCustomerId = _cid(existing) || null;
+      const wasResolved = String(existing.status || "") === "resolved";
+      try {
+        await storage.updateChatConversation(existing.id, {
+          ...(wasResolved ? { status: "new" } : {}),
+          lastMessageTime: new Date(),
+          unreadCount: _unr(existing) + 1,
+        } as any);
+      } catch {}
+    } else {
+      // Primeiro contato desse telefone: resolve o cliente sem NUNCA derrubar o handleInbound
+      // (telefone pode estar salvo normalizado, sem "ig:").
+      let customerId: string | null = null;
+      let customerName: string = displayName;
+      let customer: any = null;
+      try { customer = await storage.getChatCustomerByPhone(phoneKey); } catch {}
+      if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {} }
+      if (!customer) {
+        try {
+          customer = await storage.createChatCustomer({ name: displayName, phone: phoneKey, email: null, notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""), tags: "instagram", avatar: null } as any);
+        } catch {
+          try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {}
+        }
+      }
+      customerId = (customer && customer.id) || null;
+      if (customer && customer.name) customerName = customer.name;
+      if (!customerId) customerId = "ig-cust-" + igsid; // fallback final: garante um id
+      convCustomerId = customerId;
+      // Cria a conversa; se colidir no unique (corrida com outro webhook), reabre a existente.
+      try {
+        const created: any = await storage.createChatConversation({ customerId, customerName, customerPhone: phoneKey, status: "new", agentId: null, lastMessageTime: new Date(), unreadCount: 1 } as any);
+        convId = created.id;
+        convCustomerId = created.customerId || customerId;
+      } catch {
+        const again: any = (await db.execute(sql`SELECT id, customer_id FROM chat_conversations WHERE customer_phone = ${phoneKey} ORDER BY last_message_time DESC NULLS LAST LIMIT 1`)).rows?.[0];
+        if (again) {
+          convId = again.id;
+          convCustomerId = _cid(again) || customerId;
+          try { await storage.updateChatConversation(again.id, { status: "new", lastMessageTime: new Date() } as any); } catch {}
+        }
       }
     }
 
-    if (!conversation) {
-      // Resolve o cliente sem NUNCA derrubar o handleInbound (telefone pode estar salvo normalizado, sem "ig:").
-      let customerId: string | null = reuseCustomerId;
-      let customerName: string = displayName;
-      if (!customerId) {
-        let customer: any = null;
-        try { customer = await storage.getChatCustomerByPhone(phoneKey); } catch {}
-        if (!customer) { try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {} }
-        if (!customer) {
-          try {
-            customer = await storage.createChatCustomer({
-              name: displayName,
-              phone: phoneKey,
-              email: null,
-              notes: "Instagram Direct" + (username ? " (@" + username + ")" : ""),
-              tags: "instagram",
-              avatar: null,
-            } as any);
-          } catch {
-            // telefone duplicado/normalizado: recarrega o existente (varios formatos) em vez de derrubar
-            try { customer = (await db.execute(sql`SELECT id, name FROM chat_customers WHERE phone = ${phoneKey} OR phone = ${igsid} OR phone LIKE ${'%' + igsid} LIMIT 1`)).rows?.[0]; } catch {}
-          }
-        }
-        customerId = (customer && customer.id) || null;
-        if (customer && customer.name) customerName = customer.name;
-      }
-      if (!customerId) customerId = "ig-cust-" + igsid; // fallback final: garante um id e nunca falha
-      conversation = await storage.createChatConversation({
-        customerId: customerId,
-        customerName: customerName,
-        customerPhone: phoneKey,
-        status: "new",
-        agentId: null,
-        lastMessageTime: new Date(),
-        unreadCount: 1,
-      } as any);
-    } else {
-      await storage.updateChatConversation(conversation.id, {
-        lastMessageTime: new Date(),
-        unreadCount: _unr(conversation) + 1,
-      } as any);
-    }
+    if (!convId) return; // seguranca: sem conversa nao ha o que processar
+    const conversation: any = { id: convId, customerId: convCustomerId };
 
     await storage.createChatMessage({
       conversationId: conversation.id,
