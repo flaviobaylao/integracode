@@ -21899,28 +21899,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
 
-      // Buscar débitos vencidos por documento do cliente
+      // Buscar débitos VENCIDOS por documento do cliente.
+      // FONTE DE VERDADE = tabela `receivables` (aba Contas a Receber 2.0), a MESMA usada pelo
+      // bloqueio de crédito (getOverdueDebtByDocument). ANTES este badge lia de `overdue_debts`
+      // (sync do Omie, DEFASADO), fazendo a Rota mostrar débito de títulos já CANCELADOS/RECEBIDOS
+      // no 2.0 — divergindo da Contas a Receber. Replica EXATAMENTE a régua de "vencida":
+      // em aberto (amount - amount_paid > 0), não deletado, exclui histórico Omie, e status
+      // 'vencida' OU ('a_vencer' com vencimento < hoje BRT). Piso de R$50 = mesmo do bloqueio
+      // (débito vencido total até R$50 não conta), para badge e bloqueio ficarem coerentes.
       const documents = Object.values(customerDocuments).filter(d => d);
       let debtsMap: Record<string, number> = {};
-      
+      const DEBT_BADGE_TOLERANCE = 50;
+
       if (documents.length > 0) {
         const debtsResult = await db.execute(sql`
-          SELECT client_document, total_amount 
-          FROM overdue_debts 
-          WHERE REGEXP_REPLACE(client_document, '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))
+          SELECT REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') AS ndoc,
+                 SUM(amount - COALESCE(amount_paid, 0)) AS saldo
+          FROM receivables
+          WHERE deleted_at IS NULL
+            AND (amount - COALESCE(amount_paid, 0)) > 0
+            AND COALESCE(import_origin, '') <> 'omie_historico'
+            AND (
+              status = 'vencida'
+              OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            )
+            AND REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))
+          GROUP BY 1
         `);
-        
-        // Criar mapa de documento -> total de débito
+
+        // Criar mapa de documento -> total de débito vencido (em aberto)
         const documentToDebt: Record<string, number> = {};
         (debtsResult.rows as any[]).forEach(row => {
-          const normalizedDoc = (row.client_document || '').replace(/\D/g, '');
-          documentToDebt[normalizedDoc] = parseFloat(row.total_amount || '0');
+          const normalizedDoc = (row.ndoc || '').replace(/\D/g, '');
+          if (normalizedDoc) documentToDebt[normalizedDoc] = parseFloat(row.saldo || '0');
         });
-        
-        // Mapear customerId -> débito total
+
+        // Mapear customerId -> débito total (só acima do piso de tolerância, igual ao bloqueio)
         Object.entries(customerDocuments).forEach(([customerId, doc]) => {
-          if (documentToDebt[doc]) {
-            debtsMap[customerId] = documentToDebt[doc];
+          const saldo = documentToDebt[doc];
+          if (saldo && saldo > DEBT_BADGE_TOLERANCE) {
+            debtsMap[customerId] = saldo;
           }
         });
       }
