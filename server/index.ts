@@ -2969,6 +2969,18 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
 
+  app.all("/api/tmp/optype-6931", async (req, res) => {
+    try {
+      const token = (req.query && (req.query as any).token) || (req.headers && (req.headers as any)["x-tok"]);
+      if (token !== "vday-6931") return res.json({ error: "forbidden" });
+      const q2 = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+      const base = "FROM billing_pipeline bp WHERE (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date AND COALESCE(bp.sale_value,0) > 0 AND NOT EXISTS (SELECT 1 FROM blocked_orders bo WHERE bo.sales_card_id = bp.sales_card_id AND bo.status='blocked') AND NOT EXISTS (SELECT 1 FROM fiscal_invoices fi WHERE fi.sales_card_id = bp.sales_card_id AND UPPER(COALESCE(fi.status,'')) LIKE '%CANCEL%')";
+      const dist = await q2("SELECT COALESCE(NULLIF(TRIM(bp.operation_type),''),'(null)') AS op, COUNT(*) AS n, COALESCE(SUM(bp.sale_value),0) AS v " + base + " GROUP BY 1 ORDER BY v DESC");
+      const natVenda = await q2("SELECT UPPER(COALESCE((SELECT fi.nature_of_operation FROM fiscal_invoices fi WHERE fi.sales_card_id=bp.sales_card_id ORDER BY fi.authorization_date DESC NULLS LAST LIMIT 1),'(sem NF)')) AS nat, COUNT(*) AS n, COALESCE(SUM(bp.sale_value),0) AS v " + base + " AND LOWER(TRIM(COALESCE(bp.operation_type,'venda')))='venda' GROUP BY 1 ORDER BY v DESC");
+      const honestRows = await q2("SELECT TRIM(bp.seller_name) AS seller, COALESCE(NULLIF(TRIM(bp.operation_type),''),'(null)') AS op, bp.customer_name, bp.sale_value, (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, (SELECT string_agg(DISTINCT UPPER(fi.nature_of_operation), ' | ') FROM fiscal_invoices fi WHERE fi.sales_card_id=bp.sales_card_id) AS nat " + base + " AND LOWER(TRIM(COALESCE(bp.seller_name,''))) IN ('honest 1','honest 2','honest 3') ORDER BY bp.sale_value DESC LIMIT 60");
+      res.json({ dist, natVenda, honestRows });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
