@@ -90,6 +90,10 @@ const DDL: string[] = [
      updated_at  timestamp DEFAULT now(),
      CONSTRAINT uniq_user_permissions UNIQUE (user_id)
    );`,
+  // Índice único defensivo: tabelas criadas em deploys ANTIGOS podem não ter a
+  // constraint acima (CREATE TABLE IF NOT EXISTS não a adiciona a tabela pré-existente),
+  // o que fazia todo upsert com ON CONFLICT falhar → "Salvar acessos" não persistia.
+  `CREATE UNIQUE INDEX IF NOT EXISTS ux_user_permissions_user_id ON user_permissions (user_id);`,
 ];
 
 let _tablesReady: Promise<void> | null = null;
@@ -506,14 +510,23 @@ export function registerDelegationRoutes(app: Express) {
     res.json(row?.permissions ?? {});
   }));
 
-  // PUT: grava o mapa completo de permissões (upsert por usuário)
+  // PUT: grava o mapa completo de permissões (upsert por usuário).
+  // Upsert MANUAL (select → update/insert) em vez de ON CONFLICT: funciona mesmo
+  // que a constraint UNIQUE(user_id) não exista no banco (tabela de deploy antigo).
+  // É esse ponto que fazia "Salvar acessos" não persistir.
   app.put("/api/user-permissions/:userId", authenticateAdmin, safe(async (req, res) => {
     await ensureModuleTables();
+    const userId = req.params.userId;
     const permissions = req.body.permissions ?? {};
     const updatedBy = (req as any).currentUser.id;
-    await db.insert(userPermissions)
-      .values({ userId: req.params.userId, permissions, updatedBy })
-      .onConflictDoUpdate({ target: userPermissions.userId, set: { permissions, updatedBy, updatedAt: new Date() } });
+    const existing = await db.select({ id: userPermissions.id }).from(userPermissions).where(eq(userPermissions.userId, userId));
+    if (existing.length) {
+      await db.update(userPermissions)
+        .set({ permissions, updatedBy, updatedAt: new Date() })
+        .where(eq(userPermissions.userId, userId));
+    } else {
+      await db.insert(userPermissions).values({ userId, permissions, updatedBy });
+    }
     res.json({ ok: true });
   }));
 }
