@@ -5,7 +5,7 @@
 // público existente via chamada interna, igual ao PIX). Cartão NUNCA é gravado
 // nem logado — apenas os 4 últimos dígitos vão para a nota do pedido.
 // Credenciais via env: CIELO_MERCHANT_ID, CIELO_MERCHANT_KEY, CIELO_ENV
-// (production|sandbox; default production), CIELO_MAX_INSTALLMENTS (default 3).
+// (production|sandbox; default production). Loja e a vista (1x) — sem parcelamento.
 // ============================================================================
 import type { Express } from 'express';
 import { db } from './db';
