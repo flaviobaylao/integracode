@@ -385,6 +385,16 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     const effectiveSellerId = registeringUser ? registeringUser.id : (salesCard.sellerId || null);
     const seller = registeringUser || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
 
+    // ROTEAMENTO POR CARTEIRA (Honest): pedido de canal digital (Instagram / Hotsite / IA) de
+    // cliente já cadastrado numa carteira REAL vai para o vendedor dono da carteira — não para
+    // 'instagram'. Se não houver carteira real, mantém o comportamento atual (Instagram/registrante).
+    let walletSellerId: string | null = null;
+    let walletSellerName: string | null = null;
+    if (customer && (customer as any).sellerId && !['chatgpt-ai', 'instagram', 'system'].includes(String((customer as any).sellerId))) {
+      walletSellerId = String((customer as any).sellerId);
+      try { const ws = await storage.getUser(walletSellerId); if (ws) walletSellerName = `${ws.firstName || ''} ${ws.lastName || ''}`.trim(); } catch {}
+    }
+
     let omieInstanceName = '';
     if (customer?.omieInstanceId) {
       const instance = await storage.getOmieInstance(customer.omieInstanceId);
@@ -408,8 +418,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       customerId: salesCard.customerId,
       customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
       customerDocument: customer?.cnpj || customer?.cpf || null,
-      sellerId: String(salesCard.source || '') === 'instagram' ? 'instagram' : effectiveSellerId,
-      sellerName: String(salesCard.source || '') === 'instagram' ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null),
+      sellerId: walletSellerId || (String(salesCard.source || '') === 'instagram' ? 'instagram' : effectiveSellerId),
+      sellerName: walletSellerName || (String(salesCard.source || '') === 'instagram' ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)),
       stage: stage,
       scheduledBillingDate: schedDate,
       orderNumber: `INT-${salesCard.id.substring(0, 8)}`,
