@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient } from "@/lib/queryClient";
-import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive, Tag, Trash2, Ban } from "lucide-react";
+import { Send, Clock, AlertCircle, CheckCircle, Phone, Plus, Paperclip, Image as ImageIcon, Music, File, User, MapPin, Sparkles, Loader2, RefreshCw, BookOpen, UserPlus, Bot, Users, ArrowRightLeft, BarChart2, Calendar, Archive, Tag, Trash2, Ban, Volume2, VolumeX } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -223,7 +223,7 @@ function VirtualAttendancePanel() {
 }
 
 // Componente Auxiliar para Item de Conversa
-function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData, isAdmin, labelObjsFor }: any) {
+function ConversationItem({ conv, selectedConversation, setSelectedConversation, getStatusColor, formatLastMessageTime, onAddToPhonebook, setPhonebookData, isAdmin, labelObjsFor, soundOn = true, onToggleSound }: any) {
   const convLabelObjs = (labelObjsFor ? labelObjsFor(conv.id) : []) as any[];
   return (
     <div
@@ -303,6 +303,16 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
         >
           <UserPlus className="h-4 w-4" />
         </button>
+        {onToggleSound && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleSound(); }}
+            className={`p-1.5 rounded-full border transition-colors ${soundOn ? 'bg-blue-50 hover:bg-blue-100 text-blue-600 border-blue-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-400 border-gray-200'}`}
+            title={soundOn ? 'Som de novas mensagens: ligado (clique para desligar)' : 'Som de novas mensagens: desligado (clique para ligar)'}
+            data-testid={`button-sound-${conv.id}`}
+          >
+            {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+        )}
       </div>
       {convLabelObjs.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5">
@@ -536,6 +546,46 @@ function ChatCenterInner() {
     }
   });
   const conversations = (conversationsData as Conversation[]) || [];
+
+  // 🔔 Notificação sonora por conversa (liga/desliga salvo no navegador)
+  const [soundConvs, setSoundConvs] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('chatSoundConvs') || '{}'); } catch { return {}; }
+  });
+  const isSoundOn = (id: string) => soundConvs[id] !== false; // padrão: ligado
+  const toggleSoundConv = (id: string) => setSoundConvs((prev) => {
+    const next = { ...prev, [id]: !(prev[id] !== false) };
+    try { localStorage.setItem('chatSoundConvs', JSON.stringify(next)); } catch {}
+    return next;
+  });
+  const audioCtxRef = useRef<any>(null);
+  const playBeep = () => {
+    try {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AC();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.06;
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + 0.18);
+    } catch {}
+  };
+  const prevUnreadRef = useRef<Record<string, number>>({});
+  const soundBaselineRef = useRef(false);
+  useEffect(() => {
+    const prev = prevUnreadRef.current;
+    const cur: Record<string, number> = {};
+    let beep = false;
+    for (const c of conversations as any[]) {
+      const u = (c.unreadCount as number) || 0;
+      cur[c.id] = u;
+      if (soundBaselineRef.current && u > (prev[c.id] ?? 0) && isSoundOn(c.id)) beep = true;
+    }
+    prevUnreadRef.current = cur;
+    soundBaselineRef.current = true;
+    if (beep) playBeep();
+  }, [conversations, soundConvs]);
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
   const phoneParamProcessed = useRef(false);
@@ -1694,7 +1744,7 @@ function ChatCenterInner() {
                                   formatLastMessageTime={formatLastMessageTime}
                                   onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                   setPhonebookData={setPhonebookData}
-                                  isAdmin={isAdmin} labelObjsFor={labelsForConv}
+                                  isAdmin={isAdmin} labelObjsFor={labelsForConv} soundOn={isSoundOn(conv.id)} onToggleSound={() => toggleSoundConv(conv.id)}
                                 />
                               );
                               const unread = filteredConversations.filter((c: any) => c.hasUnread);
@@ -1789,7 +1839,7 @@ function ChatCenterInner() {
                                 formatLastMessageTime={formatLastMessageTime}
                                 onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                 setPhonebookData={setPhonebookData}
-                                isAdmin={isAdmin} labelObjsFor={labelsForConv}
+                                isAdmin={isAdmin} labelObjsFor={labelsForConv} soundOn={isSoundOn(conv.id)} onToggleSound={() => toggleSoundConv(conv.id)}
                               />
                             ))}
                           </div>
@@ -1847,7 +1897,7 @@ function ChatCenterInner() {
                                 formatLastMessageTime={formatLastMessageTime}
                                 onAddToPhonebook={(name: string, phone: string) => addToPhonebookMutation.mutate({ name, phone })}
                                 setPhonebookData={setPhonebookData}
-                                isAdmin={isAdmin} labelObjsFor={labelsForConv}
+                                isAdmin={isAdmin} labelObjsFor={labelsForConv} soundOn={isSoundOn(conv.id)} onToggleSound={() => toggleSoundConv(conv.id)}
                               />
                             ))}
                           </div>
