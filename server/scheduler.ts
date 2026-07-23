@@ -177,6 +177,8 @@ cron.schedule('*/5 * * * *', async () => {
       
       // Enviar mensagem de finalização para cada conversa fechada
       for (const conv of result.conversations) {
+        // 🏷️ Remove as etiquetas da conversa ao finalizar por inatividade
+        try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conv.id}`); } catch {}
         if (conv.customerPhone) {
           try {
             // Enviar via Evolution API
