@@ -98,20 +98,6 @@ async function _promoteAgendados(origem: string) {
 cron.schedule('5 0 * * *', () => { void _promoteAgendados('diario'); }, { timezone: 'America/Sao_Paulo' });
 cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timezone: 'America/Sao_Paulo' });
 
-// Rede de seguranca: recupera pedidos presos em sales_cards.status='pending' com venda registrada
-// (produtos + valor) que nunca foram finalizados e por isso NAO geraram item no pipeline ("somem" do funil).
-// Roda a cada 30 min; so mexe em cards parados ha >= 60 min (nao toca em pedido sendo montado agora).
-// Envia via autoSendToBillingPipeline (aplica bloqueio de debito/dedup + auditoria). Idempotente.
-cron.schedule('*/30 * * * *', async () => {
-  try {
-    const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
-    const r = await reconcilePendingOrders({ apply: true, minAgeMinutes: 60 });
-    if (r.recovered > 0) console.log(`🛟 [SCHEDULER] reconcile-pending: ${r.recovered} pedido(s) preso(s) recuperado(s) para o pipeline (de ${r.scanned} varrido[s]).`);
-  } catch (error: any) {
-    console.error('❌ [SCHEDULER] erro no reconcile-pending:', error?.message || error);
-  }
-}, { timezone: 'America/Sao_Paulo' });
-
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
@@ -171,14 +157,13 @@ cron.schedule('*/5 * * * *', async () => {
     const result = await storage.closeInactiveConversations();
     
     if (result.count > 0) {
-      // Mensagem da IA para finalização automática por inatividade (avisa que pode retomar)
-      const finalizeMessage =
-        'Estamos finalizando este atendimento por inatividade das partes. Você pode retomar a conversa a qualquer momento, é só enviar uma mensagem. 😊';
+      // Buscar mensagem de finalização configurada
+      const aiSettings = await storage.getChatAiSettings();
+      const finalizeMessage = aiSettings?.finalizeMessage || 
+        'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.';
       
       // Enviar mensagem de finalização para cada conversa fechada
       for (const conv of result.conversations) {
-        // 🏷️ Remove as etiquetas da conversa ao finalizar por inatividade
-        try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conv.id}`); } catch {}
         if (conv.customerPhone) {
           try {
             // Enviar via Evolution API
@@ -515,11 +500,7 @@ async function syncOverdueDebts(horario: string) {
 // Sincronização completa automática de hora em hora a partir das 6h
 // Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
 // IMPORTANTE: Só executa em produção para evitar race condition dev+prod no mesmo banco
-// CUTOVER TOTAL 2.0 (23/jul): sync horario com o Omie DESLIGADO. Tudo passa a ser gerado no 2.0.
-// O bloqueio automatico por DEBITO VENCIDO NAO depende disto: getOverdueDebtByDocument ja le
-// direto das Contas a Receber do 2.0 (tabela receivables, FASE 3.4r), nao mais de overdue_debts
-// (que era populada pelo Omie). A funcao syncComplete() segue definida so para acao manual.
-if (false && (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT)) {
+if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   cron.schedule('0 6-23 * * *', () => {
     const now = nowBrazil();
     const hour = now.getHours();
@@ -530,7 +511,7 @@ if (false && (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYME
   });
   console.log('✅ [SCHEDULER] Sincronização Omie horária ativada (ambiente de produção)');
 } else {
-  console.log('🚫 [SCHEDULER] Sincronização Omie horária DESLIGADA (cutover total 2.0 — débitos lidos do 2.0)');
+  console.log('⚠️ [SCHEDULER] Sincronização Omie horária DESATIVADA (ambiente de desenvolvimento)');
 }
 
 // ===== LIBERACAO AUTOMATICA DE PEDIDOS BLOQUEADOS POR DEBITO VENCIDO =====
@@ -627,7 +608,7 @@ cron.schedule('0 22 * * *', async () => {
   try {
     const { users } = await import('../shared/schema');
     const { eq } = await import('drizzle-orm');
-    const { runRepescagemDrawForDate } = await import('./repescagem-routes');
+    const { runRepescagemDrawForDate, notifyRepescagemWhatsApp } = await import('./repescagem-routes');
     const { generateDailyRoute } = await import('./routeOptimizationService');
 
     // amanha (BRT)
@@ -653,6 +634,9 @@ cron.schedule('0 22 * * *', async () => {
     // 2) Rodar a distribuicao/sorteio da repescagem p/ AMANHA sobre as rotas geradas.
     const r = await runRepescagemDrawForDate(amanhaStr, { force: true });
     console.log(`🎯 [REPESCAGEM-22H] Distribuicao ${amanhaStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
+    // Fase 2: notifica os vendedores externos por WhatsApp (DESLIGADO por padrao ate flag 'repescagem_whatsapp_enabled'='true').
+    const wa = await notifyRepescagemWhatsApp();
+    console.log(`📲 [REPESCAGEM-22H] WhatsApp vendedores externos: ${wa?.enabled ? 'ENVIADO' : 'dry-run'} (${wa?.vendors} vendedor(es)).`);
   } catch (e: any) {
     console.error('❌ [REPESCAGEM-22H] falha:', e?.message || e);
   }

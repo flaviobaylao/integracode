@@ -17,6 +17,7 @@ import {
   leads,
 } from '@shared/schema';
 import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle } from './repescagem-cycles';
+import { whatsappService } from './whatsapp-service';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -1596,6 +1597,22 @@ export function registerRepescagemRoutes(app: Express, opts: {
   });
 
   // Estatísticas: contagem de atendimentos completos por usuário num intervalo
+  // Fase 2 — Alerta EM TELA (telemarketing): clientes de repescagem atribuidos ao usuario logado.
+  app.get('/api/repescagem/meu-alerta', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+    try {
+      const uid = req.currentUser?.id;
+      // Alerta em tela e do TELEMARKETING (externos recebem WhatsApp).
+      if (!uid || req.currentUser?.role !== 'telemarketing') return res.json({ count: 0, clientes: [] });
+      const rows = await db.select().from(repescagemAssignments).where(and(eq(repescagemAssignments.status, 'pending'), eq(repescagemAssignments.assignedUserId, uid)));
+      const cids = Array.from(new Set(rows.map(r => r.customerId)));
+      const cs = cids.length ? await db.select({ id: customers.id, name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})` }).from(customers).where(inArray(customers.id, cids)) : [];
+      const nameById = new Map(cs.map(c => [c.id, c.name]));
+      res.json({ count: rows.length, clientes: rows.slice(0, 50).map(r => nameById.get(r.customerId) || r.customerId) });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   app.get('/api/repescagem/stats', authenticateUser, requireRole(ALLOWED_ROLES), async (req, res) => {
     try {
       const startDate = String(req.query.startDate || '');
@@ -1639,4 +1656,61 @@ export function registerRepescagemRoutes(app: Express, opts: {
 // para uma data especifica (ex.: o dia seguinte), programando a rota daquele dia.
 export async function runRepescagemDrawForDate(drawDate: string, opts?: { force?: boolean }): Promise<any> {
   return runDailyDraw({ drawDate, force: opts?.force ?? true });
+}
+
+// ============================================================================
+// Fase 2 — Notificacoes de repescagem.
+// WhatsApp aos VENDEDORES EXTERNOS (1 msg consolidada/dia): clientes de carteira
+// externa que estao em repescagem. DESLIGADO por padrao (system_settings
+// 'repescagem_whatsapp_enabled' != 'true') — em dry-run so registra no log.
+// (Os clientes de telemarketing recebem alerta EM TELA via /api/repescagem/meu-alerta.)
+// ============================================================================
+export async function notifyRepescagemWhatsApp(): Promise<any> {
+  try {
+    const flag: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'repescagem_whatsapp_enabled' LIMIT 1`);
+    const enabled = String(flag.rows?.[0]?.value || '').toLowerCase() === 'true';
+
+    const pend = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.status, 'pending'));
+    const custIds = Array.from(new Set(pend.map(pp => pp.customerId)));
+    if (custIds.length === 0) return { enabled, vendors: 0, results: [] };
+    const cs = await db.select({
+      id: customers.id,
+      name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
+      sellerId: customers.sellerId,
+      periodicity: customers.visitPeriodicity,
+    }).from(customers).where(inArray(customers.id, custIds));
+    const custById = new Map(cs.map(c => [c.id, c]));
+    const sellerIds = Array.from(new Set(cs.map(c => c.sellerId).filter(Boolean) as string[]));
+    const us = sellerIds.length ? await db.select({ id: users.id, role: users.role, phone: users.phone, firstName: users.firstName, lastName: users.lastName }).from(users).where(inArray(users.id, sellerIds)) : [];
+    const userById = new Map(us.map(u => [u.id, u]));
+
+    // Agrupa clientes de CARTEIRA EXTERNA por vendedor.
+    const byVendor = new Map<string, { phone: string; name: string; clientes: string[] }>();
+    for (const pp of pend) {
+      const c = custById.get(pp.customerId); if (!c || !c.sellerId) continue;
+      const seller: any = userById.get(c.sellerId);
+      if (!seller || seller.role !== 'vendedor' || !seller.phone) continue;
+      let g = byVendor.get(seller.id);
+      if (!g) { g = { phone: seller.phone, name: `${seller.firstName || ''} ${seller.lastName || ''}`.trim() || seller.id, clientes: [] }; byVendor.set(seller.id, g); }
+      g.clientes.push(c.name);
+    }
+
+    const results: any[] = [];
+    for (const [, g] of byVendor) {
+      const lista = g.clientes.slice(0, 40).map(n => `• ${n}`).join('\n');
+      const extra = g.clientes.length > 40 ? `\n… e mais ${g.clientes.length - 40} cliente(s).` : '';
+      const msg = `Ola ${g.name}! Os seguintes clientes cairam em REPESCAGEM (nao compraram dentro da periodicidade):\n\n${lista}${extra}\n\nPor favor, revise a periodicidade de cada um e visite/atenda imediatamente. — INTEGRA 2.0`;
+      if (enabled) {
+        try { const r = await whatsappService.sendMessage(g.phone, msg); results.push({ vendor: g.name, clientes: g.clientes.length, sent: !!r?.success }); }
+        catch (e: any) { results.push({ vendor: g.name, clientes: g.clientes.length, sent: false, err: e?.message }); }
+      } else {
+        results.push({ vendor: g.name, clientes: g.clientes.length, sent: false, dryRun: true });
+      }
+    }
+    console.log(`[REPESCAGEM-WHATSAPP] ${enabled ? 'ENVIADO' : 'DRY-RUN (desligado)'} — ${results.length} vendedor(es) externo(s), ${pend.length} pendentes.`);
+    return { enabled, vendors: results.length, results };
+  } catch (e: any) {
+    console.error('[REPESCAGEM-WHATSAPP] falha:', e?.message);
+    return { error: e?.message };
+  }
 }

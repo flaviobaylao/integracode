@@ -24,6 +24,7 @@ export function registerVisitSummary(app: Express) {
         LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', '') OR u.id = c.seller_id)
         WHERE c.is_active = true AND c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE
           AND c.weekdays IS NOT NULL AND c.weekdays::text NOT IN ('', '[]', 'null')
+          AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)
       `);
 
       // Fallback de vendedor pelo pedido mais recente (billing_pipeline)
@@ -42,11 +43,11 @@ export function registerVisitSummary(app: Express) {
       const saleDatesByCustomer = new Map<string, Set<string>>();
       const addSale = (cid: any, d: any) => { if (!cid || !d) return; let s = saleDatesByCustomer.get(cid); if (!s) { s = new Set(); saleDatesByCustomer.set(cid, s); } s.add(d); };
       try {
-        const salesP = await q(`SELECT customer_id, (COALESCE(scheduled_billing_date::timestamp, created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billing_pipeline WHERE LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND customer_id IS NOT NULL AND (COALESCE(scheduled_billing_date::timestamp, created_at) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        const salesP = await q(`SELECT customer_id, DATE(COALESCE(scheduled_billing_date::timestamp, created_at))::text AS d FROM billing_pipeline WHERE LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND customer_id IS NOT NULL AND DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) BETWEEN '${saleStart}' AND '${todayStr}'`);
         for (const r of salesP) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       try {
-        const salesB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, (COALESCE(order_date, invoice_date) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND (COALESCE(order_date, invoice_date) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        const salesB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, DATE(COALESCE(order_date, invoice_date))::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND DATE(COALESCE(order_date, invoice_date)) BETWEEN '${saleStart}' AND '${todayStr}'`);
         for (const r of salesB) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
