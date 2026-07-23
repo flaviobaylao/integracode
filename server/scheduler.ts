@@ -514,7 +514,11 @@ async function syncOverdueDebts(horario: string) {
 // Sincronização completa automática de hora em hora a partir das 6h
 // Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
 // IMPORTANTE: Só executa em produção para evitar race condition dev+prod no mesmo banco
-if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
+// CUTOVER TOTAL 2.0 (23/jul): sync horario com o Omie DESLIGADO. Tudo passa a ser gerado no 2.0.
+// O bloqueio automatico por DEBITO VENCIDO NAO depende disto: getOverdueDebtByDocument ja le
+// direto das Contas a Receber do 2.0 (tabela receivables, FASE 3.4r), nao mais de overdue_debts
+// (que era populada pelo Omie). A funcao syncComplete() segue definida so para acao manual.
+if (false && (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT)) {
   cron.schedule('0 6-23 * * *', () => {
     const now = nowBrazil();
     const hour = now.getHours();
@@ -525,7 +529,7 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   });
   console.log('✅ [SCHEDULER] Sincronização Omie horária ativada (ambiente de produção)');
 } else {
-  console.log('⚠️ [SCHEDULER] Sincronização Omie horária DESATIVADA (ambiente de desenvolvimento)');
+  console.log('🚫 [SCHEDULER] Sincronização Omie horária DESLIGADA (cutover total 2.0 — débitos lidos do 2.0)');
 }
 
 // ===== LIBERACAO AUTOMATICA DE PEDIDOS BLOQUEADOS POR DEBITO VENCIDO =====
