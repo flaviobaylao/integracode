@@ -16,9 +16,10 @@
 //        test -> só age nos números de INTEGRA_OFICIAL_TEST_PHONES (clientes reais intactos)
 //        on   -> age em todos os clientes reais elegíveis
 //
-// Escopo (seguro por padrão): só encerra conversas de WhatsApp (não Instagram, não
-// grupos) que estão INATIVAS e SEM humano atendendo (assigned_agent_id nulo ou 'chatgpt').
-// Conversas atribuídas a um atendente humano são deixadas para ele finalizar.
+// Escopo: encerra conversas de WhatsApp (não Instagram, não grupos) que estão INATIVAS
+// há X min — considerando TANTO a última mensagem quanto a última interação do atendente
+// (last_attended_at). Inclui conversas atribuídas a um humano que ficaram ociosas, mas
+// nunca encerra uma em que o cliente OU o atendente interagiram dentro da janela de X min.
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
@@ -76,9 +77,9 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
       AND c.customer_phone NOT LIKE '%@g.us%'
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
-      AND (c.assigned_agent_id IS NULL OR c.assigned_agent_id = 'chatgpt')
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
+      AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
     ORDER BY c.last_message_time ASC
     LIMIT ${limit}`);
   return (q.rows || []) as any;
