@@ -80,6 +80,15 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       if (secao) { setSelectedSection(secao); setShowingSectionOptions(true); }
     } catch { /* noop */ }
   }, []);
+  // Presença: mantém o vendedor "online" no Integra enquanto está logado (ping a cada 60s).
+  // Usado pelo roteamento por carteira / captura de leads para saber quem está disponível.
+  useEffect(() => {
+    let alive = true;
+    const ping = () => { fetch('/api/presence/ping', { method: 'POST', credentials: 'include' }).catch(() => { /* noop */ }); };
+    ping();
+    const iv = setInterval(() => { if (alive && document.visibilityState !== 'hidden') ping(); }, 60000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
   const bumpMenuCount = (itemId: string) => {
     setMenuCounts((prev) => {
       const next = { ...prev, [itemId]: (prev[itemId] || 0) + 1 };
