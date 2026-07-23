@@ -171,10 +171,9 @@ cron.schedule('*/5 * * * *', async () => {
     const result = await storage.closeInactiveConversations();
     
     if (result.count > 0) {
-      // Buscar mensagem de finalização configurada
-      const aiSettings = await storage.getChatAiSettings();
-      const finalizeMessage = aiSettings?.finalizeMessage || 
-        'Atendimento finalizado. Obrigado pelo contato! Caso precise de algo mais, estamos à disposição.';
+      // Mensagem da IA para finalização automática por inatividade (avisa que pode retomar)
+      const finalizeMessage =
+        'Estamos finalizando este atendimento por inatividade das partes. Você pode retomar a conversa a qualquer momento, é só enviar uma mensagem. 😊';
       
       // Enviar mensagem de finalização para cada conversa fechada
       for (const conv of result.conversations) {
