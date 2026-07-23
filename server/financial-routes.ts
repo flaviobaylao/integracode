@@ -972,7 +972,9 @@ export function registerFinancialRoutes(app: Express) {
       await logFinancialAudit({ req, action: 'update', entity: 'receivable', entityId: req.params.id, before, after: receivable });
       res.json(receivable);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const msg = String(error?.message || error);
+      if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
+      res.status(500).json({ message: msg });
     }
   });
 
@@ -983,7 +985,9 @@ export function registerFinancialRoutes(app: Express) {
       await logFinancialAudit({ req, action: 'delete', entity: 'receivable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a receber removida' });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const msg = String(error?.message || error);
+      if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
+      res.status(500).json({ message: msg });
     }
   });
 
@@ -1274,7 +1278,9 @@ export function registerFinancialRoutes(app: Express) {
       await logFinancialAudit({ req, action: 'update', entity: 'payable', entityId: req.params.id, before, after: payable });
       res.json(payable);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const msg = String(error?.message || error);
+      if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
+      res.status(500).json({ message: msg });
     }
   });
 
@@ -1285,7 +1291,9 @@ export function registerFinancialRoutes(app: Express) {
       await logFinancialAudit({ req, action: 'delete', entity: 'payable', entityId: req.params.id, before, amount: before ? Number(before.amount) : null });
       res.json({ message: 'Conta a pagar removida' });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const msg = String(error?.message || error);
+      if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
+      res.status(500).json({ message: msg });
     }
   });
 
