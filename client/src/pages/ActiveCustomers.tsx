@@ -1419,6 +1419,63 @@ export default function ActiveCustomers() {
             </div>
           </div>
 
+          {/* Legenda das marcações visuais da lista */}
+          <details open className="rounded-lg border bg-muted/30 px-3 py-2">
+            <summary className="cursor-pointer select-none text-sm font-semibold text-foreground">
+              Legenda das marcações
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-4 w-6 rounded bg-red-100 border border-red-200"></span>
+                <span>Linha vermelha: <b className="text-foreground">sem agendamento</b> (sem visita nas próximas 3)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap">SEM COORDENADA</span>
+                <span>Texto vermelho: <b className="text-foreground">sem coordenada</b> (não entra na rota do dia)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded-md font-medium">Nome</span>
+                <span>Nome com fundo verde: <b className="text-foreground">Cliente Consumidor</b></span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                <span>Status: <b className="text-foreground">encontrado</b> no sistema</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="h-4 w-4 text-orange-500" />
+                <span>Status: <b className="text-foreground">não encontrado</b> no sistema</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-red-600 font-semibold">(62) …</span>
+                <span>Telefone <b className="text-foreground">não confirmado</b> pelo cliente em 24h</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono">(62) … ✓</span>
+                <span>Telefone <b className="text-foreground">confirmado</b> pelo cliente</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-green-600 font-semibold">SIM</span>
+                <span className="text-red-500 font-semibold">NÃO</span>
+                <span><b className="text-foreground">Positivado</b> no mês (comprou / não comprou)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-green-600 font-semibold">+%</span>
+                <span className="text-red-500 font-semibold">-%</span>
+                <span className="text-gray-400">–</span>
+                <span><b className="text-foreground">Variação</b> mês anterior x atual (sobe / cai / sem base)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="flex gap-0.5">
+                  <span className="inline-block h-4 w-4 rounded bg-green-100 border" title="até 7 dias"></span>
+                  <span className="inline-block h-4 w-4 rounded bg-yellow-100 border" title="até 15 dias"></span>
+                  <span className="inline-block h-4 w-4 rounded bg-orange-100 border" title="até 30 dias"></span>
+                  <span className="inline-block h-4 w-4 rounded bg-red-100 border" title="mais de 30 dias"></span>
+                </span>
+                <span><b className="text-foreground">Última Atividade / Atendimento</b> — recência: até 7d, 15d, 30d, +30d sem comprar</span>
+              </div>
+            </div>
+          </details>
+
           <Card>
             <CardContent className="p-0 relative">
               {isLoadingCustomers ? (
