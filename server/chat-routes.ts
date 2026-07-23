@@ -4109,13 +4109,25 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Conversa não encontrada" });
       }
 
-      // 🔐 Verificar permissão: admin/coord/administrativo + telemarketing/vendedor podem enviar em qualquer conversa
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative' || currentUser?.role === 'telemarketing' || currentUser?.role === 'vendedor';
-      if (!isAdmin && conversation.agentId) {
+      // 🔐 REGRA DE PROPRIEDADE DA CONVERSA:
+      // Quando um atendente assume a conversa (assignedAgentId), somente ele pode enviar mensagens.
+      // Outro atendente só volta a poder enviar se: o proprietário transferir a conversa, ou um admin
+      // transferir/finalizar (a finalização limpa o assignedAgentId, liberando a conversa).
+      // Gestores (admin/coordenador/administrativo) podem enviar em qualquer conversa.
+      // As regras da IA (ChatGPT) seguem valendo à parte deste bloqueio, pois rodam por outro fluxo.
+      const isManager = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
+      const conversationOwner = conversation.assignedAgentId;
+      if (!isManager && conversationOwner && conversationOwner !== 'chatgpt') {
         const agents = await storage.getChatAgents();
         const userAgent = agents.find(a => a.userId === userId);
-        if (userAgent?.id !== conversation.agentId) {
-          return res.status(403).json({ error: "Você não tem permissão para enviar mensagens nesta conversa" });
+        if (!userAgent || userAgent.id !== conversationOwner) {
+          const ownerAgent = agents.find(a => a.id === conversationOwner);
+          return res.status(403).json({
+            error: `Esta conversa está sendo atendida por ${ownerAgent?.name || 'outro atendente'}. Peça a transferência ao responsável ou a um administrador para poder enviar mensagens.`,
+            code: "CONVERSATION_LOCKED",
+            ownerAgentId: conversationOwner,
+            ownerAgentName: ownerAgent?.name || null
+          });
         }
       }
 
