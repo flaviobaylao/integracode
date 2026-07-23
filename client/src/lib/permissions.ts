@@ -207,8 +207,9 @@ export function usePermissions(): UsePermissionsResult {
     role: data?.role || "",
     map,
     can: (label: string, cap: CapKey = "ver") => {
-      if (!map) return true;      // carregando → fail-open
-      if (!hasConfig) return true; // sem configuração salva → não restringe
+      if (!map) return true;                       // carregando → fail-open
+      if ((data?.role || "") === "admin") return true; // admin nunca é restringido (evita auto-lockout)
+      if (!hasConfig) return true;                 // sem configuração salva → não restringe
       return canDo(map, label, cap);
     },
   };
