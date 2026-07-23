@@ -4096,18 +4096,22 @@ export class DatabaseStorage implements IStorage {
       
       // ✅ CORREÇÃO: Usar userSellerId (UUID do usuário) para buscar débitos via customers
       if (userSellerId) {
-        // Buscar débitos vencidos da carteira usando JOIN
+        // Débitos vencidos da carteira — fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado).
         const overdueDebtsResult = await db.execute(sql`
-          SELECT 
-            od.client_document,
-            od.total_amount
-          FROM overdue_debts od
+          SELECT
+            r.customer_document AS client_document,
+            (r.amount - coalesce(r.amount_paid, 0)) AS total_amount
+          FROM receivables r
           INNER JOIN customers c ON (
-            REPLACE(REPLACE(REPLACE(od.client_document, '.', ''), '-', ''), '/', '') = 
-            COALESCE(c.cpf, c.cnpj)
+            regexp_replace(coalesce(r.customer_document, ''), '[^0-9]', '', 'g') =
+            regexp_replace(COALESCE(c.cpf, c.cnpj, ''), '[^0-9]', '', 'g')
           )
           WHERE c.seller_id = ${userSellerId}
-            AND c.omie_status = 'ativo'
+            AND coalesce(c.is_active, true) = true
+            AND r.deleted_at IS NULL
+            AND (r.amount - coalesce(r.amount_paid, 0)) > 0
+            AND coalesce(r.import_origin, '') <> 'omie_historico'
+            AND (r.status = 'vencida' OR (r.status = 'a_vencer' AND (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
