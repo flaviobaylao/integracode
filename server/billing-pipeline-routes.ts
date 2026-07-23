@@ -788,7 +788,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         UPDATE billing_pipeline bp
         SET stage = 'lixeira', updated_at = now(),
             stage_history = COALESCE(bp.stage_history, '[]'::jsonb) || jsonb_build_object(
-              'stage', 'lixeira', 'changedAt', ${ts}, 'changedBy', 'backfill cancelado->lixeira'
+              'stage', 'lixeira', 'changedAt', ${ts}::text, 'changedBy', 'backfill cancelado->lixeira'
             )::jsonb
         WHERE ${cond}`);
       res.json({ ok: true, movedToLixeira: r2?.rowCount ?? null });
