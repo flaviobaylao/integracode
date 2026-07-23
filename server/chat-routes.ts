@@ -314,7 +314,11 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
         } catch {}
         return sendUmblerTalkText(toPhone, text);
       };
-      import('./agent-runtime').then(({ maybeRunAgent }) => maybeRunAgent({ phone: normalizedPhone, conversationId: conversation.id, incomingText: finalContent, sendText: replyVia })).catch(() => {});
+      import('./ia-takeover').then(async ({ shouldRespondNow }) => {
+        if (!(await shouldRespondNow(conversation.id))) return; // regra de timeout: espera humano; o sweep assume depois
+        const { maybeRunAgent } = await import('./agent-runtime');
+        await maybeRunAgent({ phone: normalizedPhone, conversationId: conversation.id, incomingText: finalContent, sendText: replyVia });
+      }).catch(() => {});
     }
 
     console.log(`✅ [PROCESS] Mensagem salva: ${normalizedPhone} | FromMe: ${isFromMe} | ${messageText.substring(0, 30)}...`);
