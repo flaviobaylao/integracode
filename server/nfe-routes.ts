@@ -841,6 +841,22 @@ export function registerNfeRoutes(app: Express) {
         }
 
         const updatedInvoice = await storage.getFiscalInvoice(req.params.id);
+
+        // REGRA: nenhum pedido que entra no pipeline pode deixar o pipeline. Ao cancelar a NF,
+        // o card NAO some das colunas ativas nem e apagado: vai para a LIXEIRA (restauravel).
+        try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch {}
+        try {
+          const scId = (updatedInvoice as any)?.salesCardId || null;
+          const invNum = (updatedInvoice as any)?.invoiceNumber ? String((updatedInvoice as any).invoiceNumber) : null;
+          const ts = nowBrazil().toISOString();
+          const hist = sql`jsonb_build_object('stage','lixeira','changedAt', ${ts}, 'changedBy','cancelamento NF-e')`;
+          if (scId) {
+            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now(), stage_history = COALESCE(stage_history,'[]'::jsonb) || ${hist}::jsonb WHERE stage <> 'lixeira' AND sales_card_id = ${scId}`);
+          } else if (invNum) {
+            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now(), stage_history = COALESCE(stage_history,'[]'::jsonb) || ${hist}::jsonb WHERE stage <> 'lixeira' AND invoice_number = ${invNum}`);
+          }
+        } catch (lixErr: any) { console.warn('[NF-e CANCEL] Falha ao mover card para a Lixeira:', lixErr?.message); }
+
         res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true, receivablesComPagamento });
       } else {
         res.status(400).json(result);
