@@ -34,6 +34,25 @@ const num = (v: any): number => {
   return isNaN(n) ? 0 : n;
 };
 const fmtMoney = (v: any): string => num(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// --- PIX recebido: informacoes de quem efetuou o PIX (nome + documento) ---------
+const soDig = (v: any): string => String(v ?? "").replace(/\D/g, "");
+const fmtDoc = (v: any): string => {
+  const d = soDig(v);
+  if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  return d;
+};
+const isPixRecebido = (it: any): boolean =>
+  it?.type === "C" && /pix.?-?\s*recebido/i.test(String(it?.description || ""));
+// Extrai o pagador (nome e CPF/CNPJ) do lancamento de PIX recebido. Fonte: campos
+// origin_name/document do extrato + a propria descricao (formato BB: "... <doc> <NOME>").
+const pixPagador = (it: any): { nome: string; doc: string } => {
+  const desc = String(it?.description || "");
+  const m = desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)\s+(.+)$/);
+  const nome = String(it?.origin_name || (m ? m[2] : "")).trim();
+  const doc = soDig(it?.document) || (m ? m[1] : "") || ((desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)/) || [])[1] || "");
+  return { nome, doc };
+};
 
 function StatusBadge({ s }: { s: string | null }) {
   const map: Record<string, string> = {
@@ -212,7 +231,10 @@ export default function ConciliacaoBancaria() {
     if (sg?.titles?.length) return String(sg.titles[0].title || "");
     return "";
   };
-  const itemNameStr = (it: Item): string => String(it.origin_name || it.description || "");
+  const itemNameStr = (it: Item): string => {
+    if (isPixRecebido(it)) { const p = pixPagador(it); const s = `${p.nome} ${p.doc}`.trim(); if (s) return s; }
+    return String(it.origin_name || it.description || "");
+  };
 
   const viewItems = useMemo(() => {
     let arr = items.slice();
@@ -574,8 +596,17 @@ export default function ConciliacaoBancaria() {
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
                           <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>{it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}</td>
                           <td className="px-3 py-2 max-w-[260px]">
-                            <div className="truncate" title={it.description}>{it.origin_name || it.description}</div>
-                            {it.document ? <div className="text-[11px] text-gray-400">{it.document}</div> : null}
+                            {isPixRecebido(it) ? (() => { const pg = pixPagador(it); return (
+                              <>
+                                <div className="truncate font-medium text-gray-800" title={it.description}>{pg.nome || "PIX recebido"}</div>
+                                <div className="text-[11px] text-gray-500">Pagador do PIX{pg.doc ? ` · ${fmtDoc(pg.doc)}` : ""}</div>
+                              </>
+                            ); })() : (
+                              <>
+                                <div className="truncate" title={it.description}>{it.origin_name || it.description}</div>
+                                {it.document ? <div className="text-[11px] text-gray-400">{it.document}</div> : null}
+                              </>
+                            )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><StatusBadge s={st} /></td>
                           <td className="px-3 py-2">
