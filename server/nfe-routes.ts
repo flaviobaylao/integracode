@@ -848,12 +848,11 @@ export function registerNfeRoutes(app: Express) {
         try {
           const scId = (updatedInvoice as any)?.salesCardId || null;
           const invNum = (updatedInvoice as any)?.invoiceNumber ? String((updatedInvoice as any).invoiceNumber) : null;
-          const ts = nowBrazil().toISOString();
-          const hist = sql`jsonb_build_object('stage','lixeira','changedAt', ${ts}::text, 'changedBy','cancelamento NF-e')`;
+          // So muda o stage (parametro comparado a coluna varchar tem tipo definido; sem jsonb param).
           if (scId) {
-            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now(), stage_history = COALESCE(stage_history,'[]'::jsonb) || ${hist}::jsonb WHERE stage <> 'lixeira' AND sales_card_id = ${scId}`);
+            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now() WHERE stage <> 'lixeira' AND sales_card_id = ${scId}`);
           } else if (invNum) {
-            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now(), stage_history = COALESCE(stage_history,'[]'::jsonb) || ${hist}::jsonb WHERE stage <> 'lixeira' AND invoice_number = ${invNum}`);
+            await db.execute(sql`UPDATE billing_pipeline SET stage='lixeira', updated_at=now() WHERE stage <> 'lixeira' AND invoice_number = ${invNum}`);
           }
         } catch (lixErr: any) { console.warn('[NF-e CANCEL] Falha ao mover card para a Lixeira:', lixErr?.message); }
 
