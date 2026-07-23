@@ -80,6 +80,29 @@ export async function cieloDiag(): Promise<any> {
       else if (df && df.Payment) out.fullRetorno = { Status: df.Payment.Status, ReturnCode: df.Payment.ReturnCode, ReturnMessage: df.Payment.ReturnMessage };
       else out.fullRetorno = df;
     } catch (e: any) { out.fullProbeError = String(e?.message || e); }
+    // ISOLAMENTO: liga UM campo por vez sobre a base minima p/ achar qual dispara o 002.
+    // Cartao 4111... nao e cartao real em producao -> nunca gera cobranca (so testa o campo).
+    try {
+      const baseCard = { CardNumber: '4111111111111111', Holder: 'DIAG', ExpirationDate: '12/2032', SecurityCode: '123', Brand: 'Visa' };
+      const probe = async (label: string, payment: any, customer: any) => {
+        try {
+          const r = await cieloFetch(`${cfg.apiUrl}/1/sales`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', MerchantId: cfg.merchantId, MerchantKey: cfg.merchantKey },
+            body: JSON.stringify({ MerchantOrderId: 'DG' + label + Date.now(), Customer: customer, Payment: payment }),
+          }, 20000);
+          const d: any = await r.json().catch(() => null);
+          const p = (d && d.Payment) ? { Status: d.Payment.Status, ReturnCode: d.Payment.ReturnCode, ReturnMessage: d.Payment.ReturnMessage } : d;
+          return { http: r.status, ret: p };
+        } catch (e: any) { return { error: String(e?.message || e) }; }
+      };
+      out.isolamento = {
+        base_capFalse: await probe('a', { Type: 'CreditCard', Amount: 700, Installments: 1, Capture: false, CreditCard: baseCard }, { Name: 'DIAG' }),
+        captureTrue: await probe('b', { Type: 'CreditCard', Amount: 700, Installments: 1, Capture: true, CreditCard: baseCard }, { Name: 'DIAG' }),
+        softDescriptor: await probe('c', { Type: 'CreditCard', Amount: 700, Installments: 1, Capture: false, SoftDescriptor: 'HONESTSUCOS', CreditCard: baseCard }, { Name: 'DIAG' }),
+        identityCPF: await probe('d', { Type: 'CreditCard', Amount: 700, Installments: 1, Capture: false, CreditCard: baseCard }, { Name: 'DIAG', Identity: '00000000000', IdentityType: 'CPF' }),
+      };
+    } catch (e: any) { out.isolamentoError = String(e?.message || e); }
     // Leitura: httpStatus 400/401 com mensagem de credencial => credenciais/ambiente errados.
     // Payment com Status/ReturnCode (mesmo recusado por cartão inválido) => credenciais OK.
     out.diagnostico = (out.httpStatus >= 200 && out.httpStatus < 300 && out.cieloRetorno && 'Status' in out.cieloRetorno)
