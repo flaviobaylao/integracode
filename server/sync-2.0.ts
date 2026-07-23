@@ -200,6 +200,11 @@ export async function runSync20(): Promise<{
   const start = Date.now();
   const tables: Record<string, number> = {};
 
+  // CUTOVER TOTAL 2.0 (23/jul): sync 2.0->1.0 DESLIGADO por completo (worker + trigger manual).
+  logger.info("Sync 2.0->1.0 DESLIGADO (cutover total 2.0) - no-op");
+  return { success: true, totalRows: 0, durationMs: Date.now() - start, tables, error: 'disabled' };
+
+  // eslint-disable-next-line no-unreachable
   if (!LOCAL_DB_URL || !REPLIT_DB_URL) {
     const msg = "DATABASE_URL ou REPLIT_DATABASE_URL não definido";
     logger.warn(msg);
