@@ -4051,6 +4051,9 @@ export function registerChatRoutes(app: Express): void {
         assignedAgentColor: null
       });
 
+      // 🏷️ Remove as etiquetas da conversa ao finalizar (inclui a etiqueta pessoal do atendente)
+      try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conversationId}`); } catch (e: any) { console.warn('⚠️ [AUTO-LABEL] erro ao limpar etiquetas na finalização:', e?.message || e); }
+
       console.log(`✅ [CHAT-FINISH] Conversa ${conversationId} finalizada por ${currentUser?.email || userId}`);
       res.json(updated);
     } catch (error: any) {
@@ -4237,6 +4240,17 @@ export function registerChatRoutes(app: Express): void {
             
             console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atualizada pelo atendente ${userAgent.name}`);
           }
+
+          // 🏷️ Auto-etiqueta: marca a etiqueta pessoal do atendente na conversa ao assumir
+          try {
+            const lbls: any = await db.execute(sql`SELECT id, name FROM chat_labels WHERE created_by = ${userId} ORDER BY created_at ASC`);
+            const rowsL = lbls?.rows || [];
+            if (rowsL.length > 0) {
+              const nm = (userAgent.name || '').toLowerCase();
+              const personal = rowsL.find((l: any) => nm && String(l.name || '').toLowerCase() === nm) || rowsL[0];
+              await db.execute(sql`INSERT INTO chat_conversation_labels (conversation_id, label_id) VALUES (${conversation.id}, ${personal.id}) ON CONFLICT DO NOTHING`);
+            }
+          } catch (e: any) { console.warn('⚠️ [AUTO-LABEL] erro ao marcar etiqueta do atendente:', e?.message || e); }
         } else {
           await storage.updateChatConversation(conversation.id, {
             status: 'in-progress'
@@ -6151,13 +6165,34 @@ export function registerChatRoutes(app: Express): void {
   // Definir as etiquetas de uma conversa (substitui o conjunto) — qualquer atendente pode marcar
   app.post("/api/chat/conversations/:id/labels", authenticateUser, async (req, res) => {
     try {
+      const currentUser = (req as any).currentUser;
+      const isAdmin = currentUser?.role === 'admin';
       const { id } = req.params;
       const labelIds: string[] = Array.isArray(req.body?.labelIds) ? req.body.labelIds.map((x: any) => String(x)) : [];
-      await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${id}`);
-      for (const lid of labelIds) {
-        await db.execute(sql`INSERT INTO chat_conversation_labels (conversation_id, label_id) VALUES (${id}, ${lid}) ON CONFLICT DO NOTHING`);
+      if (isAdmin) {
+        // Admin: acesso total — substitui o conjunto inteiro de etiquetas da conversa
+        await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${id}`);
+        for (const lid of labelIds) {
+          await db.execute(sql`INSERT INTO chat_conversation_labels (conversation_id, label_id) VALUES (${id}, ${lid}) ON CONFLICT DO NOTHING`);
+        }
+        return res.json({ ok: true, count: labelIds.length });
       }
-      res.json({ ok: true, count: labelIds.length });
+      // Atendente: só pode incluir/excluir as PRÓPRIAS etiquetas; as de outros são preservadas
+      const ownRows: any = await db.execute(sql`SELECT id FROM chat_labels WHERE created_by = ${currentUser.id}`);
+      const ownSet = new Set((ownRows?.rows || []).map((r: any) => String(r.id)));
+      const curRows: any = await db.execute(sql`SELECT label_id FROM chat_conversation_labels WHERE conversation_id = ${id}`);
+      for (const r of (curRows?.rows || [])) {
+        const lid = String(r.label_id);
+        if (ownSet.has(lid)) {
+          await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${id} AND label_id = ${lid}`);
+        }
+      }
+      for (const lid of labelIds) {
+        if (ownSet.has(String(lid))) {
+          await db.execute(sql`INSERT INTO chat_conversation_labels (conversation_id, label_id) VALUES (${id}, ${lid}) ON CONFLICT DO NOTHING`);
+        }
+      }
+      return res.json({ ok: true });
     } catch (e: any) { console.error('[LABELS] set conv labels:', e); res.status(500).json({ error: e?.message }); }
   });
 
