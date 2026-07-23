@@ -831,8 +831,15 @@ export function registerBillingPipelineRoutes(app: Express) {
           const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${t.id} AND status = 'ATIVA'`);
           r.pixCancelados = ((pu as any)?.rowCount ?? 0) as number;
           if (!r.erros.length) {
-            await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
-            r.cancelada = true;
+            // TRAVA DE BAIXA (Honest): não cancela título conciliado (com vínculo bancário
+            // ativo) — a conciliação precisa ser desfeita antes.
+            const cj: any = await db.execute(sql`SELECT EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = ${t.id}) AS conciliado`);
+            if (((cj as any).rows || cj)?.[0]?.conciliado === true) {
+              r.erros.push('titulo conciliado — desfaca a conciliacao bancaria antes de cancelar');
+            } else {
+              await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
+              r.cancelada = true;
+            }
           }
         } catch (e: any) { r.erros.push(String(e?.message || e)); }
         results.push(r);
