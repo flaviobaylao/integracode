@@ -4122,12 +4122,16 @@ export function registerChatRoutes(app: Express): void {
         const userAgent = agents.find(a => a.userId === userId);
         if (!userAgent || userAgent.id !== conversationOwner) {
           const ownerAgent = agents.find(a => a.id === conversationOwner);
-          return res.status(403).json({
-            error: `Esta conversa está sendo atendida por ${ownerAgent?.name || 'outro atendente'}. Peça a transferência ao responsável ou a um administrador para poder enviar mensagens.`,
-            code: "CONVERSATION_LOCKED",
-            ownerAgentId: conversationOwner,
-            ownerAgentName: ownerAgent?.name || null
-          });
+          // 🔓 Só trava se o DONO estiver ONLINE. Se o dono saiu/está offline, a conversa
+          // é liberada para outro atendente assumir (evita conversas "presas" com donos ausentes).
+          if (ownerAgent && ownerAgent.status === 'online') {
+            return res.status(403).json({
+              error: `Esta conversa está sendo atendida por ${ownerAgent?.name || 'outro atendente'}. Peça a transferência ao responsável ou a um administrador para poder enviar mensagens.`,
+              code: "CONVERSATION_LOCKED",
+              ownerAgentId: conversationOwner,
+              ownerAgentName: ownerAgent?.name || null
+            });
+          }
         }
       }
 
