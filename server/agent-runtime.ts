@@ -269,6 +269,9 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     const doc = onlyDigits(inp.documento);
     if (doc) { try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
     if (!customer && inp.telefone) { try { customer = await storage.getCustomerByPhone(onlyDigits(inp.telefone)); } catch {} }
+    // Carteira do cliente: se JÁ existe cadastro vinculado a um vendedor REAL (não IA/instagram),
+    // a venda deve ir para a carteira desse vendedor. Se não, é lead a capturar.
+    const walletSellerId: string | null = (customer && (customer as any).sellerId && !['chatgpt-ai', 'instagram', 'system'].includes(String((customer as any).sellerId))) ? String((customer as any).sellerId) : null;
     if (!customer && doc) {
       const isPJ = doc.length === 14;
       const enderecoFull = String(inp.endereco || '').trim() + (inp.bairro ? ', ' + inp.bairro : '') + (inp.cidade ? ', ' + inp.cidade : '') + (inp.cep ? ' - CEP ' + inp.cep : '');
@@ -334,6 +337,23 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       await db.execute(sql`INSERT INTO instagram_pix (conversation_id, sales_card_id, order_number, igsid, customer_name, customer_document, total, status)
         VALUES (${ctx?.conversationId || null}, ${card?.id || null}, ${_orderNum}, ${onlyDigits(ctx?.phone) || null}, ${String(inp.nome || '')}, ${doc}, ${total.toFixed(2)}, 'registered')`);
     } catch (e: any) { console.error('[IG-ORDER] vinculo pix', e?.message || e); }
+
+    // ROTEAMENTO POR CARTEIRA + CAPTURA DE LEAD (Honest).
+    // - Cliente já cadastrado numa carteira → venda vai pro dono da carteira; se ele for
+    //   telemarketing, dispara alerta (WhatsApp) para acompanhar a logística.
+    // - Cliente NÃO cadastrado em carteira → oferece "capturar cliente" a todos os vendedores
+    //   /telemarketing que estiverem online no Integra (primeiro que clicar leva pra sua carteira).
+    try {
+      const { isTelemarketing, notifyTelemarketingOrder, broadcastLeadCapture } = await import('./lead-capture');
+      const _on = 'INT-' + String(card?.id || '').substring(0, 8);
+      const info: any = { salesCardId: card?.id || null, orderNumber: _on, channel: 'instagram', customerId: customer?.id || null, customerName: String(inp.nome || ''), customerDocument: doc };
+      if (walletSellerId) {
+        const owner = await storage.getUser(walletSellerId).catch(() => null);
+        if (owner && isTelemarketing(owner)) await notifyTelemarketingOrder(owner, info);
+      } else {
+        await broadcastLeadCapture(info);
+      }
+    } catch (e: any) { console.error('[IG-ORDER] lead-routing', e?.message || e); }
 
     console.log(`[IG-ORDER] pedido card=${card?.id} total=${total.toFixed(2)} tabela=${table} conv=${ctx?.conversationId}`);
     return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
