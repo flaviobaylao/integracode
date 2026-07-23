@@ -589,3 +589,5 @@ export async function tickDelegationStatuses() {
     console.error("[acessos-delegacoes] tickDelegationStatuses:", e?.message);
   }
 }
+
+// redeploy trigger (fase 4) — no-op
