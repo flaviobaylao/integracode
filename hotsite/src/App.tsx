@@ -4,6 +4,7 @@ import Cart from './components/Cart';
 import CheckoutForm from './components/CheckoutForm';
 import { CustomerTypeSelector } from './components/CustomerTypeSelector';
 import { HonestLogo } from './components/HonestLogo';
+import { GooglePayButton } from './components/GooglePayButton';
 import HeroSection from './components/HeroSection';
 import BadgesSection from './components/BadgesSection';
 import ProductShowcase from './components/ProductShowcase';
@@ -325,6 +326,21 @@ function HotsiteContent() {
             <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800">✅ {cardPendingMsg}</div>
           ) : (
             <>
+              <GooglePayButton
+                order={cardOrder}
+                onSuccess={(r) => {
+                  if (r.orderPending) {
+                    setCardPendingMsg((r.message || 'Pagamento aprovado! Pedido em processamento.') + ' Código: ' + (r.paymentId || ''));
+                  } else {
+                    setOrderNumber(r.orderNumber || '');
+                    setCart([]);
+                    localStorage.removeItem('honest-cart');
+                    setCardNumber(''); setCardHolder(''); setCardExpiry(''); setCardCvv('');
+                    setView('success');
+                  }
+                }}
+                onError={(m) => setCardError(m)}
+              />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Número do cartão</label>
               <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base tracking-wider" data-testid="card-number" />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Nome impresso no cartão</label>
