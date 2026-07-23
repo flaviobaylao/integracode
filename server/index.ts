@@ -3390,14 +3390,30 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         GROUP BY 1 ORDER BY 1
       `);
 
-      // 5) Débitos vencidos (overdue_debts)
-      const debitosResumo: any = await db.execute(sql`
-        SELECT count(*)::int AS clientes, coalesce(sum(total_amount), 0)::float AS valor_total
-        FROM overdue_debts
-      `);
+      // 5) Débitos vencidos — fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado).
+      //    Mesma regra de "vencida" do getOverdueDebtByDocument / aba Contas a Receber.
       const debitosTop: any = await db.execute(sql`
-        SELECT client_name, total_amount::float AS total_amount, max_days_overdue
-        FROM overdue_debts ORDER BY total_amount DESC LIMIT 15
+        SELECT max(customer_name) AS client_name,
+               sum(amount - coalesce(amount_paid, 0))::float AS total_amount,
+               max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date))::int AS max_days_overdue
+        FROM receivables
+        WHERE deleted_at IS NULL
+          AND (amount - coalesce(amount_paid, 0)) > 0
+          AND coalesce(import_origin, '') <> 'omie_historico'
+          AND (status = 'vencida' OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
+        GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
+        ORDER BY total_amount DESC LIMIT 15
+      `);
+      const debitosResumo: any = await db.execute(sql`
+        SELECT count(*)::int AS clientes, coalesce(sum(saldo), 0)::float AS valor_total FROM (
+          SELECT sum(amount - coalesce(amount_paid, 0)) AS saldo
+          FROM receivables
+          WHERE deleted_at IS NULL
+            AND (amount - coalesce(amount_paid, 0)) > 0
+            AND coalesce(import_origin, '') <> 'omie_historico'
+            AND (status = 'vencida' OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
+          GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
+        ) t
       `);
 
       const totalVendidoPeriodo = vendasRows.reduce((s, r) => s + (Number(r.valor_total) || 0), 0);
