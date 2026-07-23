@@ -1079,7 +1079,8 @@ function ChatCenterInner() {
   // 🔐 Trava de propriedade: se a conversa já tem um dono humano diferente do usuário atual
   // (e o usuário não é gestor), o envio fica bloqueado até transferência/finalização.
   const currentAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
-  const conversationLocked = !isAdmin && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId;
+  const isLockManager = user?.role === 'admin' || user?.role === 'coordinator'; // só admin e coordenador ignoram a trava (administrativo NÃO)
+  const conversationLocked = !isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId;
   const lockedOwnerName = conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null;
 
   const setChannelMutation = useMutation({
