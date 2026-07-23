@@ -875,6 +875,11 @@ export function registerReconciliation(app: Express) {
       if (item.reconciliation_status !== "reconciled") return res.status(409).json({ error: "item nao esta conciliado" });
       const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`));
       const reverted: any[] = [];
+      // Vencido por DIA-CALENDÁRIO (fuso Brasil): ao desfazer a baixa, o título só volta a
+      // 'vencida' se o vencimento JÁ PASSOU. Vence HOJE (ou futuro) volta a 'a_vencer'.
+      // (Antes usava due < new Date() — comparação por INSTANTE — e um título que vence hoje
+      // de manhã voltava 'vencida' à tarde, aparecendo como vencido no mesmo dia.)
+      const _pastDueBR = (d: Date | null) => !!d && d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       for (const m of matches) {
         const settled = Number(m.title_amount_settled || m.amount || 0);
         if (m.receivable_id) {
@@ -883,7 +888,7 @@ export function registerReconciliation(app: Express) {
             const newPaid = Math.max(0, Number(rec.amountPaid || 0) - settled);
             const amt = Number(rec.amount || 0);
             const due = rec.dueDate ? new Date(rec.dueDate) : null;
-            const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (due && due < new Date() ? "vencida" : "a_vencer");
+            const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (_pastDueBR(due) ? "vencida" : "a_vencer");
             await storage.updateReceivable(m.receivable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
             await db.execute(sql`DELETE FROM receivable_payments WHERE receivable_id = ${m.receivable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
             reverted.push({ kind: "receivable", id: m.receivable_id, status });
@@ -894,7 +899,7 @@ export function registerReconciliation(app: Express) {
             const newPaid = Math.max(0, Number(pay.amountPaid || 0) - settled);
             const amt = Number(pay.amount || 0);
             const due = pay.dueDate ? new Date(pay.dueDate) : null;
-            const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (due && due < new Date() ? "vencida" : "a_vencer");
+            const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (_pastDueBR(due) ? "vencida" : "a_vencer");
             await storage.updatePayable(m.payable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
             await db.execute(sql`DELETE FROM payable_payments WHERE payable_id = ${m.payable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
             reverted.push({ kind: "payable", id: m.payable_id, status });
