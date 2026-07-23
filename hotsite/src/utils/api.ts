@@ -114,7 +114,26 @@ export const api = {
     return data;
   },
 
-  async getCardConfig(): Promise<{ enabled: boolean; maxInstallments: number }> {
+  // Google Pay (Cielo): manda o token da carteira; so se aprovado, cria o pedido.
+  async payGooglePay(order: any, googlePayToken: string): Promise<{
+    success: boolean;
+    orderId?: string;
+    orderNumber?: string;
+    orderPending?: boolean;
+    paymentId?: string;
+    message?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/orders/card/pay-googlepay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order, googlePayToken }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Pagamento Google Pay nao autorizado');
+    return data;
+  },
+
+  async getCardConfig(): Promise<{ enabled: boolean; maxInstallments: number; googlePay?: any }> {
     try {
       const response = await fetch(`${API_BASE}/orders/card/config`);
       if (!response.ok) throw new Error('x');
