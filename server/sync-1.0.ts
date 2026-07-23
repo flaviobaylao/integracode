@@ -49,11 +49,15 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; nat
 { table: "routes", pk: "id", hasUpdatedAt: true },
 // { table: "customers", ... } DESLIGADO (01/jul): cadastro gerido no 2.0, sem sync do 1.0.
 { table: "billings", pk: "id", hasUpdatedAt: false, naturalKey: "omie_order_id" },
-  { table: "receivables", pk: "id", hasUpdatedAt: true },
-  { table: "receivable_payments", pk: "id", hasUpdatedAt: true },
-  { table: "payables", pk: "id", hasUpdatedAt: true },
-  { table: "payable_payments", pk: "id", hasUpdatedAt: true },
-  { table: "pix_charges", pk: "id", hasUpdatedAt: true },
+  // DESLIGADO (financeiro gerido no 2.0, cutover — igual ao billing_pipeline em 08/jul):
+  // o upsert do 1.0 fazia ON CONFLICT(id) DO UPDATE SET (todas as colunas)=EXCLUDED, SEM
+  // guarda por updated_at, então REVERTIA baixas feitas no 2.0 (amount_paid->0, status->vencida,
+  // cobranca PIX voltando a ATIVA) sempre que a versao ainda-aberta do 1.0 era ressincronizada.
+  // { table: "receivables", pk: "id", hasUpdatedAt: true },
+  // { table: "receivable_payments", pk: "id", hasUpdatedAt: true },
+  // { table: "payables", pk: "id", hasUpdatedAt: true },
+  // { table: "payable_payments", pk: "id", hasUpdatedAt: true },
+  // { table: "pix_charges", pk: "id", hasUpdatedAt: true },
   { table: "account_movements", pk: "id", hasUpdatedAt: true },
   { table: "financial_accounts", pk: "id", hasUpdatedAt: true },
   { table: "chart_of_accounts", pk: "id", hasUpdatedAt: true },
