@@ -66,6 +66,12 @@ export default function ConciliacaoBancaria() {
   // filtro / ordenação / paginação da tabela de lançamentos
   const [filterText, setFilterText] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  // campos de pesquisa dedicados (nome, valor, data) — situação usa filterStatus
+  const [fNome, setFNome] = useState("");
+  const [fValor, setFValor] = useState("");
+  const [fData, setFData] = useState("");
+  // seleção em lote (ignorar vários de uma vez)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<"date" | "name" | "amount" | "status" | "title">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
@@ -222,6 +228,12 @@ export default function ConciliacaoBancaria() {
       );
     }
     if (filterStatus) arr = arr.filter((it) => (it.reconciliation_status || "pending") === filterStatus);
+    // pesquisa dedicada: nome, valor, data
+    const nq = fNome.trim().toLowerCase();
+    if (nq) arr = arr.filter((it) => itemNameStr(it).toLowerCase().includes(nq));
+    const vq = fValor.trim().replace(/\D/g, "");
+    if (vq) arr = arr.filter((it) => String(it.amount).replace(/\D/g, "").includes(vq));
+    if (fData) arr = arr.filter((it) => String(it.transaction_date || "").slice(0, 10) === fData);
     const dir = sortDir === "asc" ? 1 : -1;
     arr.sort((a, b) => {
       let va: any, vb: any;
@@ -235,12 +247,25 @@ export default function ConciliacaoBancaria() {
       return 0;
     });
     return arr;
-  }, [items, matchesByItem, suggestions, filterText, filterStatus, sortKey, sortDir]);
+  }, [items, matchesByItem, suggestions, filterText, filterStatus, fNome, fValor, fData, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(viewItems.length / pageSize));
   const curPage = Math.min(page, totalPages - 1);
   const pageItems = viewItems.slice(curPage * pageSize, curPage * pageSize + pageSize);
-  useEffect(() => { setPage(0); }, [filterText, filterStatus, sortKey, sortDir]);
+  useEffect(() => { setPage(0); }, [filterText, filterStatus, fNome, fValor, fData, sortKey, sortDir]);
+
+  // ---- seleção em lote ----
+  const canIgnore = (it: Item) => !it.is_mirror && (it.reconciliation_status || "pending") !== "reconciled";
+  const eligibleView = useMemo(() => viewItems.filter(canIgnore), [viewItems]);
+  const allEligibleSelected = eligibleView.length > 0 && eligibleView.every((it) => selectedIds.has(it.id));
+  const toggleOne = (id: string) => setSelectedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelectedIds((s) => {
+    const n = new Set(s);
+    if (allEligibleSelected) eligibleView.forEach((it) => n.delete(it.id));
+    else eligibleView.forEach((it) => n.add(it.id));
+    return n;
+  });
+  useEffect(() => { setSelectedIds(new Set()); }, [selected]);
 
   const setSort = (k: typeof sortKey) => {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -261,6 +286,19 @@ export default function ConciliacaoBancaria() {
     setBusy(item.id);
     try { await post(`/api/reconciliation/items/${item.id}/undo`, { by: me }); await refresh(); }
     catch (e: any) { alert("Erro ao desfazer: " + e.message); }
+    finally { setBusy(""); }
+  };
+  const doIgnoreBatch = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    if (!window.confirm(`Ignorar ${ids.length} lançamento(s) selecionado(s)? Não dá baixa em nada.`)) return;
+    setBusy("batch");
+    try {
+      const r = await post(`/api/reconciliation/items/ignore-batch`, { ids, by: me });
+      setSelectedIds(new Set());
+      await refresh();
+      if (r?.skippedReconciled) alert(`${r.ignored} ignorado(s). ${r.skippedReconciled} já conciliado(s) foram pulados (desfaça antes de ignorar).`);
+    } catch (e: any) { alert("Erro ao ignorar em lote: " + e.message); }
     finally { setBusy(""); }
   };
 
@@ -486,13 +524,24 @@ export default function ConciliacaoBancaria() {
             <div className="flex-1" />
             {selected && (
               <>
-                <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Filtrar (nome, valor, título, doc)…" className="border rounded px-2 py-1 text-xs w-56" />
+                {selectedIds.size > 0 && (
+                  <button onClick={doIgnoreBatch} disabled={busy === "batch"} className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium disabled:opacity-50">
+                    {busy === "batch" ? "Ignorando…" : `Ignorar selecionados (${selectedIds.size})`}
+                  </button>
+                )}
+                <input value={fNome} onChange={(e) => setFNome(e.target.value)} placeholder="Nome…" className="border rounded px-2 py-1 text-xs w-40" />
+                <input value={fValor} onChange={(e) => setFValor(e.target.value)} placeholder="Valor…" inputMode="decimal" className="border rounded px-2 py-1 text-xs w-24" />
+                <input type="date" value={fData} onChange={(e) => setFData(e.target.value)} className="border rounded px-2 py-1 text-xs" title="Filtrar por data" />
                 <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border rounded px-2 py-1 text-xs">
                   <option value="">Todas as situações</option>
                   <option value="pending">Pendentes</option>
                   <option value="reconciled">Conciliados</option>
                   <option value="ignored">Ignorados</option>
                 </select>
+                <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Busca geral (título, doc)…" className="border rounded px-2 py-1 text-xs w-40" />
+                {(fNome || fValor || fData || filterStatus || filterText) && (
+                  <button onClick={() => { setFNome(""); setFValor(""); setFData(""); setFilterStatus(""); setFilterText(""); }} className="text-xs text-gray-500 underline">limpar</button>
+                )}
               </>
             )}
           </div>
@@ -504,6 +553,7 @@ export default function ConciliacaoBancaria() {
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white border-b z-10">
                     <tr className="text-left text-xs text-gray-500">
+                      <th className="px-2 py-2 w-8"><input type="checkbox" checked={allEligibleSelected} onChange={toggleAll} title="Selecionar todos os elegíveis (não conciliados)" /></th>
                       <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("date")}>Data<Arrow k="date" /></th>
                       <th className="px-3 py-2 text-right cursor-pointer select-none" onClick={() => setSort("amount")}>Valor<Arrow k="amount" /></th>
                       <th className="px-3 py-2 cursor-pointer select-none" onClick={() => setSort("name")}>Nome / Descrição<Arrow k="name" /></th>
@@ -519,7 +569,8 @@ export default function ConciliacaoBancaria() {
                       const isBusy = busy === it.id;
                       const st = it.reconciliation_status || "pending";
                       return (
-                        <tr key={it.id} className="align-top">
+                        <tr key={it.id} className={`align-top ${selectedIds.has(it.id) ? "bg-amber-50" : ""}`}>
+                          <td className="px-2 py-2">{canIgnore(it) && <input type="checkbox" checked={selectedIds.has(it.id)} onChange={() => toggleOne(it.id)} />}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
                           <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>{it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}</td>
                           <td className="px-3 py-2 max-w-[260px]">
@@ -585,7 +636,7 @@ export default function ConciliacaoBancaria() {
                         </tr>
                       );
                     })}
-                    {pageItems.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400 text-sm">Nenhum lançamento.</td></tr>}
+                    {pageItems.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-400 text-sm">Nenhum lançamento.</td></tr>}
                   </tbody>
                 </table>
               </div>
