@@ -139,7 +139,7 @@ export const api = {
       if (!response.ok) throw new Error('x');
       return response.json();
     } catch {
-      return { enabled: true, maxInstallments: 3 };
+      return { enabled: true, maxInstallments: 1 };
     }
   },
 
