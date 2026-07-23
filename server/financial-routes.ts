@@ -136,6 +136,29 @@ function buildRecurrenceDates(base: Date, rec: any): Date[] {
 
 export function registerFinancialRoutes(app: Express) {
 
+  // ============================================================================
+  // REPARO DE BAIXAS revertidas pelo sync 1.0 (idempotente)
+  // Recomputa amount_paid/status de recebiveis e pagaveis a partir dos pagamentos
+  // que SOBREVIVERAM (receivable_payments/payable_payments). Corrige os titulos que
+  // voltaram a "aberto/vencida" com amount_paid=0 embora ja tivessem baixa.
+  // Body { "dryRun": true } (padrao) so conta; { "dryRun": false } aplica.
+  // ============================================================================
+  app.post('/api/admin/financial/repair-baixas', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
+      const payPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM payables r JOIN (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p ON p.payable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
+      const wouldFix = { receivables: rcvPrev.rows?.[0]?.n ?? 0, payables: payPrev.rows?.[0]?.n ?? 0 };
+      if (dryRun) return res.json({ dryRun: true, wouldFix });
+
+      const rcv: any = await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
+      const pay: any = await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
+      res.json({ dryRun: false, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
   // Garante o valor 'cartao' no enum de forma de pagamento (opcao unica "Cartao"
   // usada na baixa e na criacao de titulos, tanto a receber quanto a pagar). Sem
   // isso o front envia paymentMethod='cartao' e o Postgres rejeita (o enum so tinha
