@@ -783,13 +783,11 @@ export function registerBillingPipelineRoutes(app: Express) {
         const c: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM billing_pipeline bp WHERE ${cond}`);
         return res.json({ dryRun: true, wouldMove: c?.rows?.[0]?.n ?? 0 });
       }
-      const ts = nowBrazil().toISOString();
+      // So muda o stage (sem append em stage_history) - update sem parametro sem tipo,
+      // a prova de falhas. O restore usa o historico existente e volta a etapa real anterior.
       const r2: any = await db.execute(sql`
         UPDATE billing_pipeline bp
-        SET stage = 'lixeira', updated_at = now(),
-            stage_history = COALESCE(bp.stage_history, '[]'::jsonb) || jsonb_build_object(
-              'stage', 'lixeira', 'changedAt', ${ts}::text, 'changedBy', 'backfill cancelado->lixeira'
-            )::jsonb
+        SET stage = 'lixeira', updated_at = now()
         WHERE ${cond}`);
       res.json({ ok: true, movedToLixeira: r2?.rowCount ?? null });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
