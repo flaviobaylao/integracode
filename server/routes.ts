@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
+import { requirePermission } from "./delegations-routes";
 import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances, cleanupOmieCredentials } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
 import { logCustomerChanges, getCustomerChangeHistory } from "./customerAudit";
@@ -1660,7 +1661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  app.patch('/api/customers/:id', authenticateUser, async (req: any, res) => {
+  app.patch('/api/customers/:id', authenticateUser, requirePermission("Clientes / Carteira", "editar"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const user = req.currentUser;
@@ -1913,7 +1914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/customers/:id/inactivate', authenticateUser, async (req: any, res) => {
+  app.post('/api/customers/:id/inactivate', authenticateUser, requirePermission("Clientes / Carteira", "excluir"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const { cardId } = req.body;
@@ -1967,7 +1968,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/customers', authenticateUser, async (req: any, res) => {
+  app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
       // 🔍 LOG 1: Payload recebido do frontend
       console.log('📝 [CREATE CUSTOMER] Payload recebido:', {
@@ -2306,7 +2307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/customers/:id', authenticateUser, async (req: any, res) => {
+  app.put('/api/customers/:id', authenticateUser, requirePermission("Clientes / Carteira", "editar"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const user = req.currentUser;
@@ -2534,7 +2535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/customers/:id', authenticateUser, async (req: any, res) => {
+  app.delete('/api/customers/:id', authenticateUser, requirePermission("Clientes / Carteira", "excluir"), async (req: any, res) => {
     try {
       const { id } = req.params;
       await storage.deleteCustomer(id);
@@ -2546,7 +2547,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update customer phone and contact
-  app.patch('/api/customers/:id/phone', authenticateUser, async (req: any, res) => {
+  app.patch('/api/customers/:id/phone', authenticateUser, requirePermission("Clientes / Carteira", "editar"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const { phone, contact } = req.body;
@@ -3657,7 +3658,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/sales-goals', authenticateUser, async (req: any, res) => {
+  app.post('/api/sales-goals', authenticateUser, requirePermission("Metas de Vendas", "criar"), async (req: any, res) => {
     try {
       const user = req.currentUser;
       
@@ -3694,7 +3695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/sales-goals/:id', authenticateUser, async (req: any, res) => {
+  app.put('/api/sales-goals/:id', authenticateUser, requirePermission("Metas de Vendas", "editar"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const user = req.currentUser;
@@ -3721,7 +3722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/sales-goals/:id', authenticateUser, async (req: any, res) => {
+  app.delete('/api/sales-goals/:id', authenticateUser, requirePermission("Metas de Vendas", "excluir"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const user = req.currentUser;

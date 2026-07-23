@@ -112,6 +112,39 @@ export function ensureModuleTables(): Promise<void> {
   return _tablesReady;
 }
 
+// =============================================================================
+//  Middleware de AUTORIZAÇÃO por permissão de card/ação (backend).
+//  Espelha EXATAMENTE a lógica do front (usePermissions):
+//    - admin sempre passa (evita auto-lockout / super-admin);
+//    - usuário SEM configuração salva passa (mantém comportamento por função);
+//    - nega (403) só quando há override EXPLÍCITO com a capacidade = false.
+//  Deve vir DEPOIS de authenticateUser (usa req.currentUser).
+//  Em erro de checagem, fail-open (não derruba a operação) — o modelo de ameaça
+//  aqui é uso interno indevido, não atacante externo; disponibilidade > bloqueio.
+// =============================================================================
+type Cap = "ver" | "criar" | "editar" | "excluir" | "exportar";
+export function requirePermission(card: string, cap: Cap) {
+  return async (req: Request, res: Response, next: (err?: any) => void) => {
+    try {
+      const u = (req as any).currentUser;
+      if (!u) return res.status(401).json({ error: "não autenticado" });
+      if ((u.role || "") === "admin") return next();
+      await ensureModuleTables();
+      const [row] = await db.select().from(userPermissions).where(eq(userPermissions.userId, u.id));
+      const perms: any = row?.permissions;
+      if (!perms || Object.keys(perms).length === 0) return next(); // sem config → não restringe
+      const f = perms[card];
+      if (f && f[cap] === false) {
+        return res.status(403).json({ error: "Sem permissão para esta ação.", card, cap });
+      }
+      return next();
+    } catch (e: any) {
+      console.error("[acessos] requirePermission falhou (fail-open):", e?.message);
+      return next();
+    }
+  };
+}
+
 // ---- Algoritmo de rateio (espelha o preview do front) -----------------------
 type Cli = { id: string; segment: string; avg: number };
 function ratear(clientes: Cli[], targets: string[], criteria: string) {
