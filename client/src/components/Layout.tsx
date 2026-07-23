@@ -440,7 +440,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       const visibleItems = roleFilterItems(group.items);
       return visibleItems.length > 0;
     });
-  }, [menuGroups]);
+    // inclui perms.map: quando as permissões carregam, recalcula para remover
+    // seções que ficaram sem nenhum item visível.
+  }, [menuGroups, perms.map]);
 
   const handleMenuItemClick = (itemId: string) => {
     bumpMenuCount(itemId);
