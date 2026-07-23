@@ -194,6 +194,10 @@ export function usePermissions(): UsePermissionsResult {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
+  // Só restringe usuários que TÊM configuração salva em "Acessos por Usuário".
+  // Quem nunca foi configurado (permissions vazio) mantém o comportamento atual
+  // por função — garante zero regressão ao ligar a aplicação das permissões.
+  const hasConfig = !!data && !!data.permissions && Object.keys(data.permissions).length > 0;
   const map = useMemo(
     () => (data ? effectivePermissions(data.role || "", data.permissions || {}) : undefined),
     [data],
@@ -202,6 +206,10 @@ export function usePermissions(): UsePermissionsResult {
     ready: !!data,
     role: data?.role || "",
     map,
-    can: (label: string, cap: CapKey = "ver") => canDo(map, label, cap),
+    can: (label: string, cap: CapKey = "ver") => {
+      if (!map) return true;      // carregando → fail-open
+      if (!hasConfig) return true; // sem configuração salva → não restringe
+      return canDo(map, label, cap);
+    },
   };
 }
