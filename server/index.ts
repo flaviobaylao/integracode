@@ -2060,7 +2060,13 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
       const result: any = { cancelled: 0, backfilled: { receivables: 0, payables: 0 }, errors: [] };
       for (const id of cancelIds) {
-        try { await db.execute(sql`UPDATE receivables SET status = 'cancelada', amount_paid = '0.00', updated_at = now() WHERE id = ${id}`); result.cancelled++; }
+        try {
+          // TRAVA DE BAIXA (Honest): título conciliado não pode ser cancelado/estornado
+          // sem desfazer antes a conciliação bancária.
+          const cj: any = await db.execute(sql`SELECT EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = ${id}) AS conciliado`);
+          if ((cj.rows || cj)?.[0]?.conciliado === true) { result.errors.push("cancel " + id + ": titulo conciliado — desfaca a conciliacao bancaria antes"); continue; }
+          await db.execute(sql`UPDATE receivables SET status = 'cancelada', amount_paid = '0.00', updated_at = now() WHERE id = ${id}`); result.cancelled++;
+        }
         catch (e: any) { result.errors.push("cancel " + id + ": " + e?.message); }
       }
       const pgMod: any = await import("pg");
