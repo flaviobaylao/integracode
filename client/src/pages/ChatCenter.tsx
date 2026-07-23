@@ -1076,6 +1076,11 @@ function ChatCenterInner() {
   });
 
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
+  // 🔐 Trava de propriedade: se a conversa já tem um dono humano diferente do usuário atual
+  // (e o usuário não é gestor), o envio fica bloqueado até transferência/finalização.
+  const currentAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
+  const conversationLocked = !isAdmin && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId;
+  const lockedOwnerName = conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null;
 
   const setChannelMutation = useMutation({
     mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
@@ -1280,6 +1285,7 @@ function ChatCenterInner() {
 
   const handleSendMessage = async () => {
     if (!messageText.trim()) return;
+    if (conversationLocked) { toast({ title: "Envio bloqueado", description: `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
     await sendMessageMutation.mutateAsync(messageText);
   };
 
@@ -1316,6 +1322,7 @@ function ChatCenterInner() {
 
   const handleSendMedia = async () => {
     if (!selectedFile) return;
+    if (conversationLocked) { toast({ title: "Envio bloqueado", description: `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
     
     try {
       const uploadResult = await uploadFileMutation.mutateAsync(selectedFile);
@@ -2264,9 +2271,15 @@ function ChatCenterInner() {
                         data-testid="input-media-caption"
                       />
                     )}
+                    {conversationLocked && (
+                      <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-1" data-testid="conversation-locked-banner">
+                        <Ban className="w-3.5 h-3.5 shrink-0" />
+                        <span>Conversa em atendimento por <b>{lockedOwnerName}</b>. Você não pode enviar mensagens até que o responsável transfira a conversa ou um administrador finalize/transfira.</span>
+                      </div>
+                    )}
                     <div className="flex gap-2 items-end">
                       <Textarea
-                        placeholder="Digite sua mensagem (Enter envia · Shift+Enter nova linha)..."
+                        placeholder={conversationLocked ? "Envio bloqueado — conversa atendida por outro atendente" : "Digite sua mensagem (Enter envia · Shift+Enter nova linha)..."}
                         value={messageText}
                         onChange={(e) => setMessageText(e.target.value)}
                         onKeyDown={(e) => {
@@ -2279,7 +2292,7 @@ function ChatCenterInner() {
                                                 data-testid="textarea-message"
                         className="resize-y flex-1 min-h-[44px] max-h-[50vh]"
                         rows={2}
-                        disabled={!!selectedFile}
+                        disabled={!!selectedFile || conversationLocked}
                       />
                       <div className="flex gap-1">
                         {!selectedFile ? (
@@ -2305,7 +2318,7 @@ function ChatCenterInner() {
                               onClick={() => sendLocationMutation.mutate()}
                               variant="outline"
                               size="icon"
-                              disabled={sendLocationMutation.isPending}
+                              disabled={sendLocationMutation.isPending || conversationLocked}
                               data-testid="button-location"
                               title="Enviar localização"
                             >
@@ -2328,7 +2341,7 @@ function ChatCenterInner() {
                             </Button>
                             <Button
                               onClick={handleSendMessage}
-                              disabled={!messageText.trim() || sendMessageMutation.isPending}
+                              disabled={!messageText.trim() || sendMessageMutation.isPending || conversationLocked}
                               data-testid="button-send"
                               className="bg-green-600 hover:bg-green-700"
                             >
@@ -2338,7 +2351,7 @@ function ChatCenterInner() {
                         ) : (
                           <Button
                             onClick={handleSendMedia}
-                            disabled={sendMediaMutation.isPending || uploadFileMutation.isPending}
+                            disabled={sendMediaMutation.isPending || uploadFileMutation.isPending || conversationLocked}
                             data-testid="button-send-media"
                             className="bg-blue-600"
                           >
