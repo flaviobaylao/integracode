@@ -446,7 +446,7 @@ export default function Dashboard() {
         <CardHeader>
           <div>
             <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
-            <div className="text-xs text-gray-500">Faturamento por vendedor - mes vigente</div>
+            <div className="text-xs text-gray-500">Total de pedidos de venda lançados por cada vendedor no mês vigente — exclui bloqueados, cancelados, devoluções, trocas, transferências, remessas, bonificações e amostras.</div>
           </div>
         </CardHeader>
         <CardContent>
