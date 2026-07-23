@@ -1143,11 +1143,16 @@ export function registerReconciliation(app: Express) {
         espelhados++;
       }
 
-      // Importacao READ-ONLY: NENHUMA rotina automatica roda aqui. Tarifas do BB,
-      // PIX-recebidos ja baixados e COBRANCA/SALDO sao conciliados/ignorados por ACAO
-      // EXPLICITA do operador (endpoints /conciliar-tarifas, /conciliar-pix-webhook,
-      // /ignore-cobranca). Assim a importacao nunca emite lancamento nem esconde nada.
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // Importacao READ-ONLY para baixas: tarifas do BB e COBRANCA/SALDO continuam sendo
+      // conciliados/ignorados por ACAO EXPLICITA do operador (/conciliar-tarifas,
+      // /ignore-cobranca). A importacao nao gera lancamento nem da baixa nova.
+      // EXCECAO (Honest 23/jul): PIX-recebidos que o WEBHOOK ja baixou (cobranca CONCLUIDA
+      // atrelada a um titulo) sao VINCULADOS automaticamente aqui — isto apenas reflete no
+      // extrato a conciliacao que o webhook ja fez; NAO cria baixa nem esconde nada.
+      let pixVinculados = 0;
+      try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
+      catch (e: any) { console.warn("[import-ofx] auto-link PIX webhook falhou:", e?.message || e); }
+      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, pixVinculados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -1262,7 +1267,7 @@ export function registerReconciliation(app: Express) {
     // 1) Itens pendentes de credito "PIX-RECEBIDO" (com documento do pagador).
     const items = rowsOf(await db.execute(sql`
       SELECT i.id, i.transaction_date::date::text AS d, round(COALESCE(NULLIF(i.amount::text, '')::numeric, 0), 2)::text AS amt,
-             i.description, s.financial_account_id AS acc, s.omie_instance_id AS inst
+             i.description, i.document, i.origin_document, s.financial_account_id AS acc, s.omie_instance_id AS inst
       FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
       WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
         AND i.mirror_of IS NULL AND i.type = 'C'
@@ -1282,29 +1287,48 @@ export function registerReconciliation(app: Express) {
       WHERE pc.status = 'CONCLUIDA' AND pc.receivable_id IS NOT NULL AND pc.paid_at IS NOT NULL
         AND r.deleted_at IS NULL`));
     // Indexa por valor|documento (documento do pagador OU do cliente do titulo).
+    // Honest 23/jul: NAO exige mais titulo quitado. O sinal autoritativo e a cobranca
+    // PIX CONCLUIDA (webhook) ja atrelada a um titulo (pc.receivable_id); valor+documento
+    // servem apenas para achar QUAL linha do extrato corresponde a QUAL cobranca. A baixa
+    // ja foi feita pelo webhook — aqui so vinculamos a linha do extrato ao titulo.
     const byKey: Record<string, any[]> = {};
     for (const c of charges) {
-      if (!(Number(c.rpaid) >= Number(c.ramt) - 0.005)) continue; // titulo precisa estar quitado
       const docs = new Set<string>();
       if (c.cdoc) docs.add(String(c.cdoc));
       if (c.rdoc) docs.add(String(c.rdoc));
       for (const dc of docs) (byKey[`${c.amt}|${dc}`] ||= []).push(c);
     }
+    // Documentos do pagador na linha do extrato: descricao (regex) + campos document/origin_document.
+    const docsDoItem = (it: any): string[] => {
+      const set = new Set<string>();
+      for (const raw of [extractPayerDoc(it.description), it.document, it.origin_document]) {
+        const d = onlyDigits(raw);
+        if (d.length === 11 || d.length === 14) set.add(d);
+      }
+      return [...set];
+    };
     const usados = new Set<string>();
     const aplicar: Array<{ item: any; charge: any }> = [];
     for (const it of items) {
-      const doc = extractPayerDoc(it.description);
-      if (!doc) { out.semMatch++; continue; }
-      let cands = (byKey[`${it.amt}|${doc}`] || []).filter((c: any) => !usados.has(String(c.charge_id)));
+      const docs = docsDoItem(it);
+      if (!docs.length) { out.semMatch++; continue; }
+      const seen = new Set<string>();
+      let cands: any[] = [];
+      for (const doc of docs) for (const c of (byKey[`${it.amt}|${doc}`] || [])) {
+        const cid = String(c.charge_id);
+        if (usados.has(cid) || seen.has(cid)) continue;
+        seen.add(cid); cands.push(c);
+      }
       if (!cands.length) { out.semMatch++; continue; }
       if (cands.length > 1) {
         const mesmaInst = cands.filter((c: any) => String(c.inst || "") === String(it.inst || ""));
         let pool = mesmaInst.length ? mesmaInst : cands;
         if (pool.length > 1) {
           const mesmaData = pool.filter((c: any) => c.d === it.d);
-          if (mesmaData.length === 1) pool = mesmaData;
-          else { out.ambiguos++; continue; }
+          if (mesmaData.length) pool = mesmaData;
         }
+        // Varias cobrancas mas TODAS apontando pro mesmo titulo -> nao e ambiguo.
+        if (pool.length > 1 && new Set(pool.map((c: any) => String(c.receivable_id))).size > 1) { out.ambiguos++; continue; }
         cands = pool;
       }
       const c = cands[0];
