@@ -69,6 +69,35 @@ const ORDER_TOOL: any = {
   },
 };
 
+// Ferramenta EXTRA (só Instagram): gera a cobrança PIX do pedido já registrado e envia o QR + copia-e-cola ao cliente.
+const PIX_TOOL: any = {
+  name: 'gerar_pix',
+  description: 'Gera uma cobrança PIX para o pedido JÁ REGISTRADO nesta conversa e ENVIA automaticamente o QR Code (imagem) + o código copia-e-cola ao cliente para ele pagar. Use SOMENTE depois de já ter chamado registrar_pedido nesta conversa E o cliente confirmar que quer pagar por PIX. Não precisa de parâmetros: o valor vem do pedido registrado. Depois de chamar, NÃO reescreva nem reenvie o código PIX (o sistema já enviou); apenas avise o cliente que é só pagar e que a confirmação é automática.',
+  input_schema: { type: 'object', properties: {}, required: [] },
+};
+
+// Garante a tabela de vínculo pedido<->cobrança PIX do Instagram (idempotente).
+async function ensureIgPixTable(): Promise<void> {
+  try {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS instagram_pix (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      conversation_id varchar,
+      sales_card_id varchar,
+      order_number varchar,
+      igsid varchar,
+      customer_name varchar,
+      customer_document varchar,
+      total numeric(12,2),
+      charge_id varchar,
+      txid varchar,
+      status varchar DEFAULT 'registered',
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      paid_at timestamptz
+    )`);
+  } catch {}
+}
+
 function brl(v: any) { const n = Number(v); return isNaN(n) ? String(v) : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 function onlyDigits(s: any) { return String(s || '').replace(/\D/g, ''); }
 
@@ -160,6 +189,7 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
+    if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
     return 'Ferramenta desconhecida.';
   } catch (e: any) { return 'Erro ao executar ferramenta: ' + (e?.message || String(e)).slice(0, 120); }
 }
@@ -296,11 +326,80 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
 
     try { const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes'); await autoSendToBillingPipeline(card, 'chatgpt-ai'); } catch (e: any) { console.error('[IG-ORDER] autoSend', e?.message || e); }
 
+    // Vincula o pedido para permitir gerar PIX depois (gerar_pix busca por conversation_id).
+    try {
+      await ensureIgPixTable();
+      const _orderNum = 'INT-' + String(card?.id || '').substring(0, 8);
+      await db.execute(sql`INSERT INTO instagram_pix (conversation_id, sales_card_id, order_number, igsid, customer_name, customer_document, total, status)
+        VALUES (${ctx?.conversationId || null}, ${card?.id || null}, ${_orderNum}, ${onlyDigits(ctx?.phone) || null}, ${String(inp.nome || '')}, ${doc}, ${total.toFixed(2)}, 'registered')`);
+    } catch (e: any) { console.error('[IG-ORDER] vinculo pix', e?.message || e); }
+
     console.log(`[IG-ORDER] pedido card=${card?.id} total=${total.toFixed(2)} tabela=${table} conv=${ctx?.conversationId}`);
     return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
   } catch (e: any) {
     console.error('[IG-ORDER]', e?.message || e);
     return 'Não consegui registrar o pedido agora (erro interno). Transfira para um atendente humano.';
+  }
+}
+
+// Gera a cobrança PIX do pedido registrado nesta conversa e envia o QR + copia-e-cola ao cliente.
+async function gerarPix(_input: any, ctx: any): Promise<string> {
+  try {
+    if (!ctx?.conversationId) return 'Não consegui identificar a conversa para gerar o PIX. Transfira para um atendente.';
+    await ensureIgPixTable();
+    // Pedido mais recente desta conversa que ainda não foi pago.
+    const r: any = await db.execute(sql`SELECT id, sales_card_id, order_number, igsid, customer_name, customer_document, total, charge_id, status
+      FROM instagram_pix WHERE conversation_id = ${ctx.conversationId} AND status IN ('registered','awaiting_payment') ORDER BY created_at DESC LIMIT 1`);
+    const row = r.rows?.[0];
+    if (!row) return 'Não há pedido registrado nesta conversa para gerar o PIX. Registre o pedido primeiro (registrar_pedido) e depois gere o PIX.';
+    const total = Number(row.total);
+    if (!(total > 0)) return 'O valor do pedido está indefinido. Transfira para um atendente para gerar a cobrança.';
+
+    const { createImmediateCharge } = await import('./bb-pix-service');
+    // Conta financeira com PIX BB habilitado.
+    const acc: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL AND COALESCE(is_active, true) = true ORDER BY created_at LIMIT 1`);
+    const accountId = acc.rows?.[0]?.id;
+    if (!accountId) return 'A cobrança PIX não está configurada no sistema no momento. Peça para o cliente aguardar e transfira para um atendente.';
+
+    let chargeId = row.charge_id;
+    let pixCopia = '';
+    // Reaproveita cobrança ativa; senão cria nova.
+    if (row.status === 'awaiting_payment' && chargeId) {
+      const ex: any = await db.execute(sql`SELECT pix_copia_e_cola, status, expires_at FROM pix_charges WHERE id = ${chargeId} LIMIT 1`);
+      const exr = ex.rows?.[0];
+      const expired = exr?.expires_at ? (new Date(exr.expires_at).getTime() < Date.now()) : false;
+      if (exr && String(exr.status) === 'ATIVA' && !expired) { pixCopia = String(exr.pix_copia_e_cola || ''); }
+      else { chargeId = null; }
+    }
+    if (!chargeId) {
+      let erpCustomerId: string | null = null;
+      try { const c2: any = await db.execute(sql`SELECT customer_id FROM sales_cards WHERE id = ${row.sales_card_id} LIMIT 1`); erpCustomerId = c2.rows?.[0]?.customer_id || null; } catch {}
+      const charge: any = await createImmediateCharge(accountId, {
+        amount: total,
+        debtorName: String(row.customer_name || '').slice(0, 60) || undefined,
+        debtorDocument: onlyDigits(row.customer_document) || undefined,
+        description: ('Pedido Honest ' + (row.order_number || '')).slice(0, 100),
+        expirationSeconds: 3600,
+        customerId: erpCustomerId || undefined,
+        createdBy: 'instagram-ai',
+      });
+      chargeId = charge.id;
+      pixCopia = String(charge.pixCopiaECola || '');
+      await db.execute(sql`UPDATE instagram_pix SET charge_id = ${chargeId}, txid = ${charge.txid || null}, status = 'awaiting_payment', updated_at = now() WHERE id = ${row.id}`);
+    }
+
+    // Envia o QR (imagem) + o copia-e-cola diretamente na conversa.
+    const qrUrl = `${APP_URL}/api/pix-qr/${chargeId}.png`;
+    try { if (ctx.sendImage) await ctx.sendImage(qrUrl); } catch {}
+    if (ctx.sendText) {
+      await ctx.sendText(ctx.phone, `PIX de ${brl(total)} — pedido ${row.order_number}. Copia e cola:`);
+      if (pixCopia) await ctx.sendText(ctx.phone, pixCopia);
+    }
+    console.log(`[IG-PIX] enviado conv=${ctx.conversationId} card=${row.sales_card_id} charge=${chargeId} total=${total.toFixed(2)}`);
+    return 'OK: QR Code e código PIX copia-e-cola JÁ FORAM ENVIADOS ao cliente nesta conversa. NÃO reenvie o código. Apenas diga ao cliente, de forma curta e simpática, que é só pagar pelo QR ou copia-e-cola e que a confirmação do pagamento é automática — assim que cair, ele será avisado aqui mesmo. NÃO prometa prazo específico de entrega.';
+  } catch (e: any) {
+    console.error('[IG-PIX]', e?.message || e);
+    return 'Não consegui gerar o PIX agora (erro interno). Peça desculpas ao cliente e transfira para um atendente humano.';
   }
 }
 
@@ -337,7 +436,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     while (conv.length && conv[0].role !== 'user') conv.shift();
     if (!conv.length) return { ok: false, error: 'sem mensagem de usuario' };
     const model = normModel(agent.modelo);
-    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL] : TOOL_DEFS) : undefined;
+    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL] : TOOL_DEFS) : undefined;
     const usedTools: string[] = [];
     for (let i = 0; i < 4; i++) {
       const { ok, status, j } = await callAnthropic(model, systemPrompt, conv, tools);
@@ -358,7 +457,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
   } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
 }
 
-export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; channel?: string; username?: string; }): Promise<void> {
+export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; sendImage?: (url: string) => Promise<any>; channel?: string; username?: string; }): Promise<void> {
   try {
     const channel = (opts.channel || 'whatsapp').toLowerCase();
     const isIG = channel === 'instagram';
@@ -384,7 +483,7 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     // contexto do cliente (p/ ferramentas)
     let customerId: string | null = null;
     try { const c: any = await db.execute(sql`SELECT customer_id FROM chat_conversations WHERE id=${opts.conversationId} LIMIT 1`); customerId = c.rows?.[0]?.customer_id || null; } catch {}
-    const ctx = { conversationId: opts.conversationId, customerId, phone, channel, username: handle };
+    const ctx: any = { conversationId: opts.conversationId, customerId, phone, channel, username: handle, sendText: opts.sendText, sendImage: opts.sendImage };
     // histórico recente (10)
     const h: any = await db.execute(sql`SELECT sender_type, content FROM chat_messages WHERE conversation_id = ${opts.conversationId} ORDER BY created_at DESC LIMIT 40`);
     const hist = (h.rows || []).reverse().map((m: any) => ({ role: m.sender_type === 'customer' ? 'user' : 'assistant', content: String(m.content || '') }));
