@@ -4135,6 +4135,41 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
+      // 🤖 Se a conversa estava com a IA (ChatGPT), a IA avisa o cliente da transferência
+      // para o vendedor (nome do atendente) ANTES da mensagem do atendente entrar.
+      if (conversation.assignedAgentId === 'chatgpt') {
+        try {
+          const agentsForName = await storage.getChatAgents();
+          const myAgentName = agentsForName.find(a => a.userId === userId)?.name
+            || (currentUser as any)?.name || (currentUser as any)?.firstName || 'nosso atendente';
+          const transferMsg = `Olá! Vou transferir seu atendimento para o vendedor ${myAgentName}, que já vai continuar com você. 😊`;
+          await storage.createChatMessage({
+            conversationId: conversation.id,
+            senderId: 'system',
+            senderType: 'system',
+            content: `[IA] ${transferMsg}`,
+            messageType: 'text',
+            isRead: true
+          });
+          const iaCust = conversation.customerId ? await storage.getChatCustomer(conversation.customerId) : null;
+          if (iaCust?.phone) {
+            if (process.env.UMBLER_TALK_TOKEN) {
+              await sendUmblerTalkText(iaCust.phone, transferMsg, (conversation as any).channelPhone);
+            } else if (process.env.UMBLER_API_KEY) {
+              await sendUmblerText(iaCust.phone, transferMsg);
+            } else {
+              const iaInst = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
+              const iaPh = normalizePhoneNumber(iaCust.phone);
+              const iaPhFmt = iaPh.includes('@') ? iaPh : `${iaPh}@s.whatsapp.net`;
+              await evolutionAPIService.sendTextMessage(iaInst, iaPhFmt, transferMsg);
+            }
+          }
+          console.log(`🤖 [IA-TRANSFER] Aviso de transferência enviado (atendente ${myAgentName}) na conversa ${conversation.id}`);
+        } catch (e: any) {
+          console.warn(`⚠️ [IA-TRANSFER] Erro ao enviar aviso de transferência:`, e?.message || e);
+        }
+      }
+
       // 💬 Salvar mensagem no banco
       const message = await storage.createChatMessage({
         conversationId: conversation.id,
