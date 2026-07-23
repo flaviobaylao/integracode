@@ -1034,6 +1034,70 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // HOTSITE -> PIPELINE: acha pedidos da loja online (sales_cards com nota Pedido online via,
+  // numero WEB-<timestamp> gravado no notes) e os DIRECIONA ao pipeline de faturamento.
+  // O /api/public/orders cria o card como 'pending' e NAO envia ao pipeline; so os pagos
+  // online (PIX/cartao) entram via reconcile. Este endpoint cobre o resto (regra: todo pedido
+  // registrado tem de chegar ao pipeline). Uso:
+  //   { orderNumber: 'WEB-123...' }            -> acha 1 pedido pelo numero (no notes)
+  //   { orderNumbers: ['WEB-1','WEB-2'] }       -> varios
+  //   { scanPending: true, days: 90 }           -> varre todos os pedidos da loja no periodo
+  //   + { apply: true }                          -> efetiva o envio (sem apply = dryRun/lista)
+  app.post('/api/admin/hotsite/route-orders-to-pipeline', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.body?.apply === true;
+      const nums: string[] = (Array.isArray(req.body?.orderNumbers) ? req.body.orderNumbers : (req.body?.orderNumber ? [req.body.orderNumber] : []))
+        .map((n: any) => String(n).trim()).filter(Boolean);
+      const daysRaw = Number(req.body?.days);
+      const days = Number.isFinite(daysRaw) && daysRaw > 0 && daysRaw <= 365 ? Math.floor(daysRaw) : 90;
+
+      const existing = await storage.getBillingPipelineItems();
+      const inPipeline = new Set(existing.map((i: any) => i.salesCardId).filter(Boolean));
+
+      let rows: any[] = [];
+      if (nums.length) {
+        for (const num of nums) {
+          const r: any = await db.execute(sql`SELECT id, status, source, sale_value, customer_id, notes, created_at FROM sales_cards WHERE notes ILIKE ${'%' + num + '%'} ORDER BY created_at DESC LIMIT 10`);
+          rows.push(...((r.rows || r) as any[]));
+        }
+      } else if (req.body?.scanPending === true) {
+        const r: any = await db.execute(sql.raw(`SELECT id, status, source, sale_value, customer_id, notes, created_at FROM sales_cards WHERE notes ILIKE '%Pedido online via%' AND created_at > now() - interval '${days} days' ORDER BY created_at DESC LIMIT 1000`));
+        rows = (r.rows || r) as any[];
+      } else {
+        return res.status(400).json({ error: 'informe orderNumber, orderNumbers[] ou scanPending:true' });
+      }
+
+      const seen = new Set<string>();
+      rows = rows.filter((x: any) => (x && x.id && !seen.has(x.id)) ? (seen.add(x.id), true) : false);
+
+      const orders: any[] = [];
+      for (const row of rows) {
+        const already = inPipeline.has(row.id);
+        const orderNumber = (String(row.notes || '').match(/WEB-\d+/) || [])[0] || null;
+        let cust: any = null;
+        try { cust = row.customer_id ? await storage.getCustomer(row.customer_id) : null; } catch {}
+        const entry: any = {
+          salesCardId: row.id, orderNumber, status: row.status, source: row.source,
+          saleValue: row.sale_value, createdAt: row.created_at,
+          customer: (cust as any)?.fantasyName || (cust as any)?.name || null,
+          alreadyInPipeline: already,
+        };
+        if (!already && apply) {
+          try {
+            const card: any = await storage.getSalesCard(row.id);
+            const item: any = await autoSendToBillingPipeline(card, 'system (route-hotsite)');
+            entry.routed = !!item;
+            if (!item) entry.note = 'nao criou (bloqueado por debito/tipo, ou sem valor) - ver coluna Bloqueados';
+          } catch (e: any) { entry.error = e?.message || String(e); }
+        } else if (!already) {
+          entry.wouldRoute = true;
+        }
+        orders.push(entry);
+      }
+      res.json({ ok: true, apply, found: orders.length, notInPipeline: orders.filter(o => !o.alreadyInPipeline).length, routed: orders.filter(o => o.routed).length, orders });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // RECUPERACAO: recoloca no funil um pedido que foi LIBERADO mas nao entrou (ex.: o card
   // recorrente ja tinha virado para o proximo ciclo e estava VAZIO no momento da liberacao,
   // entao autoSend pulou por 'sem venda' e o pedido sumiu). Le o SNAPSHOT imutavel do bloqueio
