@@ -3406,7 +3406,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         WHERE deleted_at IS NULL
           AND (amount - coalesce(amount_paid, 0)) > 0
           AND coalesce(import_origin, '') <> 'omie_historico'
-          AND (status = 'vencida' OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
+          AND (status IN ('a_vencer', 'vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ORDER BY total_amount DESC LIMIT 15
       `);
@@ -3417,7 +3417,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           WHERE deleted_at IS NULL
             AND (amount - coalesce(amount_paid, 0)) > 0
             AND coalesce(import_origin, '') <> 'omie_historico'
-            AND (status = 'vencida' OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
+            AND (status IN ('a_vencer', 'vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
           GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ) t
       `);
