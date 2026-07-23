@@ -1051,6 +1051,7 @@ function PayablesTab() {
   const supTimer = useRef<any>(null);
   const [danfeFile, setDanfeFile] = useState<File | null>(null);
   const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
+  const [outrosFiles, setOutrosFiles] = useState<File[]>([]);
   const [attBusy, setAttBusy] = useState(false);
   const [dupInfo, setDupInfo] = useState<any>(null);
   const { data: payableAttachments = [], refetch: refetchAttachments } = useQuery<any[]>({
@@ -1063,6 +1064,7 @@ function PayablesTab() {
     const jobs: { kind: string; file: File }[] = [];
     if (danfeFile) jobs.push({ kind: 'danfe', file: danfeFile });
     boletoFiles.forEach((f) => jobs.push({ kind: 'boleto', file: f }));
+    outrosFiles.forEach((f) => jobs.push({ kind: 'outro', file: f }));
     for (const j of jobs) {
       const b64 = await fileToBase64(j.file);
       await fetch(`/api/financial/payables/${payableId}/attachments`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: j.kind, fileName: j.file.name, mimeType: j.file.type || 'application/octet-stream', base64: b64 }) });
@@ -1369,7 +1371,7 @@ function PayablesTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog open={showCreate} onOpenChange={(o) => { setShowCreate(o); if (!o) { setDanfeFile(null); setBoletoFiles([]); setOutrosFiles([]); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nova Conta a Pagar</DialogTitle>
@@ -1544,7 +1546,7 @@ function PayablesTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showEdit} onOpenChange={setShowEdit}>
+      <Dialog open={showEdit} onOpenChange={(o) => { setShowEdit(o); if (!o) { setDanfeFile(null); setBoletoFiles([]); setOutrosFiles([]); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Conta a Pagar</DialogTitle>
@@ -1687,7 +1689,7 @@ function PayablesTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showDetail} onOpenChange={setShowDetail}>
+      <Dialog open={showDetail} onOpenChange={(o) => { setShowDetail(o); if (!o) { setDanfeFile(null); setBoletoFiles([]); setOutrosFiles([]); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Detalhes - Conta a Pagar</DialogTitle>
@@ -1723,6 +1725,41 @@ function PayablesTab() {
                     ))}
                   </div>
                 )}
+                {/* Anexar novos arquivos a uma conta a pagar JA criada (limite 15MB por arquivo). */}
+                <div className="grid grid-cols-1 gap-2 mt-3 border-t pt-3">
+                  <p className="text-xs font-medium text-muted-foreground">Anexar novos arquivos</p>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">DANFE (PDF ou XML)</Label>
+                    <Input type="file" accept=".pdf,.xml,application/pdf,text/xml" onChange={(e) => setDanfeFile(e.target.files?.[0] || null)} />
+                    {danfeFile && <p className="text-xs text-green-700 mt-1">✓ {danfeFile.name}</p>}
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Boleto(s) (PDF — pode selecionar vários)</Label>
+                    <Input type="file" accept=".pdf,application/pdf" multiple onChange={(e) => setBoletoFiles(Array.from(e.target.files || []))} />
+                    {boletoFiles.length > 0 && <p className="text-xs text-green-700 mt-1">✓ {boletoFiles.length} boleto(s): {boletoFiles.map((f) => f.name).join(', ')}</p>}
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Outros arquivos (qualquer tipo — pode selecionar vários)</Label>
+                    <Input type="file" multiple onChange={(e) => setOutrosFiles(Array.from(e.target.files || []))} />
+                    {outrosFiles.length > 0 && <p className="text-xs text-green-700 mt-1">✓ {outrosFiles.length} arquivo(s): {outrosFiles.map((f) => f.name).join(', ')}</p>}
+                  </div>
+                  {(danfeFile || boletoFiles.length > 0 || outrosFiles.length > 0) && (
+                    <Button type="button" variant="outline" size="sm" disabled={attBusy} onClick={async () => {
+                      if (!selectedItem?.id) return;
+                      setAttBusy(true);
+                      try {
+                        await uploadPayableAttachments(selectedItem.id);
+                        setDanfeFile(null); setBoletoFiles([]); setOutrosFiles([]);
+                        refetchAttachments();
+                        toast({ title: 'Anexo(s) enviado(s)' });
+                      } catch (e: any) {
+                        toast({ title: 'Falha ao anexar', description: e?.message || String(e), variant: 'destructive' });
+                      } finally { setAttBusy(false); }
+                    }}>
+                      {attBusy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Anexar selecionado(s)
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}
