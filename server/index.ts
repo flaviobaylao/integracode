@@ -2969,19 +2969,6 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
 
-  app.all("/api/tmp/gilmar-6931", async (req, res) => {
-    try {
-      const token = (req.query && (req.query as any).token);
-      if (token !== "vday-6931") return res.json({ error: "forbidden" });
-      const q2 = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
-      const D = "2026-07-22";
-      const gm = "(va.seller_id IN (SELECT uid FROM gil) OR va.seller_id IN (SELECT code FROM gil) OR va.seller_id IN (SELECT 'omie-vendor-'||code FROM gil))";
-      const natExcl = "(UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%DEVOL%' OR UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%TROCA%' OR UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%TRANSFER%' OR UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%REMESSA%' OR UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%BONIFICA%' OR UPPER(COALESCE(fi2.nature_of_operation,'')) LIKE '%AMOSTRA%')";
-      const q = "WITH gil AS (SELECT u.id::text AS uid, u.omie_vendor_code AS code FROM users u WHERE LOWER(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,'')))) LIKE 'gilmar%'), ord AS (SELECT bp.customer_id AS cid, MAX(bp.customer_name) AS name, COALESCE(SUM(bp.sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline bp WHERE (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date = '" + D + "' AND LOWER(TRIM(COALESCE(bp.seller_name,''))) LIKE 'gilmar%' AND COALESCE(bp.sale_value,0) > 0 AND LOWER(TRIM(COALESCE(bp.operation_type,'venda'))) = 'venda' AND NOT EXISTS (SELECT 1 FROM blocked_orders bo WHERE bo.sales_card_id = bp.sales_card_id AND bo.status='blocked') AND NOT EXISTS (SELECT 1 FROM fiscal_invoices fi WHERE fi.sales_card_id = bp.sales_card_id AND UPPER(COALESCE(fi.status,'')) LIKE '%CANCEL%') AND NOT EXISTS (SELECT 1 FROM fiscal_invoices fi2 WHERE fi2.sales_card_id = bp.sales_card_id AND " + natExcl + ") GROUP BY bp.customer_id) SELECT o.cid, o.name, o.v, o.n, (SELECT (c.latitude IS NOT NULL AND c.longitude IS NOT NULL) FROM customers c WHERE c.id=o.cid) AS has_coords, EXISTS(SELECT 1 FROM visit_agenda va WHERE va.customer_id=o.cid AND (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date='" + D + "' AND (va.is_virtual IS NOT TRUE) AND " + gm + ") AS va_pres, EXISTS(SELECT 1 FROM visit_agenda va WHERE va.customer_id=o.cid AND (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date='" + D + "' AND (va.is_virtual IS TRUE) AND " + gm + ") AS va_virt, (SELECT COUNT(*) FROM sales_cards sc WHERE sc.customer_id=o.cid AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date='" + D + "') AS sc_today, (SELECT COUNT(*) FROM sales_cards sc WHERE sc.customer_id=o.cid AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date='" + D + "' AND sc.check_in_time IS NOT NULL) AS sc_checkin FROM ord o ORDER BY o.v DESC";
-      const rows = await q2(q);
-      res.json({ rows });
-    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
-  });
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
