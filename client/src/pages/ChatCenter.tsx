@@ -1698,8 +1698,8 @@ function ChatCenterInner() {
                                 />
                               );
                               const unread = filteredConversations.filter((c: any) => c.hasUnread);
-                              const emAndamento = filteredConversations.filter((c: any) => !c.hasUnread && c.status === 'in-progress');
-                              const historico = filteredConversations.filter((c: any) => !c.hasUnread && c.status !== 'in-progress');
+                              const emAndamento = filteredConversations.filter((c: any) => !c.hasUnread && c.status !== 'resolved');
+                              const historico = filteredConversations.filter((c: any) => !c.hasUnread && c.status === 'resolved');
                               return (
                                 <>
                                   {/* Sub-box: Não Respondidas */}
