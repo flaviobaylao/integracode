@@ -469,7 +469,25 @@ export function registerHotsiteCard(app: Express): void {
   // Config pública do checkout (máximo de parcelas)
   app.get('/api/public/orders/card/config', async (_req, res) => {
     const cfg = cieloConfig();
-    res.json({ enabled: !!(cfg.merchantId && cfg.merchantKey), maxInstallments: cfg.maxInstallments });
+    // Google Pay: usa a MESMA conta Cielo por tras (gateway 'cielo'). So habilita quando
+    // a Cielo esta configurada E o Merchant ID do Google Pay (Business Console) foi definido.
+    // Ambiente controlado por GOOGLE_PAY_ENV (TEST|PRODUCTION; default TEST ate liberar).
+    const gpMerchantId = String(process.env.GOOGLE_PAY_MERCHANT_ID || '').trim();
+    const gpEnv = String(process.env.GOOGLE_PAY_ENV || 'TEST').toUpperCase() === 'PRODUCTION' ? 'PRODUCTION' : 'TEST';
+    res.json({
+      enabled: !!(cfg.merchantId && cfg.merchantKey),
+      maxInstallments: cfg.maxInstallments,
+      googlePay: {
+        enabled: !!(cfg.merchantId && cfg.merchantKey && gpMerchantId),
+        environment: gpEnv,
+        merchantId: gpMerchantId,
+        merchantName: 'Honest Sucos',
+        gateway: 'cielo',
+        gatewayMerchantId: cfg.merchantId,
+        allowedCardNetworks: ['MASTERCARD', 'VISA', 'ELO', 'AMEX'],
+        allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+      },
+    });
   });
 
   console.log('💳 [LOJA-CARTAO] Rotas de cartão do checkout registradas (pagar-antes, Cielo ' + (cieloConfig().sandbox ? 'SANDBOX' : 'PRODUÇÃO') + ')');
