@@ -111,13 +111,17 @@ function isOverdueByDate(dueDate?: string) {
 }
 
 function getReceivableStatusBadge(status: string, dueDate?: string) {
-  if (status === 'a_vencer' && isOverdueByDate(dueDate)) {
-    return <Badge className="bg-orange-100 text-orange-800 border-orange-300">Atrasada</Badge>;
+  // Título EM ABERTO (a_vencer/vencida): "Vencida" só se o vencimento JÁ PASSOU por
+  // DIA-CALENDÁRIO (BRT). Um status 'vencida' gravado com vencimento hoje/futuro
+  // (vencimento repostergado por renegociação/boleto unificado, ou baixa desfeita) NÃO é
+  // vencido — a régua é a DATA, nunca o flag. Vence HOJE NÃO é vencida.
+  if (status === 'a_vencer' || status === 'vencida') {
+    return isOverdueByDate(dueDate)
+      ? <Badge className="bg-red-100 text-red-800 border-red-300">Vencida</Badge>
+      : <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">A Vencer</Badge>;
   }
   const map: Record<string, { label: string; className: string }> = {
-    a_vencer: { label: 'A Vencer', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
     recebida: { label: 'Recebida', className: 'bg-green-100 text-green-800 border-green-300' },
-    vencida: { label: 'Vencida', className: 'bg-red-100 text-red-800 border-red-300' },
     cancelada: { label: 'Cancelada', className: 'bg-gray-100 text-gray-800 border-gray-300' },
   };
   const cfg = map[status] || { label: status, className: '' };
@@ -125,13 +129,15 @@ function getReceivableStatusBadge(status: string, dueDate?: string) {
 }
 
 function getPayableStatusBadge(status: string, dueDate?: string) {
-  if (status === 'a_vencer' && isOverdueByDate(dueDate)) {
-    return <Badge className="bg-orange-100 text-orange-800 border-orange-300">Atrasada</Badge>;
+  // Mesma régua da conta a receber: aberto (a_vencer/vencida) => "Vencida" só se o
+  // vencimento já passou (dia-calendário BRT). Vence hoje/futuro => "A Vencer".
+  if (status === 'a_vencer' || status === 'vencida') {
+    return isOverdueByDate(dueDate)
+      ? <Badge className="bg-red-100 text-red-800 border-red-300">Vencida</Badge>
+      : <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">A Vencer</Badge>;
   }
   const map: Record<string, { label: string; className: string }> = {
-    a_vencer: { label: 'A Vencer', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
     paga: { label: 'Paga', className: 'bg-green-100 text-green-800 border-green-300' },
-    vencida: { label: 'Vencida', className: 'bg-red-100 text-red-800 border-red-300' },
     cancelada: { label: 'Cancelada', className: 'bg-gray-100 text-gray-800 border-gray-300' },
   };
   const cfg = map[status] || { label: status, className: '' };
@@ -1155,7 +1161,10 @@ function PayablesTab() {
       if (!(p.supplierName || '').toLowerCase().includes(q) && !(p.supplierDocument || '').includes(q)) return false;
     }
     if (statusMulti.length > 0) {
-      const eff = (p.status === 'a_vencer' && p.dueDate && new Date(p.dueDate) < new Date()) ? 'vencida' : p.status;
+      // Régua por DIA-CALENDÁRIO (BRT): título em aberto (a_vencer/vencida) só conta como
+      // vencido se o vencimento já passou. Vence hoje/futuro => a_vencer (mesmo se o flag
+      // gravado for 'vencida', ex.: vencimento repostergado).
+      const eff = (p.status === 'a_vencer' || p.status === 'vencida') ? (isOverdueByDate(p.dueDate) ? 'vencida' : 'a_vencer') : p.status;
       const label = eff === 'a_vencer' ? 'A Vencer' : eff === 'paga' ? 'Paga' : eff === 'vencida' ? 'Atrasada' : eff === 'cancelada' ? 'Cancelada' : String(eff);
       if (!statusMulti.includes(label)) return false;
     }
