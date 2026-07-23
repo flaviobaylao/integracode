@@ -16,6 +16,7 @@ import {
   dailyRoutes,
   leads,
 } from '@shared/schema';
+import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle } from './repescagem-cycles';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -226,16 +227,14 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     }
   } catch (e) { console.error('[computeRedCandidates] venda set:', (e as any)?.message); }
 
-  // ULTIMA VENDA real por cliente (faturamentos com valor>0 + pipeline 'venda'), na janela.
-  // Regra: cliente que comprou DENTRO da sua periodicidade esta na cadencia e NAO cai na repescagem.
-  const lastPurchaseByCustomer = new Map<string, string>();
-  const considerPurchase = (cid: string | undefined | null, ds: string | undefined | null) => {
+  // Datas de VENDAS reais por cliente (faturamentos value>0 + pipeline 'venda'), usadas nos CICLOS.
+  const saleDatesByCustomer = new Map<string, Set<string>>();
+  const addSale = (cid: string | undefined | null, ds: string | undefined | null) => {
     if (!cid || !ds) return;
-    const prev = lastPurchaseByCustomer.get(cid);
-    if (!prev || ds > prev) lastPurchaseByCustomer.set(cid, ds);
+    let set = saleDatesByCustomer.get(cid); if (!set) { set = new Set(); saleDatesByCustomer.set(cid, set); } set.add(ds);
   };
-  for (const b of billingOrders) considerPurchase(omieCodeToCustomerId.get(b.omieCustomerCode || ''), b.dateStr);
-  for (const [cid, set] of vendaOrderDatesByCustomer) for (const ds of set) considerPurchase(cid, ds);
+  for (const b of billingOrders) addSale(omieCodeToCustomerId.get(b.omieCustomerCode || ''), b.dateStr);
+  for (const [cid, set] of vendaOrderDatesByCustomer) for (const ds of set) addSale(cid, ds);
 
   const todayStr = brTodayStr();
   const candidates: Array<{
@@ -282,25 +281,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
     if (scheduled.length === 0) continue;
     const lastDate = scheduled[scheduled.length - 1];
-    const vKey = `${c.id}_${lastDate}`;
-    const vrecs = visitMap.get(vKey) || [];
-    const hasVisit = vrecs.some(v => v.visitStatus === 'completed' || v.checkInTime) || checkpointSet.has(vKey) || virtualLogSet.has(vKey);
-    const hasOrder = orderSet.has(vKey);
-    // Vermelho = agendada, no passado, sem visita, sem pedido
-    if (hasVisit || hasOrder) continue;
-    // NAO cai na repescagem se comprou (venda real) DENTRO da sua periodicidade (contada de hoje).
-    const periodDays = PERIODICITY_DAYS[c.periodicity || 'semanal'] || 7;
-    const lastPurchase = lastPurchaseByCustomer.get(c.id);
-    if (lastPurchase) {
-      const daysSincePurchase = Math.floor((new Date(todayStr).getTime() - new Date(lastPurchase).getTime()) / 86400000);
-      if (daysSincePurchase <= periodDays) continue;
-    }
-    // NOVO: se o cliente recebeu QUALQUER pedido, atendimento virtual,
-    // check-in de rota ou visita concluída APÓS lastDate (inclusive),
-    // ele já foi atendido na repescagem -> sai da lista.
-    // GATILHO "PULAR CICLO": cliente estava vermelho (visita de rota não realizada) e recebeu
-    // um PEDIDO (venda) numa data DIFERENTE do dia de rota (fora da rota / repescagem). Nesse caso
-    // o pedido "cobre" a próxima visita → pula 1 ciclo. Âncora = data da visita de rota (lastDate).
+
+    // GATILHO "PULAR CICLO" (inalterado): venda fora do dia de rota apos a ultima visita -> pula 1 ciclo.
     if (skipOut) {
       const vendaDates = vendaOrderDatesByCustomer.get(c.id);
       if (vendaDates) {
@@ -310,21 +292,38 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       }
     }
 
-    const allDatesAfter: string[] = [];
-    for (const map of [orderDatesByCustomer, checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer]) {
-      const set = map.get(c.id);
-      if (!set) continue;
-      for (const d of set) if (d >= lastDate) allDatesAfter.push(d);
+    // ===== NOVA REGRA: CICLOS de efetividade em vendas =====
+    //  - Semanal/Quinzenal: 2 ciclos vermelhos CONSECUTIVOS (sem venda na semana/quinzena).
+    //  - Mensal: 1 ciclo vermelho (sem venda no mes) + 2 dias de tolerancia (visita/atendimento salva).
+    const dows = parseDowsCycle(c.weekdays);
+    const saleDates = saleDatesByCustomer.get(c.id) || new Set<string>();
+    const n = cyclesToShow(c.periodicity || 'semanal');
+    const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n);
+    const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
+    if (!ev.falls || !ev.lastRedAnchor) continue;
+
+    const pLow = String(c.periodicity || 'semanal').toLowerCase();
+    const isMensal = pLow.indexOf('mens') >= 0 || pLow.indexOf('bime') >= 0;
+    if (isMensal) {
+      // Tolerancia mensal: check-in / atendimento virtual / visita concluida em [anchor, anchor+2] salva.
+      const graceStart = ev.lastRedAnchor;
+      const graceEnd = (() => { const d = new Date(graceStart + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 2); return d.toISOString().slice(0, 10); })();
+      const attended = [checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer].some(map => {
+        const set = map.get(c.id); if (!set) return false;
+        for (const d of set) if (d >= graceStart && d <= graceEnd) return true; return false;
+      });
+      if (attended) continue;
     }
-    if (allDatesAfter.length > 0) continue;
-    const days = Math.floor((new Date(todayStr).getTime() - new Date(lastDate).getTime()) / 86400000);
+
+    const lastRedDate = ev.lastRedAnchor;
+    const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
       customerId: c.id,
       customerName: c.name || 'Sem nome',
       sellerId: c.sellerId || null,
       periodicity: c.periodicity || 'semanal',
       weekdays: (c.weekdays as unknown as string[]) || [],
-      lastRedDate: lastDate,
+      lastRedDate,
       daysSince: days,
     });
   }

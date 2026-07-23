@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { computeCycles, cyclesToShow } from "./repescagem-cycles";
 
 // ====== RESUMO DE VISITAS E ATENDIMENTOS — paridade com o 1.0 (calendário por cliente) ======
 export function registerVisitSummary(app: Express) {
@@ -35,6 +36,19 @@ export function registerVisitSummary(app: Express) {
       const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      // VENDAS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
+      // Combina pipeline 'venda' + faturamentos com valor>0 (mesma base do gatilho de repescagem).
+      const saleStart = dAdd(todayStr, -130);
+      const saleDatesByCustomer = new Map<string, Set<string>>();
+      const addSale = (cid: any, d: any) => { if (!cid || !d) return; let s = saleDatesByCustomer.get(cid); if (!s) { s = new Set(); saleDatesByCustomer.set(cid, s); } s.add(d); };
+      try {
+        const salesP = await q(`SELECT customer_id, (COALESCE(scheduled_billing_date::timestamp, created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billing_pipeline WHERE LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND customer_id IS NOT NULL AND (COALESCE(scheduled_billing_date::timestamp, created_at) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of salesP) addSale(r.customer_id, r.d);
+      } catch (e) { /* ignora */ }
+      try {
+        const salesB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, (COALESCE(order_date, invoice_date) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND (COALESCE(order_date, invoice_date) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of salesB) addSale(r.customer_id, r.d);
+      } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
       try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { virt = []; }
@@ -71,7 +85,9 @@ export function registerVisitSummary(app: Express) {
         if (om) for (const [d, o] of om) { const c = ensure(d); c.hasOrder = o.n > 0; c.orderValue = o.v; }
         if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
-        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', visits };
+        // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
+        const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
+        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', cycles, visits };
       });
 
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
