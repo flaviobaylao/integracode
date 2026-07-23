@@ -503,6 +503,17 @@ export function registerDelegationRoutes(app: Express) {
     }));
   }));
 
+  // GET: permissões do PRÓPRIO usuário logado (qualquer papel) — base da APLICAÇÃO
+  // das permissões (menu/botões/guardas). Retorna o papel + os overrides salvos;
+  // o front mescla com o padrão da função. Precede a rota /:userId para não ser
+  // capturada por ela.
+  app.get("/api/user-permissions/me", authenticateUser, safe(async (req, res) => {
+    await ensureModuleTables();
+    const u = (req as any).currentUser;
+    const [row] = await db.select().from(userPermissions).where(eq(userPermissions.userId, u.id));
+    res.json({ role: u.role || "", permissions: row?.permissions ?? {} });
+  }));
+
   // GET: overrides salvos p/ um usuário (o front mescla sobre o padrão da função)
   app.get("/api/user-permissions/:userId", authenticateAdmin, safe(async (req, res) => {
     await ensureModuleTables();
