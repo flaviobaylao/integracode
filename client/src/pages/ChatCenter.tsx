@@ -1080,7 +1080,8 @@ function ChatCenterInner() {
   // (e o usuário não é gestor), o envio fica bloqueado até transferência/finalização.
   const currentAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
   const isLockManager = user?.role === 'admin' || user?.role === 'coordinator'; // só admin e coordenador ignoram a trava (administrativo NÃO)
-  const conversationLocked = !isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId;
+  const ownerOnline = !!selectedChat?.assignedAgentId && onlineAgents.some((a: any) => a.id === selectedChat.assignedAgentId); // dono atualmente online?
+  const conversationLocked = !isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline;
   const lockedOwnerName = conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null;
 
   const setChannelMutation = useMutation({
