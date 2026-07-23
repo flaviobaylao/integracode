@@ -8821,12 +8821,64 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
+  // ==========================================================================
+  // TRAVA DE INTEGRIDADE DA BAIXA (regra Honest, 23/jul/2026)
+  // --------------------------------------------------------------------------
+  // Um título BAIXADO (status recebida/paga OU quitado 100%) que esteja
+  // CONCILIADO (com vínculo bancário ATIVO em bank_statement_item_matches) NÃO
+  // pode ter a baixa revertida — nem rebaixar o status, nem reduzir o
+  // amount_paid — por NENHUM caminho: automação, sync, cron ou edição direta.
+  // A ÚNICA forma de reverter é DESFAZER antes a conciliação bancária, que é
+  // a única rotina autorizada a passar __allowUnsettle=true.
+  // Consequência: conciliação continua dando baixa automática (settle sobe o
+  // status, nunca é bloqueado); e a baixa fica presa à conciliação.
+  // ==========================================================================
+  private async assertBaixaLock(kind: 'receivable' | 'payable', id: string, data: any): Promise<void> {
+    if (!data || data.__allowUnsettle === true) return;
+    const settled = kind === 'receivable' ? 'recebida' : 'paga';
+    // Só checa quando o update TENTA rebaixar: mudar status p/ != baixado, ou tocar no amount_paid.
+    const touchesStatusDown = data.status !== undefined && String(data.status) !== settled;
+    const touchesPaid = data.amountPaid !== undefined;
+    if (!touchesStatusDown && !touchesPaid) return;
+    const q = kind === 'receivable'
+      ? await db.execute(sql`
+          SELECT t.status::text AS status, t.amount::numeric AS amount, COALESCE(t.amount_paid,0)::numeric AS paid,
+                 EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = t.id) AS conciliado
+          FROM receivables t WHERE t.id = ${id}`)
+      : await db.execute(sql`
+          SELECT t.status::text AS status, t.amount::numeric AS amount, COALESCE(t.amount_paid,0)::numeric AS paid,
+                 EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = t.id) AS conciliado
+          FROM payables t WHERE t.id = ${id}`);
+    const cur: any = (q as any).rows?.[0];
+    if (!cur || cur.conciliado !== true) return; // sem conciliação ativa a regra de acoplamento não trava
+    const amount = Number(cur.amount || 0);
+    const paid = Number(cur.paid || 0);
+    const isSettled = String(cur.status) === settled || (amount > 0 && paid >= amount - 0.005);
+    if (!isSettled) return;
+    const newPaidDown = data.amountPaid !== undefined && Number(data.amountPaid) < amount - 0.005;
+    if (touchesStatusDown || newPaidDown) {
+      throw new Error('BAIXA_TRAVADA: título baixado e conciliado — desfaça a conciliação bancária (Conciliação → Desfazer) antes de estornar a baixa ou alterar o status.');
+    }
+  }
+
+  private async assertNaoConciliado(kind: 'receivable' | 'payable', id: string): Promise<void> {
+    const q = kind === 'receivable'
+      ? await db.execute(sql`SELECT EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = ${id}) AS conciliado`)
+      : await db.execute(sql`SELECT EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = ${id}) AS conciliado`);
+    if (((q as any).rows?.[0] as any)?.conciliado === true) {
+      throw new Error('BAIXA_TRAVADA: título conciliado — desfaça a conciliação bancária antes de excluir.');
+    }
+  }
+
   async updateReceivable(id: string, data: Partial<InsertReceivable>): Promise<Receivable> {
-    const [item] = await db.update(receivables).set({ ...data, updatedAt: new Date() }).where(eq(receivables.id, id)).returning();
+    await this.assertBaixaLock('receivable', id, data);
+    const { __allowUnsettle, ...clean } = data as any;
+    const [item] = await db.update(receivables).set({ ...clean, updatedAt: new Date() }).where(eq(receivables.id, id)).returning();
     return item;
   }
 
   async deleteReceivable(id: string, deletedBy?: string | null): Promise<void> {
+    await this.assertNaoConciliado('receivable', id);
     // FASE 1b: soft-delete - nada e apagado fisicamente; marca deleted_at/deleted_by.
     await db.update(receivables).set({ deletedAt: new Date(), deletedBy: deletedBy ?? null } as any).where(eq(receivables.id, id));
   }
@@ -8886,11 +8938,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePayable(id: string, data: Partial<InsertPayable>): Promise<Payable> {
-    const [item] = await db.update(payables).set({ ...data, updatedAt: new Date() }).where(eq(payables.id, id)).returning();
+    await this.assertBaixaLock('payable', id, data);
+    const { __allowUnsettle, ...clean } = data as any;
+    const [item] = await db.update(payables).set({ ...clean, updatedAt: new Date() }).where(eq(payables.id, id)).returning();
     return item;
   }
 
   async deletePayable(id: string, deletedBy?: string | null): Promise<void> {
+    await this.assertNaoConciliado('payable', id);
     // FASE 1b: soft-delete - nada e apagado fisicamente; marca deleted_at/deleted_by.
     await db.update(payables).set({ deletedAt: new Date(), deletedBy: deletedBy ?? null } as any).where(eq(payables.id, id));
   }
