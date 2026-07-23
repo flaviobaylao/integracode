@@ -884,7 +884,7 @@ export function registerReconciliation(app: Express) {
             const amt = Number(rec.amount || 0);
             const due = rec.dueDate ? new Date(rec.dueDate) : null;
             const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (due && due < new Date() ? "vencida" : "a_vencer");
-            await storage.updateReceivable(m.receivable_id, { amountPaid: newPaid.toFixed(2), status } as any);
+            await storage.updateReceivable(m.receivable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
             await db.execute(sql`DELETE FROM receivable_payments WHERE receivable_id = ${m.receivable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
             reverted.push({ kind: "receivable", id: m.receivable_id, status });
           }
@@ -895,7 +895,7 @@ export function registerReconciliation(app: Express) {
             const amt = Number(pay.amount || 0);
             const due = pay.dueDate ? new Date(pay.dueDate) : null;
             const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (due && due < new Date() ? "vencida" : "a_vencer");
-            await storage.updatePayable(m.payable_id, { amountPaid: newPaid.toFixed(2), status } as any);
+            await storage.updatePayable(m.payable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
             await db.execute(sql`DELETE FROM payable_payments WHERE payable_id = ${m.payable_id} AND reference = 'conciliacao-bancaria' AND amount = ${settled.toFixed(2)}`);
             reverted.push({ kind: "payable", id: m.payable_id, status });
           }
