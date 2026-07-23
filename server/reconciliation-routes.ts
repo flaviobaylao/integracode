@@ -590,7 +590,7 @@ export function registerReconciliation(app: Express) {
       const r: any = await db.execute(sql`
         UPDATE bank_statement_items
         SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(), notes = ${note}
-        WHERE id = ANY(${ids}::text[]) AND COALESCE(reconciliation_status, 'pending') <> 'reconciled'`);
+        WHERE id IN (${inList(ids)}) AND COALESCE(reconciliation_status, 'pending') <> 'reconciled'`);
       const ignored = r.rowCount ?? 0;
       res.json({ ok: true, ignored, requested: ids.length, skippedReconciled: ids.length - ignored });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
