@@ -6,6 +6,7 @@ import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto, cancelarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
+import { cieloDiag } from './hotsite-card';
 import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
@@ -562,6 +563,13 @@ export function registerBillingPipelineRoutes(app: Express) {
   // antigo como removido. PULA recebiveis cancelados, ja pagos (amount_paid >= amount) ou que ja
   // tem boleto ativo (boleto tem PIX proprio). dryRun=true so conta; processa no maximo `limit`
   // por chamada (default 25, max 100) -> chame em loop ate remaining=0.
+  // DIAGNOSTICO CIELO (temporario): valida credenciais/ambiente do cartao SEM expor os
+  // valores (so metadados + resposta crua da Cielo a uma sonda com cartao invalido).
+  app.get('/api/admin/cielo/diag', authenticateUser, isAdminOnly, async (_req: any, res) => {
+    try { res.json(await cieloDiag()); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.post('/api/admin/pix/regenerate-expired', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun === true;
