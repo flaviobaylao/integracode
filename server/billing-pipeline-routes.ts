@@ -768,6 +768,33 @@ export function registerBillingPipelineRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Backfill: move para a LIXEIRA todo card cujo NF-e vinculada (por sales_card_id) esteja
+  // CANCELADA. Idempotente. Regra: cancelado nao fica nas colunas ativas - vai para a Lixeira
+  // (restauravel), sem sair do pipeline. Envie dryRun true no body para apenas contar.
+  app.post('/api/admin/pipeline/cancelled-to-lixeira', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      await ensureLixeiraStage();
+      const dryRun = req.body?.dryRun === true;
+      const cond = sql`bp.stage <> 'lixeira' AND EXISTS (
+        SELECT 1 FROM fiscal_invoices fi
+        WHERE fi.sales_card_id = bp.sales_card_id
+          AND LOWER(COALESCE(fi.status, '')) IN ('cancelled', 'canceled', 'cancelada'))`;
+      if (dryRun) {
+        const c: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM billing_pipeline bp WHERE ${cond}`);
+        return res.json({ dryRun: true, wouldMove: c?.rows?.[0]?.n ?? 0 });
+      }
+      const ts = nowBrazil().toISOString();
+      const r2: any = await db.execute(sql`
+        UPDATE billing_pipeline bp
+        SET stage = 'lixeira', updated_at = now(),
+            stage_history = COALESCE(bp.stage_history, '[]'::jsonb) || jsonb_build_object(
+              'stage', 'lixeira', 'changedAt', ${ts}, 'changedBy', 'backfill cancelado->lixeira'
+            )::jsonb
+        WHERE ${cond}`);
+      res.json({ ok: true, movedToLixeira: r2?.rowCount ?? null });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // FASE 2 - Limpeza: cancela contas a receber criadas indevidamente por operacoes que
   // NAO sao venda (amostra, troca, bonificacao, transferencia, remessa, devolucao).
   // So atinge titulos SEM pagamento e ainda nao cancelados. Cancela tambem a cobranca:
