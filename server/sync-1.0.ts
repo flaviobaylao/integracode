@@ -315,6 +315,12 @@ return upserted;
 // ----------------------------------------------------------------
 
 async function runSync(): Promise<void> {
+  // CUTOVER TOTAL 2.0 (23/jul): tudo passa a ser gerado apenas no 2.0. O sync 1.0->2.0
+  // fica DESLIGADO por completo - cobre o worker automatico E os triggers manuais
+  // (trigger-1to2 / full-reset), que chamam runSync() direto. Reativar = remover este return.
+  logger.info("Sync 1.0->2.0 DESLIGADO (cutover total 2.0) - no-op");
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!REPLIT_DB_URL) {
     logger.warn("REPLIT_DATABASE_URL não definido — sync 1.0→2.0 desabilitado");
     return;
