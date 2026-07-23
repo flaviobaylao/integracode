@@ -11,6 +11,43 @@ import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 import { useToast } from "@/hooks/use-toast";
+import { usePermissions } from "@/lib/permissions";
+
+// Mapeia o id de cada item de menu para o CARD correspondente na matriz de
+// permissões. Itens sem card mapeado ficam fora do gating (fail-open).
+const MENU_CARD: Record<string, string> = {
+  dashboard: "Dashboard",
+  "sales-cards": "Cards de Venda", "sales-schedule": "Agenda de Vendas", "sales-goals": "Metas de Vendas",
+  "visit-routes": "Rota de Visitas", "rota-do-dia": "Rota do Dia", "vendas-digitais": "Vendas Digitais",
+  "sdr-digital": "SDR Digital", sellers: "Vendedores",
+  customers: "Clientes / Carteira", "clientes-ativos": "Clientes Ativos",
+  "clientes-virtuais-hoje": "Clientes Virtuais do Dia", leads: "LEADs", locations: "Localizações",
+  "tabela-precos": "Tabela de Preços", "precos-grade": "Preços (Grade)", "mapa-clientes": "Mapa de Clientes",
+  "rota-entrega": "Minhas Entregas", "entregas-do-dia": "Entregas do Dia", "validacao-rotas": "Validação de Rotas",
+  "check-in-audit": "Auditoria de Check-ins", "delivery-dashboard": "Dashboard de Entregas",
+  "delivery-management": "Gestão de Entregas", "delivery-routes": "Resumo das Rotas",
+  "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas",
+  products: "Produtos", "hotsite-pricing": "Tabela de Preços Hotsite", "hotsite-orders": "Pedidos do Site",
+  estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
+  billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "billing-pipeline": "Pipeline Faturamento",
+  "order-sale": "Pedido de Venda", "order-billing": "Faturar / Faturado", "order-billed": "Faturar / Faturado",
+  "recuperacao-faturamento": "Recuperação de Faturamento",
+  "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
+  "fin-blocked": "Pedidos Bloqueados", "fin-chart": "Plano de Contas / DRE", "fin-dre": "Plano de Contas / DRE",
+  "fin-accounts": "Contas Financeiras", "fin-xml": "XMLs / SPED Fiscal", "fin-sped": "XMLs / SPED Fiscal",
+  "fluxo-caixa": "Fluxo de Caixa", "conciliacao-bancaria": "Conciliação Bancária",
+  "conferencia-pagamentos": "Conferência de Pagamentos", "auditoria-cobrancas": "Auditoria de Cobranças",
+  "radar-compras": "Radar de Compras", cielo: "Cielo (PIX/Cartão)", "pix-charges": "Cielo (PIX/Cartão)",
+  whatsapp: "WhatsApp", "telefones-clientes": "Telefones de Clientes", "central-atendimento": "Central de Atendimento",
+  telemarketing: "Central de Telemarketing", "telemarketing-analysis": "Dashboard de Conversas",
+  "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
+  industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas",
+  relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
+  omie: "Integração Omie", "omie-instances": "Instâncias Omie", "sync-monitor": "Ambiente Fiscal",
+  "agentes-ia": "Agentes IA", "omie-stage-logs": "Logs Etapas Omie", rh: "RH / Métricas",
+  users: "Usuários", "admin-system": "Administração do Sistema", "cenarios-fiscais": "Cenários Fiscais",
+  "acessos-delegacoes": "Acessos e Delegações",
+};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -28,6 +65,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const isTelemarketing = user?.role === 'telemarketing';
   const isMotorista = user?.role === 'motorista';
   const canAccessIndustria = user?.role && ['admin', 'industria'].includes(user.role);
+  const perms = usePermissions(); // aplica permissões salvas (fail-open enquanto carrega / sem config)
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
@@ -390,6 +428,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const roleFilterItems = (items: MenuItem[]) => {
     return items
       .filter(item => item.available)
+      // Aplicação das permissões salvas: esconde o item se o usuário configurado
+      // não tem "ver" no card correspondente. Itens sem card mapeado passam livres.
+      .filter(item => { const card = MENU_CARD[item.id]; return !card || perms.can(card, "ver"); })
       .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
       .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
   };
