@@ -4,6 +4,9 @@ import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { usePermissions } from "@/lib/permissions";
+
+const CARD_ATIVOS = "Clientes Ativos";
 import { safeParseWeekdays, formatWeekdays } from "@/lib/weekdayParser";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -204,6 +207,7 @@ export default function ActiveCustomers() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const delegMarks = useCustomerMarks();
+  const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
   const [selectedSeller, setSelectedSeller] = useState<string>("");
@@ -1395,12 +1399,12 @@ export default function ActiveCustomers() {
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
                 📊 {filteredCustomers.length} cliente{filteredCustomers.length !== 1 ? 's' : ''}
               </Badge>
-              {selectedCustomerIds.size > 0 && (
+              {selectedCustomerIds.size > 0 && perms.can(CARD_ATIVOS, "editar") && (
                 <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white h-9" onClick={() => setShowBulkModal(true)} data-testid="button-bulk-edit">
                   ✏️ Editar em massa ({selectedCustomerIds.size})
                 </Button>
               )}
-              {selectedCustomerIds.size > 0 && (
+              {selectedCustomerIds.size > 0 && perms.can(CARD_ATIVOS, "excluir") && (
                 <Button
                   size="sm"
                   className="bg-red-600 hover:bg-red-700 text-white h-9"
