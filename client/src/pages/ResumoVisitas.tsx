@@ -17,6 +17,7 @@ type Visit = {
   metaValue?: number;
   nextSaleValue?: number;
 };
+type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean };
 type Row = {
   customerId: string;
   customerName: string;
@@ -25,6 +26,7 @@ type Row = {
   neighborhood: string;
   periodicity: string;
   weekdays: string;
+  cycles?: Cycle[];
   visits: Visit[];
 };
 
@@ -224,7 +226,7 @@ export default function ResumoVisitas() {
                 <th className={th} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px" }}>Cliente</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100 }}>Cidade</th>
-                <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 120 }}>Bairro</th>
+                <th className={th} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120 }} title="Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80 }}>Freq.</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 34, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
@@ -239,7 +241,11 @@ export default function ResumoVisitas() {
                     <td style={{ ...stickyL(0), padding: "4px 8px", fontWeight: 500, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.customerName}>{r.customerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.sellerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
-                    <td style={{ padding: "4px 8px", whiteSpace: "nowrap", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }} title={r.neighborhood}>{r.neighborhood}</td>
+                    <td style={{ padding: "4px 8px", whiteSpace: "nowrap", textAlign: "center" }}>
+                      {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => (
+                        <span key={ci} title={`${cy.start} a ${cy.end}: ${cy.green ? "houve venda" : "sem venda"}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: cy.green ? "#22c55e" : "#ef4444", marginRight: 3, verticalAlign: "middle" }} />
+                      )) : <span style={{ color: "#9ca3af" }}>—</span>}
+                    </td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.periodicity}</td>
                     {days.map((d) => {
                       const v = cm.get(d);
