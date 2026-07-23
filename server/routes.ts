@@ -24358,6 +24358,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
       const salesCard = await storage.createSalesCard(orderData);
+      // REGRA: todo pedido registrado entra no pipeline. Envia o pedido da loja ao pipeline de
+      // faturamento ja na criacao (idempotente por sales_card_id; os pagos online passam pelo
+      // reconcile depois, sem duplicar). Nunca quebra a criacao do pedido.
+      try {
+        const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes');
+        await autoSendToBillingPipeline(salesCard as any, 'auto (hotsite)');
+      } catch (_pipeErr: any) { console.warn('[PUBLIC-ORDER] falha ao enviar ao pipeline (segue):', _pipeErr?.message); }
 
     try {
       if (_refMode === 'code') {
