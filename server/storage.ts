@@ -4111,7 +4111,7 @@ export class DatabaseStorage implements IStorage {
             AND r.deleted_at IS NULL
             AND (r.amount - coalesce(r.amount_paid, 0)) > 0
             AND coalesce(r.import_origin, '') <> 'omie_historico'
-            AND (r.status = 'vencida' OR (r.status = 'a_vencer' AND (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))
+            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -5347,10 +5347,10 @@ export class DatabaseStorage implements IStorage {
     // Receber (tabela `receivables`), NAO mais a tabela `overdueDebts` (sync do Omie,
     // defasada) — que estava soltando no bloqueio E na liberação automática clientes
     // que de fato tinham débito vencido. Replica EXATAMENTE a regra de "vencida" do
-    // getReceivables({status:'vencida'}) / aba Contas a Receber: status = 'vencida' OU
-    // (status = 'a_vencer' E vencimento < hoje no fuso Brasil) — porque a coluna status
-    // demora a virar 'vencida' (fica 'a_vencer' até um job atualizar), e a aba já conta
-    // esses como vencidos por dia-calendário. Só em aberto (amount - amount_paid > 0).
+    // getReceivables({status:'vencida'}) / aba Contas a Receber: título EM ABERTO
+    // (status IN ('a_vencer','vencida')) E vencimento < hoje no fuso Brasil. A régua é a
+    // DATA, não o flag: 'vencida' com vencimento repostergado p/ hoje/futuro NÃO é débito
+    // vivo (não bloqueia). Só em aberto (amount - amount_paid > 0).
     const result: any = await db.execute(sql`
       SELECT MAX(customer_name) AS client_name,
              SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
@@ -5365,8 +5365,8 @@ export class DatabaseStorage implements IStorage {
         -- venda atual (bloqueio indevido). Só entram no cálculo os recebíveis correntes.
         AND COALESCE(import_origin, '') <> 'omie_historico'
         AND (
-          status = 'vencida'
-          OR (status = 'a_vencer' AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+          status IN ('a_vencer', 'vencida')
+          AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         )
         AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
@@ -8733,12 +8733,16 @@ export class DatabaseStorage implements IStorage {
     const conditions: any[] = [isNull(receivables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
     if (filters?.status === 'vencida') {
-      // VENCIDA por DIA-CALENDÁRIO (fuso Brasil): só é vencida se a data de vencimento
-      // é ANTERIOR a hoje. Vence HOJE (qualquer hora) NÃO é vencida — antes comparava o
-      // instante (dueDate < now), então um débito que vence hoje mais cedo virava "vencido".
-      conditions.push(or(eq(receivables.status, 'vencida' as any), and(eq(receivables.status, 'a_vencer' as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`))!);
+      // VENCIDA = título EM ABERTO (a_vencer/vencida) cujo vencimento JÁ PASSOU por
+      // DIA-CALENDÁRIO (fuso Brasil). A régua é SEMPRE a data, NUNCA o flag gravado:
+      // um título que já venceu e depois teve o vencimento REpostergado (renegociação /
+      // boleto unificado) ou uma baixa desfeita fica 'vencida' no banco COM vencimento
+      // hoje/futuro — e NÃO é mais vencido. Vence HOJE (qualquer hora) NÃO é vencida.
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status === 'a_vencer') {
-      conditions.push(and(eq(receivables.status, 'a_vencer' as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
+      // A VENCER = título em aberto cujo vencimento é HOJE ou FUTURO (dia-calendário BRT),
+      // mesmo que o status gravado seja 'vencida' (vencimento repostergado / baixa desfeita).
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status) {
       conditions.push(eq(receivables.status, filters.status as any));
     }
@@ -8753,14 +8757,16 @@ export class DatabaseStorage implements IStorage {
     const rows = conditions.length > 0
       ? await db.select().from(receivables).where(and(...conditions)).orderBy(desc(receivables.createdAt))
       : await db.select().from(receivables).orderBy(desc(receivables.createdAt));
-    // Recomputa status exibido por DIA-CALENDÁRIO (fuso Brasil): a_vencer com vencimento
-    // ANTERIOR a hoje => vencida. Vence HOJE NÃO é vencida (antes comparava o instante,
-    // marcando como vencido o débito que vence hoje mais cedo que a hora atual).
+    // Recomputa o status EXIBIDO de títulos EM ABERTO por DIA-CALENDÁRIO (fuso Brasil),
+    // nas DUAS direções: a_vencer com vencimento ANTERIOR a hoje => vencida; e vencida
+    // com vencimento HOJE ou FUTURO (vencimento repostergado por renegociação/boleto
+    // unificado, ou baixa desfeita) => a_vencer. Assim o status exibido é SEMPRE função da
+    // data, nunca de um flag defasado. Vence HOJE NÃO é vencida. (recebida/cancelada não muda.)
     const _hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     for (const r of rows) {
-      if ((r.status as any) === 'a_vencer' && r.dueDate) {
+      if (((r.status as any) === 'a_vencer' || (r.status as any) === 'vencida') && r.dueDate) {
         const _dueBR = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-        if (_dueBR < _hojeBR) (r as any).status = 'vencida';
+        (r as any).status = _dueBR < _hojeBR ? 'vencida' : 'a_vencer';
       }
     }
     try {
