@@ -11809,13 +11809,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const cardVal = parseFloat(String((salesCard as any).saleValue ?? '0')) || 0;
           const cardForPipeline: any = {
             ...salesCard,
+            // PRESERVA o vendedor ORIGINAL do pedido (snapshot gravado no bloqueio). O desbloqueio NUNCA
+            // muda o vendedor: nao usa quem liberou, mantem o mesmo vendedor de quando o pedido foi criado.
+            sellerId: (order as any).sellerId || (salesCard as any).sellerId || null,
             saleValue: cardVal > 0 ? salesCard.saleValue : (snapVal > 0 ? String(snapVal) : salesCard.saleValue),
             products: (Array.isArray((salesCard as any).products) && (salesCard as any).products.length) ? (salesCard as any).products : ((order as any).products || (salesCard as any).products),
             operationType: (salesCard as any).operationType || (order as any).operationType || 'venda',
             paymentMethod: (salesCard as any).paymentMethod || (order as any).paymentMethod || null,
           };
           let pipelineItem: any = null;
-          try { pipelineItem = await autoSendToBillingPipeline(cardForPipeline, req.currentUser.email || 'system', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
+          try { pipelineItem = await autoSendToBillingPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
           // Idempotencia: se ja existe item no funil para este card, conta como "entrou".
           if (!pipelineItem) {
             try { const existing = await storage.getBillingPipelineItems(); if (existing.find((i: any) => i.salesCardId === order.salesCardId)) pipelineItem = { existing: true }; } catch {}
