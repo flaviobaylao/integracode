@@ -55,6 +55,24 @@ async function igSend(igsid: string, text: string): Promise<{ success: boolean; 
   }
 }
 
+// Envia uma IMAGEM (por URL publica) para o usuario do Instagram pela Send API.
+async function igSendImage(igsid: string, url: string): Promise<{ success: boolean; id?: string; error?: string }> {
+  try {
+    const token = process.env.IG_PAGE_TOKEN;
+    if (!token) return { success: false, error: "IG_PAGE_TOKEN ausente" };
+    const r = await fetch(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ recipient: { id: igsid }, message: { attachment: { type: "image", payload: { url, is_reusable: true } } } }),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok) return { success: false, error: `graph ${r.status}: ${JSON.stringify(j).slice(0, 200)}` };
+    return { success: true, id: j?.message_id || j?.id };
+  } catch (e: any) {
+    return { success: false, error: e?.message || String(e) };
+  }
+}
+
 // Valida a assinatura do webhook (opcional; so quando IG_APP_SECRET esta setado).
 function validSignature(req: Request, rawBody: string): boolean {
   const secret = process.env.IG_APP_SECRET;
@@ -163,6 +181,7 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
       conversationId: conversation.id,
       incomingText: text,
       sendText: (_to: string, t: string) => igSend(igsid, t),
+      sendImage: (url: string) => igSendImage(igsid, url),
       channel: "instagram",
       username: username || igsid,
     });
@@ -172,6 +191,52 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
 }
 
 export function registerInstagram(app: Express) {
+  // Tabela de vinculo pedido<->cobranca PIX do Instagram (idempotente).
+  const ensureIgPix = async () => { try { await db.execute(sql`CREATE TABLE IF NOT EXISTS instagram_pix (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id varchar, sales_card_id varchar, order_number varchar, igsid varchar, customer_name varchar, customer_document varchar, total numeric(12,2), charge_id varchar, txid varchar, status varchar DEFAULT 'registered', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), paid_at timestamptz)`); } catch {} };
+  ensureIgPix();
+
+  // Rota publica: serve o QR Code do PIX como PNG (o Instagram exige URL publica de imagem, nao base64).
+  app.get("/api/pix-qr/:id.png", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id || "").replace(/\.png$/i, "");
+      const r: any = await db.execute(sql`SELECT qr_code_base64 FROM pix_charges WHERE id = ${id} LIMIT 1`);
+      const b64raw = r.rows?.[0]?.qr_code_base64;
+      if (!b64raw) { res.status(404).send("nao encontrado"); return; }
+      const b64 = String(b64raw).replace(/^data:image\/\w+;base64,/, "");
+      res.set("Content-Type", "image/png");
+      res.set("Cache-Control", "public, max-age=300");
+      res.send(Buffer.from(b64, "base64"));
+    } catch (e: any) { res.status(500).send("erro"); }
+  });
+
+  // Varredura de pagamentos PIX do Instagram (a cada 60s): confirma o pagamento no BB, marca o
+  // pedido como "Pago" no pipeline e NOTIFICA o cliente na conversa. Faturamento fiscal segue manual.
+  try {
+    setInterval(async () => {
+      try {
+        await ensureIgPix();
+        try { await db.execute(sql`UPDATE instagram_pix SET status='expired', updated_at=now() WHERE status='awaiting_payment' AND created_at < now() - interval '24 hours'`); } catch {}
+        const pend: any = await db.execute(sql`SELECT id, charge_id, txid, sales_card_id, order_number, igsid, total FROM instagram_pix WHERE status = 'awaiting_payment' AND charge_id IS NOT NULL`);
+        const rows = pend.rows || [];
+        if (!rows.length) return;
+        const { checkChargeStatus } = await import("./bb-pix-service");
+        for (const row of rows) {
+          try {
+            const c: any = await checkChargeStatus(row.charge_id);
+            if (String(c?.status || "") === "CONCLUIDA") {
+              await db.execute(sql`UPDATE instagram_pix SET status='paid', paid_at=now(), updated_at=now() WHERE id=${row.id}`);
+              // Acende o badge "Pago" no pipeline (mesma leitura da loja online).
+              try { await db.execute(sql`INSERT INTO hotsite_pending_pix (id, charge_id, txid, amount, payload, status, order_id, order_number, created_at, updated_at) VALUES (gen_random_uuid(), ${row.charge_id}, ${row.txid || null}, ${row.total}, '{}', 'paid', ${row.sales_card_id}, ${row.order_number}, now(), now())`); } catch (e: any) { console.error("[IG-PIX-SWEEP] badge", e?.message || e); }
+              try { await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${"\n💰 PIX PAGO via Instagram (" + (row.order_number || "") + ")"} WHERE id=${row.sales_card_id}`); } catch {}
+              try { if (row.igsid) await igSend(row.igsid, "✅ Recebemos seu pagamento! Seu pedido está confirmado e já seguirá para a entrega. Muito obrigado pela preferência! 🧡"); } catch {}
+              console.log(`[IG-PIX] pago card=${row.sales_card_id} charge=${row.charge_id}`);
+            }
+          } catch (e: any) { console.error("[IG-PIX-SWEEP] item", row?.charge_id, e?.message || e); }
+        }
+      } catch (e: any) { console.error("[IG-PIX-SWEEP]", e?.message || e); }
+    }, 60 * 1000);
+  } catch {}
+
   // Varredura periodica: finaliza (status 'resolved') conversas de Instagram inativas apos
   // IG_RESET_MINUTES sem novas mensagens. Mantem a fila limpa; na volta do cliente uma nova
   // conversa e criada, reiniciando o dialogo. Roda a cada 10 min (nao afeta a inicializacao).
