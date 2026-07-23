@@ -24366,6 +24366,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await autoSendToBillingPipeline(salesCard as any, 'auto (hotsite)');
       } catch (_pipeErr: any) { console.warn('[PUBLIC-ORDER] falha ao enviar ao pipeline (segue):', _pipeErr?.message); }
 
+      // ROTEAMENTO POR CARTEIRA + CAPTURA DE LEAD (Honest) — pedidos do Hotsite.
+      // - Cliente já cadastrado → venda fica na carteira dele; se o dono for telemarketing,
+      //   dispara alerta (WhatsApp) para acompanhar a logística.
+      // - Cliente novo (não cadastrado numa carteira) → oferece "capturar cliente" a todos os
+      //   vendedores/telemarketing online no Integra (o primeiro que clicar leva pra sua carteira).
+      try {
+        const { isTelemarketing, notifyTelemarketingOrder, broadcastLeadCapture } = await import('./lead-capture');
+        const _info: any = { salesCardId: salesCard.id, orderNumber, channel: 'hotsite', customerId, customerName: validatedData.customer.name, customerDocument: cpfLimpo };
+        if (existingCustomer) {
+          const _owner = existingCustomer.sellerId ? await storage.getUser(existingCustomer.sellerId).catch(() => null) : null;
+          if (_owner && isTelemarketing(_owner)) await notifyTelemarketingOrder(_owner, _info);
+        } else {
+          await broadcastLeadCapture(_info);
+        }
+      } catch (_lrErr: any) { console.warn('[PUBLIC-ORDER] lead-routing (segue):', _lrErr?.message); }
+
     try {
       if (_refMode === 'code') {
         const _rd = await fetch(_refBase + '/api/referral/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _rc, referredDocument: _bd, channel: 'hotsite', orderRef: orderNumber, orderValue: serverTotal }) }).then(r => r.json());
