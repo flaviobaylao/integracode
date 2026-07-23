@@ -2,8 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { ChevronRight, Menu, ArrowLeft } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { ChevronRight, Menu, ArrowLeft, Search, X } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
@@ -127,6 +127,25 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return next;
     });
   };
+
+  // (busca global) Campo de busca no cabeçalho para localizar qualquer
+  // função, módulo ou atividade do sistema — mostra um dropdown estilo menu
+  // e navega para a tela ao selecionar. Respeita papel e permissões do usuário.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const normalizeSearch = (s: string) =>
+    s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
 
   useEffect(() => {
     const handleSessionExpired = (event: CustomEvent) => {
@@ -444,6 +463,34 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     // seções que ficaram sem nenhum item visível.
   }, [menuGroups, perms.map]);
 
+  // Índice achatado de TODOS os itens visíveis (de todas as seções) para a busca
+  // global do cabeçalho. Deduplica por id e guarda a seção/cor de cada item.
+  const searchIndex = useMemo(() => {
+    const seen = new Set<string>();
+    const list: { id: string; label: string; icon: string; groupLabel: string; hexColor: string }[] = [];
+    for (const g of visibleGroups) {
+      for (const it of roleFilterItems(g.items)) {
+        if (seen.has(it.id)) continue;
+        seen.add(it.id);
+        list.push({ id: it.id, label: it.label, icon: it.icon, groupLabel: g.groupLabel, hexColor: g.hexColor });
+      }
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleGroups, perms.map]);
+
+  const searchResults = useMemo(() => {
+    const q = normalizeSearch(searchQuery.trim());
+    if (!q) return [] as typeof searchIndex;
+    const terms = q.split(/\s+/).filter(Boolean);
+    return searchIndex
+      .filter((x) => {
+        const hay = normalizeSearch(x.label + ' ' + x.groupLabel);
+        return terms.every((t) => hay.includes(t));
+      })
+      .slice(0, 12);
+  }, [searchQuery, searchIndex]);
+
   const handleMenuItemClick = (itemId: string) => {
     bumpMenuCount(itemId);
     setShowingSectionOptions(false);
@@ -546,6 +593,37 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       navigate(route);
     } else {
       setActiveView(itemId);
+    }
+  };
+
+  // Seleciona um resultado da busca global: limpa o campo, fecha o dropdown e navega.
+  const runSearchSelect = (id: string) => {
+    setSearchQuery('');
+    setSearchFocused(false);
+    setSearchActiveIdx(0);
+    handleMenuItemClick(id);
+  };
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setSearchFocused(false);
+      (e.currentTarget as HTMLInputElement).blur();
+      return;
+    }
+    if (!searchResults.length) {
+      if (e.key === 'Enter') e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSearchActiveIdx((i) => Math.min(i + 1, searchResults.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSearchActiveIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const item = searchResults[searchActiveIdx] || searchResults[0];
+      if (item) runSearchSelect(item.id);
     }
   };
 
@@ -785,24 +863,90 @@ export default function Layout({ children, activeView, setActiveView, user }: La
           </div>
         </div>
 
-        {/* Atalhos favoritos (até 7) */}
-        <div className="hidden md:flex flex-1 items-center justify-center gap-2 px-4">
-          {favorites.map((favId) => {
-            const info = itemIndex.get(favId);
-            if (!info) return null;
-            return (
-              <button
-                key={favId}
-                onClick={() => handleMenuItemClick(favId)}
-                title={info.label}
-                data-testid={`fav-shortcut-${favId}`}
-                className="relative w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110 shadow-sm"
-                style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
+        {/* Busca global + Atalhos favoritos (até 7) */}
+        <div className="hidden md:flex flex-1 items-center gap-3 px-4">
+          {/* Busca de funções, módulos e atividades */}
+          <div ref={searchRef} className="relative w-full max-w-sm">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setSearchActiveIdx(0); setSearchFocused(true); }}
+                onFocus={() => setSearchFocused(true)}
+                onKeyDown={onSearchKeyDown}
+                placeholder="Buscar função, módulo ou atividade..."
+                data-testid="global-search-input"
+                aria-label="Buscar funções, módulos e atividades do sistema"
+                className="w-full h-9 pl-9 pr-8 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent focus:bg-white transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => { setSearchQuery(''); setSearchActiveIdx(0); }}
+                  title="Limpar busca"
+                  aria-label="Limpar busca"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {searchFocused && searchQuery.trim() && (
+              <div
+                className="absolute left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-white rounded-lg border border-gray-200 shadow-lg z-50"
+                data-testid="global-search-results"
               >
-                <i className={`${info.icon} text-base`}></i>
-              </button>
-            );
-          })}
+                {searchResults.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-gray-500">
+                    Nenhum resultado para "{searchQuery.trim()}".
+                  </div>
+                ) : (
+                  searchResults.map((r, idx) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); runSearchSelect(r.id); }}
+                      onMouseEnter={() => setSearchActiveIdx(idx)}
+                      className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${idx === searchActiveIdx ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+                      data-testid={`global-search-result-${r.id}`}
+                    >
+                      <span
+                        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: `${r.hexColor}15`, color: r.hexColor }}
+                      >
+                        <i className={`${r.icon} text-sm`}></i>
+                      </span>
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium text-gray-800 truncate">{r.label}</span>
+                        <span className="text-[11px] text-gray-400 truncate">{r.groupLabel}</span>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Atalhos favoritos (até 7) */}
+          <div className="flex items-center justify-end gap-2 ml-auto">
+            {favorites.map((favId) => {
+              const info = itemIndex.get(favId);
+              if (!info) return null;
+              return (
+                <button
+                  key={favId}
+                  onClick={() => handleMenuItemClick(favId)}
+                  title={info.label}
+                  data-testid={`fav-shortcut-${favId}`}
+                  className="relative w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110 shadow-sm"
+                  style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
+                >
+                  <i className={`${info.icon} text-base`}></i>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="flex items-center space-x-4">
