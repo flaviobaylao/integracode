@@ -577,6 +577,25 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // IGNORAR EM LOTE: marca varios lancamentos como 'ignored' numa unica chamada.
+  // Nao dá baixa em nada (igual ao ignore individual). Pula os ja 'reconciled'
+  // (exigem desfazer antes) — reportados em skippedReconciled.
+  app.post("/api/reconciliation/items/ignore-batch", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => String(x)).filter(Boolean) : [];
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const reason = (req.body?.reason || "").toString();
+      if (!ids.length) return res.status(400).json({ error: "ids[] obrigatorio" });
+      const note = `Ignorado em lote por ${by} em ${new Date().toISOString()}${reason ? " - " + reason : ""}`;
+      const r: any = await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(), notes = ${note}
+        WHERE id = ANY(${ids}::text[]) AND COALESCE(reconciliation_status, 'pending') <> 'reconciled'`);
+      const ignored = r.rowCount ?? 0;
+      res.json({ ok: true, ignored, requested: ids.length, skippedReconciled: ids.length - ignored });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   app.post("/api/reconciliation/items/:id/reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const id = req.params.id;
