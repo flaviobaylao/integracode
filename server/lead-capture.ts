@@ -161,6 +161,31 @@ export function registerLeadCapture(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Config do gate de WhatsApp (off|test|on) — leitura e escrita (admin/coordenacao).
+  app.get("/api/lead-capture/config", authenticateUser, async (_req: Request, res: Response) => {
+    try {
+      res.json({ ok: true, mode: await getSetting("lead_capture_mode", "off"), testPhones: await getSetting("lead_capture_test_phones", ""), onlineMinutes: ONLINE_MINUTES });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+  app.post("/api/lead-capture/config", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const u: any = (req as any).currentUser;
+      const role = String(u?.role || "");
+      if (!u || !["admin", "coordinator", "administrative"].includes(role)) return res.status(403).json({ ok: false, error: "forbidden" });
+      const by = String(u.email || u.id);
+      const mode = req.body?.mode == null ? null : String(req.body.mode).toLowerCase();
+      const testPhones = req.body?.testPhones == null ? null : String(req.body.testPhones);
+      if (mode != null) {
+        if (!["off", "test", "on"].includes(mode)) return res.status(400).json({ ok: false, error: "mode invalido (off|test|on)" });
+        await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('lead_capture_mode', ${mode}, ${by}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      }
+      if (testPhones != null) {
+        await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('lead_capture_test_phones', ${testPhones}, ${by}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      }
+      res.json({ ok: true, mode: await getSetting("lead_capture_mode", "off"), testPhones: await getSetting("lead_capture_test_phones", "") });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
   // Pagina publica de captura (aberta pelo link do WhatsApp; token identifica o vendedor).
   app.get("/capturar/:token", async (req: Request, res: Response) => {
     res.set("Content-Type", "text/html; charset=utf-8");
