@@ -1271,7 +1271,7 @@ export function registerReconciliation(app: Express) {
       FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
       WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
         AND i.mirror_of IS NULL AND i.type = 'C'
-        AND regexp_replace(lower(COALESCE(i.description, '')), '[^a-z]', '', 'g') LIKE '%pixrecebido%'
+        AND regexp_replace(lower(COALESCE(i.origin_name, '') || ' ' || COALESCE(i.description, '')), '[^a-z]', '', 'g') LIKE '%pixrecebido%'
       ORDER BY i.transaction_date LIMIT 5000`));
     out.candidatos = items.length;
     if (!items.length) return out;
