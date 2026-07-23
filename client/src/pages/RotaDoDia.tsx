@@ -741,29 +741,48 @@ export default function RotaDoDia() {
     }
   };
 
-  // "Fotografa" o estado atual da visita (check-in/out + pedidos) para depois detectar ALTERAÇÕES EFETIVAS.
-  const buildVisitSnapshot = (customerId: string) => {
-    const cps = (route?.checkpoints || []).filter((cp: any) => cp.customerId === customerId);
+  // "Fotografa" o estado COMPLETO da visita (check-in/out + pedidos + campos do card) para depois
+  // detectar QUALQUER alteração efetiva feita pelo admin durante o atendimento assumido.
+  const buildFullSnapshot = (customerId: string, card: any, routeObj: any, custInfo: any) => {
+    const cps = (routeObj?.checkpoints || []).filter((cp: any) => cp.customerId === customerId);
     const ci = cps.find((cp: any) => cp.checkpointType === 'check_in');
     const co = cps.find((cp: any) => cp.checkpointType === 'check_out');
-    const ords = (customerId && customerInfo?.orders?.[customerId]) || [];
+    const ords = (customerId && custInfo?.orders?.[customerId]) || [];
+    const prods = Array.isArray(card?.products) ? card.products : [];
     return {
       checkIn: ci?.checkpointTime ? formatInTimeZone(ci.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
       checkOut: co?.checkpointTime ? formatInTimeZone(co.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
       orderCount: ords.length,
       orderValue: ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0),
+      productsSig: JSON.stringify(prods.map((p: any) => [String(p.id ?? p.name ?? ''), Number(p.quantity) || 0])),
+      productCount: prods.length,
+      saleValue: Number(card?.saleValue || 0),
+      paymentMethod: String(card?.paymentMethod || ''),
+      operationType: String(card?.operationType || ''),
+      notes: String(card?.notes || ''),
+      routeDay: String(card?.routeDay || ''),
+      recurrenceType: String(card?.recurrenceType || ''),
     };
   };
 
-  // Abrir o ATENDIMENTO COMPLETO como Adm: NÃO marca o card ao abrir; apenas fotografa o estado e abre a tela.
-  // O card só ficará roxo se o adm efetivamente alterar algo (detectado por diff no useEffect abaixo).
+  // Busca o card do cliente na data selecionada (para fotografar os campos do pedido).
+  const fetchCardForSnapshot = async (customerId: string): Promise<any> => {
+    try {
+      const r = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, { credentials: 'include' });
+      return r.ok ? await r.json() : null;
+    } catch { return null; }
+  };
+
+  // Abrir o ATENDIMENTO COMPLETO como Adm: fotografa o estado ANTES e abre a tela de atendimento.
+  // Ao FECHAR (closeModals), comparamos antes/depois e registramos CADA alteração -> card fica ROXO.
   const openFullAttendanceAsAdmin = async () => {
     if (!adminEditVisit || !route?.id) return;
     const visit = adminEditVisit.visit;
     const cid = visit.customerId || visit.entityId;
     try {
       setAdminSaving(true);
-      adminSnapshotRef.current = buildVisitSnapshot(cid);
+      const card = await fetchCardForSnapshot(cid);
+      adminSnapshotRef.current = buildFullSnapshot(cid, card, route, customerInfo);
       setAdminActingCustomerId(cid);
       setAdminEditVisit(null);
       // Abre a mesma tela de atendimento do vendedor (check-in, check-out, registrar pedido, não venda)
@@ -775,32 +794,61 @@ export default function RotaDoDia() {
     }
   };
 
-  // Detecta ALTERAÇÕES EFETIVAS durante a sessão de atendimento do adm e registra cada uma como histórico (de -> para).
-  useEffect(() => {
-    const cid = adminActingCustomerId;
-    if (!cid || !route?.id || !adminSnapshotRef.current) return;
-    const before = adminSnapshotRef.current;
-    const after = buildVisitSnapshot(cid);
-    const diffs: Array<{ field: string; from: any; to: any }> = [];
-    if (before.checkIn !== after.checkIn) diffs.push({ field: 'Check-in', from: before.checkIn, to: after.checkIn });
-    if (before.checkOut !== after.checkOut) diffs.push({ field: 'Check-out', from: before.checkOut, to: after.checkOut });
-    if (before.orderCount !== after.orderCount || before.orderValue !== after.orderValue) {
-      const fmt = (s: any) => `${s.orderCount} pedido(s) / R$ ${Number(s.orderValue || 0).toFixed(2)}`;
-      diffs.push({ field: 'Pedido', from: fmt(before), to: fmt(after) });
-    }
-    if (diffs.length === 0) return;
-    adminSnapshotRef.current = after; // evita re-registrar a mesma alteração
-    (async () => {
-      try {
-        for (const d of diffs) {
-          await apiRequest('POST', `/api/daily-routes/${route.id}/checkpoints/admin-record`, { customerId: cid, field: d.field, from: d.from, to: d.to });
-        }
-        invalidateRoute();
-      } catch (e) {
-        // silencioso: não impedir o atendimento por falha ao registrar histórico
+  // Campos comparados para detectar TODAS as alterações do admin (de -> para) no atendimento assumido.
+  const ADMIN_DIFF_FIELDS: Array<{ key: string; label: string; fmt?: (v: any) => string }> = [
+    { key: 'checkIn', label: 'Check-in' },
+    { key: 'checkOut', label: 'Check-out' },
+    { key: 'productCount', label: 'Produtos', fmt: (v: any) => `${Number(v) || 0} item(ns)` },
+    { key: 'saleValue', label: 'Valor', fmt: (v: any) => `R$ ${Number(v || 0).toFixed(2)}` },
+    { key: 'paymentMethod', label: 'Forma de pagamento' },
+    { key: 'operationType', label: 'Tipo de operação' },
+    { key: 'notes', label: 'Observações' },
+    { key: 'routeDay', label: 'Dia de rota' },
+    { key: 'recurrenceType', label: 'Periodicidade' },
+  ];
+
+  // Ao encerrar o atendimento assumido: refaz o fetch de rota/pedidos/card, compara com a foto e
+  // registra CADA alteração efetiva como histórico do Adm. Só então o card fica ROXO.
+  const finalizeAdminSession = async (cid: string, before: any, routeId: string) => {
+    if (!cid || !before || !routeId) return;
+    try {
+      const [routeRes, ciRes, freshCard] = await Promise.all([
+        refetch(),
+        refetchCustomerInfo(),
+        fetchCardForSnapshot(cid),
+      ]);
+      const freshRoute = (routeRes as any)?.data?.route || route;
+      const freshCI = (ciRes as any)?.data || customerInfo;
+      const after = buildFullSnapshot(cid, freshCard, freshRoute, freshCI);
+      const diffs: Array<{ field: string; from: any; to: any }> = [];
+      // PEDIDO (billing pipeline) — sinal mais confiável de venda registrada pelo adm.
+      const orderChanged = (before.orderCount !== after.orderCount)
+        || (Number(before.orderValue || 0).toFixed(2) !== Number(after.orderValue || 0).toFixed(2));
+      if (orderChanged) {
+        const fmtOrd = (s: any) => `${s.orderCount || 0} pedido(s) / R$ ${Number(s.orderValue || 0).toFixed(2)}`;
+        diffs.push({ field: 'Pedido', from: fmtOrd(before), to: fmtOrd(after) });
       }
-    })();
-  }, [route?.checkpoints, customerInfo, adminActingCustomerId]);
+      for (const f of ADMIN_DIFF_FIELDS) {
+        // Se já houve pedido, não duplicar "Produtos"/"Valor" (fazem parte da mesma venda).
+        if (orderChanged && (f.key === 'productCount' || f.key === 'saleValue')) continue;
+        const b = (before as any)[f.key];
+        const a = (after as any)[f.key];
+        if (String(b ?? '') !== String(a ?? '')) {
+          diffs.push({ field: f.label, from: f.fmt ? f.fmt(b) : (b ?? '—'), to: f.fmt ? f.fmt(a) : (a ?? '—') });
+        }
+      }
+      // Troca de itens sem mudar a contagem (ex.: trocar um produto por outro) fora de um pedido novo.
+      if (!orderChanged && before?.productsSig !== after?.productsSig && !diffs.some(d => d.field === 'Produtos')) {
+        diffs.push({ field: 'Produtos', from: `${before?.productCount ?? 0} item(ns)`, to: `${after?.productCount ?? 0} item(ns)` });
+      }
+      for (const d of diffs) {
+        try {
+          await apiRequest('POST', `/api/daily-routes/${routeId}/checkpoints/admin-record`, { customerId: cid, field: d.field, from: String(d.from), to: String(d.to) });
+        } catch { /* não impedir o fluxo por falha ao registrar */ }
+      }
+      if (diffs.length > 0) invalidateRoute();
+    } catch { /* silencioso */ }
+  };
 
   const virtualVisitsCount = useMemo(() => {
     if (!route?.visits) return 0;
@@ -1042,6 +1090,10 @@ export default function RotaDoDia() {
   };
 
   const closeModals = () => {
+    // Captura a sessão de atendimento assumida pelo adm ANTES de limpar, para comparar antes/depois.
+    const actingCid = adminActingCustomerId;
+    const beforeSnap = adminSnapshotRef.current;
+    const rid = route?.id;
     setShowCardModal(false);
     setIsEditModalOpen(false);
     setIsNoSaleModalOpen(false);
@@ -1052,9 +1104,12 @@ export default function RotaDoDia() {
     setLeadCheckInPhotoUrl(null);
     setCheckInCoords(null);
     setLeadCheckInNotes('');
-    // Encerra a sessão de atendimento assumida pelo adm (para de monitorar diffs)
+    // Encerra a sessão e, se o adm alterou algo, registra CADA alteração (card fica roxo + histórico).
     setAdminActingCustomerId(null);
     adminSnapshotRef.current = null;
+    if (actingCid && beforeSnap && rid) {
+      void finalizeAdminSession(actingCid, beforeSnap, rid);
+    }
   };
 
   return (
