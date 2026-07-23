@@ -4,6 +4,7 @@ import { queryClient, QueryClientProvider } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
+import RepescagemAlert from "@/components/RepescagemAlert";
 import MobileNav from "@/components/mobile-nav";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import PersistentSectionSidebar from "@/components/PersistentSectionSidebar";
@@ -229,6 +230,7 @@ function Router() {
 
   return (
     <AppShell isAuthenticated={isAuthenticated}>
+    {isAuthenticated && <RepescagemAlert />}
     <Switch>
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
