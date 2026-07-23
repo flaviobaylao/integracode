@@ -7,6 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { usePermissions } from "@/lib/permissions";
+
+const CARD_CLIENTES = "Clientes / Carteira";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -80,6 +83,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 
 export default function CustomerManagement() {
   const delegMarks = useCustomerMarks();
+  const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -429,7 +433,10 @@ export default function CustomerManagement() {
               {bulkUpdateTimeSlotsMutation.isPending ? 'Configurando...' : 'Configurar Horários em Massa'}
             </Button>
           )}
+          {perms.can(CARD_CLIENTES, "exportar") && (
           <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: c.omieStatus, Periodicidade: c.visitPeriodicity, Segmento: c.segmentoPrincipal })), "clientes")} />
+          )}
+          {perms.can(CARD_CLIENTES, "criar") && (
           <Button
             className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-600"
             onClick={() => setShowModal(true)}
@@ -438,6 +445,7 @@ export default function CustomerManagement() {
             <Plus className="h-4 w-4 mr-2" />
             Novo Cliente
           </Button>
+          )}
         </div>
       </div>
 
@@ -579,7 +587,7 @@ export default function CustomerManagement() {
             <div className="text-sm text-gray-600 flex items-center ml-1">
               {filteredCustomers.length} cliente(s)
             </div>
-            {selectedIds.size > 0 && (
+            {selectedIds.size > 0 && perms.can(CARD_CLIENTES, "excluir") && (
               <Button
                 size="sm"
                 className="bg-red-600 hover:bg-red-700 text-white h-9 ml-1"
@@ -749,6 +757,7 @@ export default function CustomerManagement() {
                               <MapPin className="h-4 w-4" />
                             </Button>
                           )}
+                          {perms.can(CARD_CLIENTES, "excluir") && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -757,6 +766,7 @@ export default function CustomerManagement() {
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

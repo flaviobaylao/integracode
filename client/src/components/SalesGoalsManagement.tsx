@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { sortSellersByType } from "@/lib/sellerOrder";
+import { usePermissions } from "@/lib/permissions";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -85,7 +86,10 @@ interface YearlySummaryData {
   }>;
 }
 
+const CARD_METAS = "Metas de Vendas";
+
 export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps) {
+  const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -304,10 +308,12 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     ))}
                   </SelectContent>
                 </Select>
+                {perms.can(CARD_METAS, "criar") && (
                 <Button onClick={openNewGoal} size="sm">
                   <Plus className="h-4 w-4 mr-1" />
                   Nova Meta
                 </Button>
+                )}
               </div>
             </div>
           </CardHeader>
@@ -420,9 +426,12 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
+                            {perms.can(CARD_METAS, "editar") && (
                             <Button variant="ghost" size="sm" onClick={() => openEditGoal(goal)}>
                               <Pencil className="h-4 w-4" />
                             </Button>
+                            )}
+                            {perms.can(CARD_METAS, "excluir") && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -431,6 +440,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
