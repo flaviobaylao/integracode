@@ -43,13 +43,14 @@ const fmtDoc = (v: any): string => {
   return d;
 };
 const isPixRecebido = (it: any): boolean =>
-  it?.type === "C" && /pix.?-?\s*recebido/i.test(String(it?.description || ""));
-// Extrai o pagador (nome e CPF/CNPJ) do lancamento de PIX recebido. Fonte: campos
-// origin_name/document do extrato + a propria descricao (formato BB: "... <doc> <NOME>").
+  it?.type === "C" && /pix.?-?\s*recebido/i.test(`${it?.origin_name || ""} ${it?.description || ""}`);
+// Extrai o pagador (nome e CPF/CNPJ) do lancamento de PIX recebido. O rotulo do tipo
+// ("Pix - Recebido") fica em origin_name; a descricao traz "DD/MM HH:MM <doc> <NOME>".
+// Fontes do pagador: campo document (CPF/CNPJ) + a descricao (doc + nome).
 const pixPagador = (it: any): { nome: string; doc: string } => {
   const desc = String(it?.description || "");
   const m = desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)\s+(.+)$/);
-  const nome = String(it?.origin_name || (m ? m[2] : "")).trim();
+  const nome = (m ? m[2] : desc.replace(/^\s*\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s*/, "").replace(/(?<!\d)(\d{11}|\d{14})(?!\d)/, "")).trim();
   const doc = soDig(it?.document) || (m ? m[1] : "") || ((desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)/) || [])[1] || "");
   return { nome, doc };
 };
@@ -599,7 +600,7 @@ export default function ConciliacaoBancaria() {
                             {isPixRecebido(it) ? (() => { const pg = pixPagador(it); return (
                               <>
                                 <div className="truncate font-medium text-gray-800" title={it.description}>{pg.nome || "PIX recebido"}</div>
-                                <div className="text-[11px] text-gray-500">Pagador do PIX{pg.doc ? ` · ${fmtDoc(pg.doc)}` : ""}</div>
+                                <div className="text-[11px] text-gray-500">{it.origin_name || "Pix recebido"}{pg.doc ? ` · ${fmtDoc(pg.doc)}` : ""}</div>
                               </>
                             ); })() : (
                               <>
