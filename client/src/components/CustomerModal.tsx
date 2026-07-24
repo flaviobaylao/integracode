@@ -119,6 +119,9 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   // Vendedores não podem alterar atendimento virtual
   const canManageVirtualService = user?.role !== 'vendedor';
 
+  // Inativação é ação de gestor. Telemarketing e Vendedor editam o cadastro, mas NÃO inativam clientes.
+  const canInactivateCustomer = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
+
   // 🔒 Dias/Periodicidade de visita: QUALQUER usuário pode INCLUIR (quando o campo está vazio);
   // ALTERAR um valor já preenchido é permitido só a estes administradores (Cinthia e Flávio).
   const VISIT_ALTER_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
@@ -1707,10 +1710,11 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
 
             {/* Botões */}
             <div className="flex justify-between items-center">
-              {/* Botão de Inativação (somente ao editar cliente ativo) */}
-              {customer && customer.omieStatus === 'ativo' && (
-                <Button 
-                  type="button" 
+              {/* Botão de Inativação: só ao editar cliente ATIVO e apenas para gestores.
+                  Telemarketing e Vendedor editam o cadastro, mas não inativam clientes. */}
+              {customer && customer.omieStatus === 'ativo' && canInactivateCustomer ? (
+                <Button
+                  type="button"
                   variant="destructive"
                   onClick={() => setShowInactivateDialog(true)}
                   disabled={inactivateCustomerMutation.isPending}
@@ -1719,8 +1723,9 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                   <XCircle className="h-4 w-4 mr-2" />
                   Inativar Cliente
                 </Button>
+              ) : (
+                <div />
               )}
-              {!customer || customer.omieStatus !== 'ativo' ? <div /> : null}
               
               <div className="flex space-x-2">
                 <Button type="button" variant="outline" onClick={onClose}>
