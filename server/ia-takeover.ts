@@ -52,6 +52,17 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
   return sendUmblerTalkText(toPhone, text);
 }
 
+// Liga/desliga a ação da IA POR NÚMERO. 1841 (last_inbound_channel='oficial_1841') -> ia_canal_1841;
+// qualquer outro (2630/broker) -> ia_canal_2630. Ambos default 'on'. Editável no painel.
+async function channelAllowed(conversationId: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`SELECT last_inbound_channel FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
+    const lic = r.rows?.[0]?.last_inbound_channel;
+    const key = lic === 'oficial_1841' ? 'ia_canal_1841' : 'ia_canal_2630';
+    return (await getSetting(key, 'on')) === 'on';
+  } catch { return true; }
+}
+
 // Decide se o disparo IMEDIATO (inbound) deve rodar agora. Ver regras no cabeçalho.
 export async function shouldRespondNow(conversationId: string): Promise<boolean> {
   try {
@@ -73,6 +84,7 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
 export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
   try {
     if (!incomingText || !incomingText.trim()) return;
+    if (!(await channelAllowed(conversationId))) return; // liga/desliga por número (2630/1841)
     if (!(await shouldRespondNow(conversationId))) return;
     const { maybeRunAgent } = await import('./agent-runtime');
     await maybeRunAgent({
@@ -128,6 +140,7 @@ export async function takeoverTick(force = false): Promise<{ ran: boolean; reaso
   const { maybeRunAgent } = await import('./agent-runtime');
   for (const row of rows) {
     try {
+      if (!(await channelAllowed(row.id))) continue; // liga/desliga por número (2630/1841)
       // maybeRunAgent aplica: agents_runtime_mode (off/test/on), allowlist de teste, chat_ai_paused,
       // escolha do agente por palavra-chave, roteamento Rota_do_Dia e loop de ferramentas — igual ao IG.
       await maybeRunAgent({
