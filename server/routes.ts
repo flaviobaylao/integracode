@@ -1669,23 +1669,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`📝 [CUSTOMER-UPDATE] Iniciando atualização para ID: ${id}`);
       console.log(`📝 [CUSTOMER-UPDATE] Usuário: ${user?.email} (${user?.role})`);
       console.log(`📝 [CUSTOMER-UPDATE] Campos enviados:`, Object.keys(req.body));
-      
-      // 📞 Registro de TELEFONE liberado a TODOS os usuários (sem restrição de papel).
-      // Gestores (admin/coordinator/administrative) editam tudo; os demais papéis (vendedor, telemarketing,
-      // motorista, etc.) podem atualizar o cliente desde que APENAS telefone/contato — nenhum outro dado.
+
+      // 📞 Edição do cadastro do cliente por papel:
+      //  • Gestores (admin/coordinator/administrative): editam tudo, inclusive a situação (ativo/inativo).
+      //  • Telemarketing e Vendedor: editam TODOS os campos do cadastro, EXCETO inativar/reativar
+      //    (mudança de status). A exclusão é outra rota (DELETE), também bloqueada para eles.
+      //  • Demais papéis (ex.: motorista): apenas telefone e contato.
       const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const phoneContactAllowedFields = ['phone', 'contact'];
       if (!_isManager) {
-        const requestedFields = Object.keys(req.body);
-        const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
-        if (disallowedFields.length > 0) {
-          return res.status(403).json({
-            message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
-            disallowedFields
-          });
+        if (_isCadastroEditor) {
+          // Bloqueia qualquer tentativa de inativar/reativar o cliente pelo cadastro.
+          if (req.body.omieStatus !== undefined || req.body.isActive === false) {
+            return res.status(403).json({
+              message: "Seu perfil pode editar o cadastro do cliente, mas não pode inativar clientes.",
+            });
+          }
+          // Nunca deixa o cadastro alterar a situação (ativo/inativo) do cliente.
+          delete req.body.omieStatus;
+          delete req.body.isActive;
+        } else {
+          const requestedFields = Object.keys(req.body);
+          const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
+          if (disallowedFields.length > 0) {
+            return res.status(403).json({
+              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+              disallowedFields
+            });
+          }
         }
       }
-      
+
       // Se o ID comeca com "billing-", e um card do PIPELINE cujo cliente nao resolveu (id sintetico
       // 'billing-'||billing_pipeline.id). ANTES atualizava a tabela 'billings' (legado, sem lat/long) -> 500.
       // Correto: resolver o CLIENTE REAL do card (por customer_id, senao por DOCUMENTO) e salvar a coordenada nele,
@@ -2312,19 +2327,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const user = req.currentUser;
       
-      // 📞 Registro de TELEFONE liberado a TODOS os usuários (sem restrição de papel).
-      // Gestores (admin/coordinator/administrative) editam tudo; os demais papéis (vendedor, telemarketing,
-      // motorista, etc.) podem atualizar o cliente desde que APENAS telefone/contato — nenhum outro dado.
+      // 📞 Edição do cadastro do cliente por papel (mesma regra do PATCH):
+      //  • Gestores (admin/coordinator/administrative): editam tudo, inclusive a situação (ativo/inativo).
+      //  • Telemarketing e Vendedor: editam TODOS os campos do cadastro, EXCETO inativar/reativar.
+      //  • Demais papéis (ex.: motorista): apenas telefone e contato.
       const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
+      const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const phoneContactAllowedFields = ['phone', 'contact'];
       if (!_isManager) {
-        const requestedFields = Object.keys(req.body);
-        const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
-        if (disallowedFields.length > 0) {
-          return res.status(403).json({
-            message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
-            disallowedFields
-          });
+        if (_isCadastroEditor) {
+          if (req.body.omieStatus !== undefined || req.body.isActive === false) {
+            return res.status(403).json({
+              message: "Seu perfil pode editar o cadastro do cliente, mas não pode inativar clientes.",
+            });
+          }
+          delete req.body.omieStatus;
+          delete req.body.isActive;
+        } else {
+          const requestedFields = Object.keys(req.body);
+          const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
+          if (disallowedFields.length > 0) {
+            return res.status(403).json({
+              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+              disallowedFields
+            });
+          }
         }
       }
 
@@ -2538,6 +2565,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/customers/:id', authenticateUser, requirePermission("Clientes / Carteira", "excluir"), async (req: any, res) => {
     try {
       const { id } = req.params;
+      // 🔒 Exclusão de cliente é ação de gestor. Telemarketing e Vendedor NUNCA excluem clientes
+      // (independente de configuração de permissões) — apenas editam o cadastro.
+      const _role = req.currentUser?.role;
+      if (['vendedor', 'telemarketing'].includes(_role)) {
+        return res.status(403).json({ message: "Seu perfil não pode excluir clientes." });
+      }
       await storage.deleteCustomer(id);
       res.json({ message: "Customer deleted successfully" });
     } catch (error) {
