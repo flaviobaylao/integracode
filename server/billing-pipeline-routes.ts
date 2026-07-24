@@ -536,7 +536,7 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
 // Cada um e roteado por autoSendToBillingPipeline, que decide pipeline OU Bloqueados.
 // Assim todo pedido registrado sempre chega a um lugar visivel, nunca some.
 export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pendingAgeMinutes?: number; apply?: boolean }): Promise<{ scanned: number; routed: number; toBlocked: number; failed: number; apply: boolean; details: any[] }> {
-  const apply = opts/.apply !== false; // default: aplica
+  const apply = opts?.apply !== false; // default: aplica
   const days = Number(opts?.days ?? 30);
   const pendingAge = Number(opts?.pendingAgeMinutes ?? 30);
   const details: any[] = [];
@@ -547,16 +547,14 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       SELECT sc.id FROM sales_cards sc
       WHERE sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
         AND sc.products IS NOT NULL AND jsonb_array_length(sc.products) > 0
-        AND sf.parent_card_id IS NULL
+        AND sc.parent_card_id IS NULL
         AND sc.status NOT IN ('no_sale','cancelled','canceled','transferred')
         AND sc.created_at > (now() - (${days} * interval '1 day'))
         AND (
               sc.status = 'completed'
               OR (sc.status = 'pending' AND sc.updated_at < (now() - (${pendingAge} * interval '1 minute')))
-        AND (
-              sc.status = 'completed'
-               OR (sc.status = 'pending' AND sc.updated_at < (now() - (${pendingAge} * interval '1 minute')))
-        AND NOT EXISTS (SELECT 1 FROM billing_pipeline br WHERE bp.sales_card_id = sc.id)
+            )
+        AND NOT EXISTS (SELECT 1 FROM billing_pipeline bp WHERE bp.sales_card_id = sc.id)
         AND NOT EXISTS (SELECT 1 FROM blocked_orders bo WHERE bo.sales_card_id = sc.id AND bo.status = 'blocked')`);
     ids = (q.rows || []).map((r: any) => r.id);
   } catch (e: any) {
@@ -567,7 +565,7 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
     try {
       const card: any = await storage.getSalesCard(id);
       if (!card || !card.saleValue || parseFloat(String(card.saleValue)) === 0) { failed++; details.push({ id, result: 'not_eligible' }); continue; }
-      if (['no_sale', 'canceled', 'canceled', 'transferred'].includes(String(card.status))) { failed++; details.push({ id, result: 'status_' + card.status }); continue; }
+      if (['no_sale', 'cancelled', 'canceled', 'transferred'].includes(String(card.status))) { failed++; details.push({ id, result: 'status_' + card.status }); continue; }
       if (!apply) { details.push({ id, val: card.saleValue, status: card.status, result: 'would_route' }); continue; }
       // Preserva a data de registro (senao entraria no pipeline como "hoje").
       const completedDate = card.completedDate || card.createdAt || new Date();
