@@ -2220,90 +2220,22 @@ export function registerChatRoutes(app: Express): void {
       if (!isFromMe) {
         debugInfo.steps.push('10a-ai-trigger');
         try {
-          const aiSettings = await storage.getChatAiSettings();
-          
-          // IMPORTANTE: Recarregar conversa para pegar o status atualizado (linha 1270-1275 atualizou para 'new')
           const currentConversation = await storage.getChatConversation(conversation.id);
-          
-          if (!currentConversation) {
-            console.error(`❌ [WEBHOOK-AI] Conversa ${conversation.id} não encontrada após atualização`);
+          const nomeUp = (identifiedName || '').toUpperCase();
+          if (nomeUp.includes('SPAM') || nomeUp.includes('GRUPO')) {
+            console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" SPAM/GRUPO - ignorando IA`);
           } else {
-            // Verificar se a conversa está atribuída ao ChatGPT ou é nova/reaberta
-            const isAssignedToChatGpt = currentConversation.assignedAgentId === 'chatgpt';
-            // Conversa é "nova" se: não tem agente atribuído OU status é 'new'
-            const isNewOrReopened = !currentConversation.assignedAgentId || currentConversation.status === 'new';
-            const isAssignedToHuman = currentConversation.assignedAgentId && 
-                                      currentConversation.assignedAgentId !== 'chatgpt';
-            
-            console.log(`🔍 [WEBHOOK-AI] Status: ${currentConversation.status} | Agent: ${currentConversation.assignedAgentId || 'nenhum'} | isNew: ${isNewOrReopened} | isHuman: ${isAssignedToHuman} | isChatGPT: ${isAssignedToChatGpt}`);
-            
-            // 🚫 SPAM/GRUPO FILTER: Não processar mensagens de contatos marcados como SPAM ou GRUPO
-            const isSpamContact = identifiedName.toUpperCase().includes('SPAM');
-            const isGrupoContact = identifiedName.toUpperCase().includes('GRUPO');
-            if (isSpamContact) {
-              console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" marcado como SPAM - IGNORANDO resposta automática`);
-              // Não distribuir nem responder - apenas arquivar silenciosamente
-            } else if (isGrupoContact) {
-              console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" marcado como GRUPO - IGNORANDO resposta automática`);
-              // Não distribuir nem responder - apenas arquivar silenciosamente
-            } else if (isAssignedToHuman) {
-              // 🔒 REGRA: Conversas atribuídas a humanos PERMANECEM com eles até serem finalizadas
-              console.log(`👤 [WEBHOOK-AI] Conversa ${conversation.id} atribuída a atendente humano (${currentConversation.assignedAgentId}) - MANTENDO atribuição`);
-            } else if (isAssignedToChatGpt) {
-              // 🤖 REGRA: Conversas do ChatGPT PERMANECEM com ele (até transferência explícita)
-              console.log(`🤖 [WEBHOOK-AI] Conversa ${conversation.id} atribuída ao ChatGPT - MANTENDO atribuição`);
-              
-              if (aiSettings && aiSettings.isEnabled && aiSettings.mode !== 'disabled') {
-                const { handleIncomingMessage } = await import("./chatgpt-service");
-                handleIncomingMessage(
-                  {
-                    id: conversation.id,
-                    customerName: identifiedName,
-                    customerPhone: normalizedPhone
-                  },
-                  {
-                    content: finalContent,
-                    timestamp: nowBrazil()
-                  },
-                  aiSettings
-                ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
-              }
-            } else if (!currentConversation.assignedAgentId) {
-              // 🆕 NOVA CONVERSA: Ainda não foi atribuída a ninguém - distribuir
-              console.log(`🆕 [WEBHOOK-AI] Conversa ${conversation.id} SEM atribuição - distribuindo...`);
-              
-              if (aiSettings && aiSettings.isEnabled && aiSettings.mode !== 'disabled') {
-                // ChatGPT ativado - distribuir (vai para ChatGPT por padrão)
-                const { distributeNewConversation } = await import("./chat-distribution-service");
-                const distribution = await distributeNewConversation(conversation.id);
-                
-                if (distribution.isChatGpt) {
-                  const { handleIncomingMessage } = await import("./chatgpt-service");
-                  handleIncomingMessage(
-                    {
-                      id: conversation.id,
-                      customerName: identifiedName,
-                      customerPhone: normalizedPhone
-                    },
-                    {
-                      content: finalContent,
-                      timestamp: nowBrazil()
-                    },
-                    aiSettings
-                  ).catch(err => console.error(`❌ [WEBHOOK-AI] Erro ao processar resposta da IA:`, err));
-                } else {
-                  console.log(`👤 [WEBHOOK-AI] Nova conversa distribuída para atendente humano: ${distribution.assignedTo}`);
-                }
-              } else {
-                // ChatGPT desativado - distribuir para humanos
-                const { distributeNewConversation } = await import("./chat-distribution-service");
-                const distribution = await distributeNewConversation(conversation.id);
-                console.log(`👤 [WEBHOOK-AI] ChatGPT DESATIVADO - Nova conversa distribuída para: ${distribution.assignedTo || 'fila'}`);
-              }
+            // Conversa nova sem dono: distribui na fila (round-robin) para os humanos verem
+            if (currentConversation && !currentConversation.assignedAgentId) {
+              try { const { distributeNewConversation } = await import("./chat-distribution-service"); await distributeNewConversation(conversation.id); }
+              catch (e: any) { console.error('[WEBHOOK-AI] distribuicao', e?.message || e); }
             }
+            // IA reativa oficial = Agentes de IA (Claude), mesmo motor do Instagram (ChatGPT antigo desativado).
+            // shouldRespondNow aplica a regra de takeover (espera humano X min); o sweep assume depois.
+            import('./ia-takeover').then(({ reactiveInbound }) => reactiveInbound(conversation.id, normalizedPhone, finalContent)).catch(() => {});
           }
         } catch (aiErr: any) {
-          console.error(`⚠️ [WEBHOOK-AI] Erro ao verificar configurações de IA:`, aiErr.message);
+          console.error(`⚠️ [WEBHOOK-AI] Erro no gatilho de IA:`, aiErr.message);
         }
       }
 
