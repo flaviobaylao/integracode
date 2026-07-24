@@ -2,6 +2,7 @@ import { registerOfficialPanel } from "./official-panel";
 import { registerIaAtendimento } from "./ia-atendimento-panel";
 import { registerIaFinalizar } from "./ia-finalizar";
 import { registerIaTakeover } from "./ia-takeover";
+import { registerIaDiag } from "./ia-diag";
 import { registerCommunicationAutomationsRoutes } from "./communication-automations-routes";
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
 import { registerDelegationRoutes } from "./delegations-routes";
@@ -42,6 +43,7 @@ registerOfficialPanel(app);
 registerIaAtendimento(app);
 registerIaFinalizar(app);
 registerIaTakeover(app);
+registerIaDiag(app);
 
 // MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas
 app.use((req, res, next) => {
