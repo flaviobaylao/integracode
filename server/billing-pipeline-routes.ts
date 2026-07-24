@@ -309,6 +309,9 @@ export async function insertBlockedOrderIdempotent(
 }
 
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null }) {
+  // BLINDAGEM: nunca estourar por card indefinido (ex.: card removido entre a varredura e o envio).
+  // Sem isso, o erro "reading saleValue of undefined" abortava o roteamento e o pedido nao entrava.
+  if (!salesCard || !salesCard.id) { return null; }
   if (!isInternalBillingModeActive()) return null;
   // So cria item no pipeline para pedidos com venda registrada (evita cards vazios)
   if (!salesCard.saleValue || parseFloat(String(salesCard.saleValue)) === 0) { await logOrderAudit(salesCard.id, 'skipped_no_sale'); return null; }
@@ -521,6 +524,67 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
   }
   console.log(`🛟 [RECONCILE-PENDING] scanned=${scanned} recovered=${recovered} blocked/dup=${blockedOrSkipped} notEligible=${notEligible} apply=${apply}`);
   return { scanned, recovered, blockedOrSkipped, notEligible, details };
+}
+
+// GARANTIA "NENHUM PEDIDO DESAPARECE": rede de seguranca abrangente.
+// Diferente de reconcilePendingOrders (que so trata status='pending'), esta varredura
+// pega QUALQUER sales_card com venda real (hotsite, instagram, vendedores) que:
+//   - tenha valor de venda > 0 e produtos,
+//   - nao seja filho (parent_card_id null) e nao esteja cancelado/sem-venda/transferido,
+//   - foi criado nos ultimos N dias,
+//   - e AINDA NAO esta no pipeline NEM em blocked_orders (coluna Bloqueados).
+// Cada um e roteado por autoSendToBillingPipeline, que decide pipeline OU Bloqueados.
+// Assim todo pedido registrado sempre chega a um lugar visivel, nunca some.
+export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pendingAgeMinutes?: number; apply?: boolean }): Promise<{ scanned: number; routed: number; toBlocked: number; failed: number; apply: boolean; details: any[] }> {
+  const apply = opts/.apply !== false; // default: aplica
+  const days = Number(opts?.days ?? 30);
+  const pendingAge = Number(opts?.pendingAgeMinutes ?? 30);
+  const details: any[] = [];
+  let routed = 0, toBlocked = 0, failed = 0;
+  let ids: string[] = [];
+  try {
+    const q: any = await db.execute(sql`
+      SELECT sc.id FROM sales_cards sc
+      WHERE sc.sale_value IS NOT NULL AND sc.sale_value::numeric > 0
+        AND sc.products IS NOT NULL AND jsonb_array_length(sc.products) > 0
+        AND sf.parent_card_id IS NULL
+        AND sc.status NOT IN ('no_sale','cancelled','canceled','transferred')
+        AND sc.created_at > (now() - (${days} * interval '1 day'))
+        AND (
+              sc.status = 'completed'
+              OR (sc.status = 'pending' AND sc.updated_at < (now() - (${pendingAge} * interval '1 minute')))
+        AND (
+              sc.status = 'completed'
+               OR (sc.status = 'pending' AND sc.updated_at < (now() - (${pendingAge} * interval '1 minute')))
+        AND NOT EXISTS (SELECT 1 FROM billing_pipeline br WHERE bp.sales_card_id = sc.id)
+        AND NOT EXISTS (SELECT 1 FROM blocked_orders bo WHERE bo.sales_card_id = sc.id AND bo.status = 'blocked')`);
+    ids = (q.rows || []).map((r: any) => r.id);
+  } catch (e: any) {
+    return { scanned: 0, routed: 0, toBlocked: 0, failed: 0, apply, details: [{ error: e?.message || String(e) }] };
+  }
+  const scanned = ids.length;
+  for (const id of ids) {
+    try {
+      const card: any = await storage.getSalesCard(id);
+      if (!card || !card.saleValue || parseFloat(String(card.saleValue)) === 0) { failed++; details.push({ id, result: 'not_eligible' }); continue; }
+      if (['no_sale', 'canceled', 'canceled', 'transferred'].includes(String(card.status))) { failed++; details.push({ id, result: 'status_' + card.status }); continue; }
+      if (!apply) { details.push({ id, val: card.saleValue, status: card.status, result: 'would_route' }); continue; }
+      // Preserva a data de registro (senao entraria no pipeline como "hoje").
+      const completedDate = card.completedDate || card.createdAt || new Date();
+      if (card.status === 'pending') {
+        await db.execute(sql`UPDATE sales_cards SET status = 'completed', completed_date = ${completedDate}, updated_at = now() WHERE id = ${id} AND status = 'pending'`);
+      }
+      let email = 'sweep-orphans';
+      try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email);
+      if (item) { routed++; details.push({ id, val: card.saleValue, result: 'routed', pipelineId: item.id, stage: item.stage }); }
+      else { toBlocked++; details.push({ id, val: card.saleValue, result: 'to_blocked_or_dup' }); }
+    } catch (e: any) {
+      failed++; details.push({ id, result: 'error', error: e?.message || String(e) });
+    }
+  }
+  console.log(`[SWEEP-ORPHANS] scanned=${scanned} routed=${routed} toBlocked=${toBlocked} failed=${failed} apply=${apply}`);
+  return { scanned, routed, toBlocked, failed, apply, details };
 }
 
 function isAdminOnly(req: any, res: any, next: any) {
@@ -910,6 +974,21 @@ export function registerBillingPipelineRoutes(app: Express) {
       const cardIds = Array.isArray(req.body?.cardIds) ? req.body.cardIds.map((x: any) => String(x)) : undefined;
       const r = await reconcilePendingOrders({ apply, minAgeMinutes, cardIds });
       res.json({ ok: true, apply, ...r });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // REDE DE SEGURANCA GERAL: varre TODOS os pedidos com venda real (qualquer origem:
+  // hotsite, instagram, vendedores) que ainda nao chegaram ao pipeline nem a Bloqueados,
+  // e os roteia. Garante que nenhum pedido registrado desapareca. dryRun por padrao;
+  // {apply:true} (ou ?apply=1) executa. Parametros: days (janela, default 30),
+  // pendingAge (min de inatividade p/ pendentes, default 30).
+  app.post('/api/admin/pipeline/sweep-orphans', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.query.apply === '1' || req.body?.apply === true;
+      const days = Number(req.query.days ?? req.body?.days) || 30;
+      const pendingAgeMinutes = Number(req.query.pendingAge ?? req.body?.pendingAge) || 30;
+      const r = await sweepUnbilledOrdersToPipeline({ apply, days, pendingAgeMinutes });
+      res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
