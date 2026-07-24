@@ -28,9 +28,11 @@ const KEYS: Record<string, string> = {
   ia_regra_finalizar_on: 'off',            // #3 finalizar conversas inativas
   ia_finalizar_min: '120',                 // minutos de inatividade do #3
   ia_despedida: 'Foi um prazer falar com voce! Qualquer coisa e so chamar aqui. 🧡',
+  ia_canal_2630: 'on',                     // liga/desliga a acao da IA no numero 2630 (atendimento)
+  ia_canal_1841: 'on',                     // liga/desliga a acao da IA no numero 1841 (HONESTAPI)
 };
 const MODES = ['agents_runtime_mode', 'agents_ig_mode'];
-const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on'];
+const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841'];
 const NUMS = ['ia_timeout_min', 'ia_finalizar_min'];
 
 export function registerIaAtendimento(app: any) {
@@ -104,6 +106,10 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
         <button class="b-test" onclick="setMode('agents_ig_mode','test')">test</button>
         <button class="b-on" onclick="setMode('agents_ig_mode','on')">on</button>
       </span></div></div>
+  <div class="row"><div>Número 2630 <span class="desc">(atendimento — HONEST2)</span></div>
+    <div id="t_ia_canal_2630"></div></div>
+  <div class="row"><div>Número 1841 <span class="desc">(HONESTAPI oficial — respostas a disparos)</span></div>
+    <div id="t_ia_canal_1841"></div></div>
 </div>
 
 <div class="card">
@@ -143,7 +149,7 @@ async function load(){
   try{
     const d = await (await fetch('/api/admin/ia-atendimento/estado'+q(''))).json();
     for(const m of ['agents_runtime_mode','agents_ig_mode']){ const b=document.getElementById('b_'+m); b.textContent=d[m]; b.className='badge m-'+d[m]; }
-    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
+    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
     document.getElementById('n_ia_timeout_min').value=d.ia_timeout_min;
     document.getElementById('n_ia_finalizar_min').value=d.ia_finalizar_min;
     const ta=document.getElementById('txt_ia_despedida'); if(document.activeElement!==ta) ta.value=d.ia_despedida;
