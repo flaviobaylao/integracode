@@ -98,6 +98,20 @@ async function _promoteAgendados(origem: string) {
 cron.schedule('5 0 * * *', () => { void _promoteAgendados('diario'); }, { timezone: 'America/Sao_Paulo' });
 cron.schedule('7 * * * *', () => { void _promoteAgendados('horario'); }, { timezone: 'America/Sao_Paulo' });
 
+// GARANTIA "NENHUM PEDIDO DESAPARECE": rede de seguranca abrangente (superset do reconcile-pending).
+// Varre pedidos com venda real de QUALQUER origem (hotsite, instagram, vendedores) - inclusive
+// status='completed' orfaos - que ainda nao chegaram ao pipeline NEM a Bloqueados, e os roteia.
+// Roda a cada 30 min (defasada 15 min do reconcile-pending). Idempotente (dedup no autoSend).
+cron.schedule('15,45 * * * *', async () => {
+  try {
+    const { sweepUnbilledOrdersToPipeline } = await import('./billing-pipeline-routes');
+    const r = await sweepUnbilledOrdersToPipeline({ apply: true, days: 30, pendingAgeMinutes: 30 });
+    if ((r.routed + r.toBlocked) > 0) console.log(`[SCHEDULER] sweep-orphans: ${r.routed} roteado(s) + ${r.toBlocked} p/ bloqueados (de ${r.scanned} varrido[s]).`);
+  } catch (error: any) {
+    console.error('[SCHEDULER] erro no sweep-orphans:', error?.message || error);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
