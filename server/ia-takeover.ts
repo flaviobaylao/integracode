@@ -65,6 +65,26 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
   } catch { return true; } // em qualquer erro, mantém o comportamento atual (não trava o atendimento)
 }
 
+// Gatilho REATIVO do WhatsApp (chamado pelo webhook ao vivo /api/chat/webhook/messages).
+// A IA reativa oficial passa a ser a NOVA (Agentes de IA / Claude, mesmo motor do Instagram).
+// O porteiro shouldRespondNow aplica a regra de takeover: se ligada e a IA ainda não assumiu,
+// espera o humano (o sweep assume em X min); se a IA já assumiu, responde na hora.
+// maybeRunAgent reaplica canal/modo/allowlist/paused — cliente real protegido em modo test.
+export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
+  try {
+    if (!incomingText || !incomingText.trim()) return;
+    if (!(await shouldRespondNow(conversationId))) return;
+    const { maybeRunAgent } = await import('./agent-runtime');
+    await maybeRunAgent({
+      phone,
+      conversationId,
+      incomingText,
+      sendText: (to: string, text: string) => replyVia(conversationId, to, text),
+      channel: 'whatsapp',
+    });
+  } catch (e: any) { console.error('[IA-REACTIVE]', e?.message || e); }
+}
+
 // Candidatos ao takeover: conversa de WhatsApp cuja ÚLTIMA mensagem é do cliente, sem resposta
 // de ninguém há >= mins, dentro de uma janela de frescor (evita disparar em backlog antigo ao ligar),
 // não pausada e não resolvida.
