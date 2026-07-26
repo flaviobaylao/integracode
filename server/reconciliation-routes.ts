@@ -1653,9 +1653,10 @@ export function registerReconciliation(app: Express) {
     return m ? m[1] : "";
   }
 
-  async function conciliarPixWebhook(by: string, dryRun: boolean): Promise<{ candidatos: number; conciliados: number; ambiguos: number; semMatch: number; erros: string[]; exemplos: any[] }> {
-    const out = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] as string[], exemplos: [] as any[] };
-    // 1) Itens pendentes de credito "PIX-RECEBIDO" (com documento do pagador).
+  async function conciliarPixWebhook(by: string, dryRun: boolean): Promise<any> {
+    const out: any = { candidatos: 0, conciliados: 0, ambiguos: 0, semMatch: 0, erros: [] as string[], exemplos: [] as any[],
+                       porChave: { documento: 0, horario: 0 }, porOrigem: { cobranca: 0, loja: 0 }, aBaixar: [] as any[] };
+    // 1) Itens pendentes de credito "PIX-RECEBIDO" (QR Code ou chave).
     const items = rowsOf(await db.execute(sql`
       SELECT i.id, i.transaction_date::date::text AS d, round(COALESCE(NULLIF(i.amount::text, '')::numeric, 0), 2)::text AS amt,
              i.description, i.document, i.origin_document, s.financial_account_id AS acc, s.omie_instance_id AS inst
@@ -1666,77 +1667,138 @@ export function registerReconciliation(app: Express) {
       ORDER BY i.transaction_date LIMIT 5000`));
     out.candidatos = items.length;
     if (!items.length) return out;
-    // 2) Cobrancas PIX pagas (webhook, status CONCLUIDA) com titulo ja quitado.
-    const charges = rowsOf(await db.execute(sql`
-      SELECT pc.id AS charge_id, pc.receivable_id, round(COALESCE(NULLIF(pc.amount_paid::text, '')::numeric, 0), 2)::text AS amt,
-             pc.paid_at::date::text AS d, pc.omie_instance_id AS inst,
+
+    // 2) Cobrancas PIX PAGAS (webhook BB, status CONCLUIDA). O titulo vem de duas
+    //    origens: (a) a propria cobranca (pc.receivable_id) — QR gerado a partir de
+    //    um titulo, ja baixado pelo webhook; (b) PIX da LOJA (hotsite): a cobranca
+    //    nasce SEM titulo, o pedido e criado depois do pagamento e o recebivel sai
+    //    do faturamento — a ligacao e hotsite_pending_pix.charge_id/txid -> order_id
+    //    (sales_card) -> billing_pipeline -> receivables.billing_pipeline_id.
+    //    Sem (b), todo PIX pago na loja ficava pendente no extrato para sempre.
+    const SQL_CHARGES = (comLoja: boolean) => sql`
+      SELECT pc.id AS charge_id, pc.txid,
+             round(COALESCE(NULLIF(pc.amount_paid::text, ''), NULLIF(pc.amount::text, ''), '0')::numeric, 2)::text AS amt,
+             pc.paid_at::date::text AS d,
+             to_char(pc.paid_at - interval '3 hours', 'MM-DD HH24:MI') AS hbrt,
+             pc.omie_instance_id AS inst, pc.created_by,
              regexp_replace(COALESCE(pc.debtor_document, ''), '[^0-9]', '', 'g') AS cdoc,
-             regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') AS rdoc,
-             r.title_number AS nf, round(COALESCE(NULLIF(r.amount::text, '')::numeric, 0), 2) AS ramt,
-             round(COALESCE(NULLIF(r.amount_paid::text, '')::numeric, 0), 2) AS rpaid
-      FROM pix_charges pc JOIN receivables r ON r.id = pc.receivable_id
-      WHERE pc.status = 'CONCLUIDA' AND pc.receivable_id IS NOT NULL AND pc.paid_at IS NOT NULL
-        AND r.deleted_at IS NULL`));
-    // Indexa por valor|documento (documento do pagador OU do cliente do titulo).
-    // Honest 23/jul: NAO exige mais titulo quitado. O sinal autoritativo e a cobranca
-    // PIX CONCLUIDA (webhook) ja atrelada a um titulo (pc.receivable_id); valor+documento
-    // servem apenas para achar QUAL linha do extrato corresponde a QUAL cobranca. A baixa
-    // ja foi feita pelo webhook — aqui so vinculamos a linha do extrato ao titulo.
-    const byKey: Record<string, any[]> = {};
+             COALESCE(pc.receivable_id, r2.id) AS receivable_id,
+             CASE WHEN pc.receivable_id IS NOT NULL THEN 'cobranca' ELSE 'loja' END AS origem,
+             regexp_replace(COALESCE(COALESCE(r.customer_document, r2.customer_document), ''), '[^0-9]', '', 'g') AS rdoc,
+             COALESCE(r.title_number, r2.title_number) AS nf,
+             round(COALESCE(NULLIF(COALESCE(r.amount, r2.amount)::text, '')::numeric, 0), 2) AS ramt,
+             round(COALESCE(NULLIF(COALESCE(r.amount_paid, r2.amount_paid)::text, '')::numeric, 0), 2) AS rpaid
+      FROM pix_charges pc
+      LEFT JOIN receivables r ON r.id = pc.receivable_id AND r.deleted_at IS NULL
+      ${comLoja ? sql`
+      LEFT JOIN hotsite_pending_pix hp ON hp.status = 'paid'
+             AND (hp.charge_id = pc.id OR (pc.txid IS NOT NULL AND hp.txid = pc.txid))
+      LEFT JOIN billing_pipeline bp ON bp.sales_card_id = hp.order_id
+      LEFT JOIN receivables r2 ON r2.billing_pipeline_id = bp.id AND r2.deleted_at IS NULL` : sql`
+      LEFT JOIN receivables r2 ON false`}
+      WHERE pc.status = 'CONCLUIDA' AND pc.paid_at IS NOT NULL
+        AND COALESCE(pc.receivable_id, r2.id) IS NOT NULL`;
+    // A tabela da loja pode nao existir em bases antigas -> cai para o modo sem loja.
+    let charges: any[] = [];
+    try { charges = rowsOf(await db.execute(SQL_CHARGES(true))); }
+    catch (e: any) {
+      out.erros.push("hotsite_pending_pix indisponivel: " + String(e?.message || e).slice(0, 80));
+      charges = rowsOf(await db.execute(SQL_CHARGES(false)));
+    }
+
+    // Indexa por valor|documento (pagador OU cliente do titulo) e por valor|horario.
+    // O HORARIO e a chave mais forte: o extrato do BB traz "DD/MM HH:MM" no texto do
+    // lancamento e o webhook grava paid_at (UTC) — batendo ao minuto. Resolve o caso
+    // em que quem paga o QR NAO e o titular do titulo (CPF do pagador != CNPJ do cliente).
+    const byDoc: Record<string, any[]> = {};
+    const byHora: Record<string, any[]> = {};
     for (const c of charges) {
       const docs = new Set<string>();
       if (c.cdoc) docs.add(String(c.cdoc));
       if (c.rdoc) docs.add(String(c.rdoc));
-      for (const dc of docs) (byKey[`${c.amt}|${dc}`] ||= []).push(c);
+      for (const dc of docs) (byDoc[`${c.amt}|${dc}`] ||= []).push(c);
+      if (c.hbrt) (byHora[`${c.amt}|${c.hbrt}`] ||= []).push(c);
     }
-    // Documentos do pagador na linha do extrato: descricao (regex) + campos document/origin_document.
     const docsDoItem = (it: any): string[] => {
       const set = new Set<string>();
       for (const raw of [extractPayerDoc(it.description), it.document, it.origin_document]) {
-        const d = onlyDigits(raw);
+        let d = onlyDigits(raw);
+        if (d.length === 14 && d.startsWith("000")) d = d.slice(3); // CPF com padding do BB
         if (d.length === 11 || d.length === 14) set.add(d);
       }
       return [...set];
     };
+    // "19/07 18:27 ..." -> "07-19 18:27"
+    const horaDoItem = (it: any): string => {
+      const m = String(it.description || "").match(/(?<!\d)(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+      if (!m) return "";
+      const dd = m[1].padStart(2, "0"), mm = m[2].padStart(2, "0"), hh = m[3].padStart(2, "0");
+      return `${mm}-${dd} ${hh}:${m[4]}`;
+    };
+    const diasEntre = (a: string, b: string) => {
+      const ta = Date.parse(a + "T00:00:00Z"), tb = Date.parse(b + "T00:00:00Z");
+      return isNaN(ta) || isNaN(tb) ? 99 : Math.abs(ta - tb) / 86400000;
+    };
+
     const usados = new Set<string>();
-    const aplicar: Array<{ item: any; charge: any }> = [];
+    const aplicar: Array<{ item: any; charge: any; via: string }> = [];
     for (const it of items) {
-      const docs = docsDoItem(it);
-      if (!docs.length) { out.semMatch++; continue; }
-      const seen = new Set<string>();
-      let cands: any[] = [];
-      for (const doc of docs) for (const c of (byKey[`${it.amt}|${doc}`] || [])) {
-        const cid = String(c.charge_id);
-        if (usados.has(cid) || seen.has(cid)) continue;
-        seen.add(cid); cands.push(c);
-      }
-      if (!cands.length) { out.semMatch++; continue; }
-      if (cands.length > 1) {
-        const mesmaInst = cands.filter((c: any) => String(c.inst || "") === String(it.inst || ""));
-        let pool = mesmaInst.length ? mesmaInst : cands;
+      const vistos = new Set<string>();
+      const push = (arr: any[], via: string, acc: Array<{ c: any; via: string }>) => {
+        for (const c of arr) {
+          const cid = String(c.charge_id);
+          if (usados.has(cid) || vistos.has(cid)) continue;
+          if (diasEntre(it.d, c.d) > 3) continue;   // extrato lanca em D ou D+1
+          vistos.add(cid); acc.push({ c, via });
+        }
+      };
+      const acc: Array<{ c: any; via: string }> = [];
+      const hora = horaDoItem(it);
+      if (hora) push(byHora[`${it.amt}|${hora}`] || [], "horario", acc);       // chave forte primeiro
+      for (const doc of docsDoItem(it)) push(byDoc[`${it.amt}|${doc}`] || [], "documento", acc);
+      if (!acc.length) { out.semMatch++; continue; }
+      let pool = acc;
+      if (pool.length > 1) {
+        const porHora = pool.filter((x) => x.via === "horario");
+        if (porHora.length) pool = porHora;
         if (pool.length > 1) {
-          const mesmaData = pool.filter((c: any) => c.d === it.d);
+          const mesmaInst = pool.filter((x) => String(x.c.inst || "") === String(it.inst || ""));
+          if (mesmaInst.length) pool = mesmaInst;
+        }
+        if (pool.length > 1) {
+          const mesmaData = pool.filter((x) => x.c.d === it.d);
           if (mesmaData.length) pool = mesmaData;
         }
-        // Varias cobrancas mas TODAS apontando pro mesmo titulo -> nao e ambiguo.
-        if (pool.length > 1 && new Set(pool.map((c: any) => String(c.receivable_id))).size > 1) { out.ambiguos++; continue; }
-        cands = pool;
+        // Varias cobrancas apontando pro MESMO titulo nao e ambiguidade.
+        if (pool.length > 1 && new Set(pool.map((x) => String(x.c.receivable_id))).size > 1) { out.ambiguos++; continue; }
       }
-      const c = cands[0];
+      const { c, via } = pool[0];
+      // PIX da LOJA: so vincula se o titulo ja estiver quitado (o recebivel de pedido
+      // pago na loja nasce baixado). Se estiver em aberto, NAO concilia — reporta para
+      // conferencia, para nunca marcar como conciliado um titulo que nao recebeu baixa.
+      if (c.origem === "loja" && !(Number(c.ramt) > 0 && Number(c.rpaid) >= Number(c.ramt) - 0.005)) {
+        out.aBaixar.push({ data: it.d, valor: it.amt, nf: c.nf || null, receivableId: c.receivable_id, txid: c.txid || null });
+        out.semMatch++;
+        continue;
+      }
       usados.add(String(c.charge_id));
-      aplicar.push({ item: it, charge: c });
+      aplicar.push({ item: it, charge: c, via });
     }
-    out.exemplos = aplicar.slice(0, 8).map(({ item, charge }) => ({ data: item.d, valor: item.amt, nf: charge.nf || null }));
+    for (const a of aplicar) { out.porChave[a.via === "horario" ? "horario" : "documento"]++; out.porOrigem[a.charge.origem === "loja" ? "loja" : "cobranca"]++; }
+    out.exemplos = aplicar.slice(0, 10).map(({ item, charge, via }) => ({ data: item.d, valor: item.amt, nf: charge.nf || null, via, origem: charge.origem }));
     if (dryRun) { out.conciliados = aplicar.length; return out; }
-    for (const { item, charge } of aplicar) {
+    for (const { item, charge, via } of aplicar) {
       try {
         await db.execute(sql`
           INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
           VALUES (gen_random_uuid(), ${item.id}, ${charge.receivable_id}, ${null}, ${item.amt}, ${"pix_webhook"}, ${"0.00"}, ${"0.00"}, ${"0.00"}, ${by}, now())`);
+        const nota = charge.origem === "loja"
+          ? "PIX pago na LOJA (hotsite) - titulo ja baixado no faturamento - vinculado automaticamente ao " + String(charge.nf || "titulo")
+          : "PIX ja baixado via webhook BB - vinculado automaticamente ao titulo " + String(charge.nf || "");
         const upd: any = await db.execute(sql`
           UPDATE bank_statement_items
           SET reconciliation_status = 'reconciled', matched_receivable_id = ${charge.receivable_id}, matched_at = now(), matched_by = ${by},
-              match_confidence = 100, notes = ${"PIX ja baixado via webhook BB - vinculado automaticamente ao titulo " + String(charge.nf || "")}
+              match_confidence = 100, notes = ${nota + " (casado por " + via + ")"}
           WHERE id = ${item.id} AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')`);
         if (Number((upd as any)?.rowCount ?? 1) > 0) out.conciliados++;
       } catch (e: any) { out.erros.push(String(e?.message || e).slice(0, 120)); }
@@ -1744,7 +1806,6 @@ export function registerReconciliation(app: Express) {
     return out;
   }
 
-  // Disparo manual (dryRun por padrao) - a importacao de OFX tambem roda isso.
   app.post("/api/reconciliation/conciliar-pix-webhook", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
