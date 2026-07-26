@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import RoutePlannerDialog from "@/components/RoutePlannerDialog";
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateDanfePdf, generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
@@ -86,6 +87,10 @@ const OPERATION_LABELS: Record<string, string> = {
 
 // Categoria de "Tipo de Operação" exibida no card (cancelado = status fiscal; senão o operationType do pedido)
 const RETURNED_FISCAL = ['returned', 'devolvida', 'devolvido'];
+
+// Etapas cujos cards podem virar entrega (mesma origem usada por getPendingDeliveries no servidor)
+const ROUTABLE_STAGES = new Set(['impresso', 'aguardando_rota', 'aguardando_rota_bsb']);
+
 const CANCELLED_ONLY_FISCAL = ['cancelled', 'canceled', 'cancelada'];
 const RED_FISCAL = [...CANCELLED_ONLY_FISCAL, ...RETURNED_FISCAL];
 const ERROR_FISCAL = ['rejected', 'rejeitada', 'denied', 'draft'];
@@ -570,6 +575,13 @@ export default function BillingPipeline() {
     return selectedItems.filter(i => i.invoiceNumber).length;
   }, [selectedItems]);
 
+  // 🚚 Roteirização com IA a partir do Pipeline (cards em Impresso / Aguardando Rota / Ag. Rota BSB)
+  const [routePlannerOpen, setRoutePlannerOpen] = useState(false);
+  const routableSelectedIds = useMemo(
+    () => selectedItems.filter((i: any) => ROUTABLE_STAGES.has(i.stage)).map((i: any) => i.id),
+    [selectedItems]
+  );
+
   const handlePrintDanfe = useCallback(async () => {
     const faturadoItems = selectedItems.filter(i => i.invoiceNumber);
     if (faturadoItems.length === 0) {
@@ -922,6 +934,17 @@ export default function BillingPipeline() {
                 );
               })}
               <div className="w-px h-6 bg-gray-300 mx-1" />
+              {routableSelectedIds.length > 0 && (
+                <Button
+                  size="sm"
+                  className="text-xs h-7 bg-purple-600 hover:bg-purple-700 text-white"
+                  onClick={() => setRoutePlannerOpen(true)}
+                  title="Gerar rotas de entrega com o agente de IA"
+                >
+                  <Truck className="h-3 w-3 mr-1" />
+                  Gerar Rotas IA ({routableSelectedIds.length})
+                </Button>
+              )}
               {selectedFaturadoCount > 0 && (
                 <Button
                   size="sm"
@@ -989,6 +1012,13 @@ export default function BillingPipeline() {
             </div>
           </div>
         )}
+
+        <RoutePlannerDialog
+          open={routePlannerOpen}
+          onOpenChange={setRoutePlannerOpen}
+          orderIds={routableSelectedIds}
+          onSaved={() => clearSelection()}
+        />
 
         {/* Kanban Board */}
         <div className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
