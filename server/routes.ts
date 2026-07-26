@@ -13829,6 +13829,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             movedCount += r?.rowCount ?? r?.rows?.length ?? 0;
           }
           console.log(`🚚 [SAVE-ROUTES] ${movedCount} card(s) do pipeline movidos (BSB/BARUC=${bsbBillingIds.length} → em_rota_bsb; demais → em_rota)`);
+
+          // Registrar no stage_history de cada card (o UPDATE acima nao gravava
+          // histórico). É o que permite descobrir a etapa de ORIGEM se o pedido
+          // for devolvido pelo entregador mais tarde.
+          try {
+            const { appendStageHistory } = await import('./deliveryPipelineSync');
+            const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-salva';
+            for (const bid of allBillingIds) {
+              await appendStageHistory(bid, bsbSet.has(bid) ? 'em_rota_bsb' : 'em_rota', `rota-confirmada (${ator})`);
+            }
+          } catch (e: any) {
+            console.warn('[SAVE-ROUTES] Falha ao registrar stage_history:', e?.message);
+          }
         } catch (e: any) {
           console.error('[SAVE-ROUTES] Falha ao mover cards do pipeline para em_rota/em_rota_bsb:', e?.message);
         }
@@ -15298,9 +15311,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       console.log(`✅ [DRIVER-CHECKOUT] Check-out realizado na parada ${stopId}`);
+      // 📦 PIPELINE: mesma regra do complete-delivery (check-out = entrega efetuada)
+      let pipelineSyncOut: any = null;
+      try {
+        const { processarEntregaNoPipeline } = await import('./deliveryPipelineSync');
+        pipelineSyncOut = await processarEntregaNoPipeline({
+          evento: 'entregue',
+          stop: updatedStop[0] || stop[0],
+          routeVehicleType: route[0]?.vehicleType,
+          photoUrls: photoUrl ? [photoUrl] : [],
+          actor: userEmail || 'motorista',
+        });
+      } catch (e: any) {
+        console.error('[DRIVER-CHECKOUT] Falha na sincronizacao com o pipeline:', e?.message);
+      }
+
       res.json({ 
         message: "Check-out realizado com sucesso", 
         stop: updatedStop[0],
+        pipeline: pipelineSyncOut,
         checkOutTime: now,
         photoUrl,
         routeCompleted: allCompleted,
@@ -15522,11 +15551,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🎉 [COMPLETE-DELIVERY] Rota ${stop[0].routeId} totalmente concluída!`);
       }
       
+      // 📦 PIPELINE: card do Kanban vai para "Entregue" + comprovante anexado
+      // na(s) conta(s) a receber daquela NF. Best-effort: nunca derruba a entrega.
+      let pipelineSync: any = null;
+      try {
+        const { processarEntregaNoPipeline } = await import('./deliveryPipelineSync');
+        pipelineSync = await processarEntregaNoPipeline({
+          evento: 'entregue',
+          stop: updatedStop[0] || stop[0],
+          routeVehicleType: route[0]?.vehicleType,
+          photoUrls: photoUrl ? [photoUrl] : [],
+          actor: userEmail || 'motorista',
+        });
+      } catch (e: any) {
+        console.error('[COMPLETE-DELIVERY] Falha na sincronizacao com o pipeline:', e?.message);
+      }
+
       console.log(`✅ [COMPLETE-DELIVERY] Entrega registrada para parada ${stopId}`);
       res.json({ 
         message: "Entrega registrada com sucesso", 
         stop: updatedStop[0],
         completedAt: now,
+        pipeline: pipelineSync,
         photoUrl,
         routeCompleted: allCompleted
       });
@@ -15647,10 +15693,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // ↩️ PIPELINE: card volta para "Aguardando Rota" ou "Ag. Rota BSB",
+      // conforme a etapa de origem do pedido. Best-effort.
+      let pipelineSyncRet: any = null;
+      try {
+        const { processarEntregaNoPipeline } = await import('./deliveryPipelineSync');
+        pipelineSyncRet = await processarEntregaNoPipeline({
+          evento: 'devolvida',
+          stop: updatedStop[0] || stop[0],
+          routeVehicleType: route[0]?.vehicleType,
+          photoUrls: photoUrl ? [photoUrl] : [],
+          actor: userEmail || 'motorista',
+          motivo: reason.trim(),
+        });
+      } catch (e: any) {
+        console.error('[RETURN-DELIVERY] Falha na sincronizacao com o pipeline:', e?.message);
+      }
+
       console.log(`🔄 [RETURN-DELIVERY] Devolução registrada para parada ${stopId}: ${reason}`);
       res.json({ 
         message: "Devolução registrada com sucesso", 
         stop: updatedStop[0],
+        pipeline: pipelineSyncRet,
         reason: reason.trim()
       });
     } catch (error: any) {
@@ -15743,6 +15807,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       console.log(`✅ [UPDATE-STOP-STATUS] Parada ${stopId} atualizada para ${status}`);
+      // 📦 PIPELINE: mesma automacao dos endpoints do entregador, para quando o
+      // status da parada e ajustado manualmente (efetuada / devolvida).
+      try {
+        const { processarEntregaNoPipeline } = await import('./deliveryPipelineSync');
+        const st = updatedStop?.[0] || stop?.[0];
+        if (st && (status === 'efetuada' || status === 'devolvida')) {
+          const ph = Array.isArray(st.photos) ? st.photos : [];
+          await processarEntregaNoPipeline({
+            evento: status === 'efetuada' ? 'entregue' : 'devolvida',
+            stop: st,
+            routeVehicleType: (route as any)?.[0]?.vehicleType,
+            photoUrls: ph,
+            actor: (userEmail as any) || 'ajuste-manual',
+          });
+        }
+      } catch (e: any) {
+        console.error('[STOP-STATUS] Falha na sincronizacao com o pipeline:', e?.message);
+      }
+
       res.json({ 
         message: "Status atualizado com sucesso", 
         stop: updatedStop[0],

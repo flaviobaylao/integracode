@@ -737,6 +737,159 @@ export function registerFinancialRoutes(app: Express) {
     } catch (error: any) { res.status(500).json({ message: error.message }); }
   });
 
+  // ==========================================================================
+  // COMPROVANTE DE ENTREGA NA CONTA A RECEBER
+  // A foto tirada pelo entregador no check-in é anexada automaticamente ao(s)
+  // título(s) daquela NF (server/deliveryPipelineSync.ts). Aqui ficam a leitura,
+  // o anexo manual e a busca direta pelo número da nota.
+  // ==========================================================================
+
+  app.get('/api/financial/receivables/:id/attachments', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
+    try {
+      const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      const q: any = await db.execute(sql`
+        SELECT id, kind, file_name, mime_type, size_bytes, url, source, invoice_number, created_by, created_at
+        FROM receivable_attachments WHERE receivable_id = ${req.params.id} ORDER BY created_at
+      `);
+      res.json((q as any).rows || []);
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  app.post('/api/financial/receivables/:id/attachments', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const { kind, fileName, mimeType, base64 } = req.body || {};
+      if (!fileName || !base64) return res.status(400).json({ message: 'fileName e base64 sao obrigatorios' });
+      const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      const user = actorOf(req);
+      const size = Math.floor((String(base64).length * 3) / 4);
+      await db.execute(sql`
+        INSERT INTO receivable_attachments (receivable_id, kind, file_name, mime_type, size_bytes, content_base64, source, created_by)
+        VALUES (${req.params.id}, ${kind || 'outro'}, ${fileName}, ${mimeType || null}, ${size}, ${base64}, 'manual', ${user?.email || null})
+      `);
+      res.json({ ok: true });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  app.get('/api/financial/receivable-attachments/:attId/download', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
+    try {
+      const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      const q: any = await db.execute(sql`SELECT file_name, mime_type, url, content_base64 FROM receivable_attachments WHERE id = ${req.params.attId} LIMIT 1`);
+      const row = ((q as any).rows || [])[0];
+      if (!row) return res.status(404).json({ message: 'anexo nao encontrado' });
+      // Comprovante do entregador: a imagem vive em photo_media, servida por URL.
+      if (row.url) return res.redirect(row.url);
+      if (!row.content_base64) return res.status(404).json({ message: 'anexo sem conteudo' });
+      const buf = Buffer.from(row.content_base64, 'base64');
+      res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || 'anexo')}"`);
+      res.send(buf);
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  app.delete('/api/financial/receivable-attachments/:attId', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      await db.execute(sql`DELETE FROM receivable_attachments WHERE id = ${req.params.attId}`);
+      res.json({ ok: true });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  // Busca direta pelo numero da NF: devolve os titulos daquela nota e todos os
+  // comprovantes de entrega (anexados + fotos das paradas de rota).
+  app.get('/api/financial/comprovante-entrega', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
+    try {
+      const nfRaw = String(req.query.nf || '').trim();
+      const nf = nfRaw.replace(/[^0-9]/g, '');
+      if (!nf) return res.status(400).json({ message: 'informe o numero da NF (?nf=)' });
+      const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      const like = `%${nf}%`;
+      const q: any = await db.execute(sql`
+        SELECT r.id, r.title_number, r.customer_name, r.amount, r.status, r.due_date,
+               r.billing_pipeline_id, r.sales_card_id,
+               COALESCE(bp.invoice_number, fi.invoice_number) AS invoice_number
+        FROM receivables r
+        LEFT JOIN billing_pipeline bp ON bp.id = r.billing_pipeline_id
+        LEFT JOIN fiscal_invoices fi ON fi.id = r.fiscal_invoice_id
+        WHERE r.deleted_at IS NULL
+          AND (r.title_number LIKE ${like} OR bp.invoice_number = ${nf} OR fi.invoice_number = ${nf})
+        ORDER BY r.created_at DESC
+        LIMIT 50
+      `);
+      const titulos: any[] = (q as any).rows || [];
+      if (!titulos.length) return res.json({ nf, titulos: [], comprovantes: [] });
+
+      const ids = titulos.map((t: any) => t.id);
+      const att: any = await db.execute(sql`
+        SELECT id, receivable_id, kind, file_name, url, created_at
+        FROM receivable_attachments WHERE receivable_id IN (${sql.join(ids.map((i: string) => sql`${i}`), sql`, `)})
+        ORDER BY created_at
+      `);
+      const comprovantes: any[] = (att as any).rows || [];
+
+      // Complemento: fotos ainda vivas nas paradas de rota (cards antigos, sem anexo).
+      const pipeIds = titulos.map((t: any) => t.billing_pipeline_id).filter(Boolean);
+      if (pipeIds.length) {
+        const st: any = await db.execute(sql`
+          SELECT id, billing_id, route_id, photos, status, check_in_time
+          FROM delivery_route_stops
+          WHERE photos IS NOT NULL AND jsonb_array_length(photos) > 0
+            AND billing_id IN (${sql.join(pipeIds.map((i: string) => sql`${i}`), sql`, `)})
+        `);
+        for (const row of ((st as any).rows || [])) {
+          let ph: string[] = [];
+          try { ph = Array.isArray(row.photos) ? row.photos : JSON.parse(row.photos || '[]'); } catch {}
+          for (const u of ph) {
+            if (!comprovantes.some((c: any) => c.url === u)) {
+              comprovantes.push({ id: null, receivable_id: null, kind: 'foto_parada', file_name: 'comprovante.jpg', url: u, created_at: row.check_in_time, stopStatus: row.status });
+            }
+          }
+        }
+      }
+      res.json({ nf, titulos, comprovantes });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
+  // Backfill: anexa aos titulos os comprovantes de entregas JA realizadas.
+  app.post('/api/admin/financial/backfill-comprovantes', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const { ensureReceivableAttachmentsTable, anexarComprovanteEntrega } = await import('./deliveryPipelineSync');
+      await ensureReceivableAttachmentsTable();
+      const dias = parseInt(String(req.body?.days || '90')) || 90;
+      const q: any = await db.execute(sql`
+        SELECT id, billing_id, sales_card_id, route_id, photos, status
+        FROM delivery_route_stops
+        WHERE photos IS NOT NULL AND jsonb_array_length(photos) > 0
+          AND status IN ('efetuada', 'devolvida')
+          AND COALESCE(completed_at, check_in_time, updated_at, created_at) > now() - (${dias}::text || ' days')::interval
+        ORDER BY created_at DESC
+        LIMIT 3000
+      `);
+      const rows: any[] = (q as any).rows || [];
+      let anexados = 0, paradas = 0;
+      for (const row of rows) {
+        let ph: string[] = [];
+        try { ph = Array.isArray(row.photos) ? row.photos : JSON.parse(row.photos || '[]'); } catch {}
+        if (!ph.length) continue;
+        const r = await anexarComprovanteEntrega({
+          billingPipelineId: row.billing_id,
+          salesCardId: row.sales_card_id,
+          stopId: row.id,
+          routeId: row.route_id,
+          photoUrls: ph,
+          actor: 'backfill',
+          kind: row.status === 'devolvida' ? 'comprovante_devolucao' : 'comprovante_entrega',
+        });
+        anexados += r.anexados; if (r.anexados > 0) paradas++;
+      }
+      res.json({ ok: true, paradasAnalisadas: rows.length, paradasComAnexo: paradas, anexosCriados: anexados });
+    } catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
   app.get('/api/financial/receivables', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
     try {
       const filters: any = {};
@@ -783,6 +936,44 @@ export function registerFinancialRoutes(app: Express) {
           }
           for (const r of pageR as any[]) {
             r.deliveryPhotos = (r.billingPipelineId && byBilling.get(r.billingPipelineId)) || (r.salesCardId && byCard.get(r.salesCardId)) || [];
+          }
+        }
+      } catch { /* nunca bloqueia a lista */ }
+      // Comprovantes ANEXADOS ao título (receivable_attachments). Sobrevivem ao
+      // replanejamento/exclusão da rota, ao contrário do join com as paradas.
+      try {
+        const ids = pageR.map((r: any) => r.id).filter(Boolean).slice(0, 5000);
+        if (ids.length) {
+          const { ensureReceivableAttachmentsTable } = await import('./deliveryPipelineSync');
+          await ensureReceivableAttachmentsTable();
+          // Consulta em lotes: sem filtro a lista pode trazer milhares de títulos e
+          // um único IN gigante degrada o banco.
+          const attRows: any[] = [];
+          for (let i = 0; i < ids.length; i += 500) {
+            const lote = ids.slice(i, i + 500);
+            const parcial: any = await db.execute(sql`
+              SELECT id, receivable_id, kind, file_name, mime_type, url, created_at
+              FROM receivable_attachments
+              WHERE receivable_id IN (${sql.join(lote.map((id: string) => sql`${id}`), sql`, `)})
+              ORDER BY created_at
+            `);
+            attRows.push(...(parcial?.rows || []));
+          }
+          const att: any = { rows: attRows };
+          const byRcv = new Map<string, any[]>();
+          for (const a of (att?.rows || [])) {
+            const arr = byRcv.get(a.receivable_id) || [];
+            arr.push(a);
+            byRcv.set(a.receivable_id, arr);
+          }
+          for (const r of pageR as any[]) {
+            const lista = byRcv.get(r.id) || [];
+            r.attachments = lista;
+            if (lista.length) {
+              const urls = lista.map((a: any) => a.url).filter(Boolean);
+              const atuais: string[] = Array.isArray(r.deliveryPhotos) ? r.deliveryPhotos : [];
+              r.deliveryPhotos = Array.from(new Set([...atuais, ...urls]));
+            }
           }
         }
       } catch { /* nunca bloqueia a lista */ }
@@ -1330,64 +1521,6 @@ export function registerFinancialRoutes(app: Express) {
   });
 
   // Payable Payments
-  // ---- Eventos de uma conta (pagar/receber): baixas + conciliacao bancaria ----
-  // Tudo o que aconteceu com o titulo: cada pagamento registrado (data, valor,
-  // forma, conta financeira, referencia, quem lancou) e a conciliacao bancaria
-  // (lancamento do extrato, arquivo, data/hora, juros/desconto, quem conciliou).
-  // READ-ONLY. Cada bloco em try/catch: se um falhar, o resto aparece.
-  async function eventosDoTitulo(kind: 'payable' | 'receivable', id: string) {
-    const out: any = { pagamentos: [], conciliacoes: [], auditoria: [], totalPago: 0 };
-    const tbl = kind === 'payable' ? 'payable_payments' : 'receivable_payments';
-    const fk = kind === 'payable' ? 'payable_id' : 'receivable_id';
-    try {
-      const r: any = await db.execute(sql`
-        SELECT p.id, p.paid_at, p.amount, p.payment_method, p.reference, p.notes,
-               p.created_by, p.created_at, p.financial_account_id, fa.name AS conta
-        FROM ${sql.raw('"' + tbl + '"')} p
-        LEFT JOIN financial_accounts fa ON fa.id = p.financial_account_id
-        WHERE p.${sql.raw('"' + fk + '"')} = ${id}
-        ORDER BY p.paid_at NULLS LAST, p.created_at`);
-      out.pagamentos = (r.rows || r || []);
-      out.totalPago = out.pagamentos.reduce((a: number, p: any) => a + Number(String(p.amount ?? '0').replace(/[^0-9.-]/g, '') || 0), 0);
-    } catch (e: any) { out.erroPagamentos = String(e?.message || e).slice(0, 120); }
-    try {
-      const r: any = await db.execute(sql`
-        SELECT m.id, m.amount, m.match_kind, m.title_amount_settled, m.interest, m.discount,
-               m.created_by, m.created_at,
-               i.id AS item_id, i.transaction_date, i.type, i.description, i.origin_name,
-               i.origin_document, i.document, i.reconciliation_status, i.matched_at, i.matched_by,
-               s.file_name, s.source, fa.name AS conta, s.omie_instance_id
-        FROM bank_statement_item_matches m
-        JOIN bank_statement_items i ON i.id = m.bank_statement_item_id
-        LEFT JOIN bank_statements s ON s.id = i.statement_id
-        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
-        WHERE m.${sql.raw('"' + fk + '"')} = ${id}
-        ORDER BY m.created_at DESC`);
-      out.conciliacoes = (r.rows || r || []);
-    } catch (e: any) { out.erroConciliacoes = String(e?.message || e).slice(0, 120); }
-    try {
-      const ids = out.conciliacoes.map((c: any) => String(c.item_id)).filter(Boolean);
-      if (ids.length) {
-        const inList = sql.join(ids.map((v: string) => sql`${v}`), sql`, `);
-        const r: any = await db.execute(sql`
-          SELECT event_at, action, amount, performed_by, bank_statement_item_id
-          FROM reconciliation_audit_log
-          WHERE bank_statement_item_id IN (${inList})
-          ORDER BY event_at DESC LIMIT 30`);
-        out.auditoria = (r.rows || r || []);
-      }
-    } catch { /* tabela de auditoria pode nao existir */ }
-    return out;
-  }
-  app.get('/api/financial/payables/:id/eventos', authenticateUser, isFinancialAuthorized, async (req, res) => {
-    try { res.json(await eventosDoTitulo('payable', req.params.id)); }
-    catch (error: any) { res.status(500).json({ message: error.message }); }
-  });
-  app.get('/api/financial/receivables/:id/eventos', authenticateUser, isFinancialAuthorized, async (req, res) => {
-    try { res.json(await eventosDoTitulo('receivable', req.params.id)); }
-    catch (error: any) { res.status(500).json({ message: error.message }); }
-  });
-
   app.get('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const payments = await storage.getPayablePayments(req.params.id);

@@ -2365,6 +2365,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // durabilidade no Railway (disco efemero). Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS payable_attachments (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), payable_id varchar NOT NULL, kind varchar NOT NULL DEFAULT 'outro', file_name varchar NOT NULL, mime_type varchar, size_bytes integer, content_base64 text NOT NULL, created_by varchar, created_at timestamp DEFAULT now())`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_payable_attachments_payable ON payable_attachments (payable_id)`).catch(() => {});
+  // Comprovante de entrega anexado às contas a receber (foto do entregador no
+  // check-in). A imagem fica em photo_media; aqui guardamos o vínculo com o título.
+  import('./deliveryPipelineSync')
+    .then((m) => m.ensureReceivableAttachmentsTable())
+    .then(() => console.log('✅ [BOOT] receivable_attachments pronta (comprovantes de entrega)'))
+    .catch((e: any) => console.warn('[BOOT] Falha ao garantir receivable_attachments:', e?.message));
   // Object storage durável no banco (mídia WhatsApp/anexos). Evita perda no disco
   // efemero do Railway. Se UPLOAD_DIR (volume) estiver setado, usa disco no lugar. Idempotente.
   db.execute(sql`CREATE TABLE IF NOT EXISTS stored_objects (id varchar PRIMARY KEY, mime_type varchar, size_bytes integer, content_base64 text NOT NULL, created_at timestamp DEFAULT now())`).catch(() => {});
@@ -2990,18 +2996,6 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
 
-  app.all("/api/tmp/fiscseller-6931", async (req, res) => {
-    try {
-      const token = (req.query && (req.query as any).token);
-      if (token !== "vday-6931") return res.json({ error: "forbidden" });
-      const q2 = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
-      const nat = "UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%AMOSTRA%'";
-      const base = "FROM fiscal_invoices fi LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN users u ON (u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id) WHERE fi.status='authorized' AND COALESCE(fi.operation_type,'saida')<>'entrada' AND COALESCE(fi.fin_nfe,'1')<>'4' AND " + nat + " AND (fi.import_origin IS NULL OR TRIM(fi.import_origin)='') AND (COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month',(now() AT TIME ZONE 'America/Sao_Paulo'))::date";
-      const perSeller = await q2("SELECT COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), 'Sem vendedor') AS seller, COALESCE(SUM(fi.total_invoice),0) AS total, COUNT(*) AS n, SUM(CASE WHEN fi.sales_card_id IS NULL THEN 1 ELSE 0 END) AS n_nocard, COALESCE(SUM(CASE WHEN fi.sales_card_id IS NULL THEN fi.total_invoice ELSE 0 END),0) AS v_nocard " + base + " GROUP BY 1 ORDER BY total DESC");
-      const grand = await q2("SELECT COALESCE(SUM(fi.total_invoice),0) AS total, COUNT(*) AS n " + base);
-      res.json({ perSeller, grand });
-    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
-  });
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
   app.get("/api/dashboard2/full", async (_req, res) => {
     try {
@@ -3792,14 +3786,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const summary: any[] = [];
       try {
         await src.connect(); await tgt.connect();
-        // ⚠️ CONCILIACAO BANCARIA e 100% do 2.0 (cutover): o backfill faz
-        // "ON CONFLICT (id) DO UPDATE SET <todas as colunas>", entao copiar essas
-        // tabelas do 1.0 REVERTIA toda conciliacao feita no 2.0 (o lancamento
-        // voltava a 'pending' e perdia matched_at/matched_by/notes, enquanto os
-        // matches criados no 2.0 sobreviviam -> "titulo baixado mas extrato
-        // pendente"). Bloqueadas junto com billing_pipeline/suppliers.
-        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers',
-          'bank_statements','bank_statement_items','bank_statement_item_matches','reconciliation_patterns','reconciliation_audit_log']);
+        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
