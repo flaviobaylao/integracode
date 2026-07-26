@@ -775,7 +775,7 @@ export default function AgentesIA() {
       </div>
 
   {/* Disparos 1841 — agora ACIMA, com mostrar/ocultar */}
-      <details open>
+      <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           📣 Disparos 1841 (WhatsApp API oficial) — mostrar/ocultar
         </summary>
@@ -791,7 +791,7 @@ export default function AgentesIA() {
       </details>
 
       {/* IA de Atendimento — regras da IA (Fase 1) */}
-      <details open>
+      <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           🤖 IA de Atendimento (regras da IA) — mostrar/ocultar
         </summary>
@@ -807,7 +807,7 @@ export default function AgentesIA() {
       </details>
 
       {/* Gestao de Canais — liga/desliga canais e IA, horarios e aviso de fora do horario */}
-      <details open>
+      <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           📡 Gestao de Canais (numeros do ChatCenter) — mostrar/ocultar
         </summary>
@@ -823,7 +823,7 @@ export default function AgentesIA() {
       </details>
 
       {/* Notificações (Automações de Comunicação) — gestão completa */}
-      <details open>
+      <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           🔔 Notificações (Automações de Comunicação) — mostrar/ocultar
         </summary>
@@ -833,7 +833,7 @@ export default function AgentesIA() {
       </details>
 
       {/* Auto-resposta dos Agentes — agora ABAIXO, com mostrar/ocultar */}
-      <details open>
+      <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
           🤖 Auto-resposta dos Agentes — mostrar/ocultar
         </summary>
