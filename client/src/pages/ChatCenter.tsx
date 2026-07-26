@@ -1143,17 +1143,24 @@ function ChatCenterInner() {
     onSuccess: () => { toast({ title: "Canal atualizado" }); queryClient.invalidateQueries({ queryKey: ['/api/chat/conversations'] }); },
     onError: (e: any) => { toast({ title: "Erro ao trocar canal", description: e.message, variant: "destructive" }); },
   });
-  // canais WhatsApp broker rotulados honest1-4 (dedup por telefone, melhor status)
+  // Canais WhatsApp de saida: broker (2630 principal, 7169 reserva) + oficial Gupshup (1841 HONESTAPI).
+  // Esconde Disabled/Deleted; marca o oficial (aviso janela 24h) e o 7169 como reserva (usar se o 2630 for bloqueado).
   const waChannels = (() => {
-    const raw = (channelsData?.canais || []).filter((c) => c.phone && /broker/i.test(String(c.tipo || '')) && /honest/i.test(String(c.nome || '')));
+    const raw = (channelsData?.canais || []).filter((c) => c.phone
+      && /whatsapp/i.test(String(c.tipo || ''))            // pega broker E gupshup (oficial)
+      && /honest/i.test(String(c.nome || ''))
+      && c.status !== 'Disabled' && c.status !== 'Deleted'); // esconde inativos
     const rank = (st: string) => st === 'Live' ? 4 : st === 'Offline' ? 3 : st === 'Disabled' ? 2 : 1;
-    const byPhone: Record<string, { phone: string; nome: string; status: string }> = {};
+    const byPhone: Record<string, { phone: string; nome: string; status: string; oficial: boolean; reserva: boolean }> = {};
     for (const c of raw) {
       const ph = String(c.phone).replace(/\D/g, '');
+      const oficial = /gupshup/i.test(String(c.tipo || ''));
+      const reserva = ph === '5562993227169';              // HONEST5/7169 = reserva (usar se o 2630 for bloqueado)
       const cur = byPhone[ph];
-      if (!cur || rank(c.status) > rank(cur.status)) byPhone[ph] = { phone: ph, nome: c.nome, status: c.status };
+      if (!cur || rank(c.status) > rank(cur.status)) byPhone[ph] = { phone: ph, nome: c.nome, status: c.status, oficial, reserva };
     }
-    return Object.values(byPhone).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+    // reserva sempre por ultimo; os demais por nome
+    return Object.values(byPhone).sort((a, b) => (a.reserva ? 1 : 0) - (b.reserva ? 1 : 0) || String(a.nome).localeCompare(String(b.nome)));
   })();
 
   const [phonebookData, setPhonebookData] = useState<{ name: string; phone: string; contactName?: string } | null>(null);
@@ -1994,8 +2001,8 @@ function ChatCenterInner() {
                               title="Canal de saída (WhatsApp) usado nesta conversa"
                             >
                               {waChannels.map((c) => (
-                                <option key={c.phone} value={c.phone} disabled={c.status !== 'Live'}>
-                                  {(c.nome || c.phone)}{c.status !== 'Live' ? ` (${c.status})` : ''}
+                                <option key={c.phone} value={c.phone} disabled={c.status !== 'Live'} title={c.oficial ? 'Canal oficial 1841: so envia texto livre dentro da janela de 24h; fora dela, use um disparo/template.' : c.reserva ? 'Canal reserva — usar somente se o 2630 for bloqueado.' : undefined}>
+                                  {(c.nome || c.phone)}{c.oficial ? ' ⚠️ (janela 24h)' : ''}{c.reserva ? ' 🔄 (reserva)' : ''}{c.status !== 'Live' ? ` (${c.status})` : ''}
                                 </option>
                               ))}
                             </select>
