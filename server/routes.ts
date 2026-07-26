@@ -21903,17 +21903,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }];
       });
 
-      // Buscar clientes para obter o documento (CPF ou CNPJ)
+      // Buscar clientes para obter o documento (CPF ou CNPJ) e o TELEFONE cadastrado.
       const customersResult = await db.execute(sql`
-        SELECT id, cpf, cnpj FROM customers WHERE id = ANY(string_to_array(${customerIds.join(',')}, ','))
+        SELECT id, cpf, cnpj, phone FROM customers WHERE id = ANY(string_to_array(${customerIds.join(',')}, ','))
       `);
 
       const customerDocuments: Record<string, string> = {};
+      const phonesMap: Record<string, string> = {};
       (customersResult.rows as any[]).forEach(row => {
         // Priorizar CNPJ, senão CPF
         const doc = row.cnpj || row.cpf;
         if (doc) {
           customerDocuments[row.id] = doc.replace(/\D/g, '');
+        }
+        // Telefone cadastrado do cliente (exibido nos cards, ex.: atendimento virtual).
+        if (row.phone && String(row.phone).trim()) {
+          phonesMap[row.id] = String(row.phone).trim();
         }
       });
       const documentsForLookup = Object.values(customerDocuments).filter(d => d);
@@ -22032,7 +22037,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orders: ordersMap,
         debts: debtsMap,
         periodicity: periodicityMap,
-        lastOrders: lastOrdersMap
+        lastOrders: lastOrdersMap,
+        phones: phonesMap
       });
     } catch (error: any) {
       console.error('Erro ao buscar informações dos clientes:', error);
