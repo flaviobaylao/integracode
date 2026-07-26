@@ -1966,8 +1966,22 @@ export function registerReconciliation(app: Express) {
                    AND j.transaction_date::date = i.transaction_date::date
                    AND round(j.amount::numeric, 2) = round(i.amount::numeric, 2)
                    AND j.type = i.type
-                   AND regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
-                     = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
+                   AND (
+                     -- (a) mesmo texto (dedup classico)
+                     regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
+                       = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
+                     -- (b) MESMO CARIMBO DE DATA/HORA no texto ("17/07 17:17"). Os dois
+                     -- formatos de export do BB escrevem o lancamento com textos
+                     -- diferentes ("PIX - ENVIADO - 17/07 17:17 VOLUS" x "17/07 17:17
+                     -- VOLUS"), entao o dedup por texto nao os colapsava e sobrava uma
+                     -- linha pendente para sempre. Mesma conta + valor + tipo + minuto
+                     -- exato = mesma transacao economica.
+                     OR (
+                       substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') IS NOT NULL
+                       AND substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}')
+                         = substring(COALESCE(j.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}')
+                     )
+                   )
                  ORDER BY j.matched_at ASC NULLS LAST, j.id ASC
                  LIMIT 1) AS canonical_id
         FROM bank_statement_items i
