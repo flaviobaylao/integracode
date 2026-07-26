@@ -16,7 +16,7 @@ type Statement = {
 };
 type Item = {
   id: string; transaction_date: string; amount: string; type: string;
-  description: string; document: string; origin_name?: string | null; reconciliation_status: string | null;
+  description: string; document: string; origin_name?: string | null; origin_document?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
   is_mirror?: boolean; mirror_from?: string | null;
 };
@@ -42,17 +42,55 @@ const fmtDoc = (v: any): string => {
   if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
   return d;
 };
-const isPixRecebido = (it: any): boolean =>
-  it?.type === "C" && /pix.?-?\s*recebido/i.test(`${it?.origin_name || ""} ${it?.description || ""}`);
-// Extrai o pagador (nome e CPF/CNPJ) do lancamento de PIX recebido. O rotulo do tipo
-// ("Pix - Recebido") fica em origin_name; a descricao traz "DD/MM HH:MM <doc> <NOME>".
-// Fontes do pagador: campo document (CPF/CNPJ) + a descricao (doc + nome).
-const pixPagador = (it: any): { nome: string; doc: string } => {
-  const desc = String(it?.description || "");
-  const m = desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)\s+(.+)$/);
-  const nome = (m ? m[2] : desc.replace(/^\s*\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s*/, "").replace(/(?<!\d)(\d{11}|\d{14})(?!\d)/, "")).trim();
-  const doc = soDig(it?.document) || (m ? m[1] : "") || ((desc.match(/(?<!\d)(\d{11}|\d{14})(?!\d)/) || [])[1] || "");
-  return { nome, doc };
+// --- DETALHE DO LANCAMENTO (extrato BB) ------------------------------------
+// O extrato do BB traz DOIS campos por lancamento e a tela mostrava so um deles:
+//   <NAME>  = rotulo generico do historico ("Pix - Enviado", "Pagamento de
+//             Boleto", "Tarifa Pix Enviado") -> vem em origin_name
+//   <MEMO>  = o DETALHE de verdade (contraparte, data/hora, CPF/CNPJ)
+//             ex.: "01/07 17:55 FLAVIO EVANGELISTA BAYLAO",
+//                  "ALPLAST ATACADISTA E APOIO ADM",
+//                  "01/07 12:39 51212906000100 COLONIAL GR"  -> vem em description
+// Nos extratos antigos o <NAME> vem vazio e o proprio MEMO comeca com o rotulo
+// ("PIX - RECEBIDO - 19/05 10:37 00002723345106 LANUCY MACH").
+// parseLanc separa tudo para exibir a CONTRAPARTE em destaque e o resto embaixo.
+type Lanc = { contraparte: string; tipo: string; doc: string; dia: string; hora: string; memo: string; docBanco: string };
+const parseLanc = (it: any): Lanc => {
+  const memo = String(it?.description ?? "").trim();
+  let tipo = String(it?.origin_name ?? "").trim();
+  let resto = memo;
+  // Extrato antigo (sem <NAME>): o rotulo esta no inicio do proprio MEMO, em
+  // caixa alta, separado por " - ". Preferimos o corte que deixa uma data logo
+  // apos (PIX - RECEBIDO - 19/05 ...); senao o primeiro " - ".
+  if (!tipo && memo) {
+    const cabe = (s: string) => /^[A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ .\/-]{3,45}$/.test(s);
+    const a = memo.match(/^(.+?)\s+-\s+(\d{1,2}\/\d{1,2}\s.*)$/);
+    const b = memo.match(/^(.+?)\s+-\s+(.+)$/);
+    const m = a && cabe(a[1]) ? a : b && cabe(b[1]) ? b : null;
+    if (m) { tipo = m[1].trim(); resto = m[2].trim(); }
+  }
+  // "01/07 17:55 ..." / "19/05 ..." no inicio do detalhe
+  let dia = "", hora = "";
+  const dh = resto.match(/^(\d{1,2}\/\d{1,2})(?:\s+(\d{1,2}:\d{2}))?\s+/);
+  if (dh) { dia = dh[1]; hora = dh[2] || ""; resto = resto.slice(dh[0].length).trim(); }
+  // CPF/CNPJ da contraparte embutido no detalhe
+  let doc = "";
+  const dm = resto.match(/(?<!\d)(\d{11}|\d{14})(?!\d)/);
+  if (dm) { doc = dm[1]; resto = (resto.slice(0, dm.index) + " " + resto.slice((dm.index || 0) + dm[1].length)).trim(); }
+  if (!doc) { const d2 = soDig(it?.origin_document); if (d2.length === 11 || d2.length === 14) doc = d2; }
+  // o BB completa o CPF com zeros a esquerda ate 14 digitos ("00094172218172"
+  // = CPF 941.722.181-72). CNPJ real nao comeca com tres zeros.
+  if (doc.length === 14 && doc.startsWith("000")) doc = doc.slice(3);
+  const contraparte = resto.replace(/\s{2,}/g, " ").replace(/^[-\s.]+|[-\s]+$/g, "").trim();
+  // numero do documento do banco (CHECKNUM). Nos extratos antigos vem codificado
+  // como data+valor (ex. 20260512013860) -> nao serve de informacao, esconder.
+  const dbRaw = String(it?.document ?? "").trim();
+  const docBanco = /^(19|20)\d{6}/.test(soDig(dbRaw)) ? "" : dbRaw;
+  return { contraparte, tipo, doc, dia, hora, memo, docBanco };
+};
+// Texto unico do lancamento (busca/ordenacao) com TUDO que da p/ identificar.
+const lancTexto = (it: any): string => {
+  const L = parseLanc(it);
+  return [L.contraparte, L.tipo, L.doc, L.dia, L.hora, L.docBanco, L.memo].filter(Boolean).join(" ");
 };
 
 function StatusBadge({ s }: { s: string | null }) {
@@ -82,6 +120,11 @@ export default function ConciliacaoBancaria() {
   const [busy, setBusy] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Importar via API de Extratos do BB (sem arquivo)
+  const [bbOpen, setBbOpen] = useState(false);
+  const [bbDe, setBbDe] = useState("");
+  const [bbAte, setBbAte] = useState("");
+  const [bbMsg, setBbMsg] = useState("");
 
   // filtro / ordenação / paginação da tabela de lançamentos
   const [filterText, setFilterText] = useState("");
@@ -233,8 +276,8 @@ export default function ConciliacaoBancaria() {
     return "";
   };
   const itemNameStr = (it: Item): string => {
-    if (isPixRecebido(it)) { const p = pixPagador(it); const s = `${p.nome} ${p.doc}`.trim(); if (s) return s; }
-    return String(it.origin_name || it.description || "");
+    const L = parseLanc(it);
+    return (L.contraparte || L.tipo || L.memo || "").trim();
   };
 
   const viewItems = useMemo(() => {
@@ -243,9 +286,9 @@ export default function ConciliacaoBancaria() {
     if (q) {
       const qd = q.replace(/\D/g, "");
       arr = arr.filter((it) =>
-        (it.description || "").toLowerCase().includes(q) ||
-        (it.origin_name || "").toLowerCase().includes(q) ||
+        lancTexto(it).toLowerCase().includes(q) ||
         itemTitleStr(it).toLowerCase().includes(q) ||
+        (qd && lancTexto(it).replace(/\D/g, "").includes(qd)) ||
         (qd && (it.document || "").replace(/\D/g, "").includes(qd)) ||
         (qd && String(it.amount).replace(/\D/g, "").includes(qd))
       );
@@ -253,7 +296,7 @@ export default function ConciliacaoBancaria() {
     if (filterStatus) arr = arr.filter((it) => (it.reconciliation_status || "pending") === filterStatus);
     // pesquisa dedicada: nome, valor, data
     const nq = fNome.trim().toLowerCase();
-    if (nq) arr = arr.filter((it) => itemNameStr(it).toLowerCase().includes(nq));
+    if (nq) arr = arr.filter((it) => lancTexto(it).toLowerCase().includes(nq));
     const vq = fValor.trim().replace(/\D/g, "");
     if (vq) arr = arr.filter((it) => String(it.amount).replace(/\D/g, "").includes(vq));
     if (fData) arr = arr.filter((it) => String(it.transaction_date || "").slice(0, 10) === fData);
@@ -415,11 +458,13 @@ export default function ConciliacaoBancaria() {
     const d = (() => { try { return new Date(modalItem.transaction_date).toISOString().slice(0, 10); } catch { return ""; } })();
     setNovo({
       tipo: modalItem.type === "C" ? "receber" : "pagar",
-      name: modalItem.description || "",
-      document: "",
+      // pre-preenche com a CONTRAPARTE do extrato (nome do favorecido/pagador),
+      // nao com o historico bruto; documento vem do CPF/CNPJ do lancamento.
+      name: parseLanc(modalItem).contraparte || modalItem.description || "",
+      document: parseLanc(modalItem).doc || "",
       amount: itemAmt,
       issueDate: d, dueDate: d,
-      description: modalItem.description || "",
+      description: [parseLanc(modalItem).tipo, modalItem.description].filter(Boolean).join(" — "),
       category: "",
       chartAccountId: "",
       omieInstanceId: instance || "",
@@ -464,6 +509,43 @@ export default function ConciliacaoBancaria() {
     } catch (err: any) { alert("Erro ao importar OFX: " + err.message); }
     finally { setImporting(false); }
   };
+
+  // ---- Importar via API de EXTRATOS do BB ---------------------------------
+  // Puxa o extrato direto do banco (sem arquivo). Traz MAIS dados que o OFX:
+  // contraparte, CPF/CNPJ e data/hora de cada lançamento.
+  const abrirBbApi = () => {
+    if (!account) { alert("Selecione a CONTA (no filtro acima) antes de importar pela API do BB."); return; }
+    const hoje = new Date();
+    const d0 = new Date(hoje.getTime() - 30 * 86400000);
+    setBbDe(d0.toISOString().slice(0, 10));
+    setBbAte(hoje.toISOString().slice(0, 10));
+    setBbMsg(""); setBbOpen(true);
+  };
+  const bbDiag = async () => {
+    setImporting(true); setBbMsg("Testando conexão com o BB…");
+    try {
+      const r = await fetch(`/api/reconciliation/bb-extrato/diag?accountId=${encodeURIComponent(account)}&de=${bbDe}&ate=${bbAte}`, { credentials: "include" });
+      const j = await r.json();
+      setBbMsg(j.ok
+        ? `✅ Conexão OK (${j.ambiente}) — ${j.lancamentos} lançamento(s) na 1ª página do período. Credencial: ${j.credenciais?.origem}.`
+        : `❌ Falhou na etapa "${j.etapa}"${j.status ? ` (HTTP ${j.status})` : ""}: ${j.erro}\nCredencial usada: ${j.credenciais?.origem || "nenhuma"}.`);
+    } catch (e: any) { setBbMsg("Erro: " + e.message); }
+    finally { setImporting(false); }
+  };
+  const bbImportar = async () => {
+    if (!window.confirm(`Importar o extrato da conta pela API do BB de ${fmtDate(bbDe)} a ${fmtDate(bbAte)}?\nLançamentos já importados entram como "já importado" (espelho) — não duplica nem dá baixa.`)) return;
+    setImporting(true); setBbMsg("Consultando o BB…");
+    try {
+      const j = await post("/api/reconciliation/import-bb-api", { accountId: account, de: bbDe, ate: bbAte, by: me });
+      if (!j.statementId) { setBbMsg(j.message || "Nenhum lançamento no período."); return; }
+      setBbOpen(false);
+      alert(`Extrato importado pela API do BB: ${j.inserted} lançamento(s) novo(s)` + (j.espelhados ? `, ${j.espelhados} já existia(m)` : "") + (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : "."));
+      await loadStatements();
+      openStatement({ id: j.statementId, file_name: j.fileName, source: "bb-api", start_date: j.periodo?.de, end_date: j.periodo?.ate, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance } as any);
+    } catch (e: any) { setBbMsg("Erro ao importar: " + e.message); }
+    finally { setImporting(false); }
+  };
+
   const doDeleteStatement = async (s: Statement, e?: any) => {
     if (e) e.stopPropagation();
     if ((s.reconciled || 0) > 0) { alert(`Este extrato tem ${s.reconciled} item(ns) já conciliado(s). Desfaça as conciliações antes de remover.`); return; }
@@ -503,7 +585,7 @@ export default function ConciliacaoBancaria() {
         <button onClick={runDedup} disabled={busy === "batch"} title="Colapsa duplicatas legadas (mesma transação em várias linhas) em uma só — reversível, não apaga nada" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧹 Deduplicar</button>
         <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
         <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
-        <button disabled title="Disponível na próxima fase" className="px-3 py-2 text-sm rounded border text-gray-500 cursor-not-allowed">🏦 Importar via BB API</button>
+        <button onClick={abrirBbApi} disabled={importing} title={account ? "Puxar o extrato direto do Banco do Brasil (traz contraparte, CPF/CNPJ e hora)" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded border border-yellow-500 text-yellow-800 bg-yellow-50 hover:bg-yellow-100 disabled:opacity-50">🏦 Importar via BB API</button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
@@ -596,18 +678,27 @@ export default function ConciliacaoBancaria() {
                           <td className="px-2 py-2">{canIgnore(it) && <input type="checkbox" checked={selectedIds.has(it.id)} onChange={() => toggleOne(it.id)} />}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
                           <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>{it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}</td>
-                          <td className="px-3 py-2 max-w-[260px]">
-                            {isPixRecebido(it) ? (() => { const pg = pixPagador(it); return (
-                              <>
-                                <div className="truncate font-medium text-gray-800" title={it.description}>{pg.nome || "PIX recebido"}</div>
-                                <div className="text-[11px] text-gray-500">{it.origin_name || "Pix recebido"}{pg.doc ? ` · ${fmtDoc(pg.doc)}` : ""}</div>
-                              </>
-                            ); })() : (
-                              <>
-                                <div className="truncate" title={it.description}>{it.origin_name || it.description}</div>
-                                {it.document ? <div className="text-[11px] text-gray-400">{it.document}</div> : null}
-                              </>
-                            )}
+                          <td className="px-3 py-2 max-w-[320px]">
+                            {(() => {
+                              const L = parseLanc(it);
+                              // linha 1 = CONTRAPARTE (quem pagou / quem recebeu); linha 2 = tipo do
+                              // lancamento no banco + CPF/CNPJ + data/hora; linha 3 = nº do documento.
+                              const l1 = L.contraparte || L.tipo || L.memo || "—";
+                              const p2: string[] = [];
+                              if (L.contraparte && L.tipo && L.contraparte.toLowerCase() !== L.tipo.toLowerCase()) p2.push(L.tipo);
+                              else if (!L.contraparte && L.memo && L.memo.toLowerCase() !== L.tipo.toLowerCase()) p2.push(L.memo);
+                              if (L.doc) p2.push(fmtDoc(L.doc));
+                              const dh = [L.dia, L.hora].filter(Boolean).join(" ");
+                              if (dh) p2.push(dh);
+                              const full = [L.tipo, L.memo].filter(Boolean).join(" — ");
+                              return (
+                                <>
+                                  <div className="truncate font-medium text-gray-800" title={full}>{l1}</div>
+                                  {p2.length ? <div className="text-[11px] text-gray-500 truncate" title={full}>{p2.join(" · ")}</div> : null}
+                                  {L.docBanco ? <div className="text-[10px] text-gray-400 truncate">Doc. {L.docBanco}</div> : null}
+                                </>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><StatusBadge s={st} /></td>
                           <td className="px-3 py-2">
@@ -688,6 +779,45 @@ export default function ConciliacaoBancaria() {
         </div>
       </div>
 
+      {/* MODAL Importar via API de Extratos do BB */}
+      {bbOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !importing && setBbOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b flex items-start justify-between">
+              <div>
+                <div className="font-bold text-gray-800">🏦 Importar extrato via API do BB</div>
+                <div className="text-xs text-gray-500 mt-0.5">Conta: <span className="font-medium">{accounts.find((a) => a.id === account)?.name || "—"}</span> · sem arquivo, direto do banco</div>
+              </div>
+              <button onClick={() => setBbOpen(false)} disabled={importing} className="text-gray-400 hover:text-gray-700 text-xl leading-none disabled:opacity-40">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">De</label>
+                  <input type="date" value={bbDe} onChange={(e) => setBbDe(e.target.value)} className="w-full border rounded px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Até</label>
+                  <input type="date" value={bbAte} onChange={(e) => setBbAte(e.target.value)} className="w-full border rounded px-3 py-1.5 text-sm" />
+                </div>
+              </div>
+              <div className="text-[11px] text-gray-500">
+                O extrato da API traz mais informação que o arquivo OFX: contraparte, CPF/CNPJ e data/hora do lançamento.
+                Lançamentos já importados entram como “já importado” (espelho) — não duplica nem dá baixa.
+              </div>
+              {bbMsg ? <div className="text-xs whitespace-pre-wrap border rounded px-3 py-2 bg-gray-50 text-gray-700">{bbMsg}</div> : null}
+            </div>
+            <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
+              <button onClick={bbDiag} disabled={importing || !bbDe || !bbAte} className="px-3 py-1.5 text-sm rounded border disabled:opacity-40">Testar conexão</button>
+              <div className="flex gap-2">
+                <button onClick={() => setBbOpen(false)} disabled={importing} className="px-3 py-1.5 text-sm rounded border disabled:opacity-40">Cancelar</button>
+                <button onClick={bbImportar} disabled={importing || !bbDe || !bbAte} className="px-4 py-1.5 text-sm rounded bg-yellow-600 text-white hover:bg-yellow-700 disabled:opacity-50">{importing ? "Importando…" : "Importar"}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL Conciliar Transação */}
       {modalItem && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={closeModal}>
@@ -696,7 +826,19 @@ export default function ConciliacaoBancaria() {
               <div>
                 <div className="font-bold text-gray-800">Conciliar Transação</div>
                 <div className="text-xs text-gray-500 mt-0.5">
-                  {modalItem.type === "C" ? "Crédito" : "Débito"}: <span className="font-medium">{fmtMoney(modalItem.amount)}</span> em {fmtDate(modalItem.transaction_date)} — {modalItem.description}
+                  {modalItem.type === "C" ? "Crédito" : "Débito"}: <span className="font-medium">{fmtMoney(modalItem.amount)}</span> em {fmtDate(modalItem.transaction_date)}
+                  {(() => {
+                    const L = parseLanc(modalItem);
+                    const p: string[] = [];
+                    if (L.contraparte) p.push(L.contraparte);
+                    if (L.tipo && L.contraparte.toLowerCase() !== L.tipo.toLowerCase()) p.push(L.tipo);
+                    if (L.doc) p.push(fmtDoc(L.doc));
+                    const dh = [L.dia, L.hora].filter(Boolean).join(" ");
+                    if (dh) p.push(dh);
+                    if (L.docBanco) p.push("Doc. " + L.docBanco);
+                    if (!p.length) p.push(L.memo);
+                    return <> — <span className="text-gray-700">{p.join(" · ")}</span></>;
+                  })()}
                 </div>
               </div>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
