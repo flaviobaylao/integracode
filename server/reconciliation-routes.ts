@@ -631,6 +631,65 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // ---- Reparo: lancamento com match mas que voltou a 'pending' ------------
+  // Causa-raiz (corrigida em 26/jul): o backfill noturno 1.0->2.0 fazia
+  // "ON CONFLICT (id) DO UPDATE" em bank_statement_items, sobrescrevendo a
+  // conciliacao feita no 2.0 com os valores (vazios) do 1.0. Os matches, criados
+  // so no 2.0, sobreviviam -> titulo baixado, extrato "nao conciliado".
+  // Este endpoint restaura o status a partir dos matches que sobreviveram.
+  // SEGURANCA: so repara quando o titulo vinculado esta REALMENTE baixado
+  // (paga/recebida ou amount_paid >= amount). Os demais entram em `naoReparados`.
+  app.post("/api/reconciliation/reparar-conciliacoes", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "reparo-conciliacao").toString();
+      const rows = rowsOf(await db.execute(sql`
+        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.reconciliation_status,
+               min(m.created_at) AS conciliado_em, min(m.created_by) AS conciliado_por,
+               count(*)::int AS n_matches,
+               max(m.receivable_id) AS receivable_id, max(m.payable_id) AS payable_id,
+               bool_or(COALESCE(r.status::text,'') IN ('recebida') OR COALESCE(NULLIF(r.amount_paid::text,'')::numeric,0) >= COALESCE(NULLIF(r.amount::text,'')::numeric,0) - 0.005) AS recv_ok,
+               bool_or(COALESCE(p.status::text,'') IN ('paga') OR COALESCE(NULLIF(p.amount_paid::text,'')::numeric,0) >= COALESCE(NULLIF(p.amount::text,'')::numeric,0) - 0.005) AS pay_ok,
+               max(COALESCE(r.title_number, p.title_number)) AS titulo
+        FROM bank_statement_items i
+        JOIN bank_statement_item_matches m ON m.bank_statement_item_id = i.id
+        LEFT JOIN receivables r ON r.id = m.receivable_id
+        LEFT JOIN payables p ON p.id = m.payable_id
+        WHERE COALESCE(i.reconciliation_status, 'pending') NOT IN ('reconciled', 'mirror')
+          AND i.mirror_of IS NULL
+        GROUP BY i.id, i.transaction_date, i.amount, i.type, i.description, i.reconciliation_status
+        ORDER BY i.transaction_date DESC`));
+
+      const reparar = rows.filter((r: any) => (r.receivable_id && r.recv_ok) || (r.payable_id && r.pay_ok));
+      const naoReparados = rows.filter((r: any) => !((r.receivable_id && r.recv_ok) || (r.payable_id && r.pay_ok)))
+        .map((r: any) => ({ id: r.id, data: String(r.transaction_date || "").slice(0, 10), valor: r.amount, titulo: r.titulo, motivo: "titulo vinculado NAO esta baixado - conferir manualmente" }));
+      const amostra = reparar.slice(0, 15).map((r: any) => ({ data: String(r.transaction_date || "").slice(0, 10), valor: r.amount, tipo: r.type, titulo: r.titulo, descricao: String(r.description || "").slice(0, 45), conciliadoEm: r.conciliado_em, por: r.conciliado_por }));
+      if (dryRun) return res.json({ ok: true, dryRun: true, candidatos: rows.length, reparaveis: reparar.length, naoReparados, amostra });
+
+      let reparados = 0;
+      const erros: string[] = [];
+      for (const r of reparar as any[]) {
+        try {
+          const nota = `Conciliacao restaurada em ${new Date().toISOString()} a partir do vinculo de ${String(r.conciliado_em || "").slice(0, 19)} por ${r.conciliado_por || "-"} (havia sido revertida pelo backfill 1.0->2.0)`;
+          await db.execute(sql`
+            UPDATE bank_statement_items
+            SET reconciliation_status = 'reconciled',
+                matched_receivable_id = COALESCE(matched_receivable_id, ${r.receivable_id ?? null}),
+                matched_payable_id = COALESCE(matched_payable_id, ${r.payable_id ?? null}),
+                matched_at = COALESCE(matched_at, ${r.conciliado_em ?? null}),
+                matched_by = COALESCE(matched_by, ${r.conciliado_por ?? by}),
+                match_confidence = COALESCE(match_confidence, 100),
+                notes = ${nota}
+            WHERE id = ${r.id}`);
+          await logReconAudit({ action: "repair", itemId: r.id, amount: money(r.amount), itemType: r.type || null, transactionDate: r.transaction_date || null, description: r.description || "", by, details: { titulo: r.titulo, conciliadoEm: r.conciliado_em } });
+          reparados++;
+        } catch (e: any) { erros.push(String(e?.message || e).slice(0, 120)); }
+      }
+      res.json({ ok: true, dryRun: false, candidatos: rows.length, reparados, naoReparados, erros });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // ---- Backfill: preenche origin_document dos lancamentos JA importados ----
   // Extrai o CPF/CNPJ do texto do lancamento (inclusive desfazendo o padding de
   // zeros do BB) e grava em origin_document quando estiver vazio. Idempotente.

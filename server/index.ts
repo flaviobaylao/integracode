@@ -3780,7 +3780,14 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const summary: any[] = [];
       try {
         await src.connect(); await tgt.connect();
-        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers']);
+        // ⚠️ CONCILIACAO BANCARIA e 100% do 2.0 (cutover): o backfill faz
+        // "ON CONFLICT (id) DO UPDATE SET <todas as colunas>", entao copiar essas
+        // tabelas do 1.0 REVERTIA toda conciliacao feita no 2.0 (o lancamento
+        // voltava a 'pending' e perdia matched_at/matched_by/notes, enquanto os
+        // matches criados no 2.0 sobreviviam -> "titulo baixado mas extrato
+        // pendente"). Bloqueadas junto com billing_pipeline/suppliers.
+        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers',
+          'bank_statements','bank_statement_items','bank_statement_item_matches','reconciliation_patterns','reconciliation_audit_log']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));

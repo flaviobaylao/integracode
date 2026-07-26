@@ -1330,6 +1330,64 @@ export function registerFinancialRoutes(app: Express) {
   });
 
   // Payable Payments
+  // ---- Eventos de uma conta (pagar/receber): baixas + conciliacao bancaria ----
+  // Tudo o que aconteceu com o titulo: cada pagamento registrado (data, valor,
+  // forma, conta financeira, referencia, quem lancou) e a conciliacao bancaria
+  // (lancamento do extrato, arquivo, data/hora, juros/desconto, quem conciliou).
+  // READ-ONLY. Cada bloco em try/catch: se um falhar, o resto aparece.
+  async function eventosDoTitulo(kind: 'payable' | 'receivable', id: string) {
+    const out: any = { pagamentos: [], conciliacoes: [], auditoria: [], totalPago: 0 };
+    const tbl = kind === 'payable' ? 'payable_payments' : 'receivable_payments';
+    const fk = kind === 'payable' ? 'payable_id' : 'receivable_id';
+    try {
+      const r: any = await db.execute(sql`
+        SELECT p.id, p.paid_at, p.amount, p.payment_method, p.reference, p.notes,
+               p.created_by, p.created_at, p.financial_account_id, fa.name AS conta
+        FROM ${sql.raw('"' + tbl + '"')} p
+        LEFT JOIN financial_accounts fa ON fa.id = p.financial_account_id
+        WHERE p.${sql.raw('"' + fk + '"')} = ${id}
+        ORDER BY p.paid_at NULLS LAST, p.created_at`);
+      out.pagamentos = (r.rows || r || []);
+      out.totalPago = out.pagamentos.reduce((a: number, p: any) => a + Number(String(p.amount ?? '0').replace(/[^0-9.-]/g, '') || 0), 0);
+    } catch (e: any) { out.erroPagamentos = String(e?.message || e).slice(0, 120); }
+    try {
+      const r: any = await db.execute(sql`
+        SELECT m.id, m.amount, m.match_kind, m.title_amount_settled, m.interest, m.discount,
+               m.created_by, m.created_at,
+               i.id AS item_id, i.transaction_date, i.type, i.description, i.origin_name,
+               i.origin_document, i.document, i.reconciliation_status, i.matched_at, i.matched_by,
+               s.file_name, s.source, fa.name AS conta, s.omie_instance_id
+        FROM bank_statement_item_matches m
+        JOIN bank_statement_items i ON i.id = m.bank_statement_item_id
+        LEFT JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE m.${sql.raw('"' + fk + '"')} = ${id}
+        ORDER BY m.created_at DESC`);
+      out.conciliacoes = (r.rows || r || []);
+    } catch (e: any) { out.erroConciliacoes = String(e?.message || e).slice(0, 120); }
+    try {
+      const ids = out.conciliacoes.map((c: any) => String(c.item_id)).filter(Boolean);
+      if (ids.length) {
+        const inList = sql.join(ids.map((v: string) => sql`${v}`), sql`, `);
+        const r: any = await db.execute(sql`
+          SELECT event_at, action, amount, performed_by, bank_statement_item_id
+          FROM reconciliation_audit_log
+          WHERE bank_statement_item_id IN (${inList})
+          ORDER BY event_at DESC LIMIT 30`);
+        out.auditoria = (r.rows || r || []);
+      }
+    } catch { /* tabela de auditoria pode nao existir */ }
+    return out;
+  }
+  app.get('/api/financial/payables/:id/eventos', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try { res.json(await eventosDoTitulo('payable', req.params.id)); }
+    catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+  app.get('/api/financial/receivables/:id/eventos', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try { res.json(await eventosDoTitulo('receivable', req.params.id)); }
+    catch (error: any) { res.status(500).json({ message: error.message }); }
+  });
+
   app.get('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const payments = await storage.getPayablePayments(req.params.id);
