@@ -629,6 +629,12 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
 }
 
 export async function sendUmblerTalkText(toPhone: string, text: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  // Gestao de Canais: se o numero de envio estiver DESLIGADO no painel, bloqueia o envio (humano ou IA).
+  try {
+    const { canalAtivoPorTelefone } = await import('./canais-gestao');
+    const _chan = fromPhoneOverride || '5562992682630';
+    if (!(await canalAtivoPorTelefone(_chan))) { console.warn('[CANAL-OFF] envio bloqueado (canal desligado):', _chan); return { success: false, error: 'canal_desligado' }; }
+  } catch {}
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');
