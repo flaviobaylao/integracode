@@ -177,6 +177,10 @@ export default function ChatAISettings() {
     queryKey: ['/api/chat/ai-settings'],
   });
 
+  const { data: openaiKeyStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ['/api/chat/ai/openai-key-status'],
+  });
+
   useEffect(() => {
     if (settingsData?.settings) {
       setSettings(settingsData.settings);
@@ -350,6 +354,11 @@ export default function ChatAISettings() {
           <p className="text-muted-foreground">
             Configure o atendimento automático via ChatGPT
           </p>
+          {openaiKeyStatus && (
+            <Badge className={`mt-2 ${openaiKeyStatus.configured ? 'bg-green-100 text-green-700 hover:bg-green-100' : 'bg-red-100 text-red-700 hover:bg-red-100'}`} data-testid="openai-key-status">
+              {openaiKeyStatus.configured ? '✓ Chave OpenAI configurada' : '✗ Chave OpenAI não configurada'}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <Button
