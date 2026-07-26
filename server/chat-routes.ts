@@ -6128,6 +6128,39 @@ export function registerChatRoutes(app: Express): void {
     } catch (e: any) { console.error('[LABELS] set conv labels:', e); res.status(500).json({ error: e?.message }); }
   });
 
+  // ✨ Aprimorar mensagem do atendente: profissional, objetiva, cordial e com ortografia correta
+  app.post("/api/chat/polish-message", authenticateUser, async (req, res) => {
+    try {
+      const raw = String(req.body?.text ?? '').trim();
+      if (raw.length < 3) return res.json({ polished: raw });
+      if (!process.env.OPENAI_API_KEY) return res.json({ polished: raw });
+      const OpenAI = (await import('openai')).default;
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      let model = 'gpt-4o-mini';
+      try { const st: any = await storage.getChatAiSettings(); if (st?.gptModel) model = st.gptModel; } catch {}
+      const sys = [
+        'Você reescreve mensagens de atendimento e vendas via WhatsApp para ficarem profissionais, objetivas e cordiais, com ortografia e gramática corretas em português do Brasil.',
+        'REGRAS OBRIGATÓRIAS:',
+        '- Preserve EXATAMENTE o significado, os fatos, valores, números, datas, horários, nomes, links, códigos e emojis. NÃO invente nem acrescente informação.',
+        '- Não adicione saudações, assinaturas ou despedidas que não existam no original.',
+        '- Mantenha curto o que é curto; não deixe a mensagem mais longa que o necessário.',
+        '- Tom humano e cordial, nunca robótico.',
+        '- Responda SOMENTE com o texto final reescrito, sem aspas e sem explicações.'
+      ].join('\n');
+      const completion = await openai.chat.completions.create({
+        model,
+        temperature: 0.3,
+        max_tokens: 600,
+        messages: [ { role: 'system', content: sys }, { role: 'user', content: raw } ]
+      });
+      const polished = String(completion.choices?.[0]?.message?.content || '').trim();
+      return res.json({ polished: polished || raw });
+    } catch (e: any) {
+      console.warn('[POLISH] erro ao aprimorar mensagem:', e?.message || e);
+      return res.json({ polished: String(req.body?.text ?? '') });
+    }
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
 
