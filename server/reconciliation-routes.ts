@@ -456,7 +456,7 @@ export function registerReconciliation(app: Express) {
       const id = req.params.id;
       const it = rowsOf(await db.execute(sql`
         SELECT to_jsonb(i) AS j, COALESCE(i.mirror_of, i.id) AS canonical_id,
-               s.id AS st_id, s.file_name, s.source, s.start_date, s.end_date, s.bank_account,
+               s.id AS st_id, s.file_name, s.source, s.start_date, s.end_date,
                s.omie_instance_id, fa.name AS account_name, fa.id AS account_id,
                fa.bank_name, fa.agency, fa.account_number
         FROM bank_statement_items i
@@ -479,7 +479,7 @@ export function registerReconciliation(app: Express) {
         item, canonicalId: canonical,
         extrato: {
           id: it.st_id, arquivo: it.file_name, origem: it.source,
-          periodo: { de: it.start_date, ate: it.end_date }, contaBanco: it.bank_account,
+          periodo: { de: it.start_date, ate: it.end_date },
           conta: it.account_name, contaId: it.account_id, instancia: it.omie_instance_id,
           banco: it.bank_name, agencia: it.agency, numeroConta: it.account_number,
         },
