@@ -1953,43 +1953,43 @@ export function registerReconciliation(app: Express) {
       const dryRun = req.body?.dryRun !== false;
       const by = (req.body?.by || "conciliacao-2.0").toString();
       await ensureMirrorColumn();
-      // Subconsulta: cada pendente (nao-espelho) + o id do seu GEMEO ja CONCILIADO
-      // (mesma conta|data|valor|tipo|descricao normalizada), ou NULL se nao houver.
+      // Casa cada PENDENTE (nao-espelho) com o GEMEO ja CONCILIADO da mesma conta.
+      // Feito com CTE + JOIN (hash join) em vez de subconsulta correlacionada: com
+      // ~12k lancamentos a versao correlacionada com regex ficava O(n^2) e estourava
+      // o tempo da requisicao.
       const CAND = sql`
-        SELECT i.id AS pending_id,
-               (SELECT j.id FROM bank_statement_items j
-                  JOIN bank_statements sj ON sj.id = j.statement_id
-                 WHERE sj.financial_account_id = s.financial_account_id
-                   AND j.id <> i.id
-                   AND j.reconciliation_status = 'reconciled'
-                   AND j.mirror_of IS NULL
-                   AND j.transaction_date::date = i.transaction_date::date
-                   AND round(j.amount::numeric, 2) = round(i.amount::numeric, 2)
-                   AND j.type = i.type
-                   AND (
-                     -- (a) mesmo texto (dedup classico)
-                     regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
-                       = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
-                     -- (b) MESMO CARIMBO DE DATA/HORA no texto ("17/07 17:17"). Os dois
-                     -- formatos de export do BB escrevem o lancamento com textos
-                     -- diferentes ("PIX - ENVIADO - 17/07 17:17 VOLUS" x "17/07 17:17
-                     -- VOLUS"), entao o dedup por texto nao os colapsava e sobrava uma
-                     -- linha pendente para sempre. Mesma conta + valor + tipo + minuto
-                     -- exato = mesma transacao economica.
-                     OR (
-                       substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') IS NOT NULL
-                       AND substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}')
-                         = substring(COALESCE(j.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}')
-                     )
-                   )
-                 ORDER BY j.matched_at ASC NULLS LAST, j.id ASC
-                 LIMIT 1) AS canonical_id
-        FROM bank_statement_items i
-        JOIN bank_statements s ON s.id = i.statement_id
-        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
-          AND i.mirror_of IS NULL`;
+        WITH base AS (
+          SELECT i.id,
+                 s.financial_account_id AS acc,
+                 i.transaction_date::date AS d,
+                 round(i.amount::numeric, 2) AS amt,
+                 i.type,
+                 regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
+                 substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') AS ts,
+                 COALESCE(i.reconciliation_status, 'pending') AS st,
+                 i.mirror_of, i.matched_at
+          FROM bank_statement_items i
+          JOIN bank_statements s ON s.id = i.statement_id
+        ),
+        conc AS (SELECT * FROM base WHERE st = 'reconciled' AND mirror_of IS NULL),
+        pend AS (SELECT * FROM base WHERE st = 'pending' AND mirror_of IS NULL)
+        SELECT DISTINCT ON (p.id) p.id AS pending_id, c.id AS canonical_id
+        FROM pend p
+        JOIN conc c
+          ON c.acc = p.acc AND c.d = p.d AND c.amt = p.amt AND c.type = p.type AND c.id <> p.id
+         AND (
+              -- (a) mesmo texto (dedup classico)
+              c.nd = p.nd
+              -- (b) MESMO CARIMBO DE DATA/HORA no texto ("17/07 17:17"). Os dois formatos
+              -- de export do BB escrevem o lancamento com textos diferentes
+              -- ("PIX - ENVIADO - 17/07 17:17 VOLUS" x "17/07 17:17 VOLUS"), entao o dedup
+              -- por texto nao os colapsava e sobrava uma linha pendente para sempre.
+              -- Mesma conta + data + valor + tipo + minuto exato = mesma transacao.
+              OR (p.ts IS NOT NULL AND c.ts = p.ts)
+             )
+        ORDER BY p.id, c.matched_at ASC NULLS LAST, c.id ASC`;
       if (dryRun) {
-        const c = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM (${CAND}) q WHERE q.canonical_id IS NOT NULL`))[0];
+        const c = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM (${CAND}) q`))[0];
         return res.json({ dryRun, candidatos: Number(c?.n || 0), atualizados: 0 });
       }
       // Aplicacao em UM unico UPDATE em conjunto (rapido e atomico; sem loop/timeout).
