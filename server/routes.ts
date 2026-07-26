@@ -13179,7 +13179,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Planejar rotas de entrega para múltiplos veículos
   app.post("/api/delivery-routes/plan", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const { orderIds, vehicles, routeDate } = req.body;
+      // mode:'ia'  → distribuição pelo agente de IA + sequência pelo algoritmo (2-opt/OSRM)
+      // dryRun     → NÃO persiste nesta etapa (quem grava é POST /api/delivery-routes/save)
+      // Ambos são opcionais: a tela antiga (Gestão de Entregas) segue com o comportamento de sempre.
+      const { orderIds, vehicles, routeDate, mode, dryRun, respectReceivingWeekdays } = req.body;
+      const useAI = String(mode || '').toLowerCase() === 'ia';
+      const persist = dryRun === true ? false : true;
 
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ message: "Order IDs are required" });
@@ -13214,6 +13219,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         scheduledDate: Date;
         paymentMethod: string;
         operationType: string;
+        pipelineStage: string;
+        customerCity: string;
+        customerState: string;
+        customerNeighborhood: string;
+        receivingWeekdays: any;
       }>(sql`
         SELECT DISTINCT ON (bp.id)
           bp.id,
@@ -13236,7 +13246,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bp.products,
           bp.created_at as "scheduledDate",
           bp.payment_method as "paymentMethod",
-          bp.operation_type as "operationType"
+          bp.operation_type as "operationType",
+          bp.stage as "pipelineStage",
+          c.city as "customerCity",
+          c.state as "customerState",
+          c.neighborhood as "customerNeighborhood",
+          c.receiving_weekdays as "receivingWeekdays"
         FROM billing_pipeline bp
         LEFT JOIN customers c ON c.id = bp.customer_id
         WHERE bp.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
@@ -13345,6 +13360,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const vehicleTypes = typeof o.vehicleTypes === 'string'
           ? JSON.parse(o.vehicleTypes)
           : (Array.isArray(o.vehicleTypes) ? o.vehicleTypes : []);
+
+        // Dias em que o CLIENTE aceita receber (usado como AVISO na roteirização com IA;
+        // só vira exclusão dura se respectReceivingWeekdays=true).
+        const receivingWeekdays = typeof o.receivingWeekdays === 'string'
+          ? (() => { try { return JSON.parse(o.receivingWeekdays as any); } catch { return null; } })()
+          : (Array.isArray(o.receivingWeekdays) ? o.receivingWeekdays : null);
         
         console.log(`📍 [CONVERSION] ${o.customerName}:`, {
           lat, lng,
@@ -13373,24 +13394,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
           operationType: o.operationType || null,
           customerWeekdays: deliveryWeekdays, // Dias de ENTREGA permitidos
           deliveryTimeSlots: deliveryTimeSlots, // Horários de ENTREGA permitidos
+          // ▼ contexto extra para o agente de IA (BSB, setor, dias de recebimento)
+          receivingWeekdays,
+          customerCity: o.customerCity || null,
+          customerState: o.customerState || null,
+          customerNeighborhood: o.customerNeighborhood || null,
+          pipelineStage: o.pipelineStage || null,
+          orderNumber: o.orderNumber || null,
+          invoiceNumber: o.invoiceNumber || null,
         };
       });
       
       console.log(`✅ [ROUTE-PLANNING] ${deliveryOrders.length} pedidos prontos para roteirização`);
 
       // Planejar rotas
+      const dataDaRota = routeDate ? new Date(routeDate) : nowBrazil();
+      const planOpts = { persist, respectReceivingWeekdays: respectReceivingWeekdays === true };
+
+      if (useAI) {
+        const { planDeliveryRoutesWithAI } = await import('./aiRoutePlannerService');
+        const plan = await planDeliveryRoutesWithAI(storage, deliveryOrders as any, vehicles, dataDaRota, planOpts);
+        console.log(`🤖 [ROUTE-PLANNING] modo=${plan.ai.modo} rotas=${plan.routes.length} atribuidos=${plan.stats.assignedOrders}/${plan.stats.totalOrders} km=${plan.stats.totalDistance.toFixed(1)}`);
+        return res.json(plan);
+      }
+
       const { planDeliveryRoutes } = await import('./deliveryRouteService');
       const plan = await planDeliveryRoutes(
         storage,
-        deliveryOrders,
+        deliveryOrders as any,
         vehicles,
-        routeDate ? new Date(routeDate) : nowBrazil()
+        dataDaRota,
+        planOpts
       );
 
       res.json(plan);
     } catch (error: any) {
       console.error("Error planning delivery routes:", error);
       res.status(500).json({ message: "Failed to plan delivery routes", error: error.message });
+    }
+  });
+
+
+  // ============================================================================
+  // FROTA DISPONÍVEL PARA ROTEIRIZAÇÃO
+  // Usa o CADASTRO EXISTENTE de motoristas (delivery_drivers), que já guarda
+  // tipo de veículo, placa e base (home_latitude/longitude). Marca quem já tem
+  // rota na data para o operador não escalar o mesmo motorista duas vezes.
+  // ============================================================================
+  app.get("/api/delivery-routes/fleet", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const dateStr = String(req.query.date || '').slice(0, 10) || nowBrazil().toISOString().slice(0, 10);
+      const result: any = await db.execute(sql`
+        SELECT d.id,
+               d.name,
+               d.email,
+               d.phone,
+               COALESCE(d.vehicle_type, 'moto') AS vehicle_type,
+               d.license_plate,
+               d.home_latitude,
+               d.home_longitude,
+               d.is_active,
+               COALESCE((
+                 SELECT COUNT(*) FROM delivery_routes r
+                 WHERE r.driver_id = d.id
+                   AND r.route_date::text = ${dateStr}
+                   AND r.status NOT IN ('cancelled', 'cancelada', 'concluida')
+               ), 0) AS routes_today
+        FROM delivery_drivers d
+        WHERE d.is_active = true
+        ORDER BY d.name
+      `);
+      const drivers = (result?.rows || []).map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        vehicleType: r.vehicle_type,
+        licensePlate: r.license_plate,
+        homeLatitude: r.home_latitude,
+        homeLongitude: r.home_longitude,
+        routesToday: Number(r.routes_today || 0),
+      }));
+      res.set('Cache-Control', 'no-store');
+      res.json({ date: dateStr, drivers, hasAiKey: !!process.env.ANTHROPIC_API_KEY });
+    } catch (error: any) {
+      console.error('Error loading delivery fleet:', error);
+      res.status(500).json({ message: 'Falha ao carregar a frota', error: error.message });
     }
   });
 
@@ -13626,6 +13715,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const billingInfoMap: Record<string, { orderNumber: string; omieOrderId: string }> = {};
           if (billingIds.length > 0) {
+            // (1) legado: ids da tabela `billings`
             const billingsData = await db.select({
               id: billingsTable.id,
               orderNumber: billingsTable.orderNumber,
@@ -13637,6 +13727,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 orderNumber: b.orderNumber || '',
                 omieOrderId: b.omieOrderId || '',
               };
+            }
+
+            // (2) ✅ FONTE VIVA: os `billingId` das paradas são ids de **billing_pipeline**
+            // (é o que /api/deliveries e /plan devolvem), então a busca acima vinha vazia e
+            // as paradas ficavam sem orderNumber/omieOrderId — o que também impedia a
+            // sincronização de etapa no Omie. Aqui completamos pelo pipeline + sales_card.
+            const faltando = billingIds.filter((bid: string) => !billingInfoMap[bid]?.omieOrderId);
+            if (faltando.length > 0) {
+              try {
+                const pipeInfo: any = await db.execute(sql`
+                  SELECT bp.id,
+                         COALESCE(bp.order_number, '') AS order_number,
+                         COALESCE(sc.omie_order_id, '') AS omie_order_id
+                  FROM billing_pipeline bp
+                  LEFT JOIN sales_cards sc ON sc.id = bp.sales_card_id
+                  WHERE bp.id IN (${sql.join(faltando.map((bid: string) => sql`${bid}`), sql`, `)})
+                `);
+                for (const r of (pipeInfo?.rows || [])) {
+                  const prev = billingInfoMap[r.id] || { orderNumber: '', omieOrderId: '' };
+                  billingInfoMap[r.id] = {
+                    orderNumber: prev.orderNumber || r.order_number || '',
+                    omieOrderId: prev.omieOrderId || r.omie_order_id || '',
+                  };
+                }
+              } catch (e: any) {
+                console.warn('[SAVE-ROUTES] Falha ao completar orderNumber/omieOrderId pelo billing_pipeline:', e?.message);
+              }
             }
           }
 

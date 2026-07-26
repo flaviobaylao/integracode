@@ -7,7 +7,9 @@ import { eq, desc, and } from 'drizzle-orm';
 
 // ==================== Data Structures ====================
 
-interface DeliveryOrder {
+export type VehicleType = 'caminhao' | 'carro' | 'moto' | 'baruc';
+
+export interface DeliveryOrder {
   id: string;
   customerId: string;
   customerName: string;
@@ -26,10 +28,20 @@ interface DeliveryOrder {
   operationType: string;
   customerWeekdays?: string; // JSON array com dias da semana permitidos
   deliveryTimeSlots?: string[]; // Array com horários permitidos (ex: ["08:00-12:00"])
+  // ▼ Campos usados pela roteirização com IA (opcionais; ausentes no fluxo legado)
+  receivingWeekdays?: string[] | string | null; // Dias em que o cliente aceita RECEBER
+  customerCity?: string | null;
+  customerState?: string | null;
+  customerNeighborhood?: string | null;
+  pipelineStage?: string | null; // stage do billing_pipeline (…_bsb ⇒ Brasília)
+  orderNumber?: string | null;
+  invoiceNumber?: string | null;
 }
 
-interface VehicleConfig {
-  type: 'caminhao' | 'carro' | 'moto';
+export interface VehicleConfig {
+  id?: string;
+  licensePlate?: string;
+  type: VehicleType;
   driverId?: string;
   driverName?: string;
   startLatitude: number;
@@ -40,22 +52,22 @@ interface VehicleConfig {
   capacity?: number; // número máximo de entregas
 }
 
-interface RouteStop {
+export interface RouteStop {
   salesCardId: string;
   customerId: string;
   customerName: string;
   customerAddress: string;
   latitude: number;
   longitude: number;
-  estimatedArrival: Date;
-  estimatedDeparture: Date;
+  estimatedArrival: string; // HH:mm
+  estimatedDeparture: string; // HH:mm
   estimatedServiceTime: number; // em minutos
   stopOrder: number;
   distanceFromPrevious: number;
 }
 
-interface VehicleRoute {
-  vehicleType: 'caminhao' | 'carro' | 'moto';
+export interface VehicleRoute {
+  vehicleType: VehicleType;
   driverId?: string;
   driverName?: string;
   startLatitude: number;
@@ -67,7 +79,7 @@ interface VehicleRoute {
   routeDate: Date;
 }
 
-interface RoutePlan {
+export interface RoutePlan {
   routes: VehicleRoute[];
   unassignedOrders: DeliveryOrder[];
   stats: {
@@ -84,9 +96,9 @@ interface RoutePlan {
 /**
  * Verifica se um pedido é compatível com um veículo
  */
-function isOrderCompatibleWithVehicle(
+export function isOrderCompatibleWithVehicle(
   order: DeliveryOrder,
-  vehicleType: 'caminhao' | 'carro' | 'moto'
+  vehicleType: VehicleType
 ): boolean {
   // Se não requer veículo exclusivo, qualquer veículo serve
   if (!order.exclusiveVehicle) {
@@ -99,7 +111,7 @@ function isOrderCompatibleWithVehicle(
   }
   
   // Se especificou tipos, verificar se o tipo está na lista permitida
-  return order.vehicleTypes.includes(vehicleType);
+  return (order.vehicleTypes as string[]).includes(vehicleType);
 }
 
 /**
@@ -116,7 +128,7 @@ function distanceFromDepot(
 /**
  * Converte string HH:mm para minutos desde meia-noite
  */
-function timeToMinutes(timeStr: string): number {
+export function timeToMinutes(timeStr: string): number {
   const [hours, minutes] = timeStr.split(':').map(Number);
   return hours * 60 + minutes;
 }
@@ -270,16 +282,23 @@ async function calculateAverageDeliveryTime(customerId: string): Promise<number>
  * FASE 1: Pré-processamento
  * Filtra pedidos por elegibilidade e separa urgentes
  */
-function preprocessOrders(
+export function preprocessOrders(
   orders: DeliveryOrder[],
   vehicles: VehicleConfig[],
-  routeDate: Date
+  routeDate: Date,
+  opts?: { respectReceivingWeekdays?: boolean }
 ): {
   eligibleByVehicle: Map<number, DeliveryOrder[]>;
   urgentOrders: DeliveryOrder[];
   regularOrders: DeliveryOrder[];
   invalidOrders: Array<{ order: DeliveryOrder; reason: string }>;
+  weekdayWarnings: Array<{ order: DeliveryOrder; reason: string }>;
 } {
+  // ⚠️ COMPATIBILIDADE: por padrão o filtro de dia de recebimento é apenas AVISO
+  // (o fluxo legado da tela Gestão de Entregas nunca populava receivingWeekdays).
+  // A roteirização com IA pode ligar a exclusão dura via opts.respectReceivingWeekdays.
+  const respectWeekdays = opts?.respectReceivingWeekdays === true;
+  const weekdayWarnings: Array<{ order: DeliveryOrder; reason: string }> = [];
   const invalidOrders: Array<{ order: DeliveryOrder; reason: string }> = [];
   
   // Filtrar pedidos com coordenadas inválidas
@@ -302,13 +321,16 @@ function preprocessOrders(
     }
     
     // Validar dia da semana permitido para recebimento (receivingWeekdays)
-    if (order.receivingWeekdays && order.receivingWeekdays.length > 0) {
-      if (!isValidDeliveryWeekday(order.receivingWeekdays, routeDate)) {
+    if (order.receivingWeekdays && (order.receivingWeekdays as any).length > 0) {
+      if (!isValidDeliveryWeekday(order.receivingWeekdays as any, routeDate)) {
         const routeWeekday = getWeekdayName(routeDate);
         const reason = `Dia de recebimento não permitido (rota: ${routeWeekday}, dias permitidos: ${Array.isArray(order.receivingWeekdays) ? order.receivingWeekdays.join(', ') : order.receivingWeekdays})`;
-        console.warn(`Pedido ${order.id} ignorado: ${reason}`);
-        invalidOrders.push({ order, reason });
-        return false;
+        if (respectWeekdays) {
+          console.warn(`Pedido ${order.id} ignorado: ${reason}`);
+          invalidOrders.push({ order, reason });
+          return false;
+        }
+        weekdayWarnings.push({ order, reason });
       }
     }
     
@@ -368,7 +390,7 @@ function preprocessOrders(
     }
   }
 
-  return { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders };
+  return { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders, weekdayWarnings };
 }
 
 /**
@@ -376,7 +398,7 @@ function preprocessOrders(
  * Usa distribuição proporcional com prioridade para urgentes
  * Balanceia carga considerando tempo de trabalho estimado
  */
-function assignOrdersToVehicles(
+export function assignOrdersToVehicles(
   urgentOrders: DeliveryOrder[],
   regularOrders: DeliveryOrder[],
   vehicles: VehicleConfig[],
@@ -522,7 +544,7 @@ function assignOrdersToVehicles(
  * Calcula ETAs baseado em tempo de serviço e distância
  * PRIORIZA pedidos urgentes no início da rota
  */
-async function optimizeVehicleRoutes(
+export async function optimizeVehicleRoutes(
   assignments: Map<number, DeliveryOrder[]>,
   vehicles: VehicleConfig[],
   routeDate: Date
@@ -790,10 +812,11 @@ export async function planDeliveryRoutes(
   storage: DatabaseStorage,
   orders: DeliveryOrder[],
   vehicles: VehicleConfig[],
-  routeDate: Date
+  routeDate: Date,
+  opts?: { persist?: boolean; respectReceivingWeekdays?: boolean }
 ): Promise<RoutePlan> {
   // FASE 1: Pré-processamento com validações de dia da semana e horário
-  const { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders } = preprocessOrders(orders, vehicles, routeDate);
+  const { eligibleByVehicle, urgentOrders, regularOrders, invalidOrders } = preprocessOrders(orders, vehicles, routeDate, opts);
 
   // Log de pedidos inválidos
   if (invalidOrders.length > 0) {
@@ -814,8 +837,12 @@ export async function planDeliveryRoutes(
   // FASE 3: Otimização por veículo
   const routes = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
 
-  // FASE 4: Persistir rotas
-  await persistRoutePlan(storage, routes, routeDate);
+  // FASE 4: Persistir rotas (dryRun ⇒ não grava; quem grava é POST /api/delivery-routes/save)
+  if (opts?.persist !== false) {
+    await persistRoutePlan(storage, routes, routeDate);
+  } else {
+    console.log('🧪 [ROUTE-PLAN] dryRun: rotas NÃO persistidas nesta etapa (persistência ocorre no /save)');
+  }
 
   // Calcular estatísticas (incluir invalid orders no total de unassigned)
   const totalDistance = routes.reduce((sum, r) => sum + r.totalDistance, 0);
