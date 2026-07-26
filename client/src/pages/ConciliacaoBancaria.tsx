@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,8 @@ const parseLanc = (it: any): Lanc => {
   // numero do documento do banco (CHECKNUM). Nos extratos antigos vem codificado
   // como data+valor (ex. 20260512013860) -> nao serve de informacao, esconder.
   const dbRaw = String(it?.document ?? "").trim();
-  const docBanco = /^(19|20)\d{6}/.test(soDig(dbRaw)) ? "" : dbRaw;
+  const dbDig = soDig(dbRaw);
+  const docBanco = (/^(19|20)\d{6}/.test(dbDig) || /^0*$/.test(dbDig)) ? "" : dbRaw;
   return { contraparte, tipo, doc, dia, hora, memo, docBanco };
 };
 // Texto unico do lancamento (busca/ordenacao) com TUDO que da p/ identificar.
@@ -92,6 +93,145 @@ const lancTexto = (it: any): string => {
   const L = parseLanc(it);
   return [L.contraparte, L.tipo, L.doc, L.dia, L.hora, L.docBanco, L.memo].filter(Boolean).join(" ");
 };
+
+// --- Painel "Detalhes" do lançamento ---------------------------------------
+// Mostra TUDO o que se sabe da linha: o que o banco mandou (inclusive as tags
+// cruas do OFX), o que foi derivado do texto e o cruzamento com o sistema.
+function Campo({ k, v }: { k: string; v: any }) {
+  if (v === null || v === undefined || v === "") return null;
+  return (
+    <div className="flex gap-1.5 text-xs py-0.5">
+      <span className="text-gray-500 shrink-0">{k}:</span>
+      <span className="text-gray-800 break-all">{String(v)}</span>
+    </div>
+  );
+}
+function Bloco({ titulo, children }: { titulo: string; children: any }) {
+  return (
+    <div className="border rounded bg-white p-3">
+      <div className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">{titulo}</div>
+      {children}
+    </div>
+  );
+}
+function DetalhePanel({ d }: { d: any }) {
+  if (!d) return <div className="text-xs text-gray-500">Sem dados.</div>;
+  if (d.erro) return <div className="text-xs text-red-600">Erro: {d.erro}</div>;
+  const b = d.banco || {}, e = d.extrato || {};
+  const tags: Record<string, string> = b.tagsOfx || {};
+  const api = b.lancamentoApi || null;
+  const jaVistos = new Set(["MEMO", "NAME", "FITID", "CHECKNUM", "TRNTYPE", "TRNAMT", "DTPOSTED", "STMTTRN"]);
+  const extras = Object.entries(tags).filter(([k]) => !jaVistos.has(k));
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <Bloco titulo="Do banco (extrato)">
+        <Campo k="Data" v={b.data ? fmtDate(b.data) : ""} />
+        <Campo k="Valor" v={`${b.tipo === "C" ? "crédito +" : "débito −"} ${fmtMoney(b.valor)}`} />
+        <Campo k="Histórico do banco" v={b.historico} />
+        <Campo k="Contraparte" v={b.contraparte} />
+        <Campo k="CPF/CNPJ" v={b.documento ? fmtDoc(b.documento) : ""} />
+        <Campo k="Data/hora do lançamento" v={b.diaHora} />
+        <Campo k="Texto completo" v={b.detalhe} />
+        <Campo k="Nº documento (banco)" v={b.numeroDocumento} />
+        <Campo k="FITID" v={b.fitid} />
+        <Campo k="Tipo (TRNTYPE)" v={tags.TRNTYPE} />
+        <Campo k="Saldo após" v={b.saldoApos} />
+        {extras.length > 0 && (
+          <div className="mt-1.5 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Outros campos do arquivo</div>
+            {extras.map(([k, v]) => <Campo key={k} k={k} v={v} />)}
+          </div>
+        )}
+        {api && (
+          <div className="mt-1.5 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Campos da API do BB</div>
+            {Object.entries(api).map(([k, v]) => <Campo key={k} k={k} v={v as any} />)}
+          </div>
+        )}
+        {!Object.keys(tags).length && !api && (
+          <div className="text-[11px] text-amber-700 mt-1">Importado antes da captura do arquivo bruto — os campos acima vêm do que já estava gravado. Reimportar o OFX passa a guardar todas as tags.</div>
+        )}
+      </Bloco>
+
+      <Bloco titulo="Origem / conta">
+        <Campo k="Extrato" v={e.arquivo} />
+        <Campo k="Importado via" v={e.origem === "bb-api" ? "API do Banco do Brasil" : "arquivo OFX"} />
+        <Campo k="Período" v={e.periodo?.de ? `${fmtDate(e.periodo.de)} a ${fmtDate(e.periodo.ate)}` : ""} />
+        <Campo k="Conta financeira" v={e.conta} />
+        <Campo k="Banco" v={e.banco} />
+        <Campo k="Agência / conta" v={[e.agencia, e.numeroConta].filter(Boolean).join(" / ")} />
+        <Campo k="Instância" v={e.instancia} />
+        {d.matches?.length > 0 && (
+          <div className="mt-2 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Títulos baixados neste lançamento</div>
+            {d.matches.map((m: any, i: number) => (
+              <div key={i} className="text-xs text-gray-800">
+                {m.receivable_id ? "Receber" : "Pagar"} <b>{m.r_title || m.p_title || "—"}</b> {m.r_name || m.p_name || ""} — {fmtMoney(m.title_amount_settled || m.amount)}
+                {num(m.interest) ? ` · juros ${fmtMoney(m.interest)}` : ""}{num(m.discount) ? ` · desc. ${fmtMoney(m.discount)}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
+        {d.auditoria?.length > 0 && (
+          <div className="mt-2 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Histórico da conciliação</div>
+            {d.auditoria.map((a: any, i: number) => (
+              <div key={i} className="text-[11px] text-gray-600">{fmtDate(a.event_at)} · {a.action} · {a.performed_by || "—"}</div>
+            ))}
+          </div>
+        )}
+      </Bloco>
+
+      <Bloco titulo="No sistema">
+        {d.cadastro?.achados?.length ? (
+          <div className="mb-1.5">
+            <div className="text-[10px] text-gray-400 mb-0.5">{d.cadastro.tipo === "cliente" ? "Cliente no cadastro" : "Fornecedor no cadastro"}</div>
+            {d.cadastro.achados.map((c: any) => (
+              <div key={c.id} className="text-xs text-gray-800">✓ {c.name}{c.cnpj || c.cpf ? ` · ${fmtDoc(c.cnpj || c.cpf)}` : ""}{c.city ? ` · ${c.city}` : ""}</div>
+            ))}
+          </div>
+        ) : <div className="text-[11px] text-gray-400 mb-1.5">Contraparte não encontrada no cadastro.</div>}
+
+        {d.titulosCadastro?.length > 0 && (
+          <div className="mb-1.5 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Títulos em aberto dessa contraparte</div>
+            {d.titulosCadastro.slice(0, 6).map((t: any) => (
+              <div key={t.id} className="text-xs text-gray-800">{t.title_number || "—"} · {fmtMoney(num(t.amount) - num(t.amount_paid))} · vence {fmtDate(t.due_date)}</div>
+            ))}
+          </div>
+        )}
+
+        {(d.cobrancas?.boletos?.length > 0 || d.cobrancas?.pix?.length > 0) && (
+          <div className="mb-1.5 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Cobranças emitidas com este valor</div>
+            {(d.cobrancas.boletos || []).map((x: any) => (
+              <div key={x.id} className="text-xs text-gray-800">Boleto {x.nosso_numero || ""} · {x.debtor_name || ""} · {x.status || ""} · venc. {fmtDate(x.data_vencimento)}</div>
+            ))}
+            {(d.cobrancas.pix || []).map((x: any) => (
+              <div key={x.id} className="text-xs text-gray-800">PIX {x.title_number || ""} · {x.customer_name || ""} · {x.status || ""} · {fmtDate(x.paid_at)}</div>
+            ))}
+          </div>
+        )}
+
+        {d.padrao && (
+          <div className="mb-1.5 pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Padrão aprendido</div>
+            <div className="text-xs text-gray-800">{d.padrao.counterparty_name || "—"}{d.padrao.suggested_category ? ` · ${d.padrao.suggested_category}` : ""} · usado {d.padrao.match_count}×</div>
+          </div>
+        )}
+
+        {d.conciliacoesAnteriores?.length > 0 && (
+          <div className="pt-1.5 border-t">
+            <div className="text-[10px] text-gray-400 mb-0.5">Conciliado antes com</div>
+            {d.conciliacoesAnteriores.map((c: any, i: number) => (
+              <div key={i} className="text-xs text-gray-800">{fmtDate(c.transaction_date)} · {fmtMoney(c.amount)} → <b>{c.r_title || c.p_title || "—"}</b> {c.r_name || c.p_name || ""}</div>
+            ))}
+          </div>
+        )}
+      </Bloco>
+    </div>
+  );
+}
 
 function StatusBadge({ s }: { s: string | null }) {
   const map: Record<string, string> = {
@@ -120,6 +260,10 @@ export default function ConciliacaoBancaria() {
   const [busy, setBusy] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Painel "Detalhes" do lançamento (linha expansível)
+  const [detId, setDetId] = useState("");
+  const [detData, setDetData] = useState<any>(null);
+  const [detLoading, setDetLoading] = useState(false);
   // Importar via API de Extratos do BB (sem arquivo)
   const [bbOpen, setBbOpen] = useState(false);
   const [bbDe, setBbDe] = useState("");
@@ -503,11 +647,29 @@ export default function ConciliacaoBancaria() {
     try {
       const text = await file.text();
       const j = await post("/api/reconciliation/import-ofx", { ofxText: text, accountId: account, by: me, fileName: file.name });
-      alert(`OFX importado: ${j.inserted} lançamento(s) novo(s)` + (j.skipped ? `, ${j.skipped} já existia(m)` : "") + (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : "."));
+      alert(`OFX importado: ${j.inserted} lançamento(s) novo(s)`
+        + (j.espelhados ? `, ${j.espelhados} já existia(m)` : "")
+        + (j.enriquecidos ? `, ${j.enriquecidos} lançamento(s) já existentes ganharam os detalhes do arquivo` : "")
+        + (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : "."));
       await loadStatements();
       if (j.statementId) openStatement({ id: j.statementId, file_name: j.fileName, source: "ofx", start_date: j.period?.start, end_date: j.period?.end, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance } as any);
     } catch (err: any) { alert("Erro ao importar OFX: " + err.message); }
     finally { setImporting(false); }
+  };
+
+  // ---- Painel "Detalhes" do lançamento ------------------------------------
+  // Mostra TUDO: o que veio do banco (todas as tags do OFX), o que foi derivado
+  // do texto (contraparte/CPF/CNPJ/hora) e o cruzamento com o sistema.
+  const toggleDetalhe = async (it: Item) => {
+    if (detId === it.id) { setDetId(""); setDetData(null); return; }
+    setDetId(it.id); setDetData(null); setDetLoading(true);
+    try {
+      const r = await fetch(`/api/reconciliation/items/${it.id}/detalhe`, { credentials: "include" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "falha ao carregar detalhes");
+      setDetData(j);
+    } catch (e: any) { setDetData({ erro: e.message }); }
+    finally { setDetLoading(false); }
   };
 
   // ---- Importar via API de EXTRATOS do BB ---------------------------------
@@ -674,7 +836,8 @@ export default function ConciliacaoBancaria() {
                       const isBusy = busy === it.id;
                       const st = it.reconciliation_status || "pending";
                       return (
-                        <tr key={it.id} className={`align-top ${selectedIds.has(it.id) ? "bg-amber-50" : ""}`}>
+                        <React.Fragment key={it.id}>
+                        <tr className={`align-top ${selectedIds.has(it.id) ? "bg-amber-50" : ""}`}>
                           <td className="px-2 py-2">{canIgnore(it) && <input type="checkbox" checked={selectedIds.has(it.id)} onChange={() => toggleOne(it.id)} />}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(it.transaction_date)}</td>
                           <td className={`px-3 py-2 text-right whitespace-nowrap font-medium ${it.type === "C" ? "text-green-600" : "text-red-600"}`}>{it.type === "C" ? "+" : "−"}{fmtMoney(it.amount)}</td>
@@ -696,6 +859,9 @@ export default function ConciliacaoBancaria() {
                                   <div className="truncate font-medium text-gray-800" title={full}>{l1}</div>
                                   {p2.length ? <div className="text-[11px] text-gray-500 truncate" title={full}>{p2.join(" · ")}</div> : null}
                                   {L.docBanco ? <div className="text-[10px] text-gray-400 truncate">Doc. {L.docBanco}</div> : null}
+                                  <button onClick={() => toggleDetalhe(it)} className="mt-0.5 text-[11px] text-blue-600 hover:underline" title="Ver todos os dados deste lançamento">
+                                    {detId === it.id ? "▾ ocultar detalhes" : "▸ detalhes"}
+                                  </button>
                                 </>
                               );
                             })()}
@@ -757,6 +923,14 @@ export default function ConciliacaoBancaria() {
                             </>)}
                           </td>
                         </tr>
+                        {detId === it.id && (
+                          <tr className="bg-slate-50">
+                            <td colSpan={7} className="px-4 py-3 border-b">
+                              {detLoading ? <div className="text-xs text-gray-500">Carregando detalhes…</div> : <DetalhePanel d={detData} />}
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                     {pageItems.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-400 text-sm">Nenhum lançamento.</td></tr>}
