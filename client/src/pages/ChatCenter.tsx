@@ -1989,25 +1989,17 @@ function ChatCenterInner() {
                             </Tooltip>
                           </TooltipProvider>
                         </div>
-                        {waChannels.length > 0 && (
-                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-600">
-                            <span>📡 Canal:</span>
-                            <select
-                              value={selectedChat.channelPhone ? String(selectedChat.channelPhone).replace(/\D/g, '') : "5562992682630"}
-                              onChange={(e) => setChannelMutation.mutate({ id: selectedChat.id, channelPhone: e.target.value })}
-                              disabled={setChannelMutation.isPending}
-                              className="border rounded px-1.5 py-0.5 text-xs"
-                              data-testid="select-channel"
-                              title="Canal de saída (WhatsApp) usado nesta conversa"
-                            >
-                              {waChannels.map((c) => (
-                                <option key={c.phone} value={c.phone} disabled={c.status !== 'Live'} title={c.oficial ? 'Canal oficial 1841: so envia texto livre dentro da janela de 24h; fora dela, use um disparo/template.' : c.reserva ? 'Canal reserva — usar somente se o 2630 for bloqueado.' : undefined}>
-                                  {(c.nome || c.phone)}{c.oficial ? ' ⚠️ (janela 24h)' : ''}{c.reserva ? ' 🔄 (reserva)' : ''}{c.status !== 'Live' ? ` (${c.status})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
+                        {waChannels.length > 0 && (() => {
+                          const curPhone = selectedChat.channelPhone ? String(selectedChat.channelPhone).replace(/\D/g, '') : "5562992682630";
+                          const cur = waChannels.find((c) => c.phone === curPhone);
+                          const label = cur ? `${cur.nome || cur.phone}${cur.oficial ? ' (oficial)' : cur.reserva ? ' (reserva)' : ''}` : curPhone;
+                          return (
+                            <div className="flex items-center gap-2 mt-2 text-xs text-gray-600" title="Canal usado nesta conversa — o controle fica no painel de Gestão de Canais">
+                              <span>📡 Canal:</span>
+                              <span className="font-medium">{label}</span>
+                            </div>
+                          );
+                        })()}
                         <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
                           <User className="w-3 h-3" />
                           <span>Vendedor: <strong>{displaySellerName}</strong></span>
