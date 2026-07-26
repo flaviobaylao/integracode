@@ -263,6 +263,7 @@ export default function RotaDoDia() {
     debts: Record<string, number>;
     periodicity?: Record<string, string>;
     lastOrders?: Record<string, { date: string; value: number }>;
+    phones?: Record<string, string>;
   }
   
   const routeId = response?.route?.id;
@@ -2104,9 +2105,9 @@ export default function RotaDoDia() {
                                       📍 {visit.customerAddress}
                                     </p>
                                   )}
-                                  {((visit as any).phone || (visit as any).customerPhone) && (
+                                  {(customerInfo?.phones?.[visit.customerId] || (visit as any).phone || (visit as any).customerPhone) && (
                                     <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                      📱 {(visit as any).phone || (visit as any).customerPhone}
+                                      📱 {customerInfo?.phones?.[visit.customerId] || (visit as any).phone || (visit as any).customerPhone}
                                     </p>
                                   )}
                                   {visit.customerId && (
