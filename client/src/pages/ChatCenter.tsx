@@ -781,6 +781,7 @@ function ChatCenterInner() {
   // ===== Etiquetas (labels) das conversas =====
   const [labelFilter, setLabelFilter] = useState<string>('all');
   const [unreadFilter, setUnreadFilter] = useState<'all' | 'unread'>('all');
+  const [polishing, setPolishing] = useState(false);
   const [showAgentsPanel, setShowAgentsPanel] = useState(true);
   const [showTemplatesPanel, setShowTemplatesPanel] = useState(true);
   const [showLabelsModal, setShowLabelsModal] = useState(false);
@@ -1336,9 +1337,19 @@ function ChatCenterInner() {
   }, [messages, selectedChat]);
 
   const handleSendMessage = async () => {
+    if (polishing || sendMessageMutation.isPending) return;
     if (!messageText.trim()) return;
     if (conversationLocked) { toast({ title: "Envio bloqueado", description: `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
-    await sendMessageMutation.mutateAsync(messageText);
+    let toSend = messageText;
+    const shouldPolish = user?.role === 'telemarketing' || user?.role === 'vendedor';
+    if (shouldPolish && messageText.trim().length >= 3) {
+      try {
+        setPolishing(true);
+        const r = await fetch('/api/chat/polish-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ text: messageText }) });
+        if (r.ok) { const d = await r.json(); if (d?.polished && String(d.polished).trim()) toSend = String(d.polished).trim(); }
+      } catch {} finally { setPolishing(false); }
+    }
+    await sendMessageMutation.mutateAsync(toSend);
   };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2393,11 +2404,12 @@ function ChatCenterInner() {
                             </Button>
                             <Button
                               onClick={handleSendMessage}
-                              disabled={!messageText.trim() || sendMessageMutation.isPending || conversationLocked}
+                              disabled={!messageText.trim() || sendMessageMutation.isPending || conversationLocked || polishing}
                               data-testid="button-send"
                               className="bg-green-600 hover:bg-green-700"
+                              title={polishing ? 'Aprimorando a mensagem...' : 'Enviar'}
                             >
-                              <Send className="w-4 h-4" />
+                              {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                             </Button>
                           </>
                         ) : (
