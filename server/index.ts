@@ -20,6 +20,7 @@ import { startSync20Worker, runSync20, resetSync20Timestamp } from "./sync-2.0";
 import { db } from "./db";
 import { registerOfficialDispatch } from "./official-dispatch";
 import { enviarAlertaPositivacaoVendedores } from './positivacao-alert';
+import { enviarAlertaNaoVisitados } from './rota-nao-visitados-alert';
 import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
 import { ensureFinancialAuditSchema } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
@@ -3269,6 +3270,37 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       };
       if (req.body && typeof req.body.ativo !== 'undefined') await setKV('positivacao_alerta_ativo', req.body.ativo ? 'on' : 'off');
       if (req.body && typeof req.body.fixos === 'string') await setKV('positivacao_fixos', String(req.body.fixos));
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ── Alerta fim de dia: clientes da rota de HOJE (presenciais/virtuais) NÃO visitados ──────
+  // Preview (não envia): /api/admin/rota-nao-visitados/alerta?apply=0
+  // Enviar de verdade:    ?apply=1   | testar num só número: ?apply=1&to=5562999883656&limit=1
+  app.get('/api/admin/rota-nao-visitados/alerta', async (req: Request, res: Response) => {
+    try {
+      const apply = String(req.query.apply || '') === '1' || String(req.query.apply || '') === 'true';
+      const toOverride = req.query.to ? String(req.query.to) : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : undefined;
+      const out = await enviarAlertaNaoVisitados(apply, { toOverride, limit });
+      res.json(out);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  // Liga/desliga o disparo automático 18:30 (dias úteis).
+  app.get('/api/admin/rota-nao-visitados/config', async (_req: Request, res: Response) => {
+    try {
+      const rd = async (k: string) => { const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key='" + k + "' LIMIT 1")); const rows = r && r.rows ? r.rows : []; return rows[0] ? String(rows[0].value) : null; };
+      res.json({ ativo: (await rd('rota_nao_visitados_ativo')) === 'on', ultimoEnvio: await rd('rota_nao_visitados_last') });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.post('/api/admin/rota-nao-visitados/config', async (req: Request, res: Response) => {
+    try {
+      const setKV = async (k: string, v: string) => {
+        const upd: any = await db.execute(sql.raw("UPDATE system_settings SET value='" + v.replace(/'/g, "") + "', updated_by='admin', updated_at=now() WHERE key='" + k + "'"));
+        const n = (upd && (upd.rowCount ?? (upd.rows ? upd.rows.length : 0))) || 0;
+        if (!n) await db.execute(sql.raw("INSERT INTO system_settings (key,value,updated_by) VALUES ('" + k + "','" + v.replace(/'/g, "") + "','admin')"));
+      };
+      if (req.body && typeof req.body.ativo !== 'undefined') await setKV('rota_nao_visitados_ativo', req.body.ativo ? 'on' : 'off');
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
