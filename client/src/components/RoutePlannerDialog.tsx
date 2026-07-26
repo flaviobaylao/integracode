@@ -11,7 +11,7 @@
 // Rotas de Entrega, Execução de Rota e no app do motorista.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -26,8 +26,11 @@ import { useToast } from "@/hooks/use-toast";
 import MissingCoordinatesModal from "@/components/MissingCoordinatesModal";
 import {
   Truck, Bot, Loader2, MapPin, Clock, AlertTriangle, CheckCircle2,
-  Wand2, ArrowLeft, Save, Users, Gauge, Info,
+  Wand2, ArrowLeft, Save, Users, Gauge, Info, Map as MapIcon, Eye, EyeOff,
 } from "lucide-react";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 // Mesmas bases usadas pela tela Gestão de Entregas
 const START_LOCATIONS = [
@@ -41,6 +44,120 @@ const VEHICLE_TYPES = [
   { value: 'caminhao', label: '🚚 Caminhão' },
   { value: 'baruc', label: '🛻 BARUC (Brasília)' },
 ];
+
+// Paleta categórica segura para daltonismo (Okabe-Ito, sem o amarelo — ilegível
+// sobre as telhas claras do OpenStreetMap). Uma cor por motorista.
+const ROTA_CORES = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#56B4E9', '#6A3D9A', '#A6761D', '#333333'];
+
+const coordDe = (o: any, latKeys: string[], lngKeys: string[]): [number, number] | null => {
+  const pick = (keys: string[]) => {
+    for (const k of keys) {
+      const v = parseFloat(o?.[k]);
+      if (Number.isFinite(v) && v !== 0) return v;
+    }
+    return NaN;
+  };
+  const lat = pick(latKeys);
+  const lng = pick(lngKeys);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lat, lng];
+};
+
+/** Enquadra o mapa em todos os pontos plotados. */
+function AjustarZoom({ pontos }: { pontos: Array<[number, number]> }) {
+  const map = useMap();
+  useEffect(() => {
+    // Dentro de um Dialog o container só ganha altura depois da animação de
+    // abertura; sem o invalidateSize o Leaflet renderiza faixas cinzas.
+    const enquadrar = () => {
+      map.invalidateSize();
+      if (!pontos.length) return;
+      if (pontos.length === 1) { map.setView(pontos[0], 14); return; }
+      map.fitBounds(L.latLngBounds(pontos), { padding: [28, 28], maxZoom: 15 });
+    };
+    enquadrar();
+    const t1 = setTimeout(enquadrar, 250);
+    const t2 = setTimeout(enquadrar, 800);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [map, JSON.stringify(pontos)]);
+  return null;
+}
+
+const pino = (cor: string, texto: string, tamanho = 28) => L.divIcon({
+  html: `<div style="background:${cor};width:${tamanho}px;height:${tamanho}px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:${tamanho > 30 ? 13 : 11}px;box-shadow:0 2px 5px rgba(0,0,0,.4)">${texto}</div>`,
+  className: '',
+  iconSize: [tamanho, tamanho],
+  iconAnchor: [tamanho / 2, tamanho / 2],
+});
+
+/**
+ * Plota as rotas propostas: uma cor por motorista, base marcada com "S",
+ * paradas numeradas na ordem de visita e a linha ligando base → paradas → base.
+ */
+function MapaRotas({ rotas, altura = 380 }: { rotas: Array<{ rota: any; cor: string }>; altura?: number }) {
+  const pontos: Array<[number, number]> = [];
+  for (const { rota } of rotas) {
+    const base = coordDe(rota, ['startLatitude'], ['startLongitude']);
+    if (base) pontos.push(base);
+    for (const s of (rota.stops || [])) {
+      const c = coordDe(s, ['latitude', 'customerLatitude'], ['longitude', 'customerLongitude']);
+      if (c) pontos.push(c);
+    }
+  }
+  if (!pontos.length) {
+    return (
+      <div className="flex items-center justify-center text-xs text-muted-foreground border rounded-lg" style={{ height: altura }}>
+        Sem coordenadas para plotar.
+      </div>
+    );
+  }
+  const centro = pontos[0];
+
+  return (
+    <div className="border rounded-lg overflow-hidden" style={{ height: altura }}>
+      <MapContainer center={centro} zoom={12} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <AjustarZoom pontos={pontos} />
+        {rotas.map(({ rota, cor }, ri) => {
+          const base = coordDe(rota, ['startLatitude'], ['startLongitude']);
+          const paradas = (rota.stops || [])
+            .map((s: any) => ({ s, c: coordDe(s, ['latitude', 'customerLatitude'], ['longitude', 'customerLongitude']) }))
+            .filter((x: any) => x.c);
+          const linha: Array<[number, number]> = [
+            ...(base ? [base] : []),
+            ...paradas.map((x: any) => x.c as [number, number]),
+            ...(base ? [base] : []),
+          ];
+          return (
+            <Fragment key={ri}>
+              {base && (
+                <Marker position={base} icon={pino(cor, 'S', 32)}>
+                  <Popup><strong>Saída / retorno</strong><br />{rota.driverName || 'Motorista'}<br />{rota.startAddress}</Popup>
+                </Marker>
+              )}
+              {paradas.map((x: any, i: number) => (
+                <Marker key={i} position={x.c} icon={pino(cor, String(x.s.stopOrder ?? i + 1))}>
+                  <Popup>
+                    <strong>{x.s.stopOrder ?? i + 1}. {x.s.customerName}</strong><br />
+                    <span style={{ color: cor, fontWeight: 600 }}>{rota.driverName} · {rota.vehicleType}</span><br />
+                    {x.s.customerAddress}<br />
+                    <span style={{ fontSize: 11, color: '#666' }}>
+                      Chegada {x.s.estimatedArrival} · +{Number(x.s.distanceFromPrevious || 0).toFixed(1)} km
+                    </span>
+                  </Popup>
+                </Marker>
+              ))}
+              {linha.length > 1 && <Polyline positions={linha} color={cor} weight={3} opacity={0.75} />}
+            </Fragment>
+          );
+        })}
+      </MapContainer>
+    </div>
+  );
+}
 
 interface FleetDriver {
   id: string;
@@ -88,6 +205,9 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   const [plan, setPlan] = useState<any>(null);
   const [selectedRoutes, setSelectedRoutes] = useState<Set<number>>(new Set());
   const [missingCoords, setMissingCoords] = useState<any[] | null>(null);
+  // Mapa: quais rotas estão visíveis no panorama e quais têm mapa individual aberto
+  const [rotasNoMapa, setRotasNoMapa] = useState<Set<number>>(new Set());
+  const [mapaDaRota, setMapaDaRota] = useState<Record<number, boolean>>({});
 
   const { data: fleet, isLoading: loadingFleet } = useQuery<{ drivers: FleetDriver[]; hasAiKey: boolean }>({
     queryKey: ['/api/delivery-routes/fleet', routeDate],
@@ -105,6 +225,8 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       setPlan(null);
       setSelectedRoutes(new Set());
       setMissingCoords(null);
+      setRotasNoMapa(new Set());
+      setMapaDaRota({});
     }
   }, [open]);
 
@@ -167,6 +289,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
     onSuccess: (data: any) => {
       setPlan(data);
       setSelectedRoutes(new Set((data.routes || []).map((_: any, i: number) => i)));
+      setRotasNoMapa(new Set((data.routes || []).map((_: any, i: number) => i)));
       setStep('resultado');
       toast({
         title: data?.ai?.modo === 'ia' ? 'Rotas montadas pela IA' : 'Rotas montadas pelo algoritmo',
@@ -409,6 +532,59 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                 ))}
               </div>
 
+              {/* Mapa das rotas propostas */}
+              {!!plan.routes?.length && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <MapIcon className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-semibold">Mapa das rotas propostas</span>
+                    <span className="text-[11px] text-muted-foreground">clique num motorista para isolar a rota dele</span>
+                    <div className="ml-auto flex gap-1">
+                      <Button size="sm" variant="ghost" className="h-6 text-[11px]"
+                        onClick={() => setRotasNoMapa(new Set(plan.routes.map((_: any, i: number) => i)))}>
+                        <Eye className="h-3 w-3 mr-1" />Todos
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 text-[11px]"
+                        onClick={() => setRotasNoMapa(new Set())}>
+                        <EyeOff className="h-3 w-3 mr-1" />Nenhum
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Legenda: uma cor por motorista, clicável */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {plan.routes.map((r: any, i: number) => {
+                      const cor = ROTA_CORES[i % ROTA_CORES.length];
+                      const ativo = rotasNoMapa.has(i);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setRotasNoMapa(prev => {
+                            const n = new Set(prev);
+                            if (n.has(i)) n.delete(i); else n.add(i);
+                            return n;
+                          })}
+                          className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition ${ativo ? 'border-gray-400 bg-white dark:bg-gray-800' : 'border-dashed border-gray-300 opacity-50'}`}
+                          title={ativo ? 'Ocultar do mapa' : 'Mostrar no mapa'}
+                        >
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: cor }} />
+                          <span className="font-medium">{r.driverName || `Rota ${i + 1}`}</span>
+                          <span className="text-muted-foreground">{r.stops?.length || 0} paradas · {Number(r.totalDistance || 0).toFixed(0)} km</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <MapaRotas
+                    altura={400}
+                    rotas={plan.routes
+                      .map((r: any, i: number) => ({ rota: r, cor: ROTA_CORES[i % ROTA_CORES.length], i }))
+                      .filter((x: any) => rotasNoMapa.has(x.i))}
+                  />
+                </div>
+              )}
+
               {/* Equilíbrio de carga */}
               {!!ai?.cargaPorVeiculo?.length && (
                 <div className="space-y-1">
@@ -460,6 +636,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                             return n;
                           })}
                         />
+                        <span className="inline-block h-3 w-3 rounded-full shrink-0" style={{ background: ROTA_CORES[idx % ROTA_CORES.length] }} title="Cor desta rota no mapa" />
                         <Truck className="h-4 w-4 text-indigo-600" />
                         <span className="font-semibold text-sm">{r.driverName || 'Sem motorista'}</span>
                         <Badge variant="outline" className="text-[10px]">{r.vehicleType}</Badge>
@@ -469,7 +646,21 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                         <span className="text-[11px] text-gray-500 flex items-center gap-1 ml-auto">
                           <MapPin className="h-3 w-3" />{r.startAddress}
                         </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[11px]"
+                          onClick={() => setMapaDaRota(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                        >
+                          <MapIcon className="h-3 w-3 mr-1" />
+                          {mapaDaRota[idx] ? 'Ocultar mapa' : 'Ver no mapa'}
+                        </Button>
                       </div>
+                      {mapaDaRota[idx] && (
+                        <div className="mb-2">
+                          <MapaRotas altura={280} rotas={[{ rota: r, cor: ROTA_CORES[idx % ROTA_CORES.length] }]} />
+                        </div>
+                      )}
                       <div className="divide-y">
                         {(r.stops || []).map((s: any, si: number) => (
                           <div key={si} className="py-1.5 flex items-center gap-2 text-xs">
