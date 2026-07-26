@@ -314,7 +314,7 @@ export default function VirtualServiceLogModal({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
@@ -322,7 +322,7 @@ export default function VirtualServiceLogModal({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-hidden flex flex-col gap-4">
+        <div className="flex-1 flex flex-col gap-4">
           {!isCreating ? (
             <Button onClick={() => setIsCreating(true)} className="w-full">
               <Plus className="h-4 w-4 mr-2" />
@@ -518,12 +518,12 @@ export default function VirtualServiceLogModal({
             </Card>
           )}
 
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 min-h-0">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
               <Clock className="h-4 w-4" />
               Histórico de Atendimentos
             </h3>
-            <ScrollArea className="h-[300px] pr-4">
+            <ScrollArea className="h-[300px] max-h-[50vh] pr-4">
               {isLoading ? (
                 <div className="space-y-4">
                   {[1, 2, 3].map((i) => (
