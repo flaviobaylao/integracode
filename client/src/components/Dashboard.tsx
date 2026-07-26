@@ -400,7 +400,7 @@ export default function Dashboard() {
     <div className="space-y-6 p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Pedidos Registrados (Hoje)</CardTitle><InfoDot text="Pedidos registrados hoje no pipeline (mesma logica do Comparativo por Vendedor), ja excluindo bloqueados, amostras, trocas e cancelamentos. Nao e faturamento fiscal (NF-e). A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Hoje)</CardTitle><InfoDot text="Faturamento efetivo de hoje: NF-e de VENDA autorizadas hoje (nota fiscal real emitida pelo Integra 2.0), ja excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-gray-800">{brl(today)}</div>
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
@@ -418,7 +418,7 @@ export default function Dashboard() {
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Pedidos Registrados (Dia)</CardTitle><InfoDot text="Compara os pedidos registrados hoje com os do mesmo dia da semana passada, pela mesma logica do Comparativo por Vendedor (ja excluidos bloqueados, amostras, trocas e cancelamentos). Nao e faturamento fiscal (NF-e). Fonte: pedidos (billing_pipeline)." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Sem. Passada x Hoje)</CardTitle><InfoDot text="Compara o faturamento efetivo de hoje (NF-e de VENDA autorizadas) com o do mesmo dia da semana passada. Considera apenas vendas, excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. Fonte: notas fiscais (fiscal_invoices)." /></div></CardHeader>
           <CardContent>
             {(() => {
               const pair = [
@@ -446,7 +446,7 @@ export default function Dashboard() {
         <CardHeader>
           <div>
             <CardTitle className="text-base">Comparativo por Vendedor</CardTitle>
-            <div className="text-xs text-gray-500">Total de pedidos de venda lançados por cada vendedor no mês vigente — exclui bloqueados, cancelados, devoluções, trocas, transferências, remessas, bonificações e amostras.</div>
+            <div className="text-xs text-gray-500">Faturamento efetivo (NF-e de venda) por vendedor no mês vigente — nota fiscal real, excluindo devoluções, trocas, transferências, remessas, bonificações e amostras.</div>
           </div>
         </CardHeader>
         <CardContent>
