@@ -607,21 +607,24 @@ export function registerReconciliation(app: Express) {
       } catch {}
       try {
         out.conciliacoesAnteriores = rowsOf(await db.execute(sql`
-          SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.origin_name,
+          SELECT DISTINCT ON (COALESCE(r.title_number, p.title_number))
+                 i.id, i.transaction_date, i.amount, i.type, i.description, i.origin_name,
                  r.title_number AS r_title, r.customer_name AS r_name,
                  p.title_number AS p_title, p.supplier_name AS p_name
           FROM bank_statement_items i
-          LEFT JOIN bank_statement_item_matches m ON m.bank_statement_item_id = i.id
+          JOIN bank_statement_item_matches m ON m.bank_statement_item_id = i.id
           LEFT JOIN receivables r ON r.id = m.receivable_id
           LEFT JOIN payables p ON p.id = m.payable_id
           WHERE i.id <> ${id} AND i.reconciliation_status = 'reconciled' AND i.type = ${item.type}
+            AND COALESCE(r.title_number, p.title_number) IS NOT NULL
             AND (
               (${docItem || "__none__"} <> '__none__' AND (
                  regexp_replace(COALESCE(i.origin_document,''),'[^0-9]','','g') = ${docItem || "__none__"}
                  OR i.description LIKE ${docItem ? "%" + docItem + "%" : "__none__"}))
               OR (${nomeLike} <> '__none__' AND i.description ILIKE ${nomeLike})
             )
-          ORDER BY i.transaction_date DESC LIMIT 6`));
+          ORDER BY COALESCE(r.title_number, p.title_number), i.transaction_date DESC
+          LIMIT 6`));
       } catch {}
 
       res.json(out);
