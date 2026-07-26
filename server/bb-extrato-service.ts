@@ -156,7 +156,7 @@ export function mapLancamento(l: any, agencia: number, conta: number): ExtratoTx
     document: (numeroDoc && numeroDoc !== "0" ? numeroDoc : "").slice(0, 60),
     fitid,
     originDocument: cpfCnpj && (cpfCnpj.length === 11 || cpfCnpj.length === 14) ? cpfCnpj : null,
-    raw: l,
+    raw: { origem: "bb-api", lancamento: l, extrato: { agencia, conta } },
   };
 }
 

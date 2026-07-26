@@ -62,6 +62,17 @@ export function registerReconciliation(app: Express) {
     __fitidColReady = true;
   }
 
+  // Guarda o lancamento BRUTO do banco (todas as tags do OFX / o JSON da API do BB)
+  // + o que foi derivado do texto. Coluna 'text' (JSON serializado) de proposito:
+  // o insert dinamico manda parametro texto e jsonb exigiria cast. Idempotente.
+  let __rawColReady = false;
+  async function ensureRawColumn() {
+    if (__rawColReady) return;
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS raw_ofx text`); } catch {}
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS origin_document text`); } catch {}
+    __rawColReady = true;
+  }
+
   // Trilha de auditoria (append-only) de TODAS as conciliacoes e estornos, para
   // rastreabilidade do processo mesmo se o item for reimportado/duplicado/desfeito.
   let __auditReady = false;
@@ -431,6 +442,220 @@ export function registerReconciliation(app: Express) {
     }
   });
 
+
+  // ---- DETALHE COMPLETO de um lancamento do extrato -----------------------
+  // Tudo o que da p/ saber sobre a linha: o que veio do banco (todas as tags do
+  // OFX / o JSON da API), o que foi derivado do texto (contraparte, CPF/CNPJ,
+  // hora) e o cruzamento com o sistema (cadastro, titulos em aberto, cobrancas
+  // do mesmo valor, conciliacoes anteriores da mesma contraparte, auditoria).
+  // READ-ONLY. Cada bloco em try/catch proprio: se um falhar, o resto aparece.
+  app.get("/api/reconciliation/items/:id/detalhe", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      await ensureRawColumn();
+      const id = req.params.id;
+      const it = rowsOf(await db.execute(sql`
+        SELECT to_jsonb(i) AS j, COALESCE(i.mirror_of, i.id) AS canonical_id,
+               s.id AS st_id, s.file_name, s.source, s.start_date, s.end_date, s.bank_account,
+               s.omie_instance_id, fa.name AS account_name, fa.id AS account_id,
+               fa.bank_name, fa.agency, fa.account_number
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE i.id = ${id} LIMIT 1`))[0];
+      if (!it) return res.status(404).json({ error: "lancamento nao encontrado" });
+      const item: any = it.j || {};
+      const canonical = String(it.canonical_id || id);
+
+      // 1) O que veio do banco + o que foi derivado do texto
+      const der = derivarDetalhe(item.description, item.origin_name);
+      let raw: any = null;
+      try { raw = item.raw_ofx ? JSON.parse(item.raw_ofx) : null; } catch { raw = { textoBruto: item.raw_ofx }; }
+      const docItem = onlyDigits(item.origin_document) || der.doc || "";
+      const valor = Number(money(item.amount));
+      const dataISO = String(item.transaction_date || "").slice(0, 10);
+
+      const out: any = {
+        item, canonicalId: canonical,
+        extrato: {
+          id: it.st_id, arquivo: it.file_name, origem: it.source,
+          periodo: { de: it.start_date, ate: it.end_date }, contaBanco: it.bank_account,
+          conta: it.account_name, contaId: it.account_id, instancia: it.omie_instance_id,
+          banco: it.bank_name, agencia: it.agency, numeroConta: it.account_number,
+        },
+        banco: {
+          data: dataISO, valor: valor.toFixed(2), tipo: item.type,
+          historico: item.origin_name || null,      // rotulo do banco (<NAME>)
+          detalhe: item.description || null,        // texto completo (<MEMO>)
+          contraparte: der.contraparte || null, documento: docItem || null,
+          diaHora: [der.dia, der.hora].filter(Boolean).join(" ") || null,
+          numeroDocumento: item.document || null, fitid: item.fitid || null,
+          saldoApos: item.balance_after ?? null,
+          tagsOfx: raw?.tags || null, lancamentoApi: raw?.lancamento || null,
+          extratoOfx: raw?.extrato || null, bruto: raw ? undefined : null,
+        },
+        matches: [], auditoria: [], cadastro: null, titulosCadastro: [],
+        cobrancas: { boletos: [], pix: [] }, padrao: null, conciliacoesAnteriores: [],
+      };
+
+      // 2) Titulos ja baixados neste lancamento (conciliacao composta)
+      try {
+        out.matches = rowsOf(await db.execute(sql`
+          SELECT m.receivable_id, m.payable_id, m.amount, m.match_kind,
+                 m.title_amount_settled, m.interest, m.discount,
+                 r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due, r.status AS r_status,
+                 p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due, p.status AS p_status
+          FROM bank_statement_item_matches m
+          LEFT JOIN receivables r ON r.id = m.receivable_id
+          LEFT JOIN payables p ON p.id = m.payable_id
+          WHERE m.bank_statement_item_id = ${canonical}`));
+      } catch {}
+
+      // 3) Trilha de auditoria (conciliacoes/estornos deste lancamento)
+      try {
+        await ensureAuditTable();
+        out.auditoria = rowsOf(await db.execute(sql`
+          SELECT event_at, action, amount, performed_by, titles, counterpart
+          FROM reconciliation_audit_log
+          WHERE bank_statement_item_id IN (${inList([id, canonical])})
+          ORDER BY event_at DESC LIMIT 20`));
+      } catch {}
+
+      // 4) Cadastro: cliente (credito) ou fornecedor (debito) pelo CPF/CNPJ, senao pelo nome
+      const nomeLike = der.contraparte ? "%" + der.contraparte.replace(/\s+/g, "%") + "%" : "__none__";
+      const docLike = docItem ? "%" + docItem + "%" : "__none__";
+      try {
+        if (item.type === "C") {
+          const c = rowsOf(await db.execute(sql`
+            SELECT id, name, company_name, cnpj, cpf, city, neighborhood, phone, seller_id, is_active
+            FROM customers
+            WHERE is_supplier IS NOT TRUE
+              AND (regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') LIKE ${docLike}
+                OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g') LIKE ${docLike}
+                OR (${nomeLike} <> '__none__' AND name ILIKE ${nomeLike}))
+            ORDER BY (is_active IS TRUE) DESC LIMIT 3`));
+          if (c.length) out.cadastro = { tipo: "cliente", achados: c };
+        } else {
+          const f = rowsOf(await db.execute(sql`
+            SELECT id, name, company_name, cnpj, cpf, default_category, default_chart_account_id, is_active
+            FROM suppliers
+            WHERE (regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') LIKE ${docLike}
+                OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g') LIKE ${docLike}
+                OR (${nomeLike} <> '__none__' AND name ILIKE ${nomeLike}))
+            ORDER BY (is_active IS TRUE) DESC LIMIT 3`));
+          if (f.length) out.cadastro = { tipo: "fornecedor", achados: f };
+        }
+      } catch {}
+
+      // 5) Titulos em aberto da contraparte (por documento ou nome)
+      try {
+        if (item.type === "C") {
+          out.titulosCadastro = rowsOf(await db.execute(sql`
+            SELECT id, title_number, customer_name, customer_document, amount,
+                   COALESCE(amount_paid,0) AS amount_paid, due_date, status
+            FROM receivables
+            WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida')
+              AND (regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g') LIKE ${docLike}
+                OR (${nomeLike} <> '__none__' AND customer_name ILIKE ${nomeLike}))
+            ORDER BY due_date LIMIT 10`));
+        } else {
+          out.titulosCadastro = rowsOf(await db.execute(sql`
+            SELECT id, title_number, supplier_name, supplier_document, amount,
+                   COALESCE(amount_paid,0) AS amount_paid, due_date, status
+            FROM payables
+            WHERE deleted_at IS NULL AND status IN ('a_vencer','vencida')
+              AND (regexp_replace(COALESCE(supplier_document,''),'[^0-9]','','g') LIKE ${docLike}
+                OR (${nomeLike} <> '__none__' AND supplier_name ILIKE ${nomeLike}))
+            ORDER BY due_date LIMIT 10`));
+        }
+      } catch {}
+
+      // 6) Cobrancas emitidas com o MESMO valor por perto (boleto/PIX) — ajuda a
+      //    identificar de quem e o credito quando o extrato so diz "Cobranca".
+      try {
+        out.cobrancas.boletos = rowsOf(await db.execute(sql`
+          SELECT id, nosso_numero, debtor_name, debtor_document, valor_original,
+                 data_vencimento, status, receivable_id
+          FROM boleto_charges
+          WHERE round(COALESCE(NULLIF(valor_original::text,'')::numeric,0),2) = ${valor.toFixed(2)}::numeric
+            AND (data_vencimento IS NULL OR abs(data_vencimento::date - ${dataISO}::date) <= 45)
+          ORDER BY data_vencimento DESC NULLS LAST LIMIT 8`));
+      } catch {}
+      try {
+        out.cobrancas.pix = rowsOf(await db.execute(sql`
+          SELECT pc.id, pc.txid, pc.status, pc.receivable_id, pc.paid_at, pc.debtor_document,
+                 round(COALESCE(NULLIF(pc.amount_paid::text,'')::numeric,0),2) AS valor_pago,
+                 r.title_number, r.customer_name
+          FROM pix_charges pc LEFT JOIN receivables r ON r.id = pc.receivable_id
+          WHERE round(COALESCE(NULLIF(pc.amount_paid::text,'')::numeric,0),2) = ${valor.toFixed(2)}::numeric
+            AND pc.paid_at IS NOT NULL AND abs(pc.paid_at::date - ${dataISO}::date) <= 5
+          ORDER BY pc.paid_at DESC LIMIT 8`));
+      } catch {}
+
+      // 7) Padrao aprendido + conciliacoes ANTERIORES da mesma contraparte
+      try {
+        const nd = normDesc(item.description);
+        const pr = rowsOf(await db.execute(sql`
+          SELECT pattern_type, normalized_value, direction, counterparty_type, counterparty_name,
+                 counterparty_document, suggested_category, match_count
+          FROM reconciliation_patterns
+          WHERE (pattern_type = 'cpf_cnpj' AND normalized_value = ${docItem || "__none__"})
+             OR (pattern_type = 'description' AND normalized_value = ${nd || "__none__"})
+          ORDER BY match_count DESC LIMIT 3`));
+        out.padrao = pr[0] || null;
+        out.padroes = pr;
+      } catch {}
+      try {
+        out.conciliacoesAnteriores = rowsOf(await db.execute(sql`
+          SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.origin_name,
+                 r.title_number AS r_title, r.customer_name AS r_name,
+                 p.title_number AS p_title, p.supplier_name AS p_name
+          FROM bank_statement_items i
+          LEFT JOIN bank_statement_item_matches m ON m.bank_statement_item_id = i.id
+          LEFT JOIN receivables r ON r.id = m.receivable_id
+          LEFT JOIN payables p ON p.id = m.payable_id
+          WHERE i.id <> ${id} AND i.reconciliation_status = 'reconciled' AND i.type = ${item.type}
+            AND (
+              (${docItem || "__none__"} <> '__none__' AND (
+                 regexp_replace(COALESCE(i.origin_document,''),'[^0-9]','','g') = ${docItem || "__none__"}
+                 OR i.description LIKE ${docItem ? "%" + docItem + "%" : "__none__"}))
+              OR (${nomeLike} <> '__none__' AND i.description ILIKE ${nomeLike})
+            )
+          ORDER BY i.transaction_date DESC LIMIT 6`));
+      } catch {}
+
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // ---- Backfill: preenche origin_document dos lancamentos JA importados ----
+  // Extrai o CPF/CNPJ do texto do lancamento (inclusive desfazendo o padding de
+  // zeros do BB) e grava em origin_document quando estiver vazio. Idempotente.
+  app.post("/api/reconciliation/backfill-detalhes", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureRawColumn();
+      const dryRun = req.body?.dryRun !== false;
+      const accountId = (req.body?.accountId || "").toString() || null;
+      const rows = rowsOf(await db.execute(sql`
+        SELECT i.id, i.description, i.origin_name
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        WHERE COALESCE(i.origin_document, '') = ''
+          AND i.description ~ '[0-9]{11}'
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        LIMIT 20000`));
+      let atualizados = 0;
+      const amostra: any[] = [];
+      for (const r of rows) {
+        const d = derivarDetalhe(r.description, r.origin_name);
+        if (!d.doc) continue;
+        if (amostra.length < 10) amostra.push({ descricao: r.description, contraparte: d.contraparte, documento: d.doc });
+        if (!dryRun) { await db.execute(sql`UPDATE bank_statement_items SET origin_document = ${d.doc} WHERE id = ${r.id}`); }
+        atualizados++;
+      }
+      res.json({ ok: true, dryRun, candidatos: rows.length, atualizados, amostra });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
 
   // =========================================================================
   // FASE 2 — ESCRITA (financeiro). Conciliar dá baixa (reusa a baixa testada).
@@ -976,11 +1201,56 @@ export function registerReconciliation(app: Express) {
     const m = block.match(new RegExp("<" + tag + ">([^<\\r\\n]*)", "i"));
     return m ? m[1].trim() : "";
   };
+  // Captura TODAS as tags-folha de um bloco OFX (nada e descartado). O BB varia os
+  // campos conforme o tipo de export (REFNUM, PAYEEID, EXTDNAME, CORRECTFITID,
+  // SIC, CURRENCY...), entao guardamos o mapa inteiro em vez de uma lista fixa.
+  const ofxAllTags = (block: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const re = /<([A-Za-z0-9._]+)>([^<\r\n]*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(block))) {
+      const k = m[1].toUpperCase();
+      const v = (m[2] || "").trim();
+      if (v && out[k] === undefined) out[k] = v.slice(0, 300);
+    }
+    return out;
+  };
+  // Deriva do texto do lancamento o que o banco nao entrega em campo proprio:
+  // contraparte (favorecido/pagador), CPF/CNPJ e data/hora. MESMA logica da tela.
+  const derivarDetalhe = (memoRaw: any, nameRaw: any) => {
+    const memo = String(memoRaw ?? "").trim();
+    let tipo = String(nameRaw ?? "").trim();
+    let resto = memo;
+    if (!tipo && memo) {
+      const cabe = (s: string) => /^[A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ .\/-]{3,45}$/.test(s);
+      const a = memo.match(/^(.+?)\s+-\s+(\d{1,2}\/\d{1,2}\s.*)$/);
+      const b = memo.match(/^(.+?)\s+-\s+(.+)$/);
+      const m = a && cabe(a[1]) ? a : b && cabe(b[1]) ? b : null;
+      if (m) { tipo = m[1].trim(); resto = m[2].trim(); }
+    }
+    let dia = "", hora = "";
+    const dh = resto.match(/^(\d{1,2}\/\d{1,2})(?:\s+(\d{1,2}:\d{2}))?\s+/);
+    if (dh) { dia = dh[1]; hora = dh[2] || ""; resto = resto.slice(dh[0].length).trim(); }
+    let doc = "";
+    const dm = resto.match(/(?<!\d)(\d{11}|\d{14})(?!\d)/);
+    if (dm) { doc = dm[1]; resto = (resto.slice(0, dm.index) + " " + resto.slice((dm.index || 0) + dm[1].length)).trim(); }
+    // o BB completa o CPF com zeros a esquerda ate 14 digitos ("00094172218172").
+    if (doc.length === 14 && doc.startsWith("000")) doc = doc.slice(3);
+    const contraparte = resto.replace(/\s{2,}/g, " ").replace(/^[-\s.]+|[-\s]+$/g, "").trim();
+    return { contraparte, tipo, doc, dia, hora };
+  };
   function parseOfx(text: string) {
     const acct = ofxTag(text, "ACCTID");
     const bankId = ofxTag(text, "BANKID");
+    const branch = ofxTag(text, "BRANCHID");
+    const acctType = ofxTag(text, "ACCTTYPE");
+    const curdef = ofxTag(text, "CURDEF");
     const dtStart = ofxDate(ofxTag(text, "DTSTART"));
     const dtEnd = ofxDate(ofxTag(text, "DTEND"));
+    // Saldo do extrato (LEDGERBAL) — informativo, entra no detalhe do lancamento.
+    const ledgerBlk = (text.match(/<LEDGERBAL>[\s\S]*?(<\/LEDGERBAL>|<AVAILBAL>|$)/i) || [""])[0];
+    const saldoFinal = ofxTag(ledgerBlk, "BALAMT");
+    const saldoData = ofxDate(ofxTag(ledgerBlk, "DTASOF"));
     const txns: any[] = [];
     const re = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
     let mm: RegExpExecArray | null;
@@ -1001,7 +1271,19 @@ export function registerReconciliation(app: Express) {
       const checknum = ofxTag(blk, "CHECKNUM");
       const trntype = ofxTag(blk, "TRNTYPE").toUpperCase();
       const type = amt >= 0 ? "C" : "D";
-      txns.push({ date, amount: Math.abs(amt), type, description: (memo || name || trntype || "").slice(0, 300), name: (name || "").slice(0, 200), document: (checknum || "").slice(0, 60), fitid: (fitid || "").slice(0, 120) });
+      // Guarda o lancamento INTEIRO (todas as tags do OFX) + o que foi derivado do
+      // texto, para o painel "Detalhes" mostrar tudo o que veio do banco.
+      const tags = ofxAllTags(blk);
+      const der = derivarDetalhe(memo, name);
+      txns.push({
+        date, amount: Math.abs(amt), type,
+        description: (memo || name || trntype || "").slice(0, 300),
+        name: (name || "").slice(0, 200),
+        document: (checknum || "").slice(0, 60),
+        fitid: (fitid || "").slice(0, 120),
+        originDocument: der.doc || null,
+        raw: { origem: "ofx", tags, derivado: der, extrato: { acct, bankId, branch, acctType, curdef, saldoFinal, saldoData } },
+      });
     }
     return { acct, bankId, dtStart, dtEnd, transactions: txns };
   }
@@ -1013,7 +1295,7 @@ export function registerReconciliation(app: Express) {
   type IngestTxn = {
     date: string; amount: number; type: string; description: string;
     name?: string | null; document?: string | null; fitid?: string | null;
-    originDocument?: string | null;
+    originDocument?: string | null; raw?: any;
   };
   async function ingestTransactions(o: {
     accountId: string; fileName: string; source: string;
@@ -1022,6 +1304,7 @@ export function registerReconciliation(app: Express) {
   }) {
     await ensureMirrorColumn();
     await ensureFitidColumn();
+    await ensureRawColumn();
     const stCols = await tableColInfo("bank_statements");
     const itCols = await tableColInfo("bank_statement_items");
     let fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
@@ -1114,8 +1397,10 @@ export function registerReconciliation(app: Express) {
         created_by: o.by,
         ...extra,
       };
-      // CPF/CNPJ da contraparte (a API do BB devolve; o OFX nao).
+      // CPF/CNPJ da contraparte: vem da API do BB ou e extraido do texto do OFX.
       if (t.originDocument && itCols.has("origin_document")) vm.origin_document = t.originDocument;
+      // lancamento bruto do banco (todas as tags) p/ o painel "Detalhes"
+      if (t.raw && itCols.has("raw_ofx")) { try { vm.raw_ofx = JSON.stringify(t.raw).slice(0, 20000); } catch {} }
       if (fitCol) vm[fitCol] = t.fitid || null;
       return vm;
     };
@@ -1125,7 +1410,7 @@ export function registerReconciliation(app: Express) {
     // FASE 3.4j - linhas ESPELHO: lancamentos ja importados em outro extrato.
     // Status/conciliacao sao resolvidos ao vivo pelo canonico (mirror_of). Nao
     // disparam baixa nem entram na visao consolidada de pendentes.
-    let espelhados = 0;
+    let espelhados = 0, enriquecidos = 0;
     for (const { t, canonical } of toMirror) {
       await insertDynamic("bank_statement_items", itCols, linha(t, {
         reconciliation_status: "mirror",
@@ -1133,8 +1418,23 @@ export function registerReconciliation(app: Express) {
         notes: "Espelho: lançamento já importado em outro extrato (mesma conta)",
       }));
       espelhados++;
+      // Reimportar o MESMO extrato passa a ENRIQUECER o lancamento canonico com o
+      // que ele ainda nao tinha (arquivo bruto do banco + CPF/CNPJ da contraparte).
+      // So preenche o que esta VAZIO — nunca sobrescreve dado existente.
+      try {
+        const rawJson = t.raw ? JSON.stringify(t.raw).slice(0, 20000) : null;
+        if (rawJson || t.originDocument) {
+          const r: any = await db.execute(sql`
+            UPDATE bank_statement_items
+               SET raw_ofx = COALESCE(NULLIF(raw_ofx, ''), ${rawJson}),
+                   origin_document = COALESCE(NULLIF(origin_document, ''), ${t.originDocument ?? null})
+             WHERE id = ${canonical}
+               AND (COALESCE(raw_ofx, '') = '' OR COALESCE(origin_document, '') = '')`);
+          if (r?.rowCount) enriquecidos++;
+        }
+      } catch { /* enriquecimento e best-effort */ }
     }
-    return { statementId: String(stmtId), inserted, espelhados, skipped, totalC, totalD };
+    return { statementId: String(stmtId), inserted, espelhados, enriquecidos, skipped, totalC, totalD };
   }
 
   app.post("/api/reconciliation/import-ofx", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
@@ -1169,7 +1469,7 @@ export function registerReconciliation(app: Express) {
       let pixVinculados = 0;
       try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
       catch (e: any) { console.warn("[import-ofx] auto-link PIX webhook falhou:", e?.message || e); }
-      res.json({ ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, skipped: r.skipped, pixVinculados, totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      res.json({ ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, enriquecidos: r.enriquecidos, skipped: r.skipped, pixVinculados, totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -1233,7 +1533,7 @@ export function registerReconciliation(app: Express) {
       try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
       catch (e: any) { console.warn("[import-bb-api] auto-link PIX webhook falhou:", e?.message || e); }
       res.json({
-        ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados,
+        ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, enriquecidos: r.enriquecidos,
         skipped: r.skipped, pixVinculados, periodo: { de, ate }, paginas: ex.paginas,
         totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2),
         account: acc.name, instance: acc.omie_instance_id || null,
