@@ -12,6 +12,7 @@ import { nowBrazil } from './brazilTimezone';
 import { runRadarScan } from './purchase-routes';
 import { runPositivacaoAlertaCron } from './positivacao-alert';
 import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
+import { runRotaNaoVisitadosCron } from './rota-nao-visitados-alert';
 import { sweepOpenBoletos } from './bb-boleto-service';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
@@ -47,6 +48,13 @@ cron.schedule('0 6 * * *', async () => {
 // Alerta diário 07:50 (BRT): lista de clientes ativos NÃO positivados por vendedor (WhatsApp).
 cron.schedule('50 7 * * *', async () => {
   await runPositivacaoAlertaCron();
+}, { timezone: 'America/Sao_Paulo' });
+
+// Alerta fim de dia 18:30 (BRT), SOMENTE DIAS ÚTEIS (Seg–Sex): clientes da rota de HOJE
+// (presenciais/virtuais) que NÃO foram visitados, por vendedor. Externo -> próprio WhatsApp;
+// interno (telemarketing) -> Cinthia. Kill-switch: system_settings 'rota_nao_visitados_ativo'='on'.
+cron.schedule('30 18 * * 1-5', async () => {
+  await runRotaNaoVisitadosCron();
 }, { timezone: 'America/Sao_Paulo' });
 
 // Alerta diário 08:30 (BRT), SOMENTE DIAS ÚTEIS: débitos vencidos por carteira (WhatsApp).
