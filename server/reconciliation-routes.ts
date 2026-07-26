@@ -1658,7 +1658,7 @@ export function registerReconciliation(app: Express) {
                        porChave: { documento: 0, horario: 0 }, porOrigem: { cobranca: 0, loja: 0 }, aBaixar: [] as any[] };
     // 1) Itens pendentes de credito "PIX-RECEBIDO" (QR Code ou chave).
     const items = rowsOf(await db.execute(sql`
-      SELECT i.id, i.transaction_date::date::text AS d, round(COALESCE(NULLIF(i.amount::text, '')::numeric, 0), 2)::text AS amt,
+      SELECT i.id, i.statement_id, i.transaction_date::date::text AS d, round(COALESCE(NULLIF(i.amount::text, '')::numeric, 0), 2)::text AS amt,
              i.description, i.document, i.origin_document, s.financial_account_id AS acc, s.omie_instance_id AS inst
       FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
       WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
@@ -1740,14 +1740,30 @@ export function registerReconciliation(app: Express) {
       return isNaN(ta) || isNaN(tb) ? 99 : Math.abs(ta - tb) / 86400000;
     };
 
-    const usados = new Set<string>();
+    // Uma MESMA cobranca pode corresponder a mais de uma LINHA do extrato quando o
+    // mesmo lancamento veio em dois arquivos diferentes (formatos de export do BB com
+    // textos distintos, que o dedup por descricao nao colapsa). Nesse caso as duas
+    // linhas sao a mesma transacao e as duas devem ficar conciliadas — senao sobra
+    // uma pendente eternamente. Reuso permitido apenas em EXTRATO diferente e quando
+    // o casamento veio pelo horario (chave que identifica a transacao exata).
+    const usados = new Map<string, Set<string>>();
+    const usadoPor = (cid: string, stId: string, via: string) => {
+      const st = usados.get(cid);
+      if (!st) return false;
+      if (via === "horario" && !st.has(String(stId))) return false;
+      return true;
+    };
+    const marcarUsado = (cid: string, stId: string) => {
+      const st = usados.get(cid) || new Set<string>();
+      st.add(String(stId)); usados.set(cid, st);
+    };
     const aplicar: Array<{ item: any; charge: any; via: string }> = [];
     for (const it of items) {
       const vistos = new Set<string>();
       const push = (arr: any[], via: string, acc: Array<{ c: any; via: string }>) => {
         for (const c of arr) {
           const cid = String(c.charge_id);
-          if (usados.has(cid) || vistos.has(cid)) continue;
+          if (usadoPor(cid, it.statement_id, via) || vistos.has(cid)) continue;
           if (diasEntre(it.d, c.d) > 3) continue;   // extrato lanca em D ou D+1
           vistos.add(cid); acc.push({ c, via });
         }
@@ -1781,7 +1797,7 @@ export function registerReconciliation(app: Express) {
         out.semMatch++;
         continue;
       }
-      usados.add(String(c.charge_id));
+      marcarUsado(String(c.charge_id), it.statement_id);
       aplicar.push({ item: it, charge: c, via });
     }
     for (const a of aplicar) { out.porChave[a.via === "horario" ? "horario" : "documento"]++; out.porOrigem[a.charge.origem === "loja" ? "loja" : "cobranca"]++; }
