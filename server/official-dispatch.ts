@@ -86,6 +86,11 @@ export async function sendOfficialTemplate(toPhone: string, umblerTemplateId: st
 }
 // Envia TEXTO LIVRE pelo 1841 (dentro da janela de 24h é grátis)
 export async function sendOfficialText(toPhone: string, text: string): Promise<{ success: boolean; error?: string }> {
+  // Gestao de Canais: se o canal 1841 (oficial) estiver DESLIGADO no painel, bloqueia o envio.
+  try {
+    const { canalAtivoPorTelefone } = await import('./canais-gestao');
+    if (!(await canalAtivoPorTelefone('5562994981841'))) { console.warn('[CANAL-OFF] envio 1841 bloqueado (canal desligado)'); return { success: false, error: 'canal_desligado' }; }
+  } catch {}
   if (!process.env.UMBLER_TALK_TOKEN) return { success: false, error: 'token ausente' };
   const contactId = await resolveContactId(toPhone);
   if (!contactId) return { success: false, error: 'contato nao resolvido' };
