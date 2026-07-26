@@ -1062,7 +1062,7 @@ function PayablesTab() {
   // Eventos da conta: baixas (pagamentos) + conciliacao bancaria + auditoria.
   const { data: payableEventos } = useQuery<any>({
     queryKey: ['/api/financial/payables', selectedItem?.id, 'eventos'],
-    queryFn: async () => { if (!selectedItem?.id) return null; const r = await fetch(`/api/financial/payables/${selectedItem.id}/eventos`, { credentials: 'include' }); return r.ok ? r.json() : null; },
+    queryFn: async () => { if (!selectedItem?.id) return null; try { const r = await fetch(`/api/financial/payables/${selectedItem.id}/eventos`, { credentials: 'include' }); if (!r.ok) return null; return await r.json(); } catch { return null; } },
     enabled: !!(showDetail && selectedItem?.id),
   });
   const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve(String(rd.result).split(',')[1] || ''); rd.onerror = reject; rd.readAsDataURL(file); });
@@ -1719,9 +1719,9 @@ function PayablesTab() {
               {/* BAIXAS + CONCILIACAO BANCARIA — todos os eventos do titulo */}
               <div className="border-t pt-3">
                 <Label className="text-xs text-muted-foreground">Baixas (pagamentos)</Label>
-                {!payableEventos ? (
+                {payableEventos === undefined ? (
                   <p className="text-sm text-muted-foreground mt-1">Carregando…</p>
-                ) : (payableEventos.pagamentos || []).length === 0 ? (
+                ) : (payableEventos?.pagamentos || []).length === 0 ? (
                   <p className="text-sm text-muted-foreground mt-1">Nenhuma baixa registrada.</p>
                 ) : (
                   <div className="space-y-1 mt-1">
@@ -1742,7 +1742,7 @@ function PayablesTab() {
                 )}
 
                 <Label className="text-xs text-muted-foreground mt-3 block">Conciliação bancária</Label>
-                {!payableEventos ? null : (payableEventos.conciliacoes || []).length === 0 ? (
+                {payableEventos === undefined ? null : (payableEventos?.conciliacoes || []).length === 0 ? (
                   <p className="text-sm text-muted-foreground mt-1">Não conciliada com nenhum lançamento do extrato.</p>
                 ) : (
                   <div className="space-y-1 mt-1">
