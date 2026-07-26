@@ -577,11 +577,11 @@ export default function Dashboard() {
         const _names = modal.searchable && _q ? modal.names.filter((n) => n.toLowerCase().includes(_q)) : modal.names;
         const _close = () => { setModal(null); setModalSearch(""); };
         return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={_close}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <h3 className="font-semibold text-sm text-gray-800">{modal.title} ({_names.length}{modal.searchable && _q ? " de " + modal.names.length : ""})</h3>
-              <button type="button" onClick={_close} className="text-sm px-2 py-1 border rounded hover:bg-gray-100">Fechar</button>
+              <button type="button" onClick={_close} title="Fechar" aria-label="Fechar" className="text-gray-400 hover:text-gray-700 text-2xl leading-none px-2">×</button>
             </div>
             {modal.searchable && (
               <div className="px-4 pt-3">

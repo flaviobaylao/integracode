@@ -773,7 +773,6 @@ export default function OverdueDebtsManagement() {
       {selectedDebt && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          onClick={() => setSelectedDebt(null)}
           data-testid="modal-debt-details"
         >
           <Card 
@@ -880,7 +879,6 @@ export default function OverdueDebtsManagement() {
       {boletoModal && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          onClick={() => setBoletoModal(null)}
           data-testid="modal-qr-code-pix"
         >
           <Card 
