@@ -6161,6 +6161,11 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // 🔑 Status da chave OpenAI (para exibir na tela Configurar IA)
+  app.get("/api/chat/ai/openai-key-status", authenticateUser, requireRole(['admin', 'coordinator']), async (_req, res) => {
+    res.json({ configured: !!process.env.OPENAI_API_KEY });
+  });
+
   console.log("✅ Chat routes registered successfully");
 }
 
