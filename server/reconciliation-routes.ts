@@ -3,6 +3,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { settleBoletoCharge } from "./bb-boleto-service";
+import { fetchExtrato, diagnosticarExtrato } from "./bb-extrato-service";
 import { authenticateUser, requireRole } from "./authMiddleware";
 const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
@@ -1005,6 +1006,137 @@ export function registerReconciliation(app: Express) {
     return { acct, bankId, dtStart, dtEnd, transactions: txns };
   }
 
+  // ---- Ingestao compartilhada (OFX e API do BB) ---------------------------
+  // Recebe transacoes ja normalizadas (mesmo formato do parseOfx) e faz:
+  // cria o `bank_statements`, insere os lancamentos novos como 'pending' e os
+  // ja existentes na MESMA conta como 'mirror' (espelho). NAO da baixa.
+  type IngestTxn = {
+    date: string; amount: number; type: string; description: string;
+    name?: string | null; document?: string | null; fitid?: string | null;
+    originDocument?: string | null;
+  };
+  async function ingestTransactions(o: {
+    accountId: string; fileName: string; source: string;
+    dtStart: string | null; dtEnd: string | null; bankAccount: string | null;
+    instanceId: string | null; transactions: IngestTxn[]; by: string;
+  }) {
+    await ensureMirrorColumn();
+    await ensureFitidColumn();
+    const stCols = await tableColInfo("bank_statements");
+    const itCols = await tableColInfo("bank_statement_items");
+    let fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
+    // ensureFitidColumn() ja garantiu 'fitid'; se nenhuma coluna de FITID existia,
+    // adota 'fitid' para que o dedup por FITID valha (evita cair so na chave composta).
+    if (!fitCol) { itCols.set("fitid", { nullable: true, hasDefault: false, dtype: "text" } as any); fitCol = "fitid"; }
+
+    // Dedup / espelho contra itens já existentes na MESMA conta.
+    // Lancamento ja importado em OUTRO extrato NAO e descartado: entra como
+    // "espelho" (mirrorOf -> id canonico), preservando a visao completa do arquivo.
+    let skipped = 0;                 // duplicata dentro do MESMO lote (descartada)
+    const toInsert: any[] = [];      // lancamentos novos (pending)
+    const toMirror: Array<{ t: any; canonical: string }> = []; // ja existentes (espelho)
+    // Mira por FITID quando houver; se o lancamento NAO tiver FITID (comum nos
+    // extratos do BB), cai para a chave composta (data|valor|tipo|descricao) na
+    // MESMA conta. Assim, reimportar um extrato sem FITID NAO recria o lancamento
+    // como novo pendente -> evita a "conciliacao que volta a pendente" e a baixa
+    // em duplicidade do titulo. A chave composta tambem faz o extrato vindo da
+    // API do BB casar com o mesmo lancamento ja importado por OFX.
+    const compKey = (dateStr: string, amount: number, type: string, desc: string) =>
+      `${dateStr}|${amount.toFixed(2)}|${type}|${String(desc || "").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+    const canonByFit: Record<string, string> = {};
+    const canonByKey: Record<string, string> = {};
+    {
+      const er = await db.execute(sql`
+        SELECT COALESCE(i.mirror_of, i.id) AS canonical, i.mirror_of AS mirror_of,
+               to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+               round(i.amount::numeric, 2)::text AS amt, i.type AS type,
+               regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd
+               ${fitCol ? sql.raw(', i."' + fitCol + '" AS fit') : sql``}
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE s.financial_account_id = ${o.accountId}`);
+      for (const x of rowsOf(er)) {
+        const kk = `${x.d}|${x.amt}|${x.type}|${x.nd}`;
+        if (!x.mirror_of) canonByKey[kk] = String(x.canonical);
+        else if (!canonByKey[kk]) canonByKey[kk] = String(x.canonical);
+        const fv = (x as any).fit;
+        if (fv) { const f = String(fv); if (!x.mirror_of) canonByFit[f] = String(x.canonical); else if (!canonByFit[f]) canonByFit[f] = String(x.canonical); }
+      }
+    }
+    {
+      const seen = new Set<string>();
+      for (const t of o.transactions) {
+        const compK = compKey(t.date, t.amount, t.type, t.description);
+        const dedK = t.fitid || compK;
+        if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO lote
+        seen.add(dedK);
+        const canonical = (t.fitid && canonByFit[t.fitid]) || canonByKey[compK] || null;
+        if (canonical) toMirror.push({ t, canonical });
+        else toInsert.push(t);
+      }
+    }
+
+    const totalC = o.transactions.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0);
+    const totalD = o.transactions.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0);
+    if (!toInsert.length && !toMirror.length) {
+      return { statementId: null as string | null, inserted: 0, espelhados: 0, skipped, totalC, totalD };
+    }
+
+    const stmt = await insertDynamic("bank_statements", stCols, {
+      file_name: o.fileName,
+      source: o.source,
+      start_date: o.dtStart,
+      end_date: o.dtEnd,
+      financial_account_id: o.accountId,
+      omie_instance_id: o.instanceId,
+      total_credits: toInsert.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0).toFixed(2),
+      total_debits: toInsert.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0).toFixed(2),
+      item_count: toInsert.length + toMirror.length,
+      reconciled_count: 0,
+      bank_account: o.bankAccount || null,
+      created_by: o.by,
+    }, "id");
+    const stmtId = stmt?.id;
+    if (!stmtId) throw new Error("falha ao criar o extrato (sem id)");
+
+    // IMPORTACAO READ-ONLY: todo lancamento novo entra como 'pending'. Nada e
+    // ignorado, baixado ou conciliado automaticamente na importacao. O extrato e
+    // apenas espelhado; qualquer baixa vem da conciliacao MANUAL de cada item, e
+    // tarifas/PIX/COBRANCA sao tratados por acao explicita do operador (botoes).
+    const linha = (t: any, extra: Record<string, any>) => {
+      const vm: Record<string, any> = {
+        statement_id: stmtId,
+        transaction_date: t.date,
+        amount: t.amount.toFixed(2),
+        type: t.type,
+        description: t.description,
+        document: t.document,
+        origin_name: t.name || null,
+        created_by: o.by,
+        ...extra,
+      };
+      // CPF/CNPJ da contraparte (a API do BB devolve; o OFX nao).
+      if (t.originDocument && itCols.has("origin_document")) vm.origin_document = t.originDocument;
+      if (fitCol) vm[fitCol] = t.fitid || null;
+      return vm;
+    };
+    let inserted = 0;
+    for (const t of toInsert) { await insertDynamic("bank_statement_items", itCols, linha(t, { reconciliation_status: "pending" })); inserted++; }
+
+    // FASE 3.4j - linhas ESPELHO: lancamentos ja importados em outro extrato.
+    // Status/conciliacao sao resolvidos ao vivo pelo canonico (mirror_of). Nao
+    // disparam baixa nem entram na visao consolidada de pendentes.
+    let espelhados = 0;
+    for (const { t, canonical } of toMirror) {
+      await insertDynamic("bank_statement_items", itCols, linha(t, {
+        reconciliation_status: "mirror",
+        mirror_of: canonical,
+        notes: "Espelho: lançamento já importado em outro extrato (mesma conta)",
+      }));
+      espelhados++;
+    }
+    return { statementId: String(stmtId), inserted, espelhados, skipped, totalC, totalD };
+  }
+
   app.post("/api/reconciliation/import-ofx", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const ofxText = String(req.body?.ofxText || "");
@@ -1017,136 +1149,16 @@ export function registerReconciliation(app: Express) {
       const acc = rowsOf(await db.execute(sql`SELECT id, name, omie_instance_id FROM financial_accounts WHERE id = ${accountId} LIMIT 1`))[0];
       if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
       const instanceId = acc.omie_instance_id || null;
-      await ensureMirrorColumn();
-      await ensureFitidColumn();
 
       const parsed = parseOfx(ofxText);
       if (!parsed.transactions.length) return res.status(400).json({ error: "nenhuma transacao (STMTTRN) encontrada no arquivo" });
 
-      const stCols = await tableColInfo("bank_statements");
-      const itCols = await tableColInfo("bank_statement_items");
-      let fitCol = ["fit_id", "fitid", "external_id", "transaction_id"].find((c) => itCols.has(c)) || null;
-      // ensureFitidColumn() ja garantiu 'fitid'; se nenhuma coluna de FITID existia,
-      // adota 'fitid' para que o dedup por FITID valha (evita cair so na chave composta).
-      if (!fitCol) { itCols.set("fitid", { nullable: true, hasDefault: false, dtype: "text" } as any); fitCol = "fitid"; }
-
-      // Dedup / espelho contra itens já existentes na MESMA conta.
-      // Lancamento ja importado em OUTRO extrato NAO e descartado: entra como
-      // "espelho" (mirrorOf -> id canonico), preservando a visao completa do arquivo.
-      let skipped = 0;                 // duplicata dentro do MESMO arquivo (descartada)
-      let toInsert: any[] = [];        // lancamentos novos (pending)
-      let toMirror: Array<{ t: any; canonical: string }> = []; // ja existentes (espelho)
-      // Mira por FITID quando houver; se o lancamento NAO tiver FITID (comum nos
-      // extratos do BB), cai para a chave composta (data|valor|tipo|descricao) na
-      // MESMA conta. Assim, reimportar um extrato sem FITID NAO recria o lancamento
-      // como novo pendente -> evita a "conciliacao que volta a pendente" e a baixa
-      // em duplicidade do titulo.
-      // Chaves de dedup calculadas NO BANCO (robustas a formato de data/valor/acento):
-      //   data = transaction_date::date, valor = round(amount,2), tipo, e descricao
-      //   normalizada = lower + remocao de tudo que nao for [a-z0-9]. A MESMA
-      //   normalizacao e aplicada as transacoes novas (compKey), casando 1:1. O bug
-      //   anterior usava String(Date).slice(0,10) (virava "Fri Jun 09"), o que fazia
-      //   a chave composta NUNCA casar quando o FITID faltava -> duplicava.
-      const compKey = (dateStr: string, amount: number, type: string, desc: string) =>
-        `${dateStr}|${amount.toFixed(2)}|${type}|${String(desc || "").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
-      const canonByFit: Record<string, string> = {};
-      const canonByKey: Record<string, string> = {};
-      {
-        const er = await db.execute(sql`
-          SELECT COALESCE(i.mirror_of, i.id) AS canonical, i.mirror_of AS mirror_of,
-                 to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
-                 round(i.amount::numeric, 2)::text AS amt, i.type AS type,
-                 regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd
-                 ${fitCol ? sql.raw(', i."' + fitCol + '" AS fit') : sql``}
-          FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
-          WHERE s.financial_account_id = ${accountId}`);
-        for (const x of rowsOf(er)) {
-          const kk = `${x.d}|${x.amt}|${x.type}|${x.nd}`;
-          if (!x.mirror_of) canonByKey[kk] = String(x.canonical);
-          else if (!canonByKey[kk]) canonByKey[kk] = String(x.canonical);
-          const fv = (x as any).fit;
-          if (fv) { const f = String(fv); if (!x.mirror_of) canonByFit[f] = String(x.canonical); else if (!canonByFit[f]) canonByFit[f] = String(x.canonical); }
-        }
-      }
-      {
-        const seen = new Set<string>();
-        for (const t of parsed.transactions) {
-          const compK = compKey(t.date, t.amount, t.type, t.description);
-          const dedK = t.fitid || compK;
-          if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO arquivo
-          seen.add(dedK);
-          const canonical = (t.fitid && canonByFit[t.fitid]) || canonByKey[compK] || null;
-          if (canonical) toMirror.push({ t, canonical });
-          else toInsert.push(t);
-        }
-      }
-
-      if (!toInsert.length && !toMirror.length) return res.json({ ok: true, statementId: null, inserted: 0, skipped, espelhados: 0, message: "Nenhum lançamento no arquivo." });
-
-      const totalC = toInsert.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0);
-      const totalD = toInsert.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0);
-
-      const stmt = await insertDynamic("bank_statements", stCols, {
-        file_name: fileName,
-        source: "ofx",
-        start_date: parsed.dtStart,
-        end_date: parsed.dtEnd,
-        financial_account_id: accountId,
-        omie_instance_id: instanceId,
-        total_credits: totalC.toFixed(2),
-        total_debits: totalD.toFixed(2),
-        item_count: toInsert.length + toMirror.length,
-        reconciled_count: 0,
-        bank_account: parsed.acct || null,
-        created_by: by,
-      }, "id");
-      const stmtId = stmt?.id;
-      if (!stmtId) return res.status(500).json({ error: "falha ao criar o extrato (sem id)" });
-
-      // IMPORTACAO READ-ONLY: todo lancamento novo entra como 'pending'. Nada e
-      // ignorado, baixado ou conciliado automaticamente na importacao. O extrato e
-      // apenas espelhado; qualquer baixa vem da conciliacao MANUAL de cada item, e
-      // tarifas/PIX/COBRANCA sao tratados por acao explicita do operador (botoes).
-      let inserted = 0;
-      for (const t of toInsert) {
-        const vm: Record<string, any> = {
-          statement_id: stmtId,
-          transaction_date: t.date,
-          amount: t.amount.toFixed(2),
-          type: t.type,
-          description: t.description,
-          document: t.document,
-          origin_name: t.name || null,
-          reconciliation_status: "pending",
-          created_by: by,
-        };
-        if (fitCol) vm[fitCol] = t.fitid || null;
-        await insertDynamic("bank_statement_items", itCols, vm);
-        inserted++;
-      }
-
-      // FASE 3.4j - linhas ESPELHO: lancamentos ja importados em outro extrato.
-      // Status/conciliacao sao resolvidos ao vivo pelo canonico (mirror_of). Nao
-      // disparam baixa nem entram na visao consolidada de pendentes.
-      let espelhados = 0;
-      for (const { t, canonical } of toMirror) {
-        const vm: Record<string, any> = {
-          statement_id: stmtId,
-          transaction_date: t.date,
-          amount: t.amount.toFixed(2),
-          type: t.type,
-          description: t.description,
-          document: t.document,
-          origin_name: t.name || null,
-          reconciliation_status: "mirror",
-          mirror_of: canonical,
-          notes: "Espelho: lançamento já importado em outro extrato (mesma conta)",
-          created_by: by,
-        };
-        if (fitCol) vm[fitCol] = t.fitid || null;
-        await insertDynamic("bank_statement_items", itCols, vm);
-        espelhados++;
-      }
+      const r = await ingestTransactions({
+        accountId, fileName, source: "ofx",
+        dtStart: parsed.dtStart, dtEnd: parsed.dtEnd, bankAccount: parsed.acct || null,
+        instanceId, transactions: parsed.transactions, by,
+      });
+      if (!r.statementId) return res.json({ ok: true, statementId: null, inserted: 0, skipped: r.skipped, espelhados: 0, message: "Nenhum lançamento no arquivo." });
 
       // Importacao READ-ONLY para baixas: tarifas do BB e COBRANCA/SALDO continuam sendo
       // conciliados/ignorados por ACAO EXPLICITA do operador (/conciliar-tarifas,
@@ -1157,10 +1169,81 @@ export function registerReconciliation(app: Express) {
       let pixVinculados = 0;
       try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
       catch (e: any) { console.warn("[import-ofx] auto-link PIX webhook falhou:", e?.message || e); }
-      res.json({ ok: true, statementId: stmtId, fileName, inserted, espelhados, skipped, pixVinculados, totalCredits: totalC.toFixed(2), totalDebits: totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      res.json({ ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, skipped: r.skipped, pixVinculados, totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // ---- Importar via API de EXTRATOS do BB ---------------------------------
+  // Mesma ingestao do OFX (dedup/espelho/pending), porem os dados vem direto do
+  // banco e trazem o DETALHE do lancamento (contraparte, CPF/CNPJ, data/hora),
+  // que o arquivo OFX so traz parcialmente.
+  const contaExtrato = async (accountId: string) =>
+    rowsOf(await db.execute(sql`
+      SELECT id, name, omie_instance_id, agency, account_number,
+             bb_extrato_client_id, bb_extrato_client_secret,
+             bb_client_id, bb_client_secret, bb_dev_app_key
+      FROM financial_accounts WHERE id = ${accountId} LIMIT 1`))[0];
+  const periodoPadrao = (req: any) => {
+    const hoje = new Date();
+    const ate = String(req.query?.ate || req.body?.ate || "").slice(0, 10) || hoje.toISOString().slice(0, 10);
+    const d0 = new Date(ate + "T00:00:00Z"); d0.setUTCDate(d0.getUTCDate() - 30);
+    const de = String(req.query?.de || req.body?.de || "").slice(0, 10) || d0.toISOString().slice(0, 10);
+    return { de, ate };
+  };
+
+  // Diagnostico (nao grava nada): diz se as credenciais existem, se o OAuth com o
+  // scope extrato-info funciona e mostra uma amostra do que o BB devolveu.
+  app.get("/api/reconciliation/bb-extrato/diag", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const accountId = (req.query.accountId as string) || "";
+      if (!accountId) return res.status(400).json({ error: "accountId obrigatorio" });
+      const acc = await contaExtrato(accountId);
+      if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
+      const { de, ate } = periodoPadrao(req);
+      res.json(await diagnosticarExtrato(acc as any, de, ate));
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  app.post("/api/reconciliation/import-bb-api", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const accountId = (req.body?.accountId || "").toString();
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const dryRun = req.body?.dryRun === true;
+      if (!accountId) return res.status(400).json({ error: "selecione a conta antes de importar" });
+      const acc = await contaExtrato(accountId);
+      if (!acc) return res.status(404).json({ error: "conta financeira nao encontrada" });
+      const { de, ate } = periodoPadrao(req);
+      if (de > ate) return res.status(400).json({ error: "periodo invalido (data inicial maior que a final)" });
+
+      const ex = await fetchExtrato(acc as any, de, ate);
+      if (!ex.transactions.length) {
+        return res.json({ ok: true, statementId: null, inserted: 0, espelhados: 0, skipped: 0, periodo: { de, ate }, message: "O BB nao retornou lancamentos nesse periodo." });
+      }
+      if (dryRun) {
+        return res.json({ ok: true, dryRun: true, periodo: { de, ate }, lancamentos: ex.transactions.length, totalRegistros: ex.totalRegistros, amostra: ex.transactions.slice(0, 10) });
+      }
+      const fileName = `BB API ${acc.name} ${de.split("-").reverse().join("/")} a ${ate.split("-").reverse().join("/")}`.slice(0, 200);
+      const r = await ingestTransactions({
+        accountId, fileName, source: "bb-api",
+        dtStart: de, dtEnd: ate, bankAccount: `${ex.agencia}/${ex.conta}`,
+        instanceId: acc.omie_instance_id || null, transactions: ex.transactions, by,
+      });
+      let pixVinculados = 0;
+      try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
+      catch (e: any) { console.warn("[import-bb-api] auto-link PIX webhook falhou:", e?.message || e); }
+      res.json({
+        ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados,
+        skipped: r.skipped, pixVinculados, periodo: { de, ate }, paginas: ex.paginas,
+        totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2),
+        account: acc.name, instance: acc.omie_instance_id || null,
+      });
+    } catch (e: any) {
+      const st = e?.response?.status;
+      const det = e?.response?.data ? JSON.stringify(e.response.data).slice(0, 600) : null;
+      res.status(500).json({ error: String(e?.message || e), status: st || null, detalheBB: det });
+    }
+  });
 
   // ---- FASE 3.4f: tarifas bancarias do BB conciliadas automaticamente ------
   // Padroes (tolerantes a acentuacao quebrada): "TARIFA PIX ..." e
