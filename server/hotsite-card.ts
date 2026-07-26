@@ -14,7 +14,7 @@ import { computeServerTotal } from './hotsite-pix';
 
 const INTERNAL_BASE = 'http://127.0.0.1:' + (process.env.PORT || '8080');
 
-function cieloConfig() {
+export function cieloConfig() {
   // .trim() blinda contra espaço/quebra-de-linha coladas por engano nas variáveis do Railway,
   // causa comum de "Credenciais Inválidas" retornado pela Cielo.
   const env = String(process.env.CIELO_ENV || 'production').toLowerCase().trim();
@@ -126,7 +126,7 @@ export function detectBrand(cardNumber: string): string {
   return 'Visa';
 }
 
-function luhnOk(cardNumber: string): boolean {
+export function luhnOk(cardNumber: string): boolean {
   const n = onlyDigits(cardNumber);
   if (n.length < 13 || n.length > 19) return false;
   let sum = 0, dbl = false;
@@ -138,7 +138,7 @@ function luhnOk(cardNumber: string): boolean {
   return sum % 10 === 0;
 }
 
-interface CardSaleResult {
+export interface CardSaleResult {
   approved: boolean;
   status?: number;
   paymentId?: string;
@@ -158,7 +158,7 @@ async function cieloFetch(url: string, opts: any, timeoutMs = 35000): Promise<Re
 }
 
 // Venda com captura automática (uma única tentativa — NUNCA repetir para não cobrar 2x)
-async function createCardSale(params: {
+export async function createCardSale(params: {
   merchantOrderId: string;
   amountCents: number;
   installments: number;
@@ -230,7 +230,7 @@ async function createCardSale(params: {
 }
 
 // Venda Google Pay (Wallet) — captura automática, à vista. Cielo decripta o token.
-async function createGooglePaySale(params: {
+export async function createGooglePaySale(params: {
   merchantOrderId: string; amountCents: number;
   customerName: string; customerIdentity?: string; customerEmail?: string | null;
   googlePayToken: string;
@@ -271,7 +271,7 @@ async function createGooglePaySale(params: {
 }
 
 // Consulta por MerchantOrderId (para desambiguar falha de rede pós-envio)
-async function queryByMerchantOrderId(merchantOrderId: string): Promise<CardSaleResult | null> {
+export async function queryByMerchantOrderId(merchantOrderId: string): Promise<CardSaleResult | null> {
   const cfg = cieloConfig();
   try {
     const resp = await cieloFetch(`${cfg.queryUrl}/1/sales?merchantOrderId=${encodeURIComponent(merchantOrderId)}`, {
@@ -294,6 +294,7 @@ async function queryByMerchantOrderId(merchantOrderId: string): Promise<CardSale
 }
 
 let _tableReady = false;
+export async function ensureHotsiteCardTable(): Promise<void> { return ensureTable(); }
 async function ensureTable(): Promise<void> {
   if (_tableReady) return;
   await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS hotsite_card_payments (
@@ -317,7 +318,7 @@ async function ensureTable(): Promise<void> {
   _tableReady = true;
 }
 
-function friendlyDecline(code: string, msg: string): string {
+export function friendlyDecline(code: string, msg: string): string {
   const known: Record<string, string> = {
     '05': 'Cartão não autorizado pelo banco emissor. Verifique os dados ou tente outro cartão.',
     '51': 'Saldo/limite insuficiente.',

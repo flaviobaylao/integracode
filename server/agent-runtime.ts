@@ -76,6 +76,15 @@ const PIX_TOOL: any = {
   input_schema: { type: 'object', properties: {}, required: [] },
 };
 
+// Ferramenta EXTRA: gera um LINK de pagamento por CARTAO DE CREDITO / GOOGLE PAY para o
+// pedido ja registrado nesta conversa e envia o link ao cliente. Vale para Instagram e
+// WhatsApp (no DM/chat nao da para renderizar o botao do Google Pay -> precisa de link).
+const CARD_LINK_TOOL: any = {
+  name: 'gerar_link_pagamento',
+  description: 'Gera e ENVIA ao cliente um LINK seguro para pagar o pedido JA REGISTRADO nesta conversa com CARTAO DE CREDITO ou GOOGLE PAY (a vista, sem parcelamento). Use SOMENTE depois de ja ter chamado registrar_pedido nesta conversa E o cliente dizer que quer pagar no cartao (ou no Google Pay). Nao precisa de parametros: o valor vem do pedido registrado. Depois de chamar, NAO reescreva o link (o sistema ja enviou); apenas avise o cliente, de forma curta, que e so abrir o link e pagar, e que a confirmacao e automatica.',
+  input_schema: { type: 'object', properties: {}, required: [] },
+};
+
 // Garante a tabela de vínculo pedido<->cobrança PIX do Instagram (idempotente).
 async function ensureIgPixTable(): Promise<void> {
   try {
@@ -191,6 +200,7 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
     }
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
+    if (name === 'gerar_link_pagamento') return await gerarLinkPagamento(input || {}, ctx);
     return 'Ferramenta desconhecida.';
   } catch (e: any) { return 'Erro ao executar ferramenta: ' + (e?.message || String(e)).slice(0, 120); }
 }
@@ -424,6 +434,50 @@ async function gerarPix(_input: any, ctx: any): Promise<string> {
   }
 }
 
+// Gera o LINK de pagamento (cartao/Google Pay) do pedido registrado nesta conversa e envia ao cliente.
+async function gerarLinkPagamento(_input: any, ctx: any): Promise<string> {
+  try {
+    if (!ctx?.conversationId) return 'Nao consegui identificar a conversa para gerar o link. Transfira para um atendente.';
+    await ensureIgPixTable();
+    // Mesmo vinculo usado pelo gerar_pix: pedido mais recente da conversa ainda nao pago.
+    const r: any = await db.execute(sql`SELECT id, sales_card_id, order_number, customer_name, customer_document, total, status
+      FROM instagram_pix WHERE conversation_id = ${ctx.conversationId} AND status IN ('registered','awaiting_payment') ORDER BY created_at DESC LIMIT 1`);
+    const row = r.rows?.[0];
+    if (!row) return 'Nao ha pedido registrado nesta conversa para gerar o link de pagamento. Registre o pedido primeiro (registrar_pedido) e so depois gere o link.';
+    const total = Number(row.total);
+    if (!(total > 0)) return 'O valor do pedido esta indefinido. Transfira para um atendente para gerar a cobranca.';
+
+    const { createPaymentLink } = await import('./payment-link');
+    const out = await createPaymentLink({
+      kind: 'order',
+      salesCardId: row.sales_card_id,
+      orderNumber: row.order_number,
+      conversationId: ctx.conversationId,
+      channel: String(ctx.channel || 'whatsapp'),
+      customerName: row.customer_name,
+      customerDocument: row.customer_document,
+      customerPhone: ctx.phone,
+      amount: total,
+      description: 'Pedido Honest ' + (row.order_number || ''),
+      createdBy: 'ia:' + String(ctx.channel || 'whatsapp'),
+    });
+    if (!out.ok || !out.url) {
+      console.error('[IA-PAYLINK] falha:', out.error);
+      return 'Nao consegui gerar o link de pagamento agora. Peca desculpas ao cliente e transfira para um atendente humano.';
+    }
+
+    if (ctx.sendText) {
+      await ctx.sendText(ctx.phone, `Link para pagar ${brl(total)} no cartao ou Google Pay — pedido ${row.order_number || ''}:`);
+      await ctx.sendText(ctx.phone, out.url);
+    }
+    console.log(`[IA-PAYLINK] enviado conv=${ctx.conversationId} card=${row.sales_card_id} total=${total.toFixed(2)} canal=${ctx.channel || '-'}`);
+    return 'OK: o LINK de pagamento JA FOI ENVIADO ao cliente nesta conversa. NAO reescreva nem reenvie o link. Apenas diga, de forma curta e simpatica, que e so abrir o link e pagar no cartao ou no Google Pay, que e a vista (sem parcelamento) e que a confirmacao do pagamento e automatica. NAO prometa prazo especifico de entrega.';
+  } catch (e: any) {
+    console.error('[IA-PAYLINK]', e?.message || e);
+    return 'Nao consegui gerar o link de pagamento agora (erro interno). Peca desculpas ao cliente e transfira para um atendente humano.';
+  }
+}
+
 async function callAnthropic(model: string, system: string, messages: any[], tools?: any[]): Promise<{ ok: boolean; status: number; j: any }> {
   const body: any = { model, max_tokens: 1024, system, messages };
   if (tools && tools.length) body.tools = tools;
@@ -457,7 +511,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     while (conv.length && conv[0].role !== 'user') conv.shift();
     if (!conv.length) return { ok: false, error: 'sem mensagem de usuario' };
     const model = normModel(agent.modelo);
-    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL] : TOOL_DEFS) : undefined;
+    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL] : [...TOOL_DEFS, CARD_LINK_TOOL]) : undefined;
     const usedTools: string[] = [];
     for (let i = 0; i < 4; i++) {
       const { ok, status, j } = await callAnthropic(model, systemPrompt, conv, tools);

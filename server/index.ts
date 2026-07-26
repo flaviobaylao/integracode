@@ -9,6 +9,7 @@ import { registerPaymentVerificationRoutes } from "./payment-verification-routes
 import { registerDelegationRoutes } from "./delegations-routes";
 import { registerHotsitePix } from "./hotsite-pix";
 import { registerHotsiteCard } from "./hotsite-card";
+import { registerPaymentLink } from "./payment-link";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, log } from "./vite";
@@ -293,6 +294,7 @@ run();
   registerCommunicationAutomationsRoutes(app);
   registerHotsitePix(app);
   registerHotsiteCard(app);
+  registerPaymentLink(app);
   registerVisitSummary(app);
   registerCadastroReceitaSync(app);
   registerReconciliation(app);
