@@ -2099,14 +2099,14 @@ export default function RotaDoDia() {
                                       </Badge>
                                     )}
                                   </div>
-                                  {(visit as any).phone && (
-                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                      📱 {(visit as any).phone}
-                                    </p>
-                                  )}
                                   {visit.customerAddress && (
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                       📍 {visit.customerAddress}
+                                    </p>
+                                  )}
+                                  {((visit as any).phone || (visit as any).customerPhone) && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                      📱 {(visit as any).phone || (visit as any).customerPhone}
                                     </p>
                                   )}
                                   {visit.customerId && (
