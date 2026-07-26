@@ -1818,11 +1818,11 @@ export default function ActiveCustomers() {
 
         {/* Modal de Edição de Cliente / Novo Lead */}
         {showBulkModal && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowBulkModal(false)}>
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
               <div className="px-5 py-3 border-b flex items-center justify-between">
                 <div className="font-bold text-gray-800">Editar em massa · {selectedCustomerIds.size} cliente(s)</div>
-                <button onClick={() => setShowBulkModal(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                <button onClick={() => setShowBulkModal(false)} title="Fechar" aria-label="Fechar" className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
               </div>
               <div className="px-5 py-4 space-y-4 text-sm">
                 <p className="text-xs text-gray-500">Preencha só os campos que quer alterar; os demais ficam como estão.</p>

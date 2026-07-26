@@ -2634,11 +2634,11 @@ function ChatCenterInner() {
         </Dialog>
 
         {showLabelsModal && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setShowLabelsModal(false); setEditingLabelId(null); }}>
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
               <div className="px-5 py-3 border-b flex items-center justify-between">
                 <div className="font-bold text-gray-800">🏷️ Etiquetas</div>
-                <button onClick={() => { setShowLabelsModal(false); setEditingLabelId(null); }} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                <button onClick={() => { setShowLabelsModal(false); setEditingLabelId(null); }} title="Fechar" aria-label="Fechar" className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
               </div>
               <div className="px-5 py-4 space-y-4 text-sm">
                 {selectedConversation && (

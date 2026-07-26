@@ -955,7 +955,7 @@ export default function ConciliacaoBancaria() {
 
       {/* MODAL Importar via API de Extratos do BB */}
       {bbOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !importing && setBbOpen(false)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-3 border-b flex items-start justify-between">
               <div>
@@ -994,7 +994,7 @@ export default function ConciliacaoBancaria() {
 
       {/* MODAL Conciliar Transação */}
       {modalItem && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={closeModal}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-3 border-b flex items-start justify-between">
               <div>
