@@ -1059,6 +1059,12 @@ function PayablesTab() {
     queryFn: async () => { if (!selectedItem?.id) return []; const r = await fetch(`/api/financial/payables/${selectedItem.id}/attachments`, { credentials: 'include' }); return r.ok ? r.json() : []; },
     enabled: !!((showDetail || showEdit) && selectedItem?.id),
   });
+  // Eventos da conta: baixas (pagamentos) + conciliacao bancaria + auditoria.
+  const { data: payableEventos } = useQuery<any>({
+    queryKey: ['/api/financial/payables', selectedItem?.id, 'eventos'],
+    queryFn: async () => { if (!selectedItem?.id) return null; const r = await fetch(`/api/financial/payables/${selectedItem.id}/eventos`, { credentials: 'include' }); return r.ok ? r.json() : null; },
+    enabled: !!(showDetail && selectedItem?.id),
+  });
   const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { const rd = new FileReader(); rd.onload = () => resolve(String(rd.result).split(',')[1] || ''); rd.onerror = reject; rd.readAsDataURL(file); });
   const uploadPayableAttachments = async (payableId: string) => {
     const jobs: { kind: string; file: File }[] = [];
@@ -1709,6 +1715,63 @@ function PayablesTab() {
                 <div><Label className="text-xs text-muted-foreground">Instância</Label><p>{selectedItem.instanceId || '-'}</p></div>
               </div>
               {selectedItem.description && <div><Label className="text-xs text-muted-foreground">Descrição</Label><p className="text-sm bg-muted p-2 rounded">{selectedItem.description}</p></div>}
+
+              {/* BAIXAS + CONCILIACAO BANCARIA — todos os eventos do titulo */}
+              <div className="border-t pt-3">
+                <Label className="text-xs text-muted-foreground">Baixas (pagamentos)</Label>
+                {!payableEventos ? (
+                  <p className="text-sm text-muted-foreground mt-1">Carregando…</p>
+                ) : (payableEventos.pagamentos || []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground mt-1">Nenhuma baixa registrada.</p>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {(payableEventos.pagamentos || []).map((p: any) => (
+                      <div key={p.id} className="text-sm border rounded px-2 py-1 bg-green-50/60">
+                        <span className="font-medium">{formatCurrency(p.amount)}</span>
+                        {p.paid_at ? <> em <span className="font-medium">{formatDate(p.paid_at)}</span></> : null}
+                        {p.payment_method ? <> · {String(p.payment_method).replace(/_/g, ' ')}</> : null}
+                        {p.conta ? <> · conta {p.conta}</> : <> · <span className="text-amber-700">sem conta bancária</span></>}
+                        {p.reference ? <div className="text-xs text-muted-foreground">{p.reference}</div> : null}
+                        <div className="text-xs text-muted-foreground">
+                          lançado por {p.created_by || '—'}{p.created_at ? ` em ${formatDate(p.created_at)}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                    <p className="text-xs text-muted-foreground">Total baixado: <span className="font-medium">{formatCurrency(payableEventos.totalPago)}</span></p>
+                  </div>
+                )}
+
+                <Label className="text-xs text-muted-foreground mt-3 block">Conciliação bancária</Label>
+                {!payableEventos ? null : (payableEventos.conciliacoes || []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground mt-1">Não conciliada com nenhum lançamento do extrato.</p>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {(payableEventos.conciliacoes || []).map((c: any) => (
+                      <div key={c.id} className="text-sm border rounded px-2 py-1 bg-blue-50/60">
+                        <div>
+                          <span className="font-medium">{c.type === 'C' ? 'Crédito' : 'Débito'} {formatCurrency(c.title_amount_settled || c.amount)}</span>
+                          {c.transaction_date ? <> no extrato de <span className="font-medium">{formatDate(c.transaction_date)}</span></> : null}
+                          {Number(c.interest) ? <> · juros {formatCurrency(c.interest)}</> : null}
+                          {Number(c.discount) ? <> · desconto {formatCurrency(c.discount)}</> : null}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {[c.origin_name, c.description].filter(Boolean).join(' — ')}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {c.conta ? `${c.conta} · ` : ''}{c.file_name || 'extrato'}{c.omie_instance_id ? ` · ${c.omie_instance_id}` : ''}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          conciliado por {c.matched_by || c.created_by || '—'}{c.matched_at || c.created_at ? ` em ${formatDate(c.matched_at || c.created_at)}` : ''} · tipo {c.match_kind || '—'}
+                          {c.reconciliation_status !== 'reconciled' && (
+                            <span className="text-red-600 font-medium"> · ⚠ o lançamento do extrato está como “{c.reconciliation_status || 'pendente'}”</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <Label className="text-xs text-muted-foreground">Anexos (DANFE / Boletos)</Label>
                 {(payableAttachments as any[]).length === 0 ? (
