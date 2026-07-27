@@ -817,8 +817,38 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     });
   };
 
+  const _realRole = (user as any)?._realRole || user?.role;
+  const _isRealAdmin = _realRole === 'admin';
+  const _impersonatingRole = (user as any)?._impersonatingRole as string | undefined;
+  const verComo = async (role: string) => {
+    if (!role) return;
+    try {
+      await fetch('/api/admin/impersonate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+      window.location.reload();
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Erro', description: 'Não foi possível entrar como esta função.' });
+    }
+  };
+  const voltarAdmin = async () => {
+    try {
+      await fetch('/api/admin/impersonate/stop', { method: 'POST', credentials: 'include' });
+      window.location.reload();
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Erro', description: 'Não foi possível voltar para administrador.' });
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
+      {_impersonatingRole && (
+        <div className="bg-amber-500 text-white px-4 py-2 text-sm flex items-center justify-center gap-3 flex-shrink-0">
+          <i className="fas fa-user-secret"></i>
+          <span>Você está vendo o sistema como <b>{getRoleLabel(_impersonatingRole)}</b> (visão de administrador).</span>
+          <button onClick={voltarAdmin} className="ml-2 bg-white text-amber-700 font-semibold rounded px-3 py-1 text-xs hover:bg-amber-50" data-testid="button-voltar-admin">
+            Voltar para Administrador
+          </button>
+        </div>
+      )}
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
         {/* Mobile Menu Button */}
@@ -962,6 +992,23 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-3">
+            {_isRealAdmin && !_impersonatingRole && (
+              <select
+                defaultValue=""
+                onChange={(e) => { const v = e.target.value; if (v) verComo(v); }}
+                title="Entrar como — ver o sistema com a visão de outra função"
+                className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-700 bg-white cursor-pointer"
+                data-testid="select-ver-como"
+              >
+                <option value="">Ver como…</option>
+                <option value="coordinator">Coordenador</option>
+                <option value="administrative">Administrativo</option>
+                <option value="vendedor">Vendedor</option>
+                <option value="telemarketing">Telemarketing</option>
+                <option value="motorista">Motorista</option>
+                <option value="industria">Indústria</option>
+              </select>
+            )}
             <div className="text-right">
               <p className="text-sm font-medium text-gray-800">
                 {user?.firstName} {user?.lastName}
