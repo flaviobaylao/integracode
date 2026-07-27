@@ -6139,6 +6139,8 @@ export function registerChatRoutes(app: Express): void {
     try {
       const raw = String(req.body?.text ?? '').trim();
       if (raw.length < 3) return res.json({ polished: raw });
+      const _polishUid = (req as any).currentUser?.id;
+      if (_polishUid) { try { const { polishAtivoParaUsuario } = await import('./polish-gestao'); if (!(await polishAtivoParaUsuario(_polishUid))) return res.json({ polished: raw }); } catch {} }
       if (!process.env.ANTHROPIC_API_KEY) return res.json({ polished: raw });
       const model = 'claude-haiku-4-5';
       const sys = [
