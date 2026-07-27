@@ -71,12 +71,17 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
   const q: any = await db.execute(sql`
     SELECT c.id, c.customer_phone
     FROM chat_conversations c
+    JOIN LATERAL (
+      SELECT sender_type FROM chat_messages
+      WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1
+    ) lm ON true
     LEFT JOIN chat_customers cu ON cu.id = c.customer_id
     WHERE c.customer_phone IS NOT NULL
       AND c.customer_phone NOT LIKE 'ig:%'
       AND c.customer_phone NOT LIKE '%@g.us%'
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
+      AND lm.sender_type <> 'customer'
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
