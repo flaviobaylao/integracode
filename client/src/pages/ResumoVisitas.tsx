@@ -17,7 +17,7 @@ type Visit = {
   metaValue?: number;
   nextSaleValue?: number;
 };
-type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean };
+type Cycle = { anchor: string; start: string; end: string; green?: boolean; state?: "green" | "yellow" | "red"; isPast: boolean };
 type Row = {
   customerId: string;
   customerName: string;
@@ -91,8 +91,8 @@ export default function ResumoVisitas() {
   const [search, setSearch] = useState("");
   const [seller, setSeller] = useState("");
   const [city, setCity] = useState("");
-  const [bairro, setBairro] = useState("");
   const [freq, setFreq] = useState("");
+  const [sortBy, setSortBy] = useState<{ key: "cliente" | "cidade" | "efet" | "freq" | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
 
   const { data, isLoading } = useQuery<{ rows?: Row[]; today?: string }>({
     queryKey: ["/api/visit-summary", startDate, endDate],
@@ -119,7 +119,6 @@ export default function ResumoVisitas() {
     [rows, sellerTypeByName],
   );
   const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort(), [rows]);
-  const bairros = useMemo(() => Array.from(new Set(rows.map((r) => r.neighborhood).filter(Boolean))).sort(), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
 
   const filtered = useMemo(() => {
@@ -127,12 +126,39 @@ export default function ResumoVisitas() {
     return rows.filter((r) => {
       if (seller && r.sellerName !== seller) return false;
       if (city && r.city !== city) return false;
-      if (bairro && r.neighborhood !== bairro) return false;
       if (freq && r.periodicity !== freq) return false;
       if (q && !((r.customerName || "").toLowerCase().includes(q) || (r.city || "").toLowerCase().includes(q) || (r.neighborhood || "").toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [rows, search, seller, city, bairro, freq]);
+  }, [rows, search, seller, city, freq]);
+
+  // Efetividade: nota p/ ordenar (verde=2, amarelo=1, vermelho=0), normalizada 0..1.
+  const efetScore = (r: Row) => {
+    const cy = r.cycles || [];
+    if (cy.length === 0) return -1;
+    let s = 0;
+    for (const c of cy) { const st = c.state || (c.green ? "green" : "red"); s += st === "green" ? 2 : st === "yellow" ? 1 : 0; }
+    return s / (cy.length * 2);
+  };
+
+  const sorted = useMemo(() => {
+    if (!sortBy.key) return filtered;
+    const dir = sortBy.dir === "asc" ? 1 : -1;
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      let r = 0;
+      if (sortBy.key === "cliente") r = (a.customerName || "").localeCompare(b.customerName || "", "pt-BR");
+      else if (sortBy.key === "cidade") r = (a.city || "").localeCompare(b.city || "", "pt-BR");
+      else if (sortBy.key === "freq") r = (a.periodicity || "").localeCompare(b.periodicity || "", "pt-BR");
+      else if (sortBy.key === "efet") r = efetScore(a) - efetScore(b);
+      return r * dir;
+    });
+    return arr;
+  }, [filtered, sortBy]);
+
+  const toggleSort = (key: "cliente" | "cidade" | "efet" | "freq") =>
+    setSortBy((p) => (p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  const sortArrow = (key: string) => (sortBy.key === key ? (sortBy.dir === "asc" ? " ▲" : " ▼") : "");
 
   // resumo por status sobre as células visíveis
   const summary = useMemo(() => {
@@ -196,12 +222,11 @@ export default function ResumoVisitas() {
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 items-center">
-        <input className="border rounded px-2 py-1 text-sm" placeholder="Nome, cidade ou bairro..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 220 }} />
+        <input className="border rounded px-2 py-1 text-sm" placeholder="Nome ou cidade..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 220 }} />
         <input type="date" className="border rounded px-2 py-1 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         <input type="date" className="border rounded px-2 py-1 text-sm" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         <select className="border rounded px-2 py-1 text-sm" value={seller} onChange={(e) => setSeller(e.target.value)}><option value="">Todos os vendedores</option>{sellers.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={city} onChange={(e) => setCity(e.target.value)}><option value="">Todas as cidades</option>{cities.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-        <select className="border rounded px-2 py-1 text-sm" value={bairro} onChange={(e) => setBairro(e.target.value)}><option value="">Todos os bairros</option>{bairros.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
       </div>
 
@@ -223,18 +248,18 @@ export default function ResumoVisitas() {
           <table className="text-xs border-collapse">
             <thead>
               <tr>
-                <th className={th} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px" }}>Cliente</th>
+                <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
-                <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100 }}>Cidade</th>
-                <th className={th} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120 }} title="Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas</th>
-                <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80 }}>Freq.</th>
+                <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
+                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = faturado (data de faturamento) · Amarelo = pedido implantado, ainda não faturado · Vermelho = sem pedido.">Efetividade em vendas{sortArrow("efet")}</th>
+                <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 34, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
+              {sorted.map((r, i) => {
                 const cm = cellMapFor(r);
                 return (
                   <tr key={`${r.customerId}-${r.sellerName}-${i}`} className="border-t hover:bg-muted/20">
@@ -242,9 +267,12 @@ export default function ResumoVisitas() {
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.sellerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap", textAlign: "center" }}>
-                      {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => (
-                        <span key={ci} title={`${cy.start} a ${cy.end}: ${cy.green ? "houve venda" : "sem venda"}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: cy.green ? "#22c55e" : "#ef4444", marginRight: 3, verticalAlign: "middle" }} />
-                      )) : <span style={{ color: "#9ca3af" }}>—</span>}
+                      {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => {
+                        const st = cy.state || (cy.green ? "green" : "red");
+                        const bg = st === "green" ? "#22c55e" : st === "yellow" ? "#eab308" : "#ef4444";
+                        const lbl = st === "green" ? "faturado" : st === "yellow" ? "pedido implantado, ainda não faturado" : "sem pedido";
+                        return <span key={ci} title={`${cy.start} a ${cy.end}: ${lbl}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: bg, marginRight: 3, verticalAlign: "middle" }} />;
+                      }) : <span style={{ color: "#9ca3af" }}>—</span>}
                     </td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.periodicity}</td>
                     {days.map((d) => {
