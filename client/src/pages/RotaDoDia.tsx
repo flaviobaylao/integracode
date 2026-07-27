@@ -993,6 +993,23 @@ export default function RotaDoDia() {
   }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
   const changeRequestStates = useChangeRequestStates(changeRequestKeys);
 
+  // 📋 Solicitar Alteração — regras de UI:
+  //  - Efetuadas: card cinza/inativo, não clicável e FORA da contagem de clientes da rota (mas visível).
+  //  - Botão de nova solicitação bloqueado quando já há check-in, atendimento virtual ou venda no dia.
+  const crEfetuadaByKey = (key: string) => changeRequestStates[key]?.status === 'efetuadas';
+  const hasCheckinOrSale = (cid?: string | null) => {
+    if (!cid) return false;
+    const c = String(cid);
+    return checkedOutCustomerIds.has(c) || attendedCustomerIds.has(c) || !!(customerInfo?.orders?.[c]?.length);
+  };
+  const presentialActiveCount = filteredPresentialVisits.filter((v: any) => {
+    const isLead = (v as any).visitType === 'lead';
+    const id = isLead ? ((v as any).entityId || (v as any).leadId || (v as any).customerId) : (v as any).customerId;
+    return !crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(id)));
+  }).length;
+  const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
+  const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
+
   const currentSeller = (isAdmin ? sellers : (coverageActive ? COVERAGE_GRANT.sellers : undefined))?.find(s => s.id === selectedSellerId);
 
   const routeMetrics = useMemo(() => {
@@ -1559,7 +1576,7 @@ export default function RotaDoDia() {
             <CardHeader>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <CardTitle className="whitespace-nowrap">
-                  Visitas Presenciais ({filteredPresentialVisits.length}{filteredPresentialVisits.length !== presentialVisits.length ? ` de ${presentialVisits.length}` : ''})
+                  Visitas Presenciais ({presentialActiveCount}{presentialActiveCount !== presentialVisits.length ? ` de ${presentialVisits.length}` : ''})
                 </CardTitle>
                 {/* Busca por cliente + filtro Atendidos/Pendentes */}
                 <div className="flex flex-1 flex-wrap items-center gap-2 lg:justify-center">
@@ -1722,16 +1739,20 @@ export default function RotaDoDia() {
                     borderColor = 'border-2 border-purple-800 dark:border-purple-400 bg-purple-200 dark:bg-purple-900 ring-1 ring-purple-800 dark:ring-purple-500';
                   }
 
+                  // 📋 Alteração Efetuada → card cinza/inativo, não clicável e fora da contagem.
+                  const crEntId = isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId;
+                  const crEfetuada = crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(crEntId)));
+
                   return (
                     <div
                       key={visit.id || visit.customerId || index}
-                      className={`p-3 border rounded-lg hover:shadow-md transition-all ${borderColor}`}
+                      className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : `hover:shadow-md ${borderColor}`}`}
                       data-testid={`visit-${visit.customerId || visit.id}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div
-                          className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
-                          onClick={() => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
+                          className={`flex items-start gap-3 flex-1 min-w-0 ${crEfetuada ? 'cursor-default' : 'cursor-pointer'}`}
+                          onClick={crEfetuada ? undefined : () => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
@@ -1971,6 +1992,7 @@ export default function RotaDoDia() {
                           {/* 📋 Solicitar Alteração */}
                           <ChangeRequestControl
                             fullRow
+                            disabled={hasCheckinOrSale(visit.customerId)}
                             entityType={isLead ? 'lead' : 'customer'}
                             entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
                             customerId={visit.customerId}
@@ -2013,7 +2035,7 @@ export default function RotaDoDia() {
                     <div className="my-6 border-t-2 border-blue-300 dark:border-blue-700 pt-4">
                       <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
                         <Phone className="h-5 w-5" />
-                        Atendimentos Virtuais ({filteredVirtualVisits.length}{filteredVirtualVisits.length !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
+                        Atendimentos Virtuais ({virtualActiveCount}{virtualActiveCount !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
                       </h3>
                       {filteredVirtualVisits.length === 0 && (
                         <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="virtual-empty">
@@ -2027,22 +2049,23 @@ export default function RotaDoDia() {
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
                           const isFinalized = !!(isAttended || hasOrderToday);
                           const isNaoVenda = !!(visit.customerId && isAttended && !hasOrderToday);
+                          const crEfetuada = crEfetuadaByKey(crKey('customer', String(visit.customerId)));
                           return (
                           <div
                             key={visit.id || visit.customerId}
-                            className={`p-3 border rounded-lg hover:shadow-md transition-all cursor-pointer ${
+                            className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700 cursor-default' : `hover:shadow-md cursor-pointer ${
                               isFinalized
                                 ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
                                 : isEmAndamento
                                 ? 'border-yellow-400 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-950'
                                 : 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-950'
-                            }`}
+                            }`}`}
                             data-testid={`virtual-visit-${visit.customerId}`}
-                            onClick={() => {
+                            onClick={crEfetuada ? undefined : () => {
                               if (visit.customerId) {
-                                setVirtualActionCustomer({ 
-                                  id: visit.customerId, 
-                                  name: visit.customerName 
+                                setVirtualActionCustomer({
+                                  id: visit.customerId,
+                                  name: visit.customerName
                                 });
                                 setShowVirtualActionModal(true);
                               }
@@ -2206,6 +2229,7 @@ export default function RotaDoDia() {
                                 {visit.customerId && (
                                   <ChangeRequestControl
                                     fullRow
+                                    disabled={hasCheckinOrSale(visit.customerId)}
                                     entityType="customer"
                                     entityId={String(visit.customerId)}
                                     customerId={visit.customerId}
@@ -2367,14 +2391,14 @@ export default function RotaDoDia() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
-                  Repescagem ({filteredRepescagem.length}{filteredRepescagem.length !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                  Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {filteredRepescagem.map((r: any) => (
                   <div
                     key={r.assignmentId}
-                    className="flex items-start justify-between p-2 rounded-lg border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]"
+                    className={`flex items-start justify-between p-2 rounded-lg border ${crEfetuadaByKey(crKey('repescagem', String(r.assignmentId))) ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'}`}
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
                     <div className="min-w-0">
@@ -2493,6 +2517,7 @@ export default function RotaDoDia() {
                       {/* 📋 Solicitar Alteração */}
                       <ChangeRequestControl
                         fullRow
+                        disabled={hasCheckinOrSale(r.customerId)}
                         entityType="repescagem"
                         entityId={String(r.assignmentId)}
                         customerId={r.customerId}
