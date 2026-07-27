@@ -82,6 +82,12 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
       AND lm.sender_type <> 'customer'
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.role IN ('vendedor','telemarketing','admin','administrative','motorista','industria')
+          AND length(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g')) >= 10
+          AND right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 11) = right(regexp_replace(coalesce(c.customer_phone, ''), '[^0-9]', '', 'g'), 11)
+      )
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
