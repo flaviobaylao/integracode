@@ -67,6 +67,17 @@ export interface AIRouteMeta {
     minutosDisponiveis: number;
     utilizacaoPct: number;
   }>;
+  /**
+   * Pedidos vizinhos que acabaram em rotas diferentes, com o MOTIVO.
+   * Responde direto a "por que esses dois clientes lado a lado foram para
+   * entregadores distintos?" sem ninguém precisar abrir o código.
+   */
+  vizinhosSeparados: Array<{
+    a: string; b: string;
+    veiculoA: string; veiculoB: string;
+    distanciaKm: number;
+    motivo: string;
+  }>;
   motivoFallback?: string;
   tokens?: { input: number; output: number };
   duracaoMs?: number;
@@ -169,8 +180,13 @@ Sua tarefa é DISTRIBUIR os pedidos do dia entre os veículos/motoristas dispon�
 OBJETIVO, nesta ordem de importância:
 1. Nenhuma restrição dura violada.
 2. Cada veículo atende uma REGIÃO COESA (pedidos vizinhos entre si, mesmo setor), para minimizar quilometragem. Evite rotas que se cruzam.
-3. Carga equilibrada entre os motoristas (nº de entregas e minutos ocupados parecidos).
+3. Carga equilibrada entre os motoristas — mas SEM quebrar a coesão do item 2. Uma diferença de até ~30% no nº de entregas é aceitável se isso mantém cada motorista na sua região. NÃO divida uma região só para deixar a contagem igual.
 4. Pedidos urgentes e clientes com janela de horário apertada em veículos com folga.
+
+REGRA DE VIZINHANÇA (importante):
+- Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura que impeça.
+- Pedidos no mesmo endereço (vizinhos 0.0km) SEMPRE no mesmo veículo — são uma parada só.
+- Use a lista "vizinhos" de cada pedido: se os vizinhos de um pedido foram para outro veículo, revise.
 
 RESTRIÇÕES DURAS (nunca viole):
 - Capacidade máxima de entregas de cada veículo.
@@ -409,15 +425,34 @@ function applyAndRepair(
     workload.set(idx, workload.get(idx)! + (o.averageDeliveryTime || 30) + 15);
   };
 
-  /** Melhor veículo alternativo: o elegível com menor carga atual. */
+  /**
+   * Melhor veículo alternativo.
+   * ⚠️ Antes escolhia só pela MENOR CARGA, o que espalhava pedidos vizinhos entre
+   * motoristas diferentes (era a causa de dois clientes lado a lado caírem em rotas
+   * distintas). Agora pesa PROXIMIDADE primeiro: distância do pedido até a parada
+   * mais próxima já atribuída àquele veículo (ou até a base, se ainda estiver vazio),
+   * com um empurrãozinho pela carga só para desempatar veículos igualmente perto.
+   */
   const bestAlternative = (o: DeliveryOrder): number => {
     let best = -1;
-    let min = Infinity;
+    let melhorCusto = Infinity;
     vehicles.forEach((_, idx) => {
       if (!fits(idx, o)) return;
-      const w = workload.get(idx)!;
-      if (w < min) {
-        min = w;
+      const v = vehicles[idx];
+      const jaAtribuidos = assignments.get(idx)!;
+      let distancia = Infinity;
+      for (const outro of jaAtribuidos) {
+        const d = calculateDistance(o.customerLatitude, o.customerLongitude, outro.customerLatitude, outro.customerLongitude);
+        if (d < distancia) distancia = d;
+      }
+      if (!Number.isFinite(distancia)) {
+        distancia = calculateDistance(o.customerLatitude, o.customerLongitude, v.startLatitude, v.startLongitude);
+      }
+      // Carga entra como penalidade suave: 1 km equivale a ~4 min de fila.
+      const penalidadeCarga = (workload.get(idx)! - 30) / 4;
+      const custo = distancia + penalidadeCarga * 0.25;
+      if (custo < melhorCusto) {
+        melhorCusto = custo;
         best = idx;
       }
     });
@@ -497,6 +532,92 @@ function applyAndRepair(
   return { assignments, workload, unassigned, ajustes };
 }
 
+/**
+ * Depois da distribuição fechada, procura pares de pedidos PRÓXIMOS que ficaram
+ * em veículos diferentes e explica o porquê de cada caso. É o diagnóstico que
+ * responde "por que o cliente X e o cliente Y, vizinhos, foram para entregadores
+ * diferentes?" — separando restrição dura de decisão de distribuição.
+ */
+function diagnosticarVizinhosSeparados(
+  assignments: Map<number, DeliveryOrder[]>,
+  vehicles: VehicleConfig[],
+  eligibleByVehicle: Map<number, DeliveryOrder[]>,
+  raioKm = 2,
+): AIRouteMeta['vizinhosSeparados'] {
+  const porPedido = new Map<string, number>();
+  const todos: DeliveryOrder[] = [];
+  for (const [idx, lista] of Array.from(assignments.entries())) {
+    for (const o of lista) { porPedido.set(o.id, idx); todos.push(o); }
+  }
+  const elegivel = new Map<number, Set<string>>();
+  for (const [idx, lista] of Array.from(eligibleByVehicle.entries())) {
+    elegivel.set(idx, new Set(lista.map((o) => o.id)));
+  }
+
+  const nomeVeic = (idx: number) => {
+    const v = vehicles[idx];
+    return v?.driverName || `V${idx} (${v?.type || '?'})`;
+  };
+
+  const out: AIRouteMeta['vizinhosSeparados'] = [];
+  const vistos = new Set<string>();
+
+  for (let i = 0; i < todos.length; i++) {
+    for (let j = i + 1; j < todos.length; j++) {
+      const a = todos[i], b = todos[j];
+      const va = porPedido.get(a.id)!, vb = porPedido.get(b.id)!;
+      if (va === vb) continue;
+      const d = calculateDistance(a.customerLatitude, a.customerLongitude, b.customerLatitude, b.customerLongitude);
+      if (d > raioKm) continue;
+      const chave = [a.id, b.id].sort().join('|');
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+
+      // Por que 'a' não poderia estar no veículo de 'b' (e vice-versa)?
+      const motivos: string[] = [];
+      const checar = (o: DeliveryOrder, destino: number) => {
+        const v = vehicles[destino];
+        if (!elegivel.get(destino)?.has(o.id) || !isOrderCompatibleWithVehicle(o, v.type)) {
+          if (o.exclusiveVehicle && Array.isArray(o.vehicleTypes) && o.vehicleTypes.length) {
+            motivos.push(`${o.customerName} exige veículo ${o.vehicleTypes.join('/')} e ${nomeVeic(destino)} é ${v.type}`);
+          } else if (isBaruc(v) !== isBsbOrder(o)) {
+            motivos.push(`${o.customerName} é de ${isBsbOrder(o) ? 'Brasília' : 'Goiânia'} e ${nomeVeic(destino)} atende o outro polo`);
+          } else {
+            motivos.push(`${o.customerName} não é elegível para ${nomeVeic(destino)} (janela de horário ou tipo de veículo)`);
+          }
+          return;
+        }
+        const v2 = vehicles[destino];
+        const carga = assignments.get(destino)!.length;
+        if (v2.capacity && carga >= v2.capacity) {
+          motivos.push(`${nomeVeic(destino)} já está na capacidade máxima (${v2.capacity} entregas)`);
+          return;
+        }
+        const disp = timeToMinutes(v2.timeWindowEnd) - timeToMinutes(v2.timeWindowStart);
+        const usados = 30 + assignments.get(destino)!.reduce((s, x) => s + (x.averageDeliveryTime || 30) + 15, 0);
+        if (usados + (o.averageDeliveryTime || 30) > disp) {
+          motivos.push(`${nomeVeic(destino)} não tem janela livre para mais uma parada`);
+        }
+      };
+      checar(a, vb);
+      checar(b, va);
+
+      out.push({
+        a: a.customerName,
+        b: b.customerName,
+        veiculoA: nomeVeic(va),
+        veiculoB: nomeVeic(vb),
+        distanciaKm: Math.round(d * 100) / 100,
+        motivo: motivos.length
+          ? Array.from(new Set(motivos)).join('; ')
+          : 'nenhuma restrição impedia juntá-los — foi decisão de distribuição (equilíbrio de carga entre os motoristas). Dá para arrastar um dos dois manualmente se preferir.',
+      });
+    }
+  }
+  // Os mais próximos primeiro: são os que mais incomodam quem olha o mapa.
+  return out.sort((x, y) => x.distanciaKm - y.distanciaKm).slice(0, 12);
+}
+
 // ==================== Entry point ====================
 
 export async function planDeliveryRoutesWithAI(
@@ -540,6 +661,7 @@ export async function planDeliveryRoutesWithAI(
     alertas,
     ajustes: [],
     cargaPorVeiculo: [],
+    vizinhosSeparados: [],
   };
 
   const semChave = !process.env.ANTHROPIC_API_KEY;
@@ -603,7 +725,7 @@ export async function planDeliveryRoutesWithAI(
           texto: String(x.texto || ''),
         }));
 
-      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0);
+      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle);
       return plan;
     }
   }
@@ -620,7 +742,7 @@ export async function planDeliveryRoutesWithAI(
   meta.resumo = 'Distribuição automática por proximidade e menor carga (sem agente de IA nesta execução).';
   meta.ajustes = [];
 
-  return finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0);
+  return finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle);
 }
 
 // ==================== FASE 3/4 comuns ====================
@@ -636,6 +758,7 @@ async function finish(
   allOrders: DeliveryOrder[],
   meta: AIRouteMeta,
   t0: number,
+  eligibleByVehicle?: Map<number, DeliveryOrder[]>,
 ): Promise<AIRoutePlan> {
   // FASE 3 — sequência ótima por veículo (NN + 2-opt + OSRM), reaproveitando o motor atual
   const routes: VehicleRoute[] = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
@@ -654,6 +777,19 @@ async function finish(
       utilizacaoPct: disp > 0 ? Math.round((usados / disp) * 1000) / 10 : 0,
     };
   });
+
+  // Diagnóstico de vizinhos separados (responde "por que esses dois foram para
+  // entregadores diferentes?" direto na tela).
+  if (eligibleByVehicle) {
+    try {
+      meta.vizinhosSeparados = diagnosticarVizinhosSeparados(assignments, vehicles, eligibleByVehicle);
+      if (meta.vizinhosSeparados.length) {
+        console.log(`🔎 [ROTA-IA] ${meta.vizinhosSeparados.length} par(es) de pedidos vizinhos em rotas diferentes`);
+      }
+    } catch (e: any) {
+      console.warn('[ROTA-IA] Falha no diagnóstico de vizinhos:', e?.message);
+    }
+  }
 
   const allUnassigned = [...unassigned, ...invalidOrders.map((i) => i.order)];
   for (const inv of invalidOrders) {
