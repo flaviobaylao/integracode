@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import { db } from './db';
+import { geocodeOne, geocodeThrottleMs } from './geocode-provider';
 import { sql, and, eq, gte, lte, isNotNull, inArray, desc } from 'drizzle-orm';
 import {
   repescagemAttendants,
@@ -838,18 +839,15 @@ async function geocodeMissingCandidates(customerIds: string[]): Promise<void> {
         for (let ai = 0; ai < attempts.length; ai++) {
           const q = attempts[ai].parts.filter(Boolean).join(', ');
           if (!q) continue;
-          const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
-          const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-repescagem-geo/1.0 (flaviobaylao@gmail.com)' } });
-          const arr: any = resp.ok ? await resp.json() : [];
-          const cand = Array.isArray(arr) && arr.length ? arr[0] : null;
+          const cand = await geocodeOne(q);
           if (cand) {
             if (attempts[ai].level === 'endereco' && cep.length === 8) {
-              const dc = ((String(cand.display_name).match(/\b\d{5}-?\d{3}\b/) || [''])[0]).replace(/\D/g, '');
-              if (dc && dc.slice(0, 5) !== cep.slice(0, 5)) { if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, 1100)); continue; }
+              const dc = cand.postcode || '';
+              if (dc && dc.slice(0, 5) !== cep.slice(0, 5)) { if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, geocodeThrottleMs())); continue; }
             }
             hit = cand; break;
           }
-          if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, 1100));
+          if (ai < attempts.length - 1) await new Promise(rs => setTimeout(rs, geocodeThrottleMs()));
         }
         if (hit) {
           const cityToken = norm(c.city).split(' ')[0] || '';
@@ -857,7 +855,7 @@ async function geocodeMissingCandidates(customerIds: string[]): Promise<void> {
           if (cityOk) { await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`); done++; }
         }
       } catch { /* ignora cliente individual */ }
-      await new Promise(rs => setTimeout(rs, 1200));
+      await new Promise(rs => setTimeout(rs, geocodeThrottleMs()));
     }
     if (done) console.log(`[REPESCAGEM2-GEO] geocodificados ${done} candidato(s) sem coordenada`);
   } catch (e: any) { console.warn('[REPESCAGEM2-GEO] falha:', e?.message); }

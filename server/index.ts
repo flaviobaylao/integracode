@@ -28,6 +28,7 @@ import { ensureFinancialAuditSchema } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
+import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
 import { registerReconciliation } from "./reconciliation-routes";
 import { registerPaymentTerms } from "./payment-terms-routes";
 import { registerChargeGuarantee } from "./charge-guarantee-routes";
@@ -662,11 +663,14 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
-  // GEOCODIFICACAO (02/jul/2026): preenche lat/long por endereco (Nominatim/OSM) p/ clientes da lista de Ativos sem coordenada.
-  // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro. Fire-and-forget (resumo em geocode_missing_last).
+  // GEOCODIFICACAO (02/jul/2026): preenche lat/long por endereco p/ clientes da lista de Ativos sem coordenada.
+  // Provedor: Google Geocoding quando ha GOOGLE_MAPS_API_KEY; senao Nominatim/OSM (ver geocode-provider.ts).
+  // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro.
+  // {skipApproximate:true} descarta centroide de bairro/cidade em vez de grava-lo. Fire-and-forget (resumo em geocode_missing_last).
   app.post('/api/admin/customers/geocode-missing', async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
+      const skipApproximate = !!(req.body && req.body.skipApproximate);
       const limit = Math.min(Number((req.body && req.body.limit) || 80), 200);
       const sel: any = await db.execute(sql`SELECT c.id, c.name, c.address, c.city FROM customers c WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND COALESCE(TRIM(c.address), '') <> '' AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE) ORDER BY c.name LIMIT ${limit}`);
       const cands = ((sel.rows || sel) as any[]);
@@ -674,29 +678,31 @@ run();
       (async () => {
         const norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
         const results: any[] = [];
-        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0;
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, aproximados = 0;
         for (const c of cands) {
           try {
             const q = [c.address, c.city, 'Brasil'].filter(Boolean).join(', ');
-            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
-            const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
-            const arr: any = resp.ok ? await resp.json() : [];
-            const hit = Array.isArray(arr) && arr.length ? arr[0] : null;
+            const hit = await geocodeOne(q);
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, status: 'nao_encontrado' }); }
+            else if (skipApproximate && hit.aproximado) {
+              // Centroide de bairro/cidade: varios clientes cairiam no mesmo ponto.
+              aproximados++;
+              results.push({ id: c.id, name: c.name, status: 'aproximado_ignorado', precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) });
+            }
             else {
               const cityToken = norm(c.city).split(' ')[0] || '';
               const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
               if (cityOk && apply) {
                 await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
-                updated++; results.push({ id: c.id, name: c.name, status: 'atualizado', lat: hit.lat, lon: hit.lon });
-              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, status: 'ok_dry_run', lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
-              else { unverified++; results.push({ id: c.id, name: c.name, status: 'cidade_nao_confere', display: String(hit.display_name).slice(0, 90) }); }
+                updated++; results.push({ id: c.id, name: c.name, status: 'atualizado', precisao: hit.precisao, lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, status: 'ok_dry_run', precisao: hit.precisao, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, status: 'cidade_nao_confere', precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) }); }
             }
           } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
-          await new Promise((rs) => setTimeout(rs, 1200));
+          await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
         }
         try {
-          const payload = JSON.stringify({ at: new Date().toISOString(), apply, candidates: cands.length, updated, dryOk, unverified, notFound, errors, results });
+          const payload = JSON.stringify({ at: new Date().toISOString(), provider: geocodeProvider(), apply, skipApproximate, candidates: cands.length, updated, dryOk, unverified, notFound, aproximados, errors, results });
           const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_missing_last'"));
           if (((ex.rows || ex) as any[]).length > 0) {
             await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_missing_last'`);
@@ -718,12 +724,16 @@ run();
 
   // GEOCODIFICACAO EM LOTE - TODOS (14/jul/2026): preenche/recalcula lat/long de TODOS os clientes (exceto coordenadas travadas).
   // PJ (com CNPJ) usa o endereco fiscal ja cadastrado (origem do CNPJ); PF usa o endereco de cadastro no Integra.
-  // Nominatim/OSM, verifica se a cidade retornada confere com a do cadastro antes de gravar. Dry-run por padrao; {apply:true} grava.
-  // {recalc:true} reprocessa quem ja tem coordenada; senao apenas os sem coordenada. Fire-and-forget (resumo em geocode_all_last, admin only).
+  // Provedor: Google Geocoding quando ha GOOGLE_MAPS_API_KEY; senao Nominatim/OSM (ver geocode-provider.ts).
+  // Verifica se a cidade retornada confere com a do cadastro antes de gravar. Dry-run por padrao; {apply:true} grava.
+  // {recalc:true} reprocessa quem ja tem coordenada; senao apenas os sem coordenada.
+  // {skipApproximate:true} descarta centroide de bairro/cidade em vez de grava-lo (evita clientes empilhados no mesmo ponto).
+  // Fire-and-forget (resumo em geocode_all_last, admin only).
   app.post('/api/admin/customers/geocode-all', authenticateUser, requireRole(['admin']), async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
       const recalc = !!(req.body && req.body.recalc);
+      const skipApproximate = !!(req.body && req.body.skipApproximate);
       const limit = Math.min(Math.max(Number((req.body && req.body.limit) || 1200), 1), 3000);
       // Escopo opcional: geocodificar SOMENTE os clientes selecionados (edição em massa).
       const customerIds: string[] | null = Array.isArray(req.body?.customerIds)
@@ -743,14 +753,14 @@ run();
         eligibleTotal = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
       } catch {}
       const remainingAfter = Math.max(0, eligibleTotal - cands.length);
-      res.json({ ok: true, started: true, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter });
+      res.json({ ok: true, started: true, provider: geocodeProvider(), apply, recalc, skipApproximate, candidates: cands.length, eligibleTotal, remainingAfter });
       (async () => {
         const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
         const results: any[] = [];
-        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, pj = 0, pf = 0, processed = 0;
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, pj = 0, pf = 0, processed = 0, aproximados = 0;
         const saveSummary = async (running: boolean) => {
           try {
-            const payload = JSON.stringify({ at: new Date().toISOString(), running, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter, processed, pj, pf, updated, dryOk, unverified, notFound, errors, results: results.slice(-400) });
+            const payload = JSON.stringify({ at: new Date().toISOString(), running, provider: geocodeProvider(), apply, recalc, skipApproximate, candidates: cands.length, eligibleTotal, remainingAfter, processed, pj, pf, updated, dryOk, unverified, notFound, aproximados, errors, results: results.slice(-400) });
             const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_all_last'"));
             if (((ex.rows || ex) as any[]).length > 0) {
               await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_all_last'`);
@@ -787,38 +797,41 @@ run();
             for (let ai = 0; ai < attempts.length; ai++) {
               const q = attempts[ai].parts.filter(Boolean).join(', ');
               if (!q) continue;
-              const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
-              const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
-              const arr: any = resp.ok ? await resp.json() : [];
-              const cand = Array.isArray(arr) && arr.length ? arr[0] : null;
+              const cand = await geocodeOne(q);
               if (cand) {
-                // Rua vaga faz o Nominatim devolver ponto errado na mesma cidade. Se o cliente tem CEP
+                // Rua vaga faz o geocodificador devolver ponto errado na mesma cidade. Se o cliente tem CEP
                 // e o CEP do resultado nao bate (5 primeiros digitos), rejeita e tenta o proximo nivel.
                 if (attempts[ai].level === 'endereco' && cepRaw.length === 8) {
-                  const dc = ((String(cand.display_name).match(/\b\d{5}-?\d{3}\b/) || [''])[0]).replace(/\D/g, '');
+                  const dc = cand.postcode || '';
                   if (dc && dc.slice(0, 5) !== cepRaw.slice(0, 5)) {
-                    if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
+                    if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
                     continue;
                   }
                 }
                 hit = cand; matchLevel = attempts[ai].level; break;
               }
-              if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
+              if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
             }
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'nao_encontrado' }); }
+            else if (skipApproximate && hit.aproximado) {
+              // Centroide de bairro/cidade: gravar isso e o que empilha varios
+              // clientes exatamente na mesma coordenada. Melhor reportar.
+              aproximados++;
+              results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'aproximado_ignorado', nivel: matchLevel, precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) });
+            }
             else {
               const cityToken = norm(c.city).split(' ')[0] || '';
               const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
               if (cityOk && apply) {
                 await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
-                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', nivel: matchLevel, lat: hit.lat, lon: hit.lon });
-              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', nivel: matchLevel, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
-              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', nivel: matchLevel, display: String(hit.display_name).slice(0, 90) }); }
+                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', nivel: matchLevel, precisao: hit.precisao, lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', nivel: matchLevel, precisao: hit.precisao, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', nivel: matchLevel, precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) }); }
             }
           } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
           processed++;
           if (processed % 25 === 0) await saveSummary(true);
-          await new Promise((rs) => setTimeout(rs, 1200));
+          await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
         }
         await saveSummary(false);
       })().catch((e) => console.error('geocode-all: erro geral', e));

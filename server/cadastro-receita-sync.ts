@@ -15,29 +15,56 @@ import { sql } from "drizzle-orm";
 // Provedores (fallback em cadeia): minhareceita.org → BrasilAPI → ReceitaWS.
 
 type SyncErr = { name: string; cnpj: string; error: string };
+// Divergência encontrada no modo "address": o que está no cadastro x o que a
+// Receita devolve. Alimenta o relatório do dry-run.
+type AddrDiff = {
+  id: string;
+  name: string;
+  cnpj: string;
+  campos: { campo: string; de: string; para: string }[];
+};
 type SyncState = {
   status: "idle" | "running" | "done" | "cancelled" | "error";
+  // "missing" = comportamento original (só preenche dado faltante).
+  // "address" = endereço fiscal da Receita como fonte da verdade (sobrescreve).
+  mode: "missing" | "address";
+  dryRun: boolean;
   total: number;
   done: number;
   updated: number;
   skipped: number;
   failed: number;
+  divergentes: number;
   current: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   startedBy: string | null;
   lastErrors: SyncErr[];
+  diffs: AddrDiff[];
 };
 
 const state: SyncState = {
-  status: "idle", total: 0, done: 0, updated: 0, skipped: 0, failed: 0,
-  current: null, startedAt: null, finishedAt: null, startedBy: null, lastErrors: [],
+  status: "idle", mode: "missing", dryRun: false,
+  total: 0, done: 0, updated: 0, skipped: 0, failed: 0, divergentes: 0,
+  current: null, startedAt: null, finishedAt: null, startedBy: null, lastErrors: [], diffs: [],
 };
 let cancelRequested = false;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const onlyDigits = (s: any) => String(s || "").replace(/\D/g, "");
 const formatCep = (d: string) => (d && d.length === 8 ? d.slice(0, 5) + "-" + d.slice(5) : d);
+// Normaliza p/ COMPARAÇÃO (não p/ gravação): remove acento, caixa e pontuação e
+// expande abreviações comuns de logradouro. Serve para não acusar divergência
+// onde a diferença é só de escrita ("AV. SAO JOAO" x "Avenida São João").
+const normalizeCmp = (s: any) =>
+  String(s || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/\bAV\b\.?/g, "AVENIDA").replace(/\bR\b\.?/g, "RUA")
+    .replace(/\bTRAV\b\.?/g, "TRAVESSA").replace(/\bROD\b\.?/g, "RODOVIA")
+    .replace(/\bPCA\b\.?|\bPC\b\.?/g, "PRACA").replace(/\bJD\b\.?/g, "JARDIM")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
 
 // Consulta o CNPJ nos provedores públicos de dados oficiais, em cadeia.
 async function fetchOfficialCnpj(cnpj: string): Promise<{ ok: boolean; data?: any; provider?: string; error?: string }> {
@@ -138,42 +165,84 @@ async function persistSnapshot() {
   } catch { /* snapshot é cosmético */ }
 }
 
-async function runSync(startedBy: string | null) {
+async function runSync(startedBy: string | null, opts?: { mode?: "missing" | "address"; dryRun?: boolean }) {
+  const mode: "missing" | "address" = opts?.mode === "address" ? "address" : "missing";
+  // No modo "address" o padrão é NÃO gravar: quem chama precisa pedir apply.
+  const dryRun = mode === "address" ? opts?.dryRun !== false : false;
   cancelRequested = false;
   state.status = "running";
-  state.total = 0; state.done = 0; state.updated = 0; state.skipped = 0; state.failed = 0;
-  state.current = null; state.lastErrors = [];
+  state.mode = mode; state.dryRun = dryRun;
+  state.total = 0; state.done = 0; state.updated = 0; state.skipped = 0; state.failed = 0; state.divergentes = 0;
+  state.current = null; state.lastErrors = []; state.diffs = [];
   state.startedAt = new Date().toISOString(); state.finishedAt = null; state.startedBy = startedBy;
   try {
-    // Clientes ATIVOS (active_customers.is_active) com CNPJ válido e ao menos
-    // um dado de cadastro FALTANTE. Clientes PF (CPF) não têm consulta pública.
-    const q: any = await db.execute(sql`
-      SELECT c.id, c.name, c.cnpj, c.state, c.city, c.zip_code, c.address, c.neighborhood, c.company_name, c.state_registration
-      FROM customers c
-      WHERE c.id IN (SELECT customer_id FROM active_customers WHERE is_active = true AND customer_id IS NOT NULL)
-        AND length(regexp_replace(coalesce(c.cnpj, ''), '[^0-9]', '', 'g')) = 14
+    // Modo "missing": clientes ATIVOS com CNPJ válido e ao menos um dado de
+    // cadastro FALTANTE. Modo "address": TODOS os clientes ativos com CNPJ
+    // válido — o endereço fiscal é a fonte da verdade, mesmo já preenchido.
+    // Clientes PF (CPF) não têm consulta pública e ficam fora dos dois modos.
+    const faltantesFilter = mode === "address" ? sql`` : sql`
         AND (
           coalesce(c.state, '') = '' OR coalesce(c.city, '') = '' OR coalesce(c.zip_code, '') = ''
           OR btrim(coalesce(c.address, '')) IN ('', ',', '-', 'N/I', 'S/N') OR coalesce(c.neighborhood, '') = ''
           OR coalesce(c.company_name, '') = ''
           OR btrim(coalesce(c.state_registration, '')) = ''
-        )
+        )`;
+    const q: any = await db.execute(sql`
+      SELECT c.id, c.name, c.cnpj, c.state, c.city, c.zip_code, c.address, c.neighborhood, c.company_name, c.state_registration
+      FROM customers c
+      WHERE c.id IN (SELECT customer_id FROM active_customers WHERE is_active = true AND customer_id IS NOT NULL)
+        AND length(regexp_replace(coalesce(c.cnpj, ''), '[^0-9]', '', 'g')) = 14${faltantesFilter}
       ORDER BY c.name
     `);
     const rows: any[] = q?.rows ?? q ?? [];
     state.total = rows.length;
-    console.log(`[CADASTRO-SYNC] ${rows.length} clientes ativos com dados faltantes (iniciado por ${startedBy || "n/d"})`);
+    console.log(`[CADASTRO-SYNC] modo=${mode}${dryRun ? " (dry-run)" : ""}: ${rows.length} clientes (iniciado por ${startedBy || "n/d"})`);
     for (const row of rows) {
       if (cancelRequested) { state.status = "cancelled"; break; }
       state.current = row.name;
       const cnpj = onlyDigits(row.cnpj);
       const needsCadastro = !row.state || !row.city || !row.zip_code || !row.neighborhood || !row.company_name
         || ["", ",", "-", "N/I", "S/N"].includes(String(row.address || "").trim());
-      const needsIe = !String(row.state_registration || "").trim();
+      const needsIe = mode === "address" ? false : !String(row.state_registration || "").trim();
       const upd: Record<string, any> = {};
       let anyFail = false;
       let ieConsultada = false;
-      if (needsCadastro) {
+      if (mode === "address") {
+        // FONTE DA VERDADE: o endereço fiscal da Receita sobrescreve o cadastro.
+        // ESCOPO ESTRITO — só campos de endereço. Razão social, nome fantasia,
+        // contato, telefone, e-mail, IE, vendedor e rota ficam INTOCADOS.
+        const r = await fetchOfficialCnpj(cnpj);
+        if (r.ok && r.data) {
+          const d = r.data;
+          const addr = ([d.logradouro, d.numero].filter(Boolean).join(", ") + (d.complemento ? ` ${d.complemento}` : "")).trim();
+          const novo: Record<string, string> = {};
+          if (addr.length > 3) novo.address = addr.slice(0, 200);
+          if (d.bairro) novo.neighborhood = String(d.bairro).trim().slice(0, 80);
+          if (d.municipio) novo.city = String(d.municipio).trim().slice(0, 80);
+          if (d.uf && /^[A-Za-z]{2}$/.test(String(d.uf).trim())) novo.state = String(d.uf).trim().toUpperCase();
+          if (d.cep && d.cep.length === 8) novo.zipCode = formatCep(d.cep);
+          // Compara ignorando acento, caixa e pontuação — evita "divergência"
+          // cosmética (ex.: "AV." x "Avenida", "Sao Paulo" x "São Paulo").
+          const atual: Record<string, string> = {
+            address: String(row.address || ""), neighborhood: String(row.neighborhood || ""),
+            city: String(row.city || ""), state: String(row.state || ""), zipCode: String(row.zip_code || ""),
+          };
+          const campos: { campo: string; de: string; para: string }[] = [];
+          for (const k of Object.keys(novo)) {
+            if (normalizeCmp(atual[k]) !== normalizeCmp(novo[k])) {
+              upd[k] = novo[k];
+              campos.push({ campo: k, de: atual[k], para: novo[k] });
+            }
+          }
+          if (campos.length) {
+            state.divergentes++;
+            if (state.diffs.length < 500) state.diffs.push({ id: String(row.id), name: row.name, cnpj, campos });
+          }
+        } else {
+          anyFail = true;
+          if (state.lastErrors.length < 20) state.lastErrors.push({ name: row.name, cnpj, error: r.error || "falha" });
+        }
+      } else if (needsCadastro) {
         const r = await fetchOfficialCnpj(cnpj);
         if (r.ok && r.data) {
           const d = r.data;
@@ -203,10 +272,12 @@ async function runSync(startedBy: string | null) {
           if (state.lastErrors.length < 20) state.lastErrors.push({ name: row.name, cnpj, error: `IE: ${ieRes.error || "falha"}` });
         }
       }
-      if (Object.keys(upd).length > 0) {
+      if (Object.keys(upd).length > 0 && !dryRun) {
         await storage.updateCustomer(row.id, upd as any);
         state.updated++;
         console.log(`[CADASTRO-SYNC] ✅ ${row.name} (${cnpj}) atualizado: ${Object.keys(upd).join(", ")}`);
+      } else if (Object.keys(upd).length > 0) {
+        console.log(`[CADASTRO-SYNC] 👁  ${row.name} (${cnpj}) divergente (dry-run): ${Object.keys(upd).join(", ")}`);
       } else if (anyFail) {
         state.failed++;
       } else {
@@ -226,7 +297,7 @@ async function runSync(startedBy: string | null) {
   state.current = null;
   state.finishedAt = new Date().toISOString();
   await persistSnapshot();
-  console.log(`[CADASTRO-SYNC] fim: ${state.status} — ${state.updated} atualizados, ${state.skipped} sem mudança, ${state.failed} falhas, de ${state.total}`);
+  console.log(`[CADASTRO-SYNC] fim: ${state.status} — modo=${state.mode}${state.dryRun ? " (dry-run)" : ""}, ${state.updated} atualizados, ${state.divergentes} divergentes, ${state.skipped} sem mudança, ${state.failed} falhas, de ${state.total}`);
 }
 
 export function registerCadastroReceitaSync(app: Express) {
@@ -242,8 +313,10 @@ export function registerCadastroReceitaSync(app: Express) {
       if (v) {
         const snap = JSON.parse(String(v));
         if (snap?.status === "running") {
-          console.log("[CADASTRO-SYNC] 🔁 retomando execução interrompida por restart do servidor");
-          runSync(snap.startedBy || "auto-resume");
+          console.log(`[CADASTRO-SYNC] 🔁 retomando execução interrompida por restart do servidor (modo=${snap.mode || "missing"}${snap.dryRun ? ", dry-run" : ""})`);
+          // Retoma no MESMO modo e no mesmo dry-run/apply — um restart nunca
+          // pode transformar um diagnóstico em gravação.
+          runSync(snap.startedBy || "auto-resume", { mode: snap.mode === "address" ? "address" : "missing", dryRun: !!snap.dryRun });
         }
       }
     } catch { /* sem retomada */ }
@@ -266,6 +339,21 @@ export function registerCadastroReceitaSync(app: Express) {
     }
     runSync(req.currentUser?.email || null); // sem await — roda em background
     res.json({ started: true });
+  });
+
+  // ENDEREÇO FISCAL COMO FONTE DA VERDADE (PJ) — varre TODOS os clientes ativos
+  // com CNPJ válido, inclusive os que já têm endereço preenchido, e compara com
+  // a Receita. Grava SOMENTE campos de endereço (address, neighborhood, city,
+  // state, zip_code). Razão social, nome fantasia, contato, telefone, e-mail,
+  // IE, vendedor e rota NÃO são tocados neste modo.
+  // Dry-run por padrão: só grava com {apply:true} explícito. Admin apenas.
+  app.post("/api/admin/cadastro-receita-sync/address-refresh", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
+    if (state.status === "running") {
+      return res.status(409).json({ message: "Atualização já em andamento", state });
+    }
+    const apply = req.body?.apply === true;
+    runSync(req.currentUser?.email || null, { mode: "address", dryRun: !apply }); // background
+    res.json({ started: true, mode: "address", dryRun: !apply });
   });
 
   // Progresso (pollado pela barra na tela Clientes Ativos)
