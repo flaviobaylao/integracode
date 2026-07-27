@@ -251,7 +251,7 @@ export default function ResumoVisitas() {
                 <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
-                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = faturado (data de faturamento) · Amarelo = pedido implantado, ainda não faturado · Vermelho = sem pedido.">Efetividade em vendas{sortArrow("efet")}</th>
+                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = faturado no pipeline · Amarelo = no pipeline/Bloqueados, sem faturamento · Vermelho = fora do pipeline.">Efetividade em vendas{sortArrow("efet")}</th>
                 <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 34, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
@@ -270,7 +270,7 @@ export default function ResumoVisitas() {
                       {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => {
                         const st = cy.state || (cy.green ? "green" : "red");
                         const bg = st === "green" ? "#22c55e" : st === "yellow" ? "#eab308" : "#ef4444";
-                        const lbl = st === "green" ? "faturado" : st === "yellow" ? "pedido implantado, ainda não faturado" : "sem pedido";
+                        const lbl = st === "green" ? "faturado" : st === "yellow" ? "no pipeline/Bloqueados, sem faturamento" : "fora do pipeline";
                         return <span key={ci} title={`${cy.start} a ${cy.end}: ${lbl}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: bg, marginRight: 3, verticalAlign: "middle" }} />;
                       }) : <span style={{ color: "#9ca3af" }}>—</span>}
                     </td>
