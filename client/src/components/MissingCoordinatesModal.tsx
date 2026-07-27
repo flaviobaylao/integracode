@@ -16,6 +16,12 @@ interface MissingCoordinate {
   address: string;
   latitude: string;
   longitude: string;
+  // Identificação do pedido — sem isto não dava para saber de qual cliente/pedido
+  // o aviso estava falando quando o nome vinha vazio.
+  orderNumber?: string | null;
+  invoiceNumber?: string | null;
+  customerDocument?: string | null;
+  saleValue?: string | number | null;
 }
 
 interface MissingCoordinatesModalProps {
@@ -23,6 +29,14 @@ interface MissingCoordinatesModalProps {
   onClose: () => void;
   missingCoordinates: MissingCoordinate[];
   onSuccess: () => void;
+}
+
+/** 12345678000199 → 12.345.678/0001-99 (e CPF quando tiver 11 dígitos). */
+function formatDoc(doc: string): string {
+  const d = String(doc || '').replace(/\D/g, '');
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  return doc;
 }
 
 export default function MissingCoordinatesModal({
@@ -179,10 +193,34 @@ export default function MissingCoordinatesModal({
               <Card key={item.customerId}>
                 <CardContent className="pt-6">
                   <div className="space-y-4">
-                    {/* Nome e Endereço */}
+                    {/* Identificação do cliente e do pedido */}
                     <div>
-                      <h3 className="font-semibold text-lg">{item.customerName}</h3>
-                      <p className="text-sm text-muted-foreground">{item.address || 'Endereço não cadastrado'}</p>
+                      <h3 className="font-semibold text-lg">
+                        {item.customerName?.trim() || 'Cliente sem nome cadastrado'}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        {item.invoiceNumber && (
+                          <span className="text-[11px] font-medium rounded border border-green-300 bg-green-50 text-green-800 px-1.5 py-0.5">
+                            NF {item.invoiceNumber}
+                          </span>
+                        )}
+                        {item.orderNumber && (
+                          <span className="text-[11px] font-medium rounded border border-blue-300 bg-blue-50 text-blue-800 px-1.5 py-0.5">
+                            Pedido {item.orderNumber}
+                          </span>
+                        )}
+                        {item.customerDocument && (
+                          <span className="text-[11px] rounded border bg-muted px-1.5 py-0.5">
+                            {formatDoc(item.customerDocument)}
+                          </span>
+                        )}
+                        {item.saleValue != null && Number(item.saleValue) > 0 && (
+                          <span className="text-[11px] font-semibold text-green-700">
+                            {Number(item.saleValue).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">{item.address || 'Endereço não cadastrado'}</p>
                     </div>
 
                     {/* Ações de captura */}
@@ -217,6 +255,18 @@ export default function MissingCoordinatesModal({
                           data-testid={`button-open-waze-${item.customerId}`}
                         >
                           Abrir no Waze
+                        </Button>
+                      )}
+
+                      {item.address && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.address)}`, '_blank')}
+                          title="Procurar o endereço no Google Maps e copiar as coordenadas"
+                        >
+                          Google Maps
                         </Button>
                       )}
                     </div>
