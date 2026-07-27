@@ -126,6 +126,12 @@ interface ActiveCustomerWithVisits {
     address: string;
     city: string | null;
     neighborhood: string | null;
+    // Campos de endereço/coordenada já vinham da API (o endpoint faz select *),
+    // só não estavam declarados aqui. Declarados para a exportação de contatos.
+    state?: string | null;
+    zipCode?: string | null;
+    latitude?: string | null;
+    longitude?: string | null;
     sellerId: string;
     sellerName?: string;
     virtualService: boolean;
@@ -760,7 +766,15 @@ export default function ActiveCustomers() {
         'Status': ac.matchStatus === 'matched' ? 'Encontrado' : 'Não encontrado',
         'CPF/CNPJ': ac.document || '',
         'Nome': ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || '',
+        // Bloco de endereço: sem ele a planilha lista os nomes mas não mostra o
+        // que falta corrigir em cada cadastro. Ordenar por "Endereço" joga os
+        // vazios para o topo — é a lista de trabalho de quem corrige cadastro.
+        'Endereço': ac.customer?.address || '',
         'Bairro': ac.customer?.neighborhood || '',
+        'CEP': ac.customer?.zipCode || '',
+        'Cidade': ac.customer?.city || '',
+        'UF': ac.customer?.state || '',
+        'Coordenada': (ac.customer?.latitude && ac.customer?.longitude) ? 'SIM' : 'NÃO',
         'Telefone': ac.customer?.phone || '',
         'Vendedor': ac.customer?.sellerName || '',
         'Tipo': ac.customer?.virtualService ? 'Virtual' : 'Presencial',
@@ -786,7 +800,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Bairro', 'Telefone', 'Vendedor', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Telefone', 'Vendedor', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
