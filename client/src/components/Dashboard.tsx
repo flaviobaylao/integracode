@@ -396,7 +396,7 @@ export default function Dashboard() {
             <div className="text-xs mt-1">{pct === null ? (<span className="text-gray-400">-</span>) : (<span className={pct >= 0 ? "text-green-600" : "text-red-600"}>{pct >= 0 ? "+" : ""}{pct}% vs mesmo dia sem. passada</span>)}</div>
             <MiniBars values={weekDayBars.arr} highlight={weekDayBars.todayIdx} labels={weekDayBars.labels} captions={weekDayBars.captions} labelSize="text-[10px]" format={brl} />
             <div className="text-[10px] text-gray-400 mt-1">Dias da semana (clique na barra)</div>
-            <button type="button" onClick={() => setModal({ title: "Clientes faturados hoje - Total " + brl(billedDay.total), names: billedDay.list })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados no dia</button>
+            <button type="button" onClick={() => setModal({ title: "Clientes faturados hoje - Total " + brl(billedDay.total), names: billedDay.list, searchable: true })} className="mt-2 text-xs text-blue-600 hover:underline">Ver clientes faturados no dia</button>
           </CardContent>
         </Card>
         <Card>
