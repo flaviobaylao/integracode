@@ -3073,6 +3073,9 @@ export const billingPipeline = pgTable("billing_pipeline", {
   notes: text("notes"),
   omieInstanceId: varchar("omie_instance_id"),
   omieInstanceName: varchar("omie_instance_name"),
+  // Prioridade na roteirização: marcada no card quando ele está aguardando rota.
+  // Vira `isUrgent` no planejamento (entra primeiro na rota) e `is_priority` na parada.
+  isPriority: boolean("is_priority").notNull().default(false),
   stageHistory: jsonb("stage_history").$type<Array<{
     stage: string;
     changedAt: string;
