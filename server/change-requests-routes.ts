@@ -256,4 +256,28 @@ export function registerChangeRequestsRoutes(app: Express) {
     if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
     res.json(mapRow(updated[0]));
   }));
+
+  // --------------------------------------------------------------------------
+  // POST /api/change-requests/transcribe — Fase 2: transcreve áudio (Whisper) do
+  //   campo "Outro". Recebe { audio: dataURL } e devolve { text }.
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/transcribe", authenticateUser, safe(async (req, res) => {
+    const src = String((req.body || {}).audio || "");
+    if (!src.startsWith("data:")) return res.status(400).json({ error: "áudio inválido" });
+    if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: "Transcrição indisponível (OPENAI_API_KEY não configurada)." });
+    const m = src.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) return res.status(400).json({ error: "formato de áudio inválido" });
+    const mt = m[1];
+    const buffer = Buffer.from(m[2], "base64");
+    if (!buffer.length) return res.status(400).json({ error: "áudio vazio" });
+    const ext = /webm/.test(mt) ? "webm" : /ogg|opus/.test(mt) ? "ogg" : /mpeg|mp3/.test(mt) ? "mp3" : /wav/.test(mt) ? "wav" : /m4a|mp4|aac/.test(mt) ? "m4a" : "webm";
+    const mod: any = await import("openai");
+    const OpenAI = mod.default || mod.OpenAI || mod;
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const fileArg = typeof mod.toFile === "function"
+      ? await mod.toFile(buffer, `audio.${ext}`, { type: mt })
+      : new File([buffer], `audio.${ext}`, { type: mt });
+    const resp = await client.audio.transcriptions.create({ file: fileArg, model: "whisper-1", language: "pt" });
+    res.json({ text: resp && resp.text ? String(resp.text).trim() : "" });
+  }));
 }
