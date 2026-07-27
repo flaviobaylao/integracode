@@ -119,10 +119,6 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
     }
     const sent = await sendDespedida(row.id, row.customer_phone, despedida);
     if (sent.ok) enviadas++;
-    try {
-      await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
-        VALUES (${row.id}, 'system', 'system', ${'[IA · finalização] ' + despedida}, 'text', true)`);
-    } catch {}
     await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
     try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
     encerradas++;
