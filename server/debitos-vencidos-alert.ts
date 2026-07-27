@@ -67,7 +67,10 @@ export async function enviarAlertaDebitosVencidos(apply: boolean, opts?: { toOve
   const brl = (n: number) => 'R$ ' + (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const normName = (s: any) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
   const hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-  const isoBR = (v: any) => { const d = (v instanceof Date) ? v : new Date(v); return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); };
+  // isoBR = dia do VENCIMENTO. Vencimento é data de calendário gravada como meia-noite
+  // UTC: lido em America/Sao_Paulo saía 1 dia antes (data errada na mensagem e 1 dia a
+  // mais no "dias de atraso"). Lê-se em UTC; o "hoje" (hojeBR) continua no fuso Brasil.
+  const isoBR = (v: any) => { const d = (v instanceof Date) ? v : new Date(v); return d.toLocaleDateString('en-CA', { timeZone: 'UTC' }); };
   const ddmm = (v: any) => { try { const s = isoBR(v); const [, mo, da] = s.split('-'); return da + '/' + mo; } catch { return String(v || '').slice(0, 10); } };
   const diasAtraso = (v: any) => { try { const ms = Date.parse(hojeBR + 'T00:00:00Z') - Date.parse(isoBR(v) + 'T00:00:00Z'); return Math.max(0, Math.round(ms / 86400000)); } catch { return 0; } };
 

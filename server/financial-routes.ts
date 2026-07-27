@@ -151,8 +151,8 @@ export function registerFinancialRoutes(app: Express) {
       const wouldFix = { receivables: rcvPrev.rows?.[0]?.n ?? 0, payables: payPrev.rows?.[0]?.n ?? 0 };
       if (dryRun) return res.json({ dryRun: true, wouldFix });
 
-      const rcv: any = await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
-      const pay: any = await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
+      const rcv: any = await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
+      const pay: any = await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
       res.json({ dryRun: false, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || String(e) });
@@ -1293,7 +1293,9 @@ export function registerFinancialRoutes(app: Express) {
         }
       } catch {}
       const hojeMs = Date.parse(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) + 'T00:00:00Z');
-      const isoBR = (d: any) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      // isoBR = dia do VENCIMENTO (data de calendário gravada como meia-noite UTC).
+      // Lido em BRT saía 1 dia antes => data_vencimento errada e dias_atraso +1.
+      const isoBR = (d: any) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'UTC' });
       const fmtBR = (d: any) => { const [y, m, dd] = isoBR(d).split('-'); return `${dd}/${m}/${y}`; };
       const diasAtraso = (d: any) => Math.max(0, Math.round((hojeMs - Date.parse(isoBR(d) + 'T00:00:00Z')) / 86400000));
       const groups = new Map<string, any>();

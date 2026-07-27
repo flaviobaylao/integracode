@@ -22270,7 +22270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND COALESCE(import_origin, '') <> 'omie_historico'
             AND (
               status IN ('a_vencer', 'vencida')
-              AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+              AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
             )
             AND REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))
           GROUP BY 1

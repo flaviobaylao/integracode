@@ -1167,7 +1167,10 @@ export function registerReconciliation(app: Express) {
       // 'vencida' se o vencimento JÁ PASSOU. Vence HOJE (ou futuro) volta a 'a_vencer'.
       // (Antes usava due < new Date() — comparação por INSTANTE — e um título que vence hoje
       // de manhã voltava 'vencida' à tarde, aparecendo como vencido no mesmo dia.)
-      const _pastDueBR = (d: Date | null) => !!d && d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      // Vencimento = data de calendário (meia-noite UTC) => ler em UTC; HOJE em BRT.
+      // (Ler o vencimento em BRT puxava o dia p/ trás e devolvia 'vencida' a um título
+      // que vence HOJE ao desfazer a baixa.)
+      const _pastDueBR = (d: Date | null) => !!d && d.toLocaleDateString('en-CA', { timeZone: 'UTC' }) < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       for (const m of matches) {
         const settled = Number(m.title_amount_settled || m.amount || 0);
         if (m.receivable_id) {
