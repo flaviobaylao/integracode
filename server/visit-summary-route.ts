@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { computeCyclesTri, cyclesToShow } from "./repescagem-cycles";
+import { computeCycles, cyclesToShow } from "./repescagem-cycles";
 
 // ====== RESUMO DE VISITAS E ATENDIMENTOS — paridade com o 1.0 (calendário por cliente) ======
 export function registerVisitSummary(app: Express) {
@@ -37,30 +37,18 @@ export function registerVisitSummary(app: Express) {
       const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
-      // Efetividade em vendas (bolinhas por ciclo) — SOMENTE pipeline do INTEGRA 2.0 (NAO considera Omie):
-      //  • VERDE   = houve FATURAMENTO no ciclo — card do pipeline que chegou na etapa 'faturado'
-      //              (posicionado pela DATA da mudanca de etapa).
-      //  • AMARELO = sem faturamento no ciclo, mas o pedido esta no PIPELINE (etapa 'pedido' etc.,
-      //              ainda nao faturado) OU em BLOQUEADOS (tabela blocked_orders).
-      //  • VERMELHO= sem faturamento e sem nenhum registro no pipeline/Bloqueados no ciclo.
+      // VENDAS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
+      // Combina pipeline 'venda' + faturamentos com valor>0 (mesma base do gatilho de repescagem).
       const saleStart = dAdd(todayStr, -130);
-      const billedByCustomer = new Map<string, Set<string>>();     // datas de FATURAMENTO (etapa 'faturado')
-      const implantedByCustomer = new Map<string, Set<string>>();  // datas de pedido no pipeline/Bloqueados (nao faturado)
-      const addTo = (map: Map<string, Set<string>>, cid: any, d: any) => { if (!cid || !d) return; let s = map.get(cid); if (!s) { s = new Set(); map.set(cid, s); } s.add(d); };
-      // (verde) card do pipeline que chegou em 'faturado' — data = mudanca de etapa (stage_history), fallback updated_at
+      const saleDatesByCustomer = new Map<string, Set<string>>();
+      const addSale = (cid: any, d: any) => { if (!cid || !d) return; let s = saleDatesByCustomer.get(cid); if (!s) { s = new Set(); saleDatesByCustomer.set(cid, s); } s.add(d); };
       try {
-        const fatP = await q(`SELECT customer_id, COALESCE((SELECT (MIN((h->>'changedAt')::timestamptz) AT TIME ZONE 'America/Sao_Paulo')::date FROM jsonb_array_elements(COALESCE(stage_history,'[]'::jsonb)) h WHERE h->>'stage'='faturado'), (updated_at AT TIME ZONE 'America/Sao_Paulo')::date)::text AS d FROM billing_pipeline WHERE customer_id IS NOT NULL AND (COALESCE(stage_history,'[]'::jsonb) @> '[{"stage":"faturado"}]'::jsonb OR stage IN ('faturado','impresso','aguardando_rota','em_rota','entregue')) AND (updated_at AT TIME ZONE 'America/Sao_Paulo')::date >= '${saleStart}'`);
-        for (const r of fatP) { if (r.d >= saleStart && r.d <= todayStr) addTo(billedByCustomer, r.customer_id, r.d); }
+        const salesP = await q(`SELECT customer_id, DATE(COALESCE(scheduled_billing_date::timestamp, created_at))::text AS d FROM billing_pipeline WHERE LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND customer_id IS NOT NULL AND DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of salesP) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
-      // (amarelo) pedido no PIPELINE ainda NAO faturado — data = created_at
       try {
-        const impP = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billing_pipeline WHERE customer_id IS NOT NULL AND NOT (COALESCE(stage_history,'[]'::jsonb) @> '[{"stage":"faturado"}]'::jsonb) AND stage NOT IN ('faturado','impresso','aguardando_rota','em_rota','entregue') AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
-        for (const r of impP) addTo(implantedByCustomer, r.customer_id, r.d);
-      } catch (e) { /* ignora */ }
-      // (amarelo) pedidos em BLOQUEADOS (blocked_orders) — data = blocked_at (fallback created_at)
-      try {
-        const blk = await q(`SELECT customer_id, (COALESCE(blocked_at, created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM blocked_orders WHERE customer_id IS NOT NULL AND status = 'blocked' AND (COALESCE(blocked_at, created_at) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
-        for (const r of blk) addTo(implantedByCustomer, r.customer_id, r.d);
+        const salesB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, DATE(COALESCE(order_date, invoice_date))::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND DATE(COALESCE(order_date, invoice_date)) BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of salesB) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
@@ -99,7 +87,7 @@ export function registerVisitSummary(app: Express) {
         if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
-        const cycles = computeCyclesTri(dows, cl.periodicity || 'semanal', billedByCustomer.get(cid) || new Set<string>(), implantedByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
+        const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
         return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', cycles, visits };
       });
 
