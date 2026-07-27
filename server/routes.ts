@@ -997,10 +997,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const userId = req.session.user.claims.sub;
         const user = await storage.getUser(userId);
         if (user) {
+          // 🔁 "Entrar como": expõe a função impersonada + a real para o front (só admin real).
+          const impRole = (req.session as any)?.impersonateRole;
+          if (impRole && user.role === 'admin') {
+            return res.json({ ...user, role: impRole, _impersonatingRole: impRole, _realRole: 'admin' });
+          }
           return res.json(user);
         }
       }
-      
+
       // Fall back to Replit auth
       if (!req.isAuthenticated() || !req.user?.claims?.sub) {
         return res.status(401).json({ message: "Unauthorized" });
@@ -1037,6 +1042,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // 🔁 "ENTRAR COMO" — impersonação de função pelo ADMIN (ver o sistema com a visão de outro perfil).
+  // Guardado por authenticateAdmin: usa sempre a identidade REAL da sessão (não o override), então
+  // só um admin de verdade ativa/desativa, e o "Voltar" funciona mesmo enquanto está impersonando.
+  const IMPERSONATABLE_ROLES = ['coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria'];
+  app.post('/api/admin/impersonate', authenticateAdmin, async (req: any, res) => {
+    try {
+      const role = String(req.body?.role || '');
+      if (!IMPERSONATABLE_ROLES.includes(role)) {
+        return res.status(400).json({ message: 'Função inválida para visualização.' });
+      }
+      (req.session as any).impersonateRole = role;
+      req.session.save((err: any) => {
+        if (err) return res.status(500).json({ message: 'Erro ao salvar sessão' });
+        res.json({ ok: true, impersonatingRole: role });
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: 'Erro ao entrar como', error: String(e?.message || e) });
+    }
+  });
+  app.post('/api/admin/impersonate/stop', authenticateAdmin, async (req: any, res) => {
+    try {
+      delete (req.session as any).impersonateRole;
+      req.session.save((err: any) => {
+        if (err) return res.status(500).json({ message: 'Erro ao salvar sessão' });
+        res.json({ ok: true });
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: 'Erro ao voltar', error: String(e?.message || e) });
     }
   });
 
