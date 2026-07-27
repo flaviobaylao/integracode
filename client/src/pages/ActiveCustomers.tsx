@@ -1652,6 +1652,11 @@ export default function ActiveCustomers() {
                                   {(ac.customer as any).companyName}
                                 </div>
                               )}
+                              {ac.customer?.neighborhood && (
+                                <div className="text-xs text-muted-foreground truncate max-w-[220px]">
+                                  {ac.customer.neighborhood}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="font-mono text-sm">
                               {(() => {
