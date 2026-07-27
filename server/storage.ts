@@ -1029,12 +1029,16 @@ export class DatabaseStorage implements IStorage {
     }
     
     // 1. Update customer: set isActive = false and inactivatedAt = now
+    //    omieStatus='inativo' torna a inativação DESVINCULADA do Omie: o sync não
+    //    reativa (omieIntegration não sobrescreve mais isActive/omieStatus) e o cliente
+    //    fica filtrado em todas as consultas que checam omie_status='ativo'.
     const [inactivatedCustomer] = await db
       .update(customers)
-      .set({ 
-        isActive: false, 
+      .set({
+        isActive: false,
+        omieStatus: 'inativo',
         inactivatedAt: nowBrazil(),
-        updatedAt: nowBrazil() 
+        updatedAt: nowBrazil()
       })
       .where(eq(customers.id, customerId))
       .returning();
@@ -1051,10 +1055,9 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`✅ Cliente ${customerId} removido da lista de clientes ativos`);
     
-    // 3. Delete all future pending sales cards for this customer, except the current one
-    const today = nowBrazil();
-    today.setHours(0, 0, 0, 0);
-    
+    // 3. Apagar TODOS os cards pendentes/em andamento do cliente, exceto o card atual.
+    //    Inclui os cards PERMANENTES (datados por next_visit_date, não por scheduled_date),
+    //    que antes sobreviviam à inativação e voltavam a aparecer na rota.
     const result = await db
       .delete(salesCards)
       .where(
@@ -1064,12 +1067,16 @@ export class DatabaseStorage implements IStorage {
           or(
             eq(salesCards.status, 'pending'),
             eq(salesCards.status, 'in_progress')
-          ),
-          gte(salesCards.scheduledDate, today)
+          )
         )
       )
       .returning();
-    
+
+    // 4. Tirar o cliente da repescagem do dia (sai do overlay da Rota do Dia).
+    try {
+      await db.execute(sql`UPDATE repescagem_assignments SET status = 'cancelled', updated_at = now() WHERE customer_id = ${customerId} AND status IN ('pending','in_route')`);
+    } catch (e) { console.warn('inactivateCustomer: falha ao limpar repescagem', e); }
+
     return {
       customer: inactivatedCustomer,
       deletedCards: result.length
@@ -1080,8 +1087,6 @@ export class DatabaseStorage implements IStorage {
   // Clientes Ativos e apaga cards futuros pendentes), porém em lote e sem preservar card.
   async bulkInactivateCustomers(ids: string[]): Promise<{ processed: number; inactivated: number; alreadyInactive: number; deletedCards: number; inactivatedIds: string[] }> {
     if (!ids || ids.length === 0) return { processed: 0, inactivated: 0, alreadyInactive: 0, deletedCards: 0, inactivatedIds: [] };
-    const today = nowBrazil();
-    today.setHours(0, 0, 0, 0);
 
     // Quais estavam ATIVOS antes (para auditoria e contagem)
     const activeBefore = await db
@@ -1090,10 +1095,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
     const inactivatedIds = activeBefore.map((r) => r.id);
 
-    // 1. customers.isActive = false
+    // 1. customers.isActive = false + omieStatus='inativo' (desvincula do Omie: sync não reativa)
     await db
       .update(customers)
-      .set({ isActive: false, inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .set({ isActive: false, omieStatus: 'inativo', inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
@@ -1102,17 +1107,22 @@ export class DatabaseStorage implements IStorage {
       .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
       .where(inArray(activeCustomers.customerId, ids));
 
-    // 3. Apagar cards futuros pendentes/em andamento
+    // 3. Apagar TODOS os cards pendentes/em andamento (inclui permanentes por next_visit_date)
     const del = await db
       .delete(salesCards)
       .where(
         and(
           inArray(salesCards.customerId, ids),
-          or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress')),
-          gte(salesCards.scheduledDate, today)
+          or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress'))
         )
       )
       .returning();
+
+    // 4. Tirar da repescagem do dia (sai do overlay da Rota do Dia).
+    try {
+      const inList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+      await db.execute(sql`UPDATE repescagem_assignments SET status = 'cancelled', updated_at = now() WHERE customer_id IN (${inList}) AND status IN ('pending','in_route')`);
+    } catch (e) { console.warn('bulkInactivateCustomers: falha ao limpar repescagem', e); }
 
     return {
       processed: ids.length,
