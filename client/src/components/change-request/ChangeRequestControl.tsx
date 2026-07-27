@@ -97,10 +97,12 @@ interface ControlProps {
   className?: string;
   /** quando true, o gatilho vai para uma linha própria (abaixo dos ícones), alinhado à direita */
   fullRow?: boolean;
+  /** quando true, o botão de nova solicitação fica desabilitado (ex.: já há check-in/venda no dia) */
+  disabled?: boolean;
 }
 
 export function ChangeRequestControl(props: ControlProps) {
-  const { entityType, entityId, customerId, entityName, sellerId, sellerName, state, className, fullRow } = props;
+  const { entityType, entityId, customerId, entityName, sellerId, sellerName, state, className, fullRow, disabled } = props;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -236,9 +238,10 @@ export function ChangeRequestControl(props: ControlProps) {
       <Button
         size="sm"
         variant="outline"
-        className={`h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800 ${className || ""}`}
-        onClick={(e) => { stop(e); setOpen(true); }}
-        title="Solicitar Alteração"
+        disabled={disabled}
+        className={`h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50 ${className || ""}`}
+        onClick={(e) => { stop(e); if (!disabled) setOpen(true); }}
+        title={disabled ? "Indisponível: já há check-in ou venda registrada" : "Solicitar Alteração"}
         data-testid={`button-cr-open-${entityId}`}
       >
         <ClipboardList className="h-3.5 w-3.5" /> Solicitar Alteração
@@ -386,7 +389,7 @@ export function ChangeRequestControl(props: ControlProps) {
           )}
           <DialogFooter>
             {state?.status !== "pending" && (
-              <Button onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
+              <Button disabled={disabled} onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
             )}
             <Button variant="outline" onClick={() => setViewOpen(false)}>Fechar</Button>
           </DialogFooter>
