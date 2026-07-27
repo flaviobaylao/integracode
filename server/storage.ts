@@ -6160,7 +6160,10 @@ export class DatabaseStorage implements IStorage {
       // sem atividade das partes (cliente ou atendente). A finalização manual pelo
       // vendedor é sempre permitida (botão "Finalizar"), independentemente deste tempo.
       const timeoutMinutes = 10;
-      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+      // 🕐 FIX FUSO: lastMessageTime/lastAttendedAt são gravados com nowBrazil() (horário de Brasília,
+      // 3h atrás do UTC). O corte precisa usar o MESMO relógio, senão toda conversa nasce "vencida"
+      // e é finalizada no próximo ciclo. Usar nowBrazil() aqui alinha o corte aos timestamps gravados.
+      const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
       
       // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
       // Status a fechar: 'new', 'assigned', 'in-progress'
