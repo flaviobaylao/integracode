@@ -10,7 +10,7 @@
 //  A busca de estados é feita 1x por página via useChangeRequestStates().
 //  Fase 1: campo "Outro" é texto (áudio transcrito entra na Fase 2).
 // =============================================================================
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2 } from "lucide-react";
+import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2, Mic, Square } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Tipos e rótulos
@@ -113,6 +113,39 @@ export function ChangeRequestControl(props: ControlProps) {
   const [areaVendas, setAreaVendas] = useState<string>("");
   const [inicioAtendimento, setInicioAtendimento] = useState<string>("");
   const [outro, setOutro] = useState<string>("");
+
+  // Fase 2: gravação de áudio transcrito (Whisper) para o campo "Outro".
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) audioChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        try { stream.getTracks().forEach((tk) => tk.stop()); } catch {}
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const dataUrl: string = await new Promise((resolve) => { const r = new FileReader(); r.onloadend = () => resolve(String(r.result)); r.readAsDataURL(blob); });
+        setTranscribing(true);
+        try {
+          const resp = await apiRequest("POST", "/api/change-requests/transcribe", { audio: dataUrl });
+          if (resp?.text) setOutro((prev) => (prev ? prev.trim() + " " : "") + resp.text);
+          else toast({ title: "Nada transcrito", description: "Não consegui entender o áudio. Tente de novo." });
+        } catch (e: any) {
+          toast({ title: "Falha na transcrição", description: e?.message || "Tente novamente.", variant: "destructive" });
+        } finally { setTranscribing(false); }
+      };
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setRecording(true);
+    } catch (e: any) {
+      toast({ title: "Microfone indisponível", description: e?.message || "Permita o acesso ao microfone.", variant: "destructive" });
+    }
+  };
+  const stopRecording = () => { try { mediaRecorderRef.current?.stop(); } catch {} setRecording(false); };
 
   const resetForm = () => {
     setSelected(new Set()); setPeriodicidade(""); setDiaRota(new Set());
@@ -282,10 +315,23 @@ export function ChangeRequestControl(props: ControlProps) {
                     <Textarea
                       value={outro}
                       onChange={(e) => setOutro(e.target.value)}
-                      placeholder="Descreva a alteração desejada…"
+                      placeholder="Descreva a alteração desejada… (ou grave um áudio)"
                       rows={3}
                       data-testid="cr-outro-texto"
                     />
+                    <div className="flex items-center gap-2 mt-2">
+                      {!recording ? (
+                        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={(e) => { stop(e); startRecording(); }} disabled={transcribing} data-testid="cr-audio-record">
+                          <Mic className="h-3.5 w-3.5" /> Gravar áudio
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" variant="destructive" className="gap-1" onClick={(e) => { stop(e); stopRecording(); }} data-testid="cr-audio-stop">
+                          <Square className="h-3.5 w-3.5" /> Parar
+                        </Button>
+                      )}
+                      {recording && <span className="text-xs text-red-600 animate-pulse">gravando…</span>}
+                      {transcribing && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> transcrevendo…</span>}
+                    </div>
                   </div>
                 )}
               </div>
