@@ -15,6 +15,7 @@ import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { ChangeRequestControl, useChangeRequestStates, crKey } from "@/components/change-request/ChangeRequestControl";
 import {
   Select,
   SelectContent,
@@ -518,6 +519,13 @@ export default function LeadsManagement() {
   // Não convertidos (descartados) vão para o FINAL da lista, preservando a ordenação dentro de cada grupo
   const displayLeads = [...sortedLeads].sort((a: any, b: any) => (a.status === 'discarded' ? 1 : 0) - (b.status === 'discarded' ? 1 : 0));
 
+  // 📋 Solicitar Alteração — estados dos leads visíveis (1 query por página).
+  const changeRequestKeys = useMemo(
+    () => displayLeads.map((l: any) => (l?.id ? crKey('lead', String(l.id)) : '')).filter(Boolean),
+    [displayLeads.map((l: any) => l.id).join('|')]
+  );
+  const changeRequestStates = useChangeRequestStates(changeRequestKeys);
+
   const stats = {
     total: leads.length,
     pending: leads.filter(l => l.status === 'pending').length,
@@ -898,6 +906,14 @@ export default function LeadsManagement() {
                               </Button>
                             </>
                           )}
+                          {/* 📋 Solicitar Alteração */}
+                          <ChangeRequestControl
+                            entityType="lead"
+                            entityId={String(lead.id)}
+                            entityName={(lead as any).fantasyName || (lead as any).contact}
+                            sellerId={(lead as any).assignedTo}
+                            state={changeRequestStates[crKey('lead', String(lead.id))]}
+                          />
                         </div>
                       </td>
                       )}
