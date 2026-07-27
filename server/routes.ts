@@ -2863,7 +2863,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       console.log(`[last-order] Buscando último pedido para cliente: ${id}`);
       
-      // Primeiro, buscar o último pedido do cliente através do sales_card (pedidos internos)
+      // FONTE PRIMARIA: Pipeline de Faturamento — reflete TODOS os pedidos do cliente
+      // (visita presencial, hotsite, automacoes/reconcile), diferente do order_history, que
+      // so e gravado no checkout de card permanente. Pega o mais recente por created_at,
+      // ignorando cards na Lixeira (stage 'lixeira').
+      const pipelineResult = await db.execute(sql`
+        SELECT
+          bp.id,
+          bp.created_at AS order_date,
+          bp.products,
+          bp.sale_value AS total_value,
+          bp.notes,
+          bp.stage,
+          bp.operation_type AS order_type,
+          bp.payment_method,
+          bp.order_number,
+          bp.invoice_number,
+          bp.customer_id,
+          c.name AS customer_name,
+          c.fantasy_name AS customer_fantasy_name,
+          c.phone AS customer_phone,
+          c.address AS customer_address,
+          c.city AS customer_city,
+          c.neighborhood AS customer_neighborhood,
+          'billing_pipeline' AS source
+        FROM billing_pipeline bp
+        LEFT JOIN customers c ON c.id = bp.customer_id
+        WHERE bp.customer_id = ${id} AND bp.stage::text <> 'lixeira'
+        ORDER BY bp.created_at DESC
+        LIMIT 1
+      `);
+
+      if (pipelineResult.rows && pipelineResult.rows.length > 0) {
+        const order = pipelineResult.rows[0] as any;
+        let products = order.products;
+        if (typeof products === 'string') {
+          try { products = JSON.parse(products); } catch { products = []; }
+        }
+        // Mapeia a etapa do pipeline para os status que a ficha entende.
+        const stageToStatus: Record<string, string> = { entregue: 'delivered' };
+        return res.json({
+          hasOrder: true,
+          ...order,
+          status: stageToStatus[String(order.stage)] || order.stage,
+          products: Array.isArray(products) ? products : []
+        });
+      }
+
+      // Fallback: ultimo pedido do cliente através do sales_card (pedidos internos)
       const orderHistoryResult = await db.execute(sql`
         SELECT 
           oh.id,
