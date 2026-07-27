@@ -91,6 +91,16 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
 // O porteiro shouldRespondNow aplica a regra de takeover: se ligada e a IA ainda não assumiu,
 // espera o humano (o sweep assume em X min); se a IA já assumiu, responde na hora.
 // maybeRunAgent reaplica canal/modo/allowlist/paused — cliente real protegido em modo test.
+// Aplica a etiqueta "Atendimento IA" na conversa (sem remover as outras) quando a IA assume.
+async function marcarEtiquetaIA(conversationId: string): Promise<void> {
+  try {
+    await db.execute(sql`
+      INSERT INTO chat_conversation_labels (conversation_id, label_id)
+      SELECT ${conversationId}, id FROM chat_labels WHERE name = 'Atendimento IA' LIMIT 1
+      ON CONFLICT DO NOTHING`);
+  } catch (e: any) { console.error('[IA-ETIQUETA]', e?.message || e); }
+}
+
 export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
   try {
     if (!incomingText || !incomingText.trim()) return;
@@ -104,6 +114,7 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       sendText: (to: string, text: string) => replyVia(conversationId, to, text),
       channel: 'whatsapp',
     });
+    await marcarEtiquetaIA(conversationId);
   } catch (e: any) { console.error('[IA-REACTIVE]', e?.message || e); }
 }
 
@@ -160,6 +171,7 @@ export async function takeoverTick(force = false): Promise<{ ran: boolean; reaso
         sendText: (to: string, text: string) => replyVia(row.id, to, text),
         channel: 'whatsapp',
       });
+      await marcarEtiquetaIA(row.id);
       assumidas++;
       detalhes.push({ conv: row.id });
       console.log(`[IA-TAKEOVER] conv=${row.id} assumida (mode=${mode})`);
