@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import ChatAISettings from "@/pages/ChatAISettings";
 
 type Agente = {
   id: string;
@@ -773,6 +774,16 @@ export default function AgentesIA() {
           recebe é a BASE_COMUM + o bloco do agente. Edição salva direto no banco (sem deploy).
         </p>
       </div>
+
+  {/* Configurações do ChatGPT (atendimento automático) — estrutura completa embutida */}
+      <details open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
+          🧠 Configurações do ChatGPT (atendimento automático) — mostrar/ocultar
+        </summary>
+        <div className="mt-2">
+          <ChatAISettings />
+        </div>
+      </details>
 
   {/* Disparos 1841 — agora ACIMA, com mostrar/ocultar */}
       <details>
