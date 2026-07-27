@@ -1970,6 +1970,7 @@ export default function RotaDoDia() {
                           )}
                           {/* 📋 Solicitar Alteração */}
                           <ChangeRequestControl
+                            fullRow
                             entityType={isLead ? 'lead' : 'customer'}
                             entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
                             customerId={visit.customerId}
@@ -2204,6 +2205,7 @@ export default function RotaDoDia() {
                                 {/* 📋 Solicitar Alteração */}
                                 {visit.customerId && (
                                   <ChangeRequestControl
+                                    fullRow
                                     entityType="customer"
                                     entityId={String(visit.customerId)}
                                     customerId={visit.customerId}
@@ -2436,7 +2438,7 @@ export default function RotaDoDia() {
                         {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
                       {/* Botões só para repescagem que caiu no telemarketing */}
                       {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                         <Button
@@ -2490,6 +2492,7 @@ export default function RotaDoDia() {
                       )}
                       {/* 📋 Solicitar Alteração */}
                       <ChangeRequestControl
+                        fullRow
                         entityType="repescagem"
                         entityId={String(r.assignmentId)}
                         customerId={r.customerId}
