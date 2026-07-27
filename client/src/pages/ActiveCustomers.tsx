@@ -1424,7 +1424,7 @@ export default function ActiveCustomers() {
           </div>
 
           {/* Legenda das marcações visuais da lista */}
-          <details open className="rounded-lg border bg-muted/30 px-3 py-2">
+          <details className="rounded-lg border bg-muted/30 px-3 py-2">
             <summary className="cursor-pointer select-none text-sm font-semibold text-foreground">
               Legenda das marcações
             </summary>
