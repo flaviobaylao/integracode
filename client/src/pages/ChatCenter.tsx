@@ -1510,18 +1510,6 @@ function ChatCenterInner() {
           </div>
           <div className="flex gap-3">
             {isAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setLocation('/telemarketing/ai-settings')}
-                className="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
-                data-testid="button-ai-settings"
-              >
-                <Bot className="h-4 w-4" />
-                Configurar IA
-              </Button>
-            )}
-            {isAdmin && (
               <div className="flex items-center gap-2">
                 <Button
                   onClick={() => syncAgentsMutation.mutate()}
