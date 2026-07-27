@@ -1534,7 +1534,7 @@ export default function ActiveCustomers() {
                             className="flex items-center gap-1 hover:text-primary transition-colors"
                             data-testid="sort-name"
                           >
-                            Nome
+                            Nome Fantasia
                             {sortColumn === 'name' ? (
                               sortDirection === 'desc' ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />
                             ) : (
@@ -1647,9 +1647,9 @@ export default function ActiveCustomers() {
                                 )}
                                 <SobDelegacaoBadge show={delegMarks.has(((ac.customer as any)?.id ?? ac.customerId) as string)} />
                               </div>
-                              {ac.customer?.address && (
-                                <div className="text-xs text-muted-foreground truncate max-w-[200px]">
-                                  {ac.customer.neighborhood}
+                              {(ac.customer as any)?.companyName && (
+                                <div className="text-xs text-muted-foreground truncate max-w-[220px]" title={(ac.customer as any).companyName}>
+                                  {(ac.customer as any).companyName}
                                 </div>
                               )}
                             </TableCell>
