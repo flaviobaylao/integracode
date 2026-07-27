@@ -833,6 +833,22 @@ export default function AgentesIA() {
         </Card>
       </details>
 
+      {/* Correcao Profissional por usuario (telemarketing) */}
+      <details open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
+          ✍️ Correcao Profissional (por usuario telemarketing) — mostrar/ocultar
+        </summary>
+        <Card className="mt-2">
+          <CardContent>
+            <iframe
+              src="/api/admin/polish/painel"
+              style={{ width: "100%", height: "620px", border: 0, borderRadius: 12 }}
+              title="Painel de Correcao Profissional"
+            />
+          </CardContent>
+        </Card>
+      </details>
+
       {/* Notificações (Automações de Comunicação) — gestão completa */}
       <details>
         <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
