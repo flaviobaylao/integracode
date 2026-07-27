@@ -105,34 +105,6 @@ export function computeCycles(dows: number[], periodicity: string, saleDates: Se
   });
 }
 
-export type CycleState = 'green' | 'yellow' | 'red';
-export type Cycle3 = { anchor: string; start: string; end: string; state: CycleState; isPast: boolean };
-
-// Variante tri-estado usada na coluna "Efetividade em vendas" do Resumo de Visitas.
-//   VERDE   = houve FATURAMENTO no ciclo (data em billedDates).
-//   AMARELO = houve PEDIDO IMPLANTADO no ciclo, ainda sem faturamento (data em implantedDates).
-//   VERMELHO= nao houve nada no ciclo.
-// Observacao: nao altera computeCycles/evaluateRepescagem (regra da repescagem intacta).
-export function computeCyclesTri(
-  dows: number[], periodicity: string, billedDates: Set<string>, implantedDates: Set<string>, todayStr: string, n: number,
-): Cycle3[] {
-  if (dows.length === 0) return [];
-  const periodDays = CYCLE_PERIODICITY_DAYS[String(periodicity || 'semanal').toLowerCase()] || 7;
-  const lookbackDays = n * periodDays + 21;
-  const startScan = iso(new Date(mkUTC(todayStr).getTime() - lookbackDays * 864e5));
-  const anchors: string[] = [];
-  { const d = mkUTC(startScan); const end = mkUTC(todayStr);
-    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
-  const lastN = anchors.slice(-n);
-  return lastN.map(anchor => {
-    const { start, end } = cycleWindow(anchor, periodicity);
-    const state: CycleState = saleInWindow(billedDates, start, end)
-      ? 'green'
-      : saleInWindow(implantedDates, start, end) ? 'yellow' : 'red';
-    return { anchor, start, end, state, isPast: anchor < todayStr };
-  });
-}
-
 // Avalia a regra de repescagem a partir dos ciclos. Retorna null se NAO cai,
 // ou { lastRedDate, reason, phaseKind } se cai/deve notificar.
 // kind: 'repescagem' (cai na lista) — usado pelo gatilho.
