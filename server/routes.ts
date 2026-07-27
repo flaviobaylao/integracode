@@ -27186,6 +27186,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Correção ADMIN de um registro da lista de Clientes Ativos (document / customerId / nome / tipo).
+  // Necessário para consertar linhas "manual-add" corrompidas (ex.: ligadas a um cliente que foi
+  // apagado), que não têm outra via de edição/remoção pela aplicação. Só admin.
+  app.patch('/api/active-customers/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const body = req.body || {};
+      const patch: any = {};
+      if (body.document !== undefined) patch.document = String(body.document).replace(/\D/g, '');
+      if (body.documentType !== undefined) patch.documentType = String(body.documentType);
+      if (body.fantasyNameImported !== undefined) patch.fantasyNameImported = body.fantasyNameImported;
+      if (body.customerId !== undefined) { patch.customerId = body.customerId; patch.matchStatus = 'matched'; }
+      if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ message: 'Nenhum campo para atualizar (document, documentType, customerId, fantasyNameImported, isActive).' });
+      }
+      const updated = await storage.updateActiveCustomer(id, patch);
+      if (!updated) return res.status(404).json({ message: 'Registro de cliente ativo não encontrado' });
+      res.json({ message: 'Registro atualizado', activeCustomer: updated });
+    } catch (error: any) {
+      console.error('Erro ao corrigir active-customer:', error?.message || error);
+      res.status(500).json({ message: 'Erro ao corrigir registro', error: String(error?.message || error) });
+    }
+  });
+
   // Reconciliar clientes não vinculados (admin only)
   app.post('/api/active-customers/reconcile', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
