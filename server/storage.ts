@@ -6172,6 +6172,11 @@ export class DatabaseStorage implements IStorage {
         )
         .returning();
       
+      // 🏷️ Remove as etiquetas (inclui a etiqueta pessoal do atendente) das conversas finalizadas por inatividade
+      for (const conv of result) {
+        try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conv.id}`); } catch (e: any) { console.warn('⚠️ [AUTO-LABEL] erro ao limpar etiquetas na auto-finalização:', e?.message || e); }
+      }
+      
       if (result.length > 0) {
         console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade (${timeoutMinutes} min)`);
         result.forEach(conv => {
