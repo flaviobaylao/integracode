@@ -2374,6 +2374,12 @@ export default function RotaDoDia() {
                         <MapPin className="h-3 w-3" />
                         {r.address || 'Endereço não informado'}
                       </p>
+                      {(customerInfo?.phones?.[r.customerId] || (r as any).phone) && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-1">
+                          <Phone className="h-3 w-3" />
+                          {customerInfo?.phones?.[r.customerId] || (r as any).phone}
+                        </p>
+                      )}
                       {r.customerId && (
                         <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
                           🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
