@@ -6139,11 +6139,8 @@ export function registerChatRoutes(app: Express): void {
     try {
       const raw = String(req.body?.text ?? '').trim();
       if (raw.length < 3) return res.json({ polished: raw });
-      if (!process.env.OPENAI_API_KEY) return res.json({ polished: raw });
-      const OpenAI = (await import('openai')).default;
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      let model = 'gpt-4o-mini';
-      try { const st: any = await storage.getChatAiSettings(); if (st?.gptModel) model = st.gptModel; } catch {}
+      if (!process.env.ANTHROPIC_API_KEY) return res.json({ polished: raw });
+      const model = 'claude-haiku-4-5';
       const sys = [
         'Você reescreve mensagens de atendimento e vendas via WhatsApp para ficarem profissionais, objetivas e cordiais, com ortografia e gramática corretas em português do Brasil.',
         'REGRAS OBRIGATÓRIAS:',
@@ -6153,13 +6150,13 @@ export function registerChatRoutes(app: Express): void {
         '- Tom humano e cordial, nunca robótico.',
         '- Responda SOMENTE com o texto final reescrito, sem aspas e sem explicações.'
       ].join('\n');
-      const completion = await openai.chat.completions.create({
-        model,
-        temperature: 0.3,
-        max_tokens: 600,
-        messages: [ { role: 'system', content: sys }, { role: 'user', content: raw } ]
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model, max_tokens: 600, temperature: 0.3, system: sys, messages: [ { role: 'user', content: raw } ] }),
       });
-      const polished = String(completion.choices?.[0]?.message?.content || '').trim();
+      const data: any = await resp.json();
+      const polished = String((Array.isArray(data?.content) ? data.content.map((b: any) => b?.text || '').join('') : '') || '').trim();
       return res.json({ polished: polished || raw });
     } catch (e: any) {
       console.warn('[POLISH] erro ao aprimorar mensagem:', e?.message || e);
