@@ -363,29 +363,19 @@ export default function Dashboard() {
   const aFaturar: any[] = ov.aFaturar || ov.unbilled || [];
   const nfsHoje: any[] = ov.nfsHoje || ov.todayInvoices || [];
   // Relacao de clientes faturados no DIA (mesma composicao do card Vendas Hoje: a faturar + NFs de hoje).
+  const faturadosDia: any[] = ov.faturadosDia || [];
+  const faturadosSemana: any[] = ov.faturadosSemana || [];
   const billedDay = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const x of aFaturar) { const n = x.customer_name || x.customerName || "-"; m.set(n, (m.get(n) || 0) + (Number(x.sale_value) || 0)); }
-    for (const x of nfsHoje) { const n = x.customer_name || x.customerName || "-"; m.set(n, (m.get(n) || 0) + (Number(x.total_invoice) || 0)); }
-    const arr = [...m.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    const total = arr.reduce((acc, [, v]) => acc + v, 0);
-    return { list: arr.map(([n, v]) => n + " - " + brl(v)), total };
-  }, [aFaturar, nfsHoje]);
+    const arr = faturadosDia.map((x: any) => ({ n: x.customer_name || "-", v: Number(x.total) || 0 })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+    const total = arr.reduce((acc, x) => acc + x.v, 0);
+    return { list: arr.map((x) => x.n + " - " + brl(x.v)), total };
+  }, [faturadosDia]);
   // Relacao de clientes faturados na SEMANA vigente (billing_pipeline via visitSummary).
   const billedWeek = useMemo(() => {
-    const rows = data?.visitSummary?.rows;
-    const m = new Map<string, number>();
-    if (Array.isArray(rows)) {
-      for (const N of rows) {
-        let v = 0;
-        for (const vis of N.visits || []) { if (vis.hasOrder && vis.date >= weekStartISO) v += Number(vis.orderValue) || 0; }
-        if (v > 0) { const n = N.customerName || "-"; m.set(n, (m.get(n) || 0) + v); }
-      }
-    }
-    const arr = [...m.entries()].sort((a, b) => b[1] - a[1]);
-    const total = arr.reduce((acc, [, v]) => acc + v, 0);
-    return { list: arr.map(([n, v]) => n + " - " + brl(v)), total };
-  }, [data, weekStartISO]);
+    const arr = faturadosSemana.map((x: any) => ({ n: x.customer_name || "-", v: Number(x.total) || 0 })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+    const total = arr.reduce((acc, x) => acc + x.v, 0);
+    return { list: arr.map((x) => x.n + " - " + brl(x.v)), total };
+  }, [faturadosSemana]);
 
   // Filtro de vendedor do card "Pedidos e Notas Fiscais" (aplica nas 3 colunas).
   const matchSeller = (x: any) => multiMatch(pnfSeller, resolveSeller(x.seller_name || x.sellerName || x.seller_id || ""));
