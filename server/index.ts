@@ -8,6 +8,7 @@ import { registerPolishGestao } from "./polish-gestao";
 import { registerCommunicationAutomationsRoutes } from "./communication-automations-routes";
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
 import { registerDelegationRoutes } from "./delegations-routes";
+import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerHotsitePix } from "./hotsite-pix";
 import { registerHotsiteCard } from "./hotsite-card";
 import { registerPaymentLink } from "./payment-link";
@@ -310,6 +311,7 @@ run();
   registerInstagram(app);
   registerLeadCapture(app);
   registerDelegationRoutes(app);
+  registerChangeRequestsRoutes(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
   app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
