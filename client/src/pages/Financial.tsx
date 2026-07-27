@@ -102,12 +102,18 @@ function formatDateTime(date: string | null | undefined) {
   return new Date(date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-// Vencido por DIA-CALENDÁRIO (fuso Brasil): só atrasa DEPOIS que o dia do vencimento passa.
-// Vence HOJE não é atrasado (antes comparava o instante e marcava vencido no mesmo dia).
+// Vencido por DIA-CALENDÁRIO: só atrasa DEPOIS que o dia do vencimento passa.
+// ATENÇÃO ao fuso: o vencimento é uma DATA DE CALENDÁRIO gravada como MEIA-NOITE UTC
+// (por isso o formatDate acima renderiza com timeZone:'UTC'). Ler o vencimento em
+// America/Sao_Paulo (UTC-3) puxava o dia para trás — 2026-07-27T00:00Z virava 26/07 —
+// e marcava como "Vencida" TODA conta que vence HOJE, contradizendo a própria coluna
+// "Vencimento" da tabela. Régua correta: vencimento lido em UTC (o dia que a tela
+// mostra) x HOJE no fuso Brasil. Vence HOJE (ou no futuro) NUNCA é vencida.
 function isOverdueByDate(dueDate?: string) {
   if (!dueDate) return false;
-  const opts = { timeZone: 'America/Sao_Paulo' } as const;
-  return new Date(dueDate).toLocaleDateString('en-CA', opts) < new Date().toLocaleDateString('en-CA', opts);
+  const venc = new Date(dueDate).toLocaleDateString('en-CA', { timeZone: 'UTC' });
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  return venc < hoje;
 }
 
 function getReceivableStatusBadge(status: string, dueDate?: string) {
