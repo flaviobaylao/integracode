@@ -264,9 +264,13 @@ export default function AcessosEDelegacoes() {
             />
             {(() => {
               const q = buscaUser.trim().toLowerCase();
-              const lista = activeUsers.filter(u =>
-                !q || `${u.firstName || ""} ${u.lastName || ""} ${ROLE_LABEL[u.role || ""] || ""}`.toLowerCase().includes(q)
-              );
+              // Lista apenas usuários ATIVOS que são Vendedores (mesmos papéis da tela
+              // "Vendedores": vendedor + telemarketing).
+              const lista = activeUsers
+                .filter(u => ["vendedor", "telemarketing"].includes(u.role || ""))
+                .filter(u =>
+                  !q || `${u.firstName || ""} ${u.lastName || ""} ${ROLE_LABEL[u.role || ""] || ""}`.toLowerCase().includes(q)
+                );
               return (
                 <div className="space-y-1 max-h-[560px] overflow-y-auto">
                   {lista.length === 0 && <p className="text-xs text-gray-400 px-1 py-2">Nenhum usuário encontrado.</p>}
