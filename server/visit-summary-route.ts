@@ -37,18 +37,16 @@ export function registerVisitSummary(app: Express) {
       const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
-      // VENDAS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
-      // Combina pipeline 'venda' + faturamentos com valor>0 (mesma base do gatilho de repescagem).
+      // FATURAMENTOS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
+      // VERDE = houve FATURAMENTO no ciclo. Data de faturamento = data em que o card do pipeline chegou
+      // a etapa 'faturado' (changedAt no stage_history). Somente INTEGRA 2.0 (sem Omie). O changedAt e
+      // gravado em horario de Sao Paulo (naive ou rotulado Z), entao usamos os 10 primeiros chars (data).
       const saleStart = dAdd(todayStr, -130);
       const saleDatesByCustomer = new Map<string, Set<string>>();
       const addSale = (cid: any, d: any) => { if (!cid || !d) return; let s = saleDatesByCustomer.get(cid); if (!s) { s = new Set(); saleDatesByCustomer.set(cid, s); } s.add(d); };
       try {
-        const salesP = await q(`SELECT customer_id, DATE(COALESCE(scheduled_billing_date::timestamp, created_at))::text AS d FROM billing_pipeline WHERE LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND customer_id IS NOT NULL AND DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) BETWEEN '${saleStart}' AND '${todayStr}'`);
-        for (const r of salesP) addSale(r.customer_id, r.d);
-      } catch (e) { /* ignora */ }
-      try {
-        const salesB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, DATE(COALESCE(order_date, invoice_date))::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND DATE(COALESCE(order_date, invoice_date)) BETWEEN '${saleStart}' AND '${todayStr}'`);
-        for (const r of salesB) addSale(r.customer_id, r.d);
+        const salesF = await q(`SELECT bp.customer_id AS customer_id, LEFT(elem->>'changedAt', 10) AS d FROM billing_pipeline bp CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(bp.stage_history)='array' THEN bp.stage_history ELSE '[]'::jsonb END) AS elem WHERE bp.customer_id IS NOT NULL AND LOWER(COALESCE(NULLIF(bp.operation_type::text,''),'venda'))='venda' AND elem->>'stage'='faturado' AND elem->>'changedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND LEFT(elem->>'changedAt', 10) BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of salesF) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
