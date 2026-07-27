@@ -429,6 +429,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
+      { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: null },
       ],
     },
   ];
@@ -546,6 +547,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
+    if (itemId === 'solicitacoes-alteracao') { navigate('/admin/solicitacoes-alteracao'); return; }
 
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
