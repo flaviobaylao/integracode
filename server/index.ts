@@ -190,6 +190,10 @@ run();
       await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
       await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_repescagem_assign_draw ON repescagem_assignments(draw_date)"));
       await db.execute(sql.raw("ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS check_in_notes text"));
+      // Prioridade do card na roteirização (checkbox nas etapas "Aguardando Rota").
+      // ⚠️ Coluna adicionada ao schema drizzle → o ALTER PRECISA ficar aqui no boot,
+      // senão todo SELECT de billing_pipeline quebra entre o deploy e o ALTER.
+      await db.execute(sql.raw("ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false"));
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinates_locked boolean NOT NULL DEFAULT false"));
       // Fluxo de retorno de lead (15 dias): colunas de controle (aditivas, idempotentes).
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS original_return_date timestamp"));

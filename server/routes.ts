@@ -13241,7 +13241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.exclusive_vehicle as "exclusiveVehicle",
           c.vehicle_types as "vehicleTypes",
           COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-          false as "isUrgent",
+          COALESCE(bp.is_priority, false) as "isUrgent",
           bp.sale_value as "saleValue",
           bp.products,
           bp.created_at as "scheduledDate",

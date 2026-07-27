@@ -64,6 +64,7 @@ export interface RouteStop {
   estimatedServiceTime: number; // em minutos
   stopOrder: number;
   distanceFromPrevious: number;
+  isUrgent?: boolean; // prioridade marcada no card do pipeline
 }
 
 export interface VehicleRoute {
@@ -682,7 +683,8 @@ export async function optimizeVehicleRoutes(
         estimatedDeparture: departureStr,
         estimatedServiceTime: serviceTime,
         stopOrder: i + 1,
-        distanceFromPrevious: distanceFromPrevious
+        distanceFromPrevious: distanceFromPrevious,
+        isUrgent: order.isUrgent === true
       });
 
       currentTime = departureTime;

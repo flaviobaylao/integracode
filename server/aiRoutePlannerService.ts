@@ -181,7 +181,7 @@ OBJETIVO, nesta ordem de importância:
 1. Nenhuma restrição dura violada.
 2. Cada veículo atende uma REGIÃO COESA (pedidos vizinhos entre si, mesmo setor), para minimizar quilometragem. Evite rotas que se cruzam.
 3. Carga equilibrada entre os motoristas — mas SEM quebrar a coesão do item 2. Uma diferença de até ~30% no nº de entregas é aceitável se isso mantém cada motorista na sua região. NÃO divida uma região só para deixar a contagem igual.
-4. Pedidos urgentes e clientes com janela de horário apertada em veículos com folga.
+4. Pedidos marcados PRIORIDADE e clientes com janela de horário apertada em veículos com folga — a prioridade foi marcada à mão pela operação e o algoritmo já os coloca no início da rota do motorista.
 
 REGRA DE VIZINHANÇA (importante):
 - Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura que impeça.
@@ -298,7 +298,7 @@ function buildBriefing(
     if (o.exclusiveVehicle && Array.isArray(o.vehicleTypes) && o.vehicleTypes.length > 0) {
       partes.push(`veíc: ${o.vehicleTypes.join('/')}`);
     }
-    if (o.isUrgent) partes.push('URGENTE');
+    if (o.isUrgent) partes.push('PRIORIDADE');
     const slots = Array.isArray(o.deliveryTimeSlots) ? o.deliveryTimeSlots.filter(Boolean) : [];
     if (slots.length) partes.push(`janela ${slots.join(',')}`);
     const rw = weekdaysToText(o.receivingWeekdays);

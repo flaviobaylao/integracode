@@ -1595,6 +1595,53 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Delete item from pipeline
+  // ==========================================================================
+  // PRIORIDADE NA ROTEIRIZAÇÃO
+  // Marcada no card enquanto ele aguarda rota. Vira `isUrgent` no planejamento
+  // (o pedido é atribuído primeiro e vai para o início da rota do motorista) e
+  // `is_priority` na parada salva, que o app do entregador destaca.
+  // ==========================================================================
+  const STAGES_PRIORIZAVEIS = ['aguardando_rota', 'aguardando_rota_bsb', 'impresso', 'bsb'];
+
+  app.patch('/api/billing-pipeline/:id/priority', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const isPriority = req.body?.isPriority === true;
+      const q: any = await db.execute(sql`SELECT stage FROM billing_pipeline WHERE id = ${req.params.id} LIMIT 1`);
+      const row = (q?.rows || [])[0];
+      if (!row) return res.status(404).json({ message: 'Card não encontrado' });
+      if (isPriority && !STAGES_PRIORIZAVEIS.includes(String(row.stage))) {
+        return res.status(400).json({ message: 'A prioridade só pode ser marcada em pedidos aguardando rota.' });
+      }
+      await db.execute(sql`UPDATE billing_pipeline SET is_priority = ${isPriority}, updated_at = NOW() WHERE id = ${req.params.id}`);
+      const user = req.currentUser || req.user;
+      console.log(`${isPriority ? '⭐' : '☆'} [PRIORIDADE] Card ${req.params.id} → ${isPriority ? 'prioritário' : 'normal'} (${user?.email || '?'})`);
+      res.json({ ok: true, id: req.params.id, isPriority });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post('/api/billing-pipeline/batch/priority', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+      const isPriority = req.body?.isPriority === true;
+      if (!ids.length) return res.status(400).json({ message: 'ids obrigatórios' });
+      const filtroEtapa = isPriority
+        ? sql` AND stage IN (${sql.join(STAGES_PRIORIZAVEIS.map((st) => sql`${st}`), sql`, `)})`
+        : sql``;
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline SET is_priority = ${isPriority}, updated_at = NOW()
+        WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})${filtroEtapa}
+      `);
+      const updated = r?.rowCount ?? r?.rows?.length ?? 0;
+      const user = req.currentUser || req.user;
+      console.log(`${isPriority ? '⭐' : '☆'} [PRIORIDADE] ${updated}/${ids.length} card(s) → ${isPriority ? 'prioritário' : 'normal'} (${user?.email || '?'})`);
+      res.json({ ok: true, updated, total: ids.length, ignorados: ids.length - updated });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.delete('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       await ensureLixeiraStage();
