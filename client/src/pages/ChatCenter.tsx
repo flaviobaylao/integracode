@@ -1989,17 +1989,6 @@ function ChatCenterInner() {
                             </Tooltip>
                           </TooltipProvider>
                         </div>
-                        {waChannels.length > 0 && (() => {
-                          const curPhone = selectedChat.channelPhone ? String(selectedChat.channelPhone).replace(/\D/g, '') : "5562992682630";
-                          const cur = waChannels.find((c) => c.phone === curPhone);
-                          const label = cur ? `${cur.nome || cur.phone}${cur.oficial ? ' (oficial)' : cur.reserva ? ' (reserva)' : ''}` : curPhone;
-                          return (
-                            <div className="flex items-center gap-2 mt-2 text-xs text-gray-600" title="Canal usado nesta conversa — o controle fica no painel de Gestão de Canais">
-                              <span>📡 Canal:</span>
-                              <span className="font-medium">{label}</span>
-                            </div>
-                          );
-                        })()}
                         <div className="flex items-center gap-2 mt-2 text-xs text-blue-600">
                           <User className="w-3 h-3" />
                           <span>Vendedor: <strong>{displaySellerName}</strong></span>
