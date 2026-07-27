@@ -85,8 +85,8 @@ async function syncClientsFromOmie() {
                 state: converted.state,
                 zipCode: converted.zipCode,
                 sellerId: converted.sellerId || existingCustomer.sellerId, // NUNCA sobrescrever com default
-                isActive: converted.isActive,
-                omieStatus: converted.omieStatus,
+                // DESVINCULADO DO OMIE: não sobrescrever isActive/omieStatus de clientes existentes
+                // (a inativação feita no INTEGRA é permanente e não é revertida pelo sync).
                 situacao: converted.situacao,
                 virtualService: false // IMPORTANTE: Garantir que não seja marcado como virtual
                 // NÃO incluir weekdays/visitPeriodicity na atualização para preservar dados existentes
