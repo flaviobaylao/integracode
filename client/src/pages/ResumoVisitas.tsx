@@ -17,7 +17,7 @@ type Visit = {
   metaValue?: number;
   nextSaleValue?: number;
 };
-type Cycle = { anchor: string; start: string; end: string; green?: boolean; state?: "green" | "yellow" | "red"; isPast: boolean };
+type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean };
 type Row = {
   customerId: string;
   customerName: string;
@@ -137,8 +137,8 @@ export default function ResumoVisitas() {
     const cy = r.cycles || [];
     if (cy.length === 0) return -1;
     let s = 0;
-    for (const c of cy) { const st = c.state || (c.green ? "green" : "red"); s += st === "green" ? 2 : st === "yellow" ? 1 : 0; }
-    return s / (cy.length * 2);
+    for (const c of cy) { s += c.green ? 1 : 0; }
+    return s / cy.length;
   };
 
   const sorted = useMemo(() => {
@@ -251,7 +251,7 @@ export default function ResumoVisitas() {
                 <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
-                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = faturado no pipeline · Amarelo = no pipeline/Bloqueados, sem faturamento · Vermelho = fora do pipeline.">Efetividade em vendas{sortArrow("efet")}</th>
+                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas{sortArrow("efet")}</th>
                 <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 34, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
@@ -267,12 +267,9 @@ export default function ResumoVisitas() {
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.sellerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap", textAlign: "center" }}>
-                      {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => {
-                        const st = cy.state || (cy.green ? "green" : "red");
-                        const bg = st === "green" ? "#22c55e" : st === "yellow" ? "#eab308" : "#ef4444";
-                        const lbl = st === "green" ? "faturado" : st === "yellow" ? "no pipeline/Bloqueados, sem faturamento" : "fora do pipeline";
-                        return <span key={ci} title={`${cy.start} a ${cy.end}: ${lbl}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: bg, marginRight: 3, verticalAlign: "middle" }} />;
-                      }) : <span style={{ color: "#9ca3af" }}>—</span>}
+                      {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => (
+                        <span key={ci} title={`${cy.start} a ${cy.end}: ${cy.green ? "houve venda" : "sem venda"}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: cy.green ? "#22c55e" : "#ef4444", marginRight: 3, verticalAlign: "middle" }} />
+                      )) : <span style={{ color: "#9ca3af" }}>—</span>}
                     </td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.periodicity}</td>
                     {days.map((d) => {
