@@ -17,7 +17,8 @@ import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
-  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe
+  Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe,
+  Star, StarOff
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -31,6 +32,7 @@ interface BillingPipelineItem {
   sellerId: string | null;
   sellerName: string | null;
   stage: string;
+  isPriority?: boolean; // prioridade na roteirização (etapas aguardando rota)
   orderNumber: string | null;
   invoiceNumber: string | null;
   saleValue: string | null;
@@ -90,6 +92,9 @@ const RETURNED_FISCAL = ['returned', 'devolvida', 'devolvido'];
 
 // Etapas cujos cards podem virar entrega (mesma origem usada por getPendingDeliveries no servidor)
 const ROUTABLE_STAGES = new Set(['impresso', 'aguardando_rota', 'aguardando_rota_bsb']);
+
+// Etapas em que faz sentido marcar prioridade de entrega (o pedido ainda vai ser roteirizado)
+const STAGES_PRIORIZAVEIS = new Set(['aguardando_rota', 'aguardando_rota_bsb', 'impresso', 'bsb']);
 
 const CANCELLED_ONLY_FISCAL = ['cancelled', 'canceled', 'cancelada'];
 const RED_FISCAL = [...CANCELLED_ONLY_FISCAL, ...RETURNED_FISCAL];
@@ -575,6 +580,37 @@ export default function BillingPipeline() {
     return selectedItems.filter(i => i.invoiceNumber).length;
   }, [selectedItems]);
 
+  // ⭐ Prioridade na roteirização (só nas etapas que ainda serão roteirizadas)
+  const priorityMutation = useMutation({
+    mutationFn: async ({ id, isPriority }: { id: string; isPriority: boolean }) =>
+      await apiRequest('PATCH', `/api/billing-pipeline/${id}/priority`, { isPriority }),
+    onSuccess: (_d: any, v: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({ title: v.isPriority ? 'Marcado como prioritário' : 'Prioridade removida',
+              description: v.isPriority ? 'Entra primeiro na próxima roteirização.' : undefined });
+    },
+    onError: (e: any) => toast({ title: 'Erro ao alterar prioridade', description: e?.message, variant: 'destructive' }),
+  });
+
+  const batchPriorityMutation = useMutation({
+    mutationFn: async ({ ids, isPriority }: { ids: string[]; isPriority: boolean }) =>
+      await apiRequest('POST', '/api/billing-pipeline/batch/priority', { ids, isPriority }),
+    onSuccess: (d: any, v: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      toast({
+        title: v.isPriority ? `${d?.updated || 0} pedido(s) priorizado(s)` : `${d?.updated || 0} pedido(s) sem prioridade`,
+        description: d?.ignorados ? `${d.ignorados} ignorado(s) por não estarem aguardando rota.` : undefined,
+      });
+      clearSelection();
+    },
+    onError: (e: any) => toast({ title: 'Erro ao alterar prioridade', description: e?.message, variant: 'destructive' }),
+  });
+
+  const priorizaveisSelecionados = useMemo(
+    () => selectedItems.filter((i: any) => STAGES_PRIORIZAVEIS.has(i.stage)).map((i: any) => i.id),
+    [selectedItems]
+  );
+
   // 🚚 Roteirização com IA a partir do Pipeline (cards em Impresso / Aguardando Rota / Ag. Rota BSB)
   const [routePlannerOpen, setRoutePlannerOpen] = useState(false);
   const routableSelectedIds = useMemo(
@@ -934,6 +970,32 @@ export default function BillingPipeline() {
                 );
               })}
               <div className="w-px h-6 bg-gray-300 mx-1" />
+              {priorizaveisSelecionados.length > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs h-7 border-amber-400 text-amber-700 hover:bg-amber-50"
+                    onClick={() => batchPriorityMutation.mutate({ ids: priorizaveisSelecionados, isPriority: true })}
+                    disabled={batchPriorityMutation.isPending}
+                    title="Priorizar estas entregas na próxima roteirização"
+                  >
+                    <Star className="h-3 w-3 mr-1" />
+                    Priorizar ({priorizaveisSelecionados.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs h-7"
+                    onClick={() => batchPriorityMutation.mutate({ ids: priorizaveisSelecionados, isPriority: false })}
+                    disabled={batchPriorityMutation.isPending}
+                    title="Remover a prioridade destas entregas"
+                  >
+                    <StarOff className="h-3 w-3 mr-1" />
+                    Tirar prioridade
+                  </Button>
+                </>
+              )}
               {routableSelectedIds.length > 0 && (
                 <Button
                   size="sm"
@@ -1129,6 +1191,8 @@ export default function BillingPipeline() {
                       }}
                       isBlocking={blockOrderMutation.isPending}
                       canEdit={canEdit}
+                      canPriority={canEdit && STAGES_PRIORIZAVEIS.has(item.stage)}
+                      onTogglePriority={() => priorityMutation.mutate({ id: item.id, isPriority: !item.isPriority })}
                     />
                   ))}
                 </div>
@@ -1571,6 +1635,8 @@ function KanbanCard({
   onBlock,
   isBlocking,
   canEdit = true,
+  canPriority = false,
+  onTogglePriority,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -1589,6 +1655,8 @@ function KanbanCard({
   onBlock?: () => void;
   isBlocking?: boolean;
   canEdit?: boolean;
+  canPriority?: boolean;
+  onTogglePriority?: () => void;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
@@ -1608,7 +1676,7 @@ function KanbanCard({
           : '';
   return (
     <Card
-      className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${statusBg}`}
+      className={`shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${statusBg} ${item.isPriority ? 'ring-2 ring-amber-400' : ''}`}
       style={{ borderLeftColor: `var(--${stage.key}-color, #6b7280)` }}
       onClick={onViewDetail}
     >
@@ -1631,6 +1699,15 @@ function KanbanCard({
               </p>
             )}
           </div>
+          {canPriority && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onTogglePriority?.(); }}
+              className={item.isPriority ? 'text-amber-500 hover:text-amber-600' : 'text-gray-300 hover:text-amber-500'}
+              title={item.isPriority ? 'Prioritário na roteirização — clique para remover' : 'Marcar como prioritário na roteirização'}
+            >
+              <Star className="h-4 w-4" fill={item.isPriority ? 'currentColor' : 'none'} />
+            </button>
+          )}
           <button onClick={(e) => { e.stopPropagation(); onViewDetail(); }} className="text-gray-400 hover:text-gray-600">
             <Eye className="h-4 w-4" />
           </button>
@@ -1649,6 +1726,12 @@ function KanbanCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          {item.isPriority && (
+            <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50 font-semibold" title="Entra primeiro na roteirização">
+              <Star className="h-2.5 w-2.5 mr-0.5" fill="currentColor" />
+              PRIORIDADE
+            </Badge>
+          )}
           {item.source === 'hotsite' && (
             <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-700 bg-orange-50" title="Pedido recebido pelo Hotsite (loja online)">
               <Globe className="h-2.5 w-2.5 mr-0.5" />
