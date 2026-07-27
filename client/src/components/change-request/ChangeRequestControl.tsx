@@ -95,10 +95,12 @@ interface ControlProps {
   sellerName?: string | null;
   state?: ChangeRequestState;
   className?: string;
+  /** quando true, o gatilho vai para uma linha própria (abaixo dos ícones), alinhado à direita */
+  fullRow?: boolean;
 }
 
 export function ChangeRequestControl(props: ControlProps) {
-  const { entityType, entityId, customerId, entityName, sellerId, sellerName, state, className } = props;
+  const { entityType, entityId, customerId, entityName, sellerId, sellerName, state, className, fullRow } = props;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -199,21 +201,21 @@ export function ChangeRequestControl(props: ControlProps) {
   } else {
     trigger = (
       <Button
-        size="icon"
-        variant="ghost"
-        className={`h-8 w-8 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 ${className || ""}`}
+        size="sm"
+        variant="outline"
+        className={`h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800 ${className || ""}`}
         onClick={(e) => { stop(e); setOpen(true); }}
         title="Solicitar Alteração"
         data-testid={`button-cr-open-${entityId}`}
       >
-        <ClipboardList className="h-4 w-4" />
+        <ClipboardList className="h-3.5 w-3.5" /> Solicitar Alteração
       </Button>
     );
   }
 
   return (
     <>
-      {trigger}
+      {fullRow ? <div className="basis-full w-full flex justify-end mt-1">{trigger}</div> : trigger}
 
       {/* Modal de nova solicitação */}
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm(); }}>
