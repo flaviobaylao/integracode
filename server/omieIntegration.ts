@@ -3628,8 +3628,9 @@ export class OmieService {
                     state: converted.state,
                     zipCode: converted.zipCode,
                     sellerId: finalSellerId,
-                    isActive: converted.isActive,
-                    omieStatus: converted.omieStatus,
+                    // DESVINCULADO DO OMIE (Flavio): isActive/omieStatus são geridos SOMENTE no INTEGRA.
+                    // O sync NÃO reativa nem sobrescreve o status de clientes existentes — a inativação
+                    // feita no INTEGRA é permanente e não é revertida pela sincronização do Omie.
                     situacao: converted.situacao,
                     omieInstanceId: existingCustomer.omieInstanceId || this.omieInstanceId || undefined
                   });
