@@ -280,4 +280,32 @@ export function registerChangeRequestsRoutes(app: Express) {
     const resp = await client.audio.transcriptions.create({ file: fileArg, model: "whisper-1", language: "pt" });
     res.json({ text: resp && resp.text ? String(resp.text).trim() : "" });
   }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/admin/clientes-reativados — VARREDURA (admin, somente leitura):
+  //   clientes que foram INATIVADOS no histórico (customer_change_history:
+  //   Ativo -> Não) mas que HOJE estão ATIVOS (reativados pelo sync antigo do Omie,
+  //   antes do desvinculo). Serve para reinativar em lote.
+  // --------------------------------------------------------------------------
+  app.get("/api/admin/clientes-reativados", authenticateUser, requireRole(["admin"]), safe(async (_req, res) => {
+    const rows = rowsOf(await db.execute(sql`
+      SELECT c.id,
+             COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
+             c.cpf, c.cnpj, c.omie_status, c.seller_id,
+             MAX(h.created_at) AS ultima_inativacao,
+             COUNT(*) AS eventos_inativacao
+      FROM customers c
+      JOIN customer_change_history h ON h.customer_id = c.id
+      WHERE h.field = 'isActive' AND h.new_value = 'Não' AND c.is_active = true
+      GROUP BY c.id, nome, c.cpf, c.cnpj, c.omie_status, c.seller_id
+      ORDER BY ultima_inativacao DESC`));
+    res.json({
+      total: rows.length,
+      clientes: rows.map((r: any) => ({
+        id: r.id, nome: r.nome, cpf: r.cpf, cnpj: r.cnpj,
+        omieStatus: r.omie_status, sellerId: r.seller_id,
+        ultimaInativacao: r.ultima_inativacao, eventosInativacao: Number(r.eventos_inativacao) || 0,
+      })),
+    });
+  }));
 }
