@@ -57,8 +57,26 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
 //   - a IA precisa estar LIGADA naquele canal (ia_canal_<n>; mesmas chaves do painel Fase 1);
 //   - precisa estar DENTRO DO HORÁRIO de atividade (dias + início/fim, fuso de Brasília).
 // Fora do horário: envia o aviso automático 1x (throttle de 4h por conversa) e NÃO aciona a IA.
+// A conversa e com um FUNCIONARIO (vendedor/telemarketing/admin/etc.)? Se sim, a IA NAO atende —
+// evita a IA responder os proprios vendedores/admins que recebem avisos de gestao no WhatsApp.
+async function ehConversaDeFuncionario(phone: string): Promise<boolean> {
+  try {
+    const ph = String(phone || '').replace(/[^0-9]/g, '');
+    if (ph.length < 8) return false;
+    const semDDI = ph.replace(/^55/, '');
+    const comDDI = '55' + semDDI;
+    const r: any = await db.execute(sql`
+      SELECT 1 FROM users
+      WHERE role IN ('vendedor','telemarketing','admin','administrative','motorista','industria')
+        AND regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') IN (${ph}, ${semDDI}, ${comDDI})
+      LIMIT 1`);
+    return (r.rows || []).length > 0;
+  } catch { return false; }
+}
+
 async function canalLiberaIA(conversationId: string, toPhone: string): Promise<boolean> {
   try {
+    if (await ehConversaDeFuncionario(toPhone)) return false; // nunca atende os proprios funcionarios
     const { avaliarCanal, podeEnviarForaMsg, registrarForaMsgEnviado } = await import('./canais-gestao');
     const av = await avaliarCanal(conversationId);
     if (!av.ativo) return false;    // canal inteiro desligado
