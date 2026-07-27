@@ -6176,6 +6176,8 @@ export class DatabaseStorage implements IStorage {
       for (const conv of result) {
         try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conv.id}`); } catch (e: any) { console.warn('⚠️ [AUTO-LABEL] erro ao limpar etiquetas na auto-finalização:', e?.message || e); }
       }
+      // 🧹 Sweep de consistência: nenhuma conversa finalizada deve manter etiquetas (limpa também o histórico antigo)
+      try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id IN (SELECT id FROM chat_conversations WHERE status = 'resolved')`); } catch (e: any) { console.warn('⚠️ [AUTO-LABEL] erro no sweep de etiquetas de conversas finalizadas:', e?.message || e); }
       
       if (result.length > 0) {
         console.log(`⏰ [INACTIVE-CONV] ${result.length} conversa(s) encerrada(s) por inatividade (${timeoutMinutes} min)`);
