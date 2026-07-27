@@ -682,8 +682,11 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                       <div className="divide-y">
                         {(r.stops || []).map((s: any, si: number) => (
                           <div key={si} className="py-1.5 flex items-center gap-2 text-xs">
-                            <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">{si + 1}</span>
-                            <span className="flex-1 truncate font-medium">{s.customerName}</span>
+                            <span className={`w-6 h-6 rounded-full text-white flex items-center justify-center font-bold shrink-0 ${s.isUrgent ? 'bg-amber-500' : 'bg-emerald-600'}`}>{si + 1}</span>
+                            <span className="flex-1 truncate font-medium flex items-center gap-1">
+                              {s.isUrgent && <span title="Entrega prioritária" className="text-amber-500">★</span>}
+                              {s.customerName}
+                            </span>
                             <span className="hidden md:block flex-1 truncate text-gray-500">{s.customerAddress}</span>
                             <span className="text-gray-500 flex items-center gap-1"><Clock className="h-3 w-3" />{s.estimatedArrival}</span>
                             <span className="w-16 text-right text-gray-400">+{Number(s.distanceFromPrevious || 0).toFixed(1)} km</span>
