@@ -113,6 +113,7 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
         VALUES (${row.id}, 'system', 'system', ${'[IA · finalização] ' + despedida}, 'text', true)`);
     } catch {}
     await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
+    try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
     encerradas++;
     detalhes.push({ conv: row.id, phone: phoneDigits, via: sent.via, enviado: sent.ok, erro: sent.error || null });
     console.log(`[IA-FINALIZAR] conv=${row.id} phone=${phoneDigits} via=${sent.via} ok=${sent.ok} mode=${waMode}`);
