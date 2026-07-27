@@ -37,29 +37,30 @@ export function registerVisitSummary(app: Express) {
       const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
       const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
-      // Efetividade em vendas (bolinhas por ciclo), agora por DATA DE FATURAMENTO:
-      //  • VERDE   = houve FATURAMENTO no ciclo — NF do Omie (invoice_date) OU card do
-      //              pipeline que chegou na etapa 'faturado' (data da mudanca de etapa).
-      //  • AMARELO = pedido IMPLANTADO no ciclo (billing_pipeline 'venda') ainda NAO faturado.
-      //  • VERMELHO= nada no ciclo.
+      // Efetividade em vendas (bolinhas por ciclo) — SOMENTE pipeline do INTEGRA 2.0 (NAO considera Omie):
+      //  • VERDE   = houve FATURAMENTO no ciclo — card do pipeline que chegou na etapa 'faturado'
+      //              (posicionado pela DATA da mudanca de etapa).
+      //  • AMARELO = sem faturamento no ciclo, mas o pedido esta no PIPELINE (etapa 'pedido' etc.,
+      //              ainda nao faturado) OU em BLOQUEADOS (tabela blocked_orders).
+      //  • VERMELHO= sem faturamento e sem nenhum registro no pipeline/Bloqueados no ciclo.
       const saleStart = dAdd(todayStr, -130);
-      const billedByCustomer = new Map<string, Set<string>>();     // datas de FATURAMENTO
-      const implantedByCustomer = new Map<string, Set<string>>();  // datas de IMPLANTACAO (nao faturado)
+      const billedByCustomer = new Map<string, Set<string>>();     // datas de FATURAMENTO (etapa 'faturado')
+      const implantedByCustomer = new Map<string, Set<string>>();  // datas de pedido no pipeline/Bloqueados (nao faturado)
       const addTo = (map: Map<string, Set<string>>, cid: any, d: any) => { if (!cid || !d) return; let s = map.get(cid); if (!s) { s = new Set(); map.set(cid, s); } s.add(d); };
-      // (verde) NF fiscal do Omie — data de faturamento = invoice_date
-      try {
-        const fatB = await q(`SELECT CONCAT('omie-client-', omie_customer_code) AS customer_id, DATE(invoice_date)::text AS d FROM billings WHERE is_cancelled = false AND COALESCE(CAST(total_value AS NUMERIC),0) > 0 AND omie_customer_code IS NOT NULL AND invoice_date IS NOT NULL AND DATE(invoice_date) BETWEEN '${saleStart}' AND '${todayStr}'`);
-        for (const r of fatB) addTo(billedByCustomer, r.customer_id, r.d);
-      } catch (e) { /* ignora */ }
-      // (verde) pipeline que chegou em 'faturado' — data = mudanca de etapa (stage_history), fallback updated_at
+      // (verde) card do pipeline que chegou em 'faturado' — data = mudanca de etapa (stage_history), fallback updated_at
       try {
         const fatP = await q(`SELECT customer_id, COALESCE((SELECT (MIN((h->>'changedAt')::timestamptz) AT TIME ZONE 'America/Sao_Paulo')::date FROM jsonb_array_elements(COALESCE(stage_history,'[]'::jsonb)) h WHERE h->>'stage'='faturado'), (updated_at AT TIME ZONE 'America/Sao_Paulo')::date)::text AS d FROM billing_pipeline WHERE customer_id IS NOT NULL AND (COALESCE(stage_history,'[]'::jsonb) @> '[{"stage":"faturado"}]'::jsonb OR stage IN ('faturado','impresso','aguardando_rota','em_rota','entregue')) AND (updated_at AT TIME ZONE 'America/Sao_Paulo')::date >= '${saleStart}'`);
         for (const r of fatP) { if (r.d >= saleStart && r.d <= todayStr) addTo(billedByCustomer, r.customer_id, r.d); }
       } catch (e) { /* ignora */ }
-      // (amarelo) pedido implantado e ainda NAO faturado — data = created_at (implantacao)
+      // (amarelo) pedido no PIPELINE ainda NAO faturado — data = created_at
       try {
-        const impP = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billing_pipeline WHERE customer_id IS NOT NULL AND LOWER(COALESCE(NULLIF(operation_type::text,''),'venda'))='venda' AND NOT (COALESCE(stage_history,'[]'::jsonb) @> '[{"stage":"faturado"}]'::jsonb) AND stage NOT IN ('faturado','impresso','aguardando_rota','em_rota','entregue') AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        const impP = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM billing_pipeline WHERE customer_id IS NOT NULL AND NOT (COALESCE(stage_history,'[]'::jsonb) @> '[{"stage":"faturado"}]'::jsonb) AND stage NOT IN ('faturado','impresso','aguardando_rota','em_rota','entregue') AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
         for (const r of impP) addTo(implantedByCustomer, r.customer_id, r.d);
+      } catch (e) { /* ignora */ }
+      // (amarelo) pedidos em BLOQUEADOS (blocked_orders) — data = blocked_at (fallback created_at)
+      try {
+        const blk = await q(`SELECT customer_id, (COALESCE(blocked_at, created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM blocked_orders WHERE customer_id IS NOT NULL AND status = 'blocked' AND (COALESCE(blocked_at, created_at) AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}'`);
+        for (const r of blk) addTo(implantedByCustomer, r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
