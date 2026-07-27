@@ -31,6 +31,7 @@ import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
+import { ChangeRequestControl, useChangeRequestStates, crKey } from "@/components/change-request/ChangeRequestControl";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -977,6 +978,20 @@ export default function RotaDoDia() {
     if (!q) return list;
     return list.filter((r: any) => (r.customerName || '').toLowerCase().includes(q));
   }, [repescagemOverlay, presentialSearch]);
+
+  // 📋 Solicitar Alteração: chaves de todos os cards visíveis → 1 query de estados por página.
+  const changeRequestKeys = useMemo(() => {
+    const ks: string[] = [];
+    for (const v of (filteredPresentialVisits || [])) {
+      const isLead = (v as any).visitType === 'lead';
+      const id = isLead ? ((v as any).entityId || (v as any).leadId || (v as any).customerId) : (v as any).customerId;
+      if (id) ks.push(crKey(isLead ? 'lead' : 'customer', String(id)));
+    }
+    for (const v of (filteredVirtualVisits || [])) { if ((v as any).customerId) ks.push(crKey('customer', String((v as any).customerId))); }
+    for (const r of (filteredRepescagem || [])) { if ((r as any).assignmentId) ks.push(crKey('repescagem', String((r as any).assignmentId))); }
+    return ks;
+  }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
+  const changeRequestStates = useChangeRequestStates(changeRequestKeys);
 
   const currentSeller = (isAdmin ? sellers : (coverageActive ? COVERAGE_GRANT.sellers : undefined))?.find(s => s.id === selectedSellerId);
 
@@ -1953,6 +1968,15 @@ export default function RotaDoDia() {
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
+                          {/* 📋 Solicitar Alteração */}
+                          <ChangeRequestControl
+                            entityType={isLead ? 'lead' : 'customer'}
+                            entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                            customerId={visit.customerId}
+                            entityName={visit.customerName}
+                            sellerId={selectedSellerId}
+                            state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                          />
                         </div>
                       </div>
 
@@ -2176,6 +2200,17 @@ export default function RotaDoDia() {
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
+                                )}
+                                {/* 📋 Solicitar Alteração */}
+                                {visit.customerId && (
+                                  <ChangeRequestControl
+                                    entityType="customer"
+                                    entityId={String(visit.customerId)}
+                                    customerId={visit.customerId}
+                                    entityName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    state={changeRequestStates[crKey('customer', String(visit.customerId))]}
+                                  />
                                 )}
                               </div>
                             </div>
@@ -2453,6 +2488,15 @@ export default function RotaDoDia() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
+                      {/* 📋 Solicitar Alteração */}
+                      <ChangeRequestControl
+                        entityType="repescagem"
+                        entityId={String(r.assignmentId)}
+                        customerId={r.customerId}
+                        entityName={r.customerName}
+                        sellerId={selectedSellerId}
+                        state={changeRequestStates[crKey('repescagem', String(r.assignmentId))]}
+                      />
                     </div>
                   </div>
                 ))}
