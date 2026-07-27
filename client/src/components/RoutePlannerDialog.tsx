@@ -604,6 +604,24 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                 </div>
               )}
 
+              {/* Vizinhos que ficaram em rotas diferentes — com o motivo */}
+              {!!ai?.vizinhosSeparados?.length && (
+                <Card className="border-orange-200 bg-orange-50/60 dark:bg-orange-900/10"><CardContent className="p-3">
+                  <div className="text-xs font-semibold mb-1 flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5 text-orange-600" />
+                    Clientes próximos em rotas diferentes — por quê
+                  </div>
+                  <ul className="text-xs text-gray-700 dark:text-gray-300 space-y-1">
+                    {ai.vizinhosSeparados.map((v: any, i: number) => (
+                      <li key={i} className="leading-snug">
+                        <b>{v.a}</b> ({v.veiculoA}) e <b>{v.b}</b> ({v.veiculoB}) estão a{' '}
+                        <b>{v.distanciaKm.toFixed(2)} km</b> um do outro — {v.motivo}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent></Card>
+              )}
+
               {/* Ajustes e alertas */}
               {!!ai?.ajustes?.length && (
                 <Card className="border-blue-200 bg-blue-50/60 dark:bg-blue-900/10"><CardContent className="p-3">
