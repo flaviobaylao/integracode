@@ -13220,6 +13220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: string;
         operationType: string;
         pipelineStage: string;
+        customerDocument: string;
         customerCity: string;
         customerState: string;
         customerNeighborhood: string;
@@ -13231,7 +13232,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           NULL as "omieOrderId",
           bp.order_number as "orderNumber",
           COALESCE(c.id, 'billing-' || bp.id) as "customerId",
-          COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
+          -- fantasy_name VAZIO (string '') fazia o COALESCE devolver '' e o cliente
+          -- aparecia sem nome no aviso de coordenadas faltantes.
+          COALESCE(NULLIF(TRIM(c.fantasy_name), ''), NULLIF(TRIM(c.company_name), ''), NULLIF(TRIM(c.name), ''), NULLIF(TRIM(bp.customer_name), ''), 'Cliente sem nome cadastrado') as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           c.latitude as "customerLatitude",
           c.longitude as "customerLongitude",
@@ -13248,6 +13251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bp.payment_method as "paymentMethod",
           bp.operation_type as "operationType",
           bp.stage as "pipelineStage",
+          bp.customer_document as "customerDocument",
           c.city as "customerCity",
           c.state as "customerState",
           c.neighborhood as "customerNeighborhood",
@@ -13335,8 +13339,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           missingCoordinates: invalidOrders.map(o => ({ 
             billingId: o.id,
             customerId: o.customerId,
-            customerName: o.customerName, 
-            address: o.customerAddress,
+            customerName: o.customerName || 'Cliente sem nome cadastrado', 
+            address: [o.customerAddress, (o as any).customerNeighborhood, (o as any).customerCity]
+              .map((x: any) => String(x || '').trim()).filter(Boolean).join(', '),
+            // Identificação extra: sem isto o operador não sabia de qual pedido se tratava.
+            orderNumber: (o as any).orderNumber || null,
+            invoiceNumber: (o as any).invoiceNumber || null,
+            customerDocument: (o as any).customerDocument || null,
+            saleValue: (o as any).saleValue ?? null,
             latitude: o.customerLatitude || '',
             longitude: o.customerLongitude || ''
           }))
@@ -16391,7 +16401,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         SELECT DISTINCT ON (bp.id)
           bp.id,
           bp.invoice_number as "invoiceNumber",
-          COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
+          -- fantasy_name VAZIO (string '') fazia o COALESCE devolver '' e o cliente
+          -- aparecia sem nome no aviso de coordenadas faltantes.
+          COALESCE(NULLIF(TRIM(c.fantasy_name), ''), NULLIF(TRIM(c.company_name), ''), NULLIF(TRIM(c.name), ''), NULLIF(TRIM(bp.customer_name), ''), 'Cliente sem nome cadastrado') as "customerName",
           COALESCE(c.address, '') as "customerAddress",
           COALESCE(c.id, '') as "customerId",
           COALESCE(CAST(c.latitude AS TEXT), '0') as "customerLatitude",

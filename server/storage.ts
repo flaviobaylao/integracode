@@ -3117,7 +3117,8 @@ export class DatabaseStorage implements IStorage {
         bp.invoice_number as "invoiceNumber",
         NULL as "omieOrderId",
         bp.order_number as "orderNumber",
-        COALESCE(c.fantasy_name, bp.customer_name) as "customerName",
+        -- fantasy_name vazio ('') derrubava o nome do cliente na Gestão de Entregas.
+        COALESCE(NULLIF(TRIM(c.fantasy_name), ''), NULLIF(TRIM(c.company_name), ''), NULLIF(TRIM(c.name), ''), NULLIF(TRIM(bp.customer_name), ''), 'Cliente sem nome cadastrado') as "customerName",
         COALESCE(c.name, '') as "customerRazaoSocial",
         bp.customer_document as "customerDocument",
         bp.created_at as "scheduledDate",
