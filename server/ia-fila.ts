@@ -220,6 +220,7 @@ export async function lembreteTick(): Promise<{ ran: boolean; lembradas: number;
   let lembradas = 0;
   try {
     if ((await getSetting('ia_lembrete_on', 'on')) !== 'on') return { ran: false, lembradas: 0, detalhes };
+    await ensureFilaTable();
     const mins = Math.max(5, parseInt(await getSetting('ia_lembrete_min', '120'), 10) || 120);
     const repeteH = Math.max(1, parseInt(await getSetting('ia_lembrete_repete_h', '24'), 10) || 24);
     const r: any = await db.execute(sql`SELECT id, customer_name, customer_phone FROM chat_conversations
@@ -487,7 +488,8 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
 export function registerIaFila(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
 
-  ensureFilaTable().catch(() => {});
+  // A tabela e criada sob demanda (handoffParaHumano/filaTick), NAO no boot:
+  // o healthcheck do Railway e curto e o boot deste app ja faz muito trabalho de banco.
 
   // Diagnostico: conversas aguardando atendimento e quem esta online.
   app.get('/api/admin/ia-atendimento/fila', async (req: any, res: any) => {
@@ -518,7 +520,9 @@ export function registerIaFila(app: any) {
   });
 
   try {
-    setInterval(() => { filaTick().catch(e => console.error('[IA-FILA]', e?.message || e)); }, 60 * 1000);
+    setTimeout(() => {
+      setInterval(() => { filaTick().catch(e => console.error('[IA-FILA]', e?.message || e)); }, 60 * 1000);
+    }, 2 * 60 * 1000);
     // Lembrete de finalizacao: varredura mais espacada (5 min).
     setInterval(() => { lembreteTick().catch(e => console.error('[IA-FILA] lembrete', e?.message || e)); }, 5 * 60 * 1000);
   } catch {}
