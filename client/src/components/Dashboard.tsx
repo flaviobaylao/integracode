@@ -141,7 +141,7 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
 
 export default function Dashboard() {
   // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
-  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 15000, refetchOnWindowFocus: true, staleTime: 0 });
+  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
   const { data: phoneCoverage } = useQuery<any[]>({ queryKey: ["/api/dashboard/phone-coverage"], refetchInterval: 60000, refetchOnWindowFocus: true, staleTime: 0 });
   const phoneCov = useMemo(() => {
     const arr = Array.isArray(phoneCoverage) ? [...phoneCoverage] : [];
