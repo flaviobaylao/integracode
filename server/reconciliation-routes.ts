@@ -1150,17 +1150,18 @@ export function registerReconciliation(app: Express) {
   });
 
   // ---- Desfazer conciliação (reverte a baixa) ------------------------------
-  app.post("/api/reconciliation/items/:id/undo", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
-    try {
-      const id = req.params.id;
-      const by = (req.body?.by || "conciliacao-2.0").toString();
+  // FASE 3.4s: o corpo virou a função `undoReconciliation(id, by)` para poder ser
+  // reusada pela correção em lote de BAIXA DUPLA (`fix-baixa-dupla`). A rota abaixo
+  // continua idêntica no comportamento e no formato da resposta.
+  async function undoReconciliation(id: string, by: string): Promise<{ ok: boolean; status?: string; reverted?: any; error?: string; code?: number }> {
+    {
       const item = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_items WHERE id = ${id}`))[0];
-      if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (!item) return { ok: false, error: "item nao encontrado", code: 404 };
       if (item.reconciliation_status === "ignored") {
         await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_by=${by}, matched_at=null, notes=null WHERE id=${id}`);
-        return res.json({ ok: true, status: "pending", reverted: "ignored" });
+        return { ok: true, status: "pending", reverted: "ignored" };
       }
-      if (item.reconciliation_status !== "reconciled") return res.status(409).json({ error: "item nao esta conciliado" });
+      if (item.reconciliation_status !== "reconciled") return { ok: false, error: "item nao esta conciliado", code: 409 };
       const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`));
       const reverted: any[] = [];
       // Vencido por DIA-CALENDÁRIO (fuso Brasil): ao desfazer a baixa, o título só volta a
@@ -1200,7 +1201,15 @@ export function registerReconciliation(app: Express) {
       await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
       await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_receivable_id=null, matched_payable_id=null, matched_at=null, matched_by=${by}, match_confidence=null, notes=null WHERE id=${id}`);
       await logReconAudit({ action: "undo", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: matches.map((m: any) => ({ receivable_id: m.receivable_id, payable_id: m.payable_id, amount: m.amount, settled: m.title_amount_settled })), by, details: { reverted } });
-      res.json({ ok: true, status: "pending", reverted });
+      return { ok: true, status: "pending", reverted };
+    }
+  }
+
+  app.post("/api/reconciliation/items/:id/undo", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const r = await undoReconciliation(req.params.id, (req.body?.by || "conciliacao-2.0").toString());
+      if (!r.ok) return res.status(r.code || 409).json({ error: r.error });
+      res.json({ ok: true, status: r.status, reverted: r.reverted });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -2131,6 +2140,136 @@ export function registerReconciliation(app: Express) {
         espelhados += Number((u as any)?.rowCount ?? 0);
       }
       res.json({ dryRun: false, porHorario, gruposDuplicados: gruposDup, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, espelhados });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // ---- BAIXA DUPLA: desconciliar as sobras e deixar UM lancamento -----------
+  // FASE 3.4s. Alvo: os grupos que o `dedup-canonical` RECUSA colapsar porque tem
+  // 2+ linhas com BAIXA DE VERDADE (linha em bank_statement_item_matches) — a mesma
+  // transacao do banco conciliada duas ou mais vezes.
+  //
+  // Regra (definida pelo Flavio em 28/jul):
+  //  * TODAS as baixas do grupo caem no MESMO titulo  -> e baixa duplicada do mesmo
+  //    titulo. MANTEM a conciliacao mais ANTIGA e DESFAZ as demais (o `amount_paid`
+  //    do titulo volta ao valor correto). Nada a refazer.
+  //  * As baixas caem em TITULOS DIFERENTES -> o sistema NAO tem como saber qual esta
+  //    certa. DESFAZ TODAS; o lancamento fica unico e 'pending' para conciliacao
+  //    manual contra o titulo certo.
+  // Depois de desfazer, o grupo e COLAPSADO em uma unica linha canonica (as demais
+  // viram espelho), atendendo "manter um unico lancamento".
+  //
+  // Usa a MESMA `undoReconciliation` da tela (reverte amount_paid, recalcula o status
+  // do titulo, apaga o pagamento e o match, e grava auditoria action='undo').
+  // ⚠️ Desfazer baixa REABRE o titulo — pode voltar a bloquear pedido por debito
+  // vencido e entrar no alerta de WhatsApp. A resposta lista todos os titulos tocados.
+  // dryRun por padrao.
+  app.post("/api/reconciliation/fix-baixa-dupla", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const accountId = (req.body?.accountId as string) || null;
+      const colapsar = req.body?.colapsar !== false;
+      const porHorario = req.body?.porHorario !== false;
+      await ensureMirrorColumn();
+      const rows = rowsOf(await db.execute(sql`
+        SELECT i.id, s.financial_account_id AS acc, fa.name AS conta,
+               to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+               round(i.amount::numeric, 2)::text AS amt, i.type AS type,
+               regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
+               substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') AS stamp,
+               i.description, i.reconciliation_status AS st, i.matched_at, s.file_name,
+               (SELECT count(*) FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = i.id)::int AS n_match,
+               COALESCE((SELECT string_agg(DISTINCT COALESCE('r:' || m.receivable_id, 'p:' || m.payable_id), ',')
+                           FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = i.id), '') AS titulo_keys,
+               COALESCE((SELECT string_agg(DISTINCT COALESCE(r.title_number, p.title_number, '?'), ' / ')
+                           FROM bank_statement_item_matches m
+                           LEFT JOIN receivables r ON r.id = m.receivable_id
+                           LEFT JOIN payables p ON p.id = m.payable_id
+                          WHERE m.bank_statement_item_id = i.id), '') AS titulo,
+               COALESCE((SELECT string_agg(DISTINCT COALESCE(r.customer_name, p.supplier_name, ''), ' / ')
+                           FROM bank_statement_item_matches m
+                           LEFT JOIN receivables r ON r.id = m.receivable_id
+                           LEFT JOIN payables p ON p.id = m.payable_id
+                          WHERE m.bank_statement_item_id = i.id), '') AS parte
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE i.mirror_of IS NULL
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})`));
+
+      // Mesmo agrupamento do dedup-canonical: descricao normalizada UNIAO carimbo.
+      const parent: Record<string, string> = {};
+      const find = (a: string): string => { while (parent[a] && parent[a] !== a) { parent[a] = parent[parent[a]] || parent[a]; a = parent[a]; } return a; };
+      const union = (a: string, b: string) => { parent[a] ||= a; parent[b] ||= b; const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+      const firstByKey: Record<string, string> = {};
+      for (const r of rows) {
+        const id = String(r.id); parent[id] ||= id;
+        const keys = [["d", r.acc || "", r.d, r.amt, r.type, r.nd].join("|")];
+        if (porHorario && r.stamp) keys.push(["h", r.acc || "", r.d, r.amt, r.type, String(r.stamp)].join("|"));
+        for (const k of keys) { if (firstByKey[k]) union(firstByKey[k], id); else firstByKey[k] = id; }
+      }
+      const groups: Record<string, any[]> = {};
+      for (const r of rows) (groups[find(String(r.id))] ||= []).push(r);
+
+      const ordena = (arr: any[]) => arr.slice().sort((a, b) => {
+        const ta = a.matched_at ? new Date(a.matched_at).getTime() : Number.MAX_SAFE_INTEGER;
+        const tb = b.matched_at ? new Date(b.matched_at).getTime() : Number.MAX_SAFE_INTEGER;
+        return ta !== tb ? ta - tb : (String(a.id) < String(b.id) ? -1 : 1);
+      });
+
+      const plano: any[] = [];
+      for (const g of Object.values(groups)) {
+        const comBaixa = g.filter((x) => Number(x.n_match) > 0);
+        if (comBaixa.length < 2) continue;
+        const titulos = new Set<string>();
+        for (const x of comBaixa) for (const t of String(x.titulo_keys || "").split(",")) if (t) titulos.add(t);
+        const mesmoTitulo = titulos.size === 1;
+        const ord = ordena(comBaixa);
+        const manter = mesmoTitulo ? ord[0] : null;              // titulos diferentes: desfaz TODAS
+        const desfazer = mesmoTitulo ? ord.slice(1) : ord;
+        plano.push({
+          conta: g[0].conta || g[0].acc, data: g[0].d, valor: g[0].amt, tipo: g[0].type,
+          descricao: String(g[0].description || "").slice(0, 120),
+          linhasNoGrupo: g.length, linhasComBaixa: comBaixa.length,
+          mesmoTitulo, titulos: [...titulos].length,
+          mantida: manter ? { id: String(manter.id), titulo: manter.titulo, parte: manter.parte, arquivo: manter.file_name } : null,
+          desfeitas: desfazer.map((x: any) => ({ id: String(x.id), titulo: x.titulo, parte: x.parte, arquivo: x.file_name, matches: Number(x.n_match) })),
+          _grupo: g.map((x: any) => String(x.id)), _manterId: manter ? String(manter.id) : null,
+        });
+      }
+
+      const resumo = {
+        gruposComBaixaDupla: plano.length,
+        gruposMesmoTitulo: plano.filter((p) => p.mesmoTitulo).length,
+        gruposTitulosDiferentes: plano.filter((p) => !p.mesmoTitulo).length,
+        conciliacoesADesfazer: plano.reduce((a, p) => a + p.desfeitas.length, 0),
+      };
+      if (dryRun) return res.json({ dryRun: true, ...resumo, plano: plano.map(({ _grupo, _manterId, ...p }) => p) });
+
+      let desfeitas = 0, falhas: any[] = [], titulosTocados: any[] = [], espelhados = 0;
+      for (const p of plano) {
+        for (const d of p.desfeitas) {
+          const r = await undoReconciliation(d.id, by);
+          if (r.ok) { desfeitas++; if (Array.isArray(r.reverted)) for (const rv of r.reverted) titulosTocados.push({ data: p.data, valor: p.valor, titulo: d.titulo, parte: d.parte, ...rv }); }
+          else falhas.push({ id: d.id, erro: r.error });
+        }
+        if (!colapsar) continue;
+        // Colapsa o grupo em UMA linha: mantem a que ficou com baixa (ou a de menor id)
+        // e transforma as demais em espelho. Nunca espelha linha que ainda tem match.
+        const keep = p._manterId || p._grupo.slice().sort()[0];
+        const outros = p._grupo.filter((x: string) => x !== keep);
+        for (let i = 0; i < outros.length; i += 300) {
+          const lote = outros.slice(i, i + 300);
+          const u: any = await db.execute(sql`
+            UPDATE bank_statement_items t
+            SET mirror_of = ${keep}, reconciliation_status = 'mirror', matched_by = ${by}, matched_at = now(),
+                notes = 'Baixa dupla corrigida (fix-baixa-dupla) - linha colapsada, reversivel'
+            WHERE t.id::text IN (${inList(lote)}) AND t.mirror_of IS NULL
+              AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
+          espelhados += Number((u as any)?.rowCount ?? 0);
+        }
+      }
+      res.json({ dryRun: false, ...resumo, desfeitas, espelhados, falhas, titulosTocados });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
