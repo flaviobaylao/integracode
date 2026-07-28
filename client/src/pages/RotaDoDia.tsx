@@ -1002,11 +1002,22 @@ export default function RotaDoDia() {
     const c = String(cid);
     return checkedOutCustomerIds.has(c) || attendedCustomerIds.has(c) || !!(customerInfo?.orders?.[c]?.length);
   };
-  const presentialActiveCount = filteredPresentialVisits.filter((v: any) => {
+  // Uma visita presencial (ou lead) está "Efetuada" quando sua solicitação foi concluída.
+  const isVisitEfetuada = (v: any) => {
     const isLead = (v as any).visitType === 'lead';
     const id = isLead ? ((v as any).entityId || (v as any).leadId || (v as any).customerId) : (v as any).customerId;
-    return !crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(id)));
-  }).length;
+    return crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(id)));
+  };
+  const presentialActiveCount = filteredPresentialVisits.filter((v: any) => !isVisitEfetuada(v)).length;
+  // Numeração exibida no card: cards Efetuados ficam SEM número; os demais renumeram em sequência (1,2,3…).
+  const presCardNumbers: (number | null)[] = (() => {
+    let n = 0;
+    return filteredPresentialVisits.map((v: any) => (isVisitEfetuada(v) ? null : ++n));
+  })();
+  const virtCardNumbers: (number | null)[] = (() => {
+    let n = 0;
+    return filteredVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
+  })();
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
   const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
 
@@ -1341,14 +1352,17 @@ export default function RotaDoDia() {
                 // Presenciais: conta as visitas presenciais REAIS do dia (exclui virtuais).
                 // Antes usava route.totalVisits, que contava também clientes virtuais que vazam
                 // para o optimizedOrder — inflando o total (ex.: telemarketing mostrava presenciais).
-                const presTotal = presentialVisits.length;
+                // 📋 Cards com alteração "Efetuada" saem da contagem da rota (mas continuam visíveis).
+                const presActiveVisits = presentialVisits.filter((v: any) => !isVisitEfetuada(v));
+                const presTotal = presActiveVisits.length;
                 // Concluídas = clientes presenciais distintos com CHECK-IN feito (check-out desligado)
-                const presConcl = presentialVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
+                const presConcl = presActiveVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
                 const presPend = Math.max(0, presTotal - presConcl);
                 const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
-                // Virtuais
-                const virtTotal = virtualVisitsCount || 0;
-                const virtConcl = virtualConcludedIds.size;
+                // Virtuais (também excluindo os Efetuados)
+                const virtActiveVisits = allVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId))));
+                const virtTotal = virtActiveVisits.length;
+                const virtConcl = virtActiveVisits.filter((v: any) => virtualConcludedIds.has(String((v as any).customerId))).length;
                 const virtPend = Math.max(0, virtTotal - virtConcl);
                 const virtPct = virtTotal > 0 ? Math.round((virtConcl / virtTotal) * 100) : 0;
                 return (
@@ -1755,9 +1769,9 @@ export default function RotaDoDia() {
                           onClick={crEfetuada ? undefined : () => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
-                            hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                            crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
-                            {index + 1}
+                            {crEfetuada ? '' : presCardNumbers[index]}
                           </div>
 
                           <div className="flex-1 min-w-0">
@@ -2073,8 +2087,8 @@ export default function RotaDoDia() {
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
-                                  {index + 1}
+                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
+                                  {crEfetuada ? '' : virtCardNumbers[index]}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
