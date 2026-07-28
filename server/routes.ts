@@ -6357,6 +6357,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (isStatusChanging && data.status === 'completed' && Number((data as any).saleValue) > 0 && salesCard) {
             const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
             const cardForPipeline: any = { ...salesCard, saleValue: (salesCard as any).saleValue ?? (data as any).saleValue };
+            // REGRA: o pedido IMPLANTADO pertence a QUEM implantou (vendedor/telemarketing logado), e NAO ao
+            // dono da carteira do cliente. Fixa o vendedor do pedido no implantador (robusto mesmo se o e-mail
+            // nao resolver no autoSend). NAO altera o card salvo nem rezoneia o cliente: cardForPipeline e uma
+            // copia usada so no pipeline; o cadastro do cliente permanece na carteira/vendedor original.
+            if (user && user.id && (user.role === 'vendedor' || user.role === 'telemarketing')) {
+              cardForPipeline.sellerId = user.id;
+            }
             await autoSendToBillingPipeline(cardForPipeline, user?.email || 'system');
           }
         } catch (e: any) { console.error('[PUT sales-card] autoSend pipeline (ignorado):', e?.message); }
