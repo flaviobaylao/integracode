@@ -255,7 +255,7 @@ export interface IStorage {
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
-  deleteSalesCard(id: string): Promise<void>;
+  deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void>;
   deleteAllSalesCards(): Promise<number>;
   getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
@@ -1058,6 +1058,8 @@ export class DatabaseStorage implements IStorage {
     // 3. Apagar TODOS os cards pendentes/em andamento do cliente, exceto o card atual.
     //    Inclui os cards PERMANENTES (datados por next_visit_date, não por scheduled_date),
     //    que antes sobreviviam à inativação e voltavam a aparecer na rota.
+    // 🛡️ BLINDAGEM (28/jul/2026): NUNCA apaga card com VENDA (sale_value > 0) ou com PRODUTOS —
+    //    isso é um PEDIDO REAL (hotsite/instagram/vendedor), não um slot de agenda.
     const result = await db
       .delete(salesCards)
       .where(
@@ -1067,7 +1069,9 @@ export class DatabaseStorage implements IStorage {
           or(
             eq(salesCards.status, 'pending'),
             eq(salesCards.status, 'in_progress')
-          )
+          ),
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
         )
       )
       .returning();
@@ -1108,12 +1112,16 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(activeCustomers.customerId, ids));
 
     // 3. Apagar TODOS os cards pendentes/em andamento (inclui permanentes por next_visit_date)
+    // 🛡️ BLINDAGEM (28/jul/2026): NUNCA apaga card com VENDA (sale_value > 0) ou com PRODUTOS —
+    //    isso é um PEDIDO REAL, não um slot de agenda.
     const del = await db
       .delete(salesCards)
       .where(
         and(
           inArray(salesCards.customerId, ids),
-          or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress'))
+          or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress')),
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
         )
       )
       .returning();
@@ -2403,7 +2411,26 @@ export class DatabaseStorage implements IStorage {
     return cardsWithRelations as SalesCardWithRelations[];
   }
 
-  async deleteSalesCard(id: string): Promise<void> {
+  // 🛡️ BLINDAGEM (28/jul/2026): card com VENDA (sale_value > 0) ou com PRODUTOS é um PEDIDO REAL.
+  // Exclusão só passa com { force: true } — usado apenas pelo endpoint admin de excluir pedido do
+  // hotsite, que é uma ação deliberada. Qualquer outra chamada recebe erro em vez de apagar em
+  // silêncio (era assim que um pedido sumia sem deixar rastro).
+  async deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void> {
+    if (!opts?.force) {
+      const guarded = await db
+        .delete(salesCards)
+        .where(and(
+          eq(salesCards.id, id),
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
+        ))
+        .returning({ id: salesCards.id });
+      if (!guarded.length) {
+        const [ainda] = await db.select({ id: salesCards.id }).from(salesCards).where(eq(salesCards.id, id));
+        if (ainda) throw new Error('CARD_COM_VENDA: este card tem valor/produtos (é um PEDIDO) e não pode ser excluído por esta rota.');
+      }
+      return;
+    }
     await db.delete(salesCards).where(eq(salesCards.id, id));
   }
 

@@ -120,6 +120,22 @@ cron.schedule('15,45 * * * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 🚨 DETECTOR "PEDIDO SUMIU" (28/jul/2026) — 3a camada da garantia de que nenhum pedido
+// desaparece. As duas primeiras (blindagem dos DELETEs + order_journal) impedem a perda;
+// esta AVISA se ainda assim acontecer. Compara o diario imutavel (order_journal) com
+// sales_cards/billing_pipeline e dispara WhatsApp. Roda de hora em hora, aos :25.
+// Config: system_settings 'pedido_sumido_alerta_ativo' (on|off) e 'pedido_sumido_alerta_fones'.
+// Nao recria nada sozinho — recuperacao e 1 clique: POST /api/admin/orders/journal/audit {apply:true}.
+cron.schedule('25 * * * *', async () => {
+  try {
+    const { runPedidoSumidoAlertaCron } = await import('./order-journal');
+    const r = await runPedidoSumidoAlertaCron();
+    if (r.problemas > 0) console.warn(`[SCHEDULER] pedido-sumido: ${r.problemas} problema(s), alerta enviado=${r.enviado}${r.motivo ? ' (' + r.motivo + ')' : ''}`);
+  } catch (error: any) {
+    console.error('[SCHEDULER] erro no detector de pedido sumido:', error?.message || error);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {

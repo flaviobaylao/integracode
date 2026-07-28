@@ -3,6 +3,15 @@ import { customers, visitAgenda } from '../shared/schema';
 import { eq, and, gte, lte, isNotNull, sql } from 'drizzle-orm';
 import { nowBrazil, toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
 
+// 🛡️ Um sales_card com VALOR DE VENDA ou com PRODUTOS e um PEDIDO REAL, nao um slot de agenda.
+// Rotinas de agenda/inativacao jamais podem apaga-lo. (28/jul/2026)
+export function cardTemVenda(card: any): boolean {
+  const v = parseFloat(String(card?.saleValue ?? card?.sale_value ?? '0'));
+  const p = card?.products;
+  const nProd = Array.isArray(p) ? p.length : (p && typeof p === 'object' ? Object.keys(p).length : 0);
+  return (Number.isFinite(v) && v > 0) || nProd > 0;
+}
+
 // Função para calcular a próxima data de visita baseada na periodicidade
 function getNextVisitDate(lastDate: Date, periodicity: string): Date {
   const nextDate = new Date(lastDate);
@@ -438,17 +447,29 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
           return normalized.toISOString().split('T')[0];
         });
         
+        // 🛡️ BLINDAGEM "CARD COM VENDA E UM PEDIDO, NAO E AGENDA" (28/jul/2026)
+        // Card de visita nasce VAZIO (sem valor e sem produtos). Card com sale_value > 0 ou
+        // com produtos e um PEDIDO REAL (hotsite/instagram/vendedor) — a rotina de agenda
+        // NUNCA pode apaga-lo. Causa do sumico do pedido WEB-1785189596269 (27/jul/2026):
+        // pedido do hotsite nasce status='pending' e caia nesta varredura da meia-noite.
         const cardsToDelete = existingCards.filter(card => {
+          if (cardTemVenda(card)) return false; // pedido real: PRESERVA
           const cardDate = new Date(card.scheduledDate);
           cardDate.setHours(0, 0, 0, 0);
           const cardDateStr = cardDate.toISOString().split('T')[0];
           return !correctDateStrings.includes(cardDateStr);
         });
-        
+
         // Deletar cards incorretos em batch
         if (cardsToDelete.length > 0) {
           const cardIds = cardsToDelete.map(c => c.id);
-          await db.delete(salesCards).where(inArray(salesCards.id, cardIds));
+          // 2a trava, no proprio SQL: mesmo que a lista acima venha errada, o banco recusa
+          // apagar qualquer card que tenha venda ou produtos.
+          await db.delete(salesCards).where(and(
+            inArray(salesCards.id, cardIds),
+            sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+            sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
+          ));
           stats.deleted += cardsToDelete.length;
         }
         

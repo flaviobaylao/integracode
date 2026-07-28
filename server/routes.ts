@@ -18,6 +18,7 @@ import { registerOmieFinanceiroImportRoutes } from "./omie-financeiro-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
+import { registerOrderJournal } from "./order-journal";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
@@ -726,6 +727,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Confirmacao de telefone do comprador via link (WhatsApp) — nao bloqueia o pedido
   registerPhoneVerification(app, { authenticateUser, requireRole });
+
+  // 📓 Diário imutável do pedido da loja + detector de "pedido sumido" (28/jul/2026)
+  registerOrderJournal(app, authenticateUser, requireRole(['admin', 'coordinator', 'administrative']));
 
   // Version endpoint
   app.get('/api/version', (req, res) => {
@@ -4955,9 +4959,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Este pedido não é do hotsite" });
       }
       
-      // Excluir o pedido
-      await storage.deleteSalesCard(orderId);
-      
+      // Excluir o pedido (ação DELIBERADA de admin sobre um pedido do hotsite → force)
+      await storage.deleteSalesCard(orderId, { force: true });
+      // 📓 marca no diário para o detector NÃO ressuscitar um pedido excluído de propósito.
+      try {
+        const { journalMarkDeleted } = await import('./order-journal');
+        await journalMarkDeleted(orderId, req.currentUser?.email);
+      } catch (_je: any) { console.warn('[DELETE-HOTSITE-ORDER] journal (segue):', _je?.message); }
+
       console.log('✅ [DELETE-HOTSITE-ORDER] Pedido excluído:', orderId);
       
       res.json({ success: true, message: "Pedido excluído com sucesso" });
@@ -6554,12 +6563,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
+  // 🛡️ (28/jul/2026) Exclusão de card: agora restrita a admin/coordenação e BLOQUEADA quando o
+  // card tem venda/produtos (é um PEDIDO). Antes qualquer usuário autenticado apagava qualquer
+  // card, sem trava e sem rastro — um dos caminhos pelos quais um pedido do hotsite sumia.
+  app.delete('/api/sales-cards/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { id } = req.params;
       await storage.deleteSalesCard(id);
       res.json({ message: "Sales card deleted successfully" });
-    } catch (error) {
+    } catch (error: any) {
+      if (String(error?.message || '').startsWith('CARD_COM_VENDA')) {
+        console.warn('🛡️ [DELETE-CARD] recusado (card com venda):', req.params.id, 'por', req.currentUser?.email);
+        return res.status(409).json({ message: "Este card é um PEDIDO (tem valor/produtos) e não pode ser excluído por aqui. Cancele o pedido no pipeline." });
+      }
       console.error("Error deleting sales card:", error);
       res.status(500).json({ message: "Failed to delete sales card" });
     }
@@ -24341,6 +24357,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Criar pedido público (do hotsite)
   app.post('/api/public/orders', async (req, res) => {
+    // 📓 DIÁRIO IMUTÁVEL DO PEDIDO (28/jul/2026) — grava o payload COMPLETO ANTES de qualquer
+    // coisa ser criada. Se o card sumir depois (ou nem chegar a nascer), o pedido continua
+    // recuperável a partir daqui. Nunca quebra a criação do pedido.
+    let _journalId: string | null = null;
+    try {
+      const { journalOrderReceived } = await import('./order-journal');
+      _journalId = await journalOrderReceived(req.body, 'hotsite');
+    } catch (_je: any) { console.warn('[PUBLIC-ORDER] journal indisponivel (segue):', _je?.message); }
+
     try {
       // Inicializar serviço Omie
       const omieService = getOmieService(storage);
@@ -24699,6 +24724,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
       const salesCard = await storage.createSalesCard(orderData);
+      // 📓 vincula o diário ao card recém-criado (número + id). Não bloqueia o fluxo.
+      try {
+        const { journalOrderCreated } = await import('./order-journal');
+        void journalOrderCreated(_journalId, { orderNumber, salesCardId: salesCard.id });
+      } catch (_je: any) { console.warn('[PUBLIC-ORDER] journal vinculo (segue):', _je?.message); }
       // REGRA: todo pedido registrado entra no pipeline. Envia o pedido da loja ao pipeline de
       // faturamento ja na criacao (idempotente por sales_card_id; os pagos online passam pelo
       // reconcile depois, sem duplicar). Nunca quebra a criacao do pedido.
@@ -24746,17 +24776,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
     } catch (error: any) {
       console.error('❌ Erro ao criar pedido público:', error);
-      
+      // 📓 registra a falha no diário — o payload fica salvo para retentativa/atendimento manual.
+      try {
+        const { journalOrderFailed } = await import('./order-journal');
+        void journalOrderFailed(_journalId, error);
+      } catch {}
+
       if (error.name === 'ZodError') {
         return res.status(400).json({
           message: 'Dados inválidos',
           errors: error.errors
         });
       }
-      
-      res.status(500).json({ 
+
+      res.status(500).json({
         message: 'Erro ao criar pedido',
-        error: error.message 
+        error: error.message
       });
     }
   });
