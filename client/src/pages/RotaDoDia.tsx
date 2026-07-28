@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -1025,6 +1025,8 @@ export default function RotaDoDia() {
   })();
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
   const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
+  // ↩️ Solicitações REJEITADAS entre os cards da rota — para ciência do vendedor.
+  const rejeitadasCount = Object.values(changeRequestStates).filter((s: any) => s?.status === 'rejeitadas').length;
 
   const currentSeller = (isAdmin ? sellers : (coverageActive ? COVERAGE_GRANT.sellers : undefined))?.find(s => s.id === selectedSellerId);
 
@@ -1666,6 +1668,22 @@ export default function RotaDoDia() {
                       <Zap className="h-4 w-4" />
                       {optimizeRouteMutation.isPending ? 'Otimizando...' : 'Otimizar Rota'}
                     </Button>
+                  </div>
+                )}
+                {/* ↩️ Contagem de solicitações REJEITADAS (destaque) + dica ao vendedor */}
+                {rejeitadasCount > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap" data-testid="rejeitadas-aviso">
+                    <Badge variant="outline" className="gap-1 bg-red-100 text-red-800 border-red-300 font-semibold">
+                      <XCircle className="h-3.5 w-3.5" />
+                      {rejeitadasCount} {rejeitadasCount === 1 ? 'solicitação rejeitada' : 'solicitações rejeitadas'}
+                    </Badge>
+                    <span
+                      className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-300 cursor-help"
+                      title="Clique na tag 'Rejeitadas' no card para ver o motivo e reenviar a solicitação ao admin."
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                      Clique na tag do card para ver o motivo e reenviar.
+                    </span>
                   </div>
                 )}
               </div>
