@@ -54,6 +54,34 @@ async function marcarTransferida(conversationId: string): Promise<void> {
   await setSetting('ia_transferida:' + conversationId, new Date().toISOString());
 }
 
+// ---------------------------------------------------------------------------
+// Telefone: leitura canonica
+// ---------------------------------------------------------------------------
+// No Brasil o mesmo celular chega de tres jeitos: 5562999883656 (13, com o 9),
+// 556299883656 (12, sem o 9) e as vezes 62999883656 / 99883656 (sem o 55).
+// Comparar string com string quebra. A chave canonica e DDD + ULTIMOS 8 DIGITOS,
+// que e igual nas duas formas.
+export function chaveTelefone(v: any): string {
+  let d = String(v || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('55') && d.length >= 12) d = d.slice(2); // tira o pais
+  if (d.length < 10) return d.slice(-8);                    // sem DDD: so os 8
+  return d.slice(0, 2) + d.slice(-8);                       // DDD + 8 finais
+}
+
+// Dois numeros sao o mesmo celular? (ignora +55, 9o digito, mascara e espacos)
+export function mesmoTelefone(a: any, b: any): boolean {
+  const x = chaveTelefone(a), y = chaveTelefone(b);
+  return !!x && x.length >= 8 && x === y;
+}
+
+// Algum da lista bate com o telefone?
+export function telefoneNaLista(phone: any, lista: string): boolean {
+  const alvo = chaveTelefone(phone);
+  if (!alvo) return false;
+  return String(lista || '').split(/[,;\s]+/).map(x => chaveTelefone(x)).filter(Boolean).includes(alvo);
+}
+
 const PLACEHOLDERS = ['chatgpt-ai', 'instagram', 'system', 'auto', 'reconcile', 'unknown-vendor', ''];
 
 export async function ensureFilaTable(): Promise<void> {
@@ -137,15 +165,18 @@ async function agentDoUsuario(userId: string): Promise<{ agent_id: string; name:
 // Dono da carteira a partir do telefone do cliente (casa pelos ultimos 8 digitos,
 // mesma regra do storage.getCustomerByPhone). Retorna users.id ou null.
 export async function donoDaCarteira(phone: string): Promise<string | null> {
-  const d = String(phone || '').replace(/\D/g, '');
-  if (d.length < 8) return null;
-  const last8 = d.slice(-8);
+  const alvo = chaveTelefone(phone);
+  if (alvo.length < 8) return null;
+  const last8 = alvo.slice(-8);
   try {
-    const r: any = await db.execute(sql`SELECT c.seller_id FROM customers c
+    // Busca pelos 8 finais (indice barato) e confere DDD no JS — 8 digitos sozinhos
+    // repetem entre DDDs diferentes e casariam o cliente errado.
+    const r: any = await db.execute(sql`SELECT c.seller_id, c.phone FROM customers c
       WHERE RIGHT(REGEXP_REPLACE(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 8) = ${last8}
         AND c.seller_id IS NOT NULL
-      ORDER BY c.updated_at DESC NULLS LAST LIMIT 1`);
-    const s = r.rows?.[0]?.seller_id;
+      ORDER BY c.updated_at DESC NULLS LAST LIMIT 20`);
+    const cand = (r.rows || []).find((x: any) => mesmoTelefone(x.phone, phone));
+    const s = cand?.seller_id;
     if (!s) return null;
     const sid = String(s);
     if (PLACEHOLDERS.includes(sid)) return null;

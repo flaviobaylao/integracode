@@ -606,8 +606,10 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
         const allow = (await getSetting('agents_ig_test_handles', '')).split(/[,;\n\s]+/).map(s => s.replace(/^@/, '').trim().toLowerCase()).filter(Boolean);
         if (!allow.length || !handle || !allow.includes(handle)) return;
       } else {
-        const allow = (await getSetting('agents_test_numbers', '5562995782812')).split(/[,;\s]+/).map(s => onlyDigits(s)).filter(Boolean);
-        if (!allow.includes(phone)) return;
+        // Compara por DDD + 8 finais: o mesmo celular chega com 13 digitos (com o 9)
+        // ou 12 (sem o 9), e a comparacao literal deixava a IA muda em modo teste.
+        const { telefoneNaLista } = await import('./ia-fila');
+        if (!telefoneNaLista(phone, await getSetting('agents_test_numbers', '5562995782812'))) return;
       }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;

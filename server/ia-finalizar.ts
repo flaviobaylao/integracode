@@ -104,7 +104,8 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
   for (const row of rows) {
     const phoneDigits = normalizeBrPhone(row.customer_phone);
     // Em modo test (ou force sem canal on), só age nos números de teste; clientes reais ficam intactos.
-    if ((waMode === 'test' || (force && waMode !== 'on')) && !tests.includes(phoneDigits)) {
+    const { telefoneNaLista } = await import('./ia-fila');
+    if ((waMode === 'test' || (force && waMode !== 'on')) && !telefoneNaLista(phoneDigits, tests.join(','))) {
       puladasTeste++;
       continue;
     }
