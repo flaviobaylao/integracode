@@ -850,7 +850,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         </div>
       )}
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <header className="relative bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
         {/* Mobile Menu Button */}
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
@@ -969,8 +969,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             )}
           </div>
 
-          {/* Atalhos favoritos (até 7) */}
-          <div className="flex items-center justify-end gap-2 ml-auto">
+          {/* Atalhos favoritos (até 7) — centralizados no cabeçalho */}
+          <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
             {favorites.map((favId) => {
               const info = itemIndex.get(favId);
               if (!info) return null;
