@@ -6688,8 +6688,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Determinar sellerId - usar o do cliente ou o usuário atual se for vendedor
         let sellerId = customer.sellerId || user.id;
         
-        // Se o usuário é vendedor, forçar usar o próprio ID
-        if (user.role === 'vendedor') {
+        // Se o usuário é vendedor OU telemarketing, forçar usar o próprio ID: o pedido implantado
+        // pertence a QUEM implantou (telemarketing conta como o vendedor do pedido, igual ao vendedor).
+        // NÃO rezoneia o cliente — só define o vendedor DESTE pedido.
+        if (user.role === 'vendedor' || user.role === 'telemarketing') {
           sellerId = user.id;
         }
 
@@ -6720,8 +6722,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // É um lead - criar sales_card com leadId como customerId
         let sellerId = lead.assignedTo || user.id;
         
-        // Se o usuário é vendedor, forçar usar o próprio ID
-        if (user.role === 'vendedor') {
+        // Se o usuário é vendedor OU telemarketing, forçar usar o próprio ID: o pedido implantado
+        // pertence a QUEM implantou (telemarketing conta como o vendedor do pedido, igual ao vendedor).
+        // NÃO rezoneia o cliente — só define o vendedor DESTE pedido.
+        if (user.role === 'vendedor' || user.role === 'telemarketing') {
           sellerId = user.id;
         }
 
