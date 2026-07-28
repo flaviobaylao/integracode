@@ -2022,11 +2022,19 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       for (const r of s1 as any[]) { const d = dg(r.cnpj) || dg(r.cpf); if (d && d.length >= 11 && !docToSeller.has(d)) docToSeller.set(d, r.seller_id); }
       const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
       const rows2 = (t2.rows || t2) as any[];
+      // PROTEÇÃO DO REZONEAMENTO MANUAL DO 2.0: clientes cujo vendedor já foi alterado à mão no 2.0
+      // (histórico do campo sellerId por edição individual ou em massa) NÃO são sobrescritos pelo 1.0
+      // — o rezoneamento manual prevalece sobre o sync por documento.
+      const rezonedIds = new Set<string>();
+      try {
+        const rz: any = await db.execute(sql.raw("SELECT DISTINCT customer_id FROM customer_change_history WHERE field = 'sellerId' AND source IN ('edit','bulk')"));
+        for (const r of (rz.rows || rz) as any[]) rezonedIds.add(String(r.customer_id));
+      } catch (_e) {}
       const toFix: Array<{ id: string; val: string }> = [];
-      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
+      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; if (rezonedIds.has(String(c.id))) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
       const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
       const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
-      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, protegidosPorRezoneamento: rezonedIds.size, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
       if (apply && toFix.length) {
         let upd = 0;
         for (const d of toFix) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${d.val}, updated_at = now() WHERE id = ${d.id}`); upd += (u.rowCount || 0); } catch (e) {} }
