@@ -30,6 +30,16 @@ import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2
 // ---------------------------------------------------------------------------
 export type EntityType = "customer" | "lead" | "repescagem";
 
+export interface CRMessage {
+  id?: string;
+  role: "seller" | "admin";
+  byName?: string;
+  text: string;
+  at?: string;
+  kind?: string;
+  status?: string;
+}
+
 export interface ChangeRequestState {
   id: string;
   entityType: EntityType;
@@ -40,6 +50,7 @@ export interface ChangeRequestState {
   requestedByName?: string;
   resolvedByName?: string;
   resolutionNote?: string | null;
+  messages?: CRMessage[];
   createdAt?: string;
   resolvedAt?: string;
 }
@@ -60,6 +71,35 @@ const RESULT_META: Record<string, { label: string; cls: string; Icon: any }> = {
   parcial: { label: "Parcial", cls: "bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200", Icon: AlertTriangle },
   rejeitadas: { label: "Rejeitadas", cls: "bg-red-100 text-red-800 border-red-300 hover:bg-red-200", Icon: XCircle },
 };
+
+const fmtWhen = (s?: string) => {
+  if (!s) return "";
+  try { return new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); }
+  catch { return ""; }
+};
+
+// 💬 Histórico de conversa (vendedor ⇄ admin).
+export function MessageThread({ messages }: { messages?: CRMessage[] }) {
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length === 0) return null;
+  return (
+    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+      {list.map((m, i) => {
+        const admin = m.role === "admin";
+        return (
+          <div key={m.id || i} className={`flex ${admin ? "justify-start" : "justify-end"}`}>
+            <div className={`rounded-lg px-2.5 py-1.5 text-xs max-w-[85%] ${admin ? "bg-indigo-50 text-indigo-900 border border-indigo-200" : "bg-emerald-50 text-emerald-900 border border-emerald-200"}`}>
+              <div className="font-semibold text-[10px] opacity-80 mb-0.5">
+                {admin ? "Admin" : "Vendedor"}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtWhen(m.at)}` : ""}
+              </div>
+              <div className="whitespace-pre-wrap break-words">{m.text}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Hook: 1 query por página para o mapa de estados. keys = "customer:ID" etc.
@@ -115,6 +155,9 @@ export function ChangeRequestControl(props: ControlProps) {
   const [areaVendas, setAreaVendas] = useState<string>("");
   const [inicioAtendimento, setInicioAtendimento] = useState<string>("");
   const [outro, setOutro] = useState<string>("");
+
+  // 💬 Resposta/reenvio da conversa (vendedor).
+  const [replyText, setReplyText] = useState<string>("");
 
   // Fase 2: gravação de áudio transcrito (Whisper) para o campo "Outro".
   const [recording, setRecording] = useState(false);
@@ -192,6 +235,21 @@ export function ChangeRequestControl(props: ControlProps) {
     onError: (e: any) => {
       toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" });
     },
+  });
+
+  // 💬 Reenvio: registra a mensagem do vendedor e REABRE a solicitação (volta ao admin).
+  const replyMut = useMutation({
+    mutationFn: async () => {
+      if (!state?.id) throw new Error("Solicitação inválida");
+      return apiRequest("POST", `/api/change-requests/${state.id}/reply`, { text: replyText.trim(), resend: true });
+    },
+    onSuccess: () => {
+      toast({ title: "Solicitação reenviada", description: "O admin foi notificado na caixa de solicitações." });
+      setReplyText(""); setViewOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível reenviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
 
   const canSubmit = selected.size > 0 && !createMut.isPending;
@@ -381,15 +439,45 @@ export function ChangeRequestControl(props: ControlProps) {
                   <Badge variant="outline" className={`gap-1 ${RESULT_META[state.status]?.cls || ""}`}>
                     Alterações {RESULT_META[state.status]?.label}
                   </Badge>
-                  {state.resolutionNote && <div className="text-xs">Obs.: {state.resolutionNote}</div>}
                   {state.resolvedByName && <div className="text-muted-foreground text-xs">Resolvido por {state.resolvedByName}</div>}
+                </div>
+              )}
+
+              {/* 💬 Histórico da conversa (vendedor ⇄ admin) */}
+              {Array.isArray(state.messages) && state.messages.length > 0 && (
+                <div className="pt-2 mt-1 border-t">
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
+                  <MessageThread messages={state.messages} />
+                </div>
+              )}
+
+              {/* ↩️ Reenvio: só para Parcial/Rejeitadas — o vendedor devolve ao admin */}
+              {(state.status === "parcial" || state.status === "rejeitadas") && (
+                <div className="pt-2 mt-1 border-t space-y-2">
+                  <div className="text-[11px] font-semibold text-muted-foreground">Reenviar solicitação ao admin</div>
+                  <Textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Escreva um retorno (ex.: motivo para reconsiderar)…"
+                    rows={2}
+                    data-testid="cr-reply-text"
+                  />
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    disabled={replyMut.isPending || !replyText.trim()}
+                    onClick={() => replyMut.mutate()}
+                    data-testid="cr-reply-resend"
+                  >
+                    {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reenviar ao admin"}
+                  </Button>
                 </div>
               )}
             </div>
           )}
           <DialogFooter>
             {state?.status !== "pending" && (
-              <Button disabled={disabled} onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
+              <Button variant="outline" disabled={disabled} onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
             )}
             <Button variant="outline" onClick={() => setViewOpen(false)}>Fechar</Button>
           </DialogFooter>
