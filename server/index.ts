@@ -2047,6 +2047,104 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     finally { await src.end().catch(() => {}); }
   });
 
+  // =============================================================================
+  // AUDITORIA DE INATIVACOES (1.0 + 2.0) desde <since>. READ-ONLY (nao escreve).
+  //   body: { since?, list?, flagCol?, dateCol?, activeVal? }
+  //     2.0: customers.inactivated_at >= since (inativacoes feitas no INTEGRA 2.0)
+  //     1.0: customers[flagCol] IS DISTINCT FROM activeVal [AND dateCol >= since]
+  //          (schema do 1.0 e' descoberto e devolvido em cols10; passe flagCol/activeVal)
+  //   Confere p/ cada inativado: inativo hoje?, existe em Gestao (customers)?,
+  //   existe em Clientes Ativos (active_customers.is_active=true)?, vinculo Omie?
+  //   Devolve os ids que precisam ser reinativados (estao em Clientes Ativos).
+  // ============================================================================
+  app.post('/api/admin/audit/inact', async (req: Request, res: Response) => {
+    const b: any = req.body || {};
+    const since: string = b.since || '2026-01-01';
+    const wantList: boolean = b.list === true;
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+    const out: any = { since };
+    try {
+      // ---------- active_customers ativos (lista Clientes Ativos) ----------
+      const acr: any = await db.execute(sql.raw("SELECT customer_id FROM active_customers WHERE is_active = true AND customer_id IS NOT NULL"));
+      const activeSet = new Set<string>(((acr.rows || acr) as any[]).map((r: any) => String(r.customer_id)));
+
+      // ---------- 2.0: inativados desde 'since' ----------
+      const c20r: any = await db.execute(sql`
+        SELECT id, name, cnpj, cpf, is_active, omie_status, situacao, inactivated_at, omie_client_code
+        FROM customers WHERE inactivated_at >= ${since}::timestamptz`);
+      const c20 = (c20r.rows || c20r) as any[];
+      const list20 = c20.map((c: any) => ({
+        id: String(c.id), name: c.name, doc: dg(c.cnpj) || dg(c.cpf),
+        inativoHoje: c.is_active === false,
+        omieDesvinc: c.omie_status === 'inativo',
+        omieClientCode: c.omie_client_code || null,
+        emClientesAtivos: activeSet.has(String(c.id)),
+      }));
+      out.c20 = {
+        total: list20.length,
+        aindaAtivoHoje: list20.filter((x) => !x.inativoHoje).map((x) => x.id),
+        emClientesAtivos: list20.filter((x) => x.emClientesAtivos).map((x) => x.id),
+        comOmieVinculo: list20.filter((x) => !x.omieDesvinc || x.omieClientCode).length,
+      };
+      if (wantList) out.c20.rows = list20;
+
+      // ---------- 1.0: schema + inativados desde 'since' ----------
+      await src.connect();
+      const colsR = await src.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' ORDER BY ordinal_position");
+      const cols10: string[] = (colsR.rows as any[]).map((r: any) => r.column_name);
+      out.cols10 = cols10;
+
+      const flagCol = typeof b.flagCol === 'string' && cols10.includes(b.flagCol) ? b.flagCol : null;
+      const dateCol = typeof b.dateCol === 'string' && cols10.includes(b.dateCol) ? b.dateCol : null;
+      if (!flagCol) {
+        out.hint = 'passe flagCol (coluna ativo/inativo do 1.0) + activeVal (valor de ATIVO, ex: true | "ativo" | "S") e opcional dateCol p/ filtrar por data';
+        return res.json(out);
+      }
+      const activeVal = b.activeVal;
+      let q = 'SELECT cnpj, cpf FROM customers WHERE "' + flagCol + '" IS DISTINCT FROM $1';
+      const params: any[] = [activeVal];
+      if (dateCol) { q += ' AND "' + dateCol + '" >= $2'; params.push(since); }
+      const inact10 = (await src.query(q, params)).rows as any[];
+      const docs10 = [...new Set(inact10.map((r: any) => dg(r.cnpj) || dg(r.cpf)).filter((d: string) => d && d.length >= 11))];
+      out.c10 = { totalInativados10: inact10.length, docsUnicos: docs10.length };
+
+      // status 2.0 desses documentos (em lotes)
+      const found: any[] = [];
+      const CH = 500;
+      for (let i = 0; i < docs10.length; i += CH) {
+        const chunk = docs10.slice(i, i + CH);
+        const inList = sql.join(chunk.map((d: string) => sql`${d}`), sql`, `);
+        const r: any = await db.execute(sql`
+          SELECT id, name, cnpj, cpf, is_active, omie_status, omie_client_code
+          FROM customers
+          WHERE regexp_replace(coalesce(cnpj,''),'[^0-9]','','g') IN (${inList})
+             OR regexp_replace(coalesce(cpf,''),'[^0-9]','','g') IN (${inList})`);
+        for (const c of (r.rows || r) as any[]) found.push(c);
+      }
+      const found20 = found.map((c: any) => ({
+        id: String(c.id), name: c.name, doc: dg(c.cnpj) || dg(c.cpf),
+        inativoHoje: c.is_active === false,
+        omieDesvinc: c.omie_status === 'inativo',
+        emClientesAtivos: activeSet.has(String(c.id)),
+      }));
+      const foundDocs = new Set(found20.map((x) => x.doc));
+      out.c10.casadosNo20 = found20.length;
+      out.c10.semCadastroNo20 = docs10.filter((d: string) => !foundDocs.has(d)).length;
+      out.c10.aindaAtivoHoje = found20.filter((x) => !x.inativoHoje).map((x) => x.id);
+      out.c10.emClientesAtivos = found20.filter((x) => x.emClientesAtivos).map((x) => x.id);
+      if (wantList) out.c10.rows = found20;
+
+      // ---------- UNIAO: quem precisa reinativar (esta em Clientes Ativos) ----------
+      const reinativarSet = new Set<string>([...out.c20.emClientesAtivos, ...out.c10.emClientesAtivos]);
+      out.reinativar = { total: reinativarSet.size, ids: [...reinativarSet] };
+
+      return res.json(out);
+    } catch (e: any) { out.err = (e?.message || String(e)).slice(0, 300); return res.status(500).json(out); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
   app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
