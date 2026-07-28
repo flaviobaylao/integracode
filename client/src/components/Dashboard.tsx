@@ -461,7 +461,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {sortedSellerDaily.map((x: any) => (
-                  <tr key={x.sellerId} className="border-b border-gray-100 hover:bg-gray-50">
+                  <tr key={x.sellerId} className="border-b border-gray-200 hover:bg-gray-50">
                     <td className="py-1 pr-3 pl-1 font-medium text-gray-800 whitespace-nowrap sticky left-0 bg-white">{x.sellerName}</td>
                     {x.weeks.flatMap((wk: any, wi: number) => [
                       ...wk.dayVals.map((v: any, di: number) => (
