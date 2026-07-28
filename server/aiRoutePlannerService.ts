@@ -505,6 +505,33 @@ function applyAndRepair(
   const availableMinutes = (idx: number) =>
     timeToMinutes(vehicles[idx].timeWindowEnd) - timeToMinutes(vehicles[idx].timeWindowStart);
 
+  /** Distância do pedido até a parada mais próxima já atribuída ao veículo (ou até a base). */
+  const distanciaAoVeiculo = (idx: number, o: DeliveryOrder): number => {
+    let d = Infinity;
+    for (const outro of assignments.get(idx)!) {
+      const x = calculateDistance(o.customerLatitude, o.customerLongitude, outro.customerLatitude, outro.customerLongitude);
+      if (x < d) d = x;
+    }
+    if (!Number.isFinite(d)) {
+      d = calculateDistance(o.customerLatitude, o.customerLongitude, vehicles[idx].startLatitude, vehicles[idx].startLongitude);
+    }
+    return d;
+  };
+
+  /**
+   * Deslocamento estimado até a parada, em minutos.
+   *
+   * ⚠️ Antes era um valor FIXO de 15 min por parada — pessimista demais para
+   * cluster urbano. Numa rota real de 23 paradas em Goiânia o sequenciador (OSRM,
+   * 40 km/h) fechou 311 min, enquanto a heurística de 15 min projetava ~575 e
+   * derrubava pedidos por "janela cheia" com meia jornada livre (28/jul/2026:
+   * COLEGIO LOGOSOFICO e TOUROS CASA DE CARNES ficaram fora com 311/600 min usados).
+   * Agora usa a distância real até o cluster do veículo, no mesmo modelo do
+   * sequenciador, com piso de 3 min e teto de 20 min.
+   */
+  const deslocamentoEstimado = (idx: number, o: DeliveryOrder): number =>
+    Math.min(20, Math.max(3, (distanciaAoVeiculo(idx, o) / 40) * 60));
+
   /**
    * @param ignorarCota só é usado no último passe, quando um pedido não caberia
    * em lugar nenhum. Melhor estourar a cota em 1 parada do que deixar o pedido
@@ -523,13 +550,17 @@ function applyAndRepair(
       const cota = ctx.quotas.get(idx) ?? Infinity;
       if (assignments.get(idx)!.length >= cota) return false;
     }
-    if (workload.get(idx)! + (o.averageDeliveryTime || 30) > availableMinutes(idx)) return false;
+    // Viabilidade da jornada: atendimento + deslocamento estimado até o cluster.
+    const custo = (o.averageDeliveryTime || 30) + deslocamentoEstimado(idx, o);
+    if (workload.get(idx)! + custo > availableMinutes(idx)) return false;
     return true;
   };
 
   const place = (idx: number, o: DeliveryOrder) => {
+    // Calcula o deslocamento ANTES do push (a parada nova não pode ser sua própria vizinha).
+    const custo = (o.averageDeliveryTime || 30) + deslocamentoEstimado(idx, o);
     assignments.get(idx)!.push(o);
-    workload.set(idx, workload.get(idx)! + (o.averageDeliveryTime || 30) + 15);
+    workload.set(idx, workload.get(idx)! + custo);
   };
 
   /**
@@ -548,17 +579,7 @@ function applyAndRepair(
     let melhorCusto = Infinity;
     vehicles.forEach((_, idx) => {
       if (!fits(idx, o, ignorarCota)) return;
-      const v = vehicles[idx];
-      const jaAtribuidos = assignments.get(idx)!;
-      let distancia = Infinity;
-      for (const outro of jaAtribuidos) {
-        const d = calculateDistance(o.customerLatitude, o.customerLongitude, outro.customerLatitude, outro.customerLongitude);
-        if (d < distancia) distancia = d;
-      }
-      if (!Number.isFinite(distancia)) {
-        distancia = calculateDistance(o.customerLatitude, o.customerLongitude, v.startLatitude, v.startLongitude);
-      }
-      const custo = distancia; // sem penalidade de carga: não existe balanceamento
+      const custo = distanciaAoVeiculo(idx, o); // sem penalidade de carga: não existe balanceamento
       if (custo < melhorCusto) {
         melhorCusto = custo;
         best = idx;
@@ -725,8 +746,11 @@ function diagnosticarVizinhosSeparados(
           motivos.push(`a cota de ${cota} paradas de ${nomeVeic(destino)} já estava completa`);
           return;
         }
+        // Mesmo modelo de deslocamento usado na atribuição (distância real / 40 km/h),
+        // e não os 15 min fixos de antes, que inventavam "janela cheia".
         const disp = timeToMinutes(v2.timeWindowEnd) - timeToMinutes(v2.timeWindowStart);
-        const usados = 30 + assignments.get(destino)!.reduce((s, x) => s + (x.averageDeliveryTime || 30) + 15, 0);
+        const lista = assignments.get(destino)!;
+        const usados = 30 + lista.reduce((s, x) => s + (x.averageDeliveryTime || 30) + 6, 0);
         if (usados + (o.averageDeliveryTime || 30) > disp) {
           motivos.push(`${nomeVeic(destino)} não tem janela livre para mais uma parada`);
         }
@@ -886,6 +910,107 @@ export async function planDeliveryRoutesWithAI(
 
 // ==================== FASE 3/4 comuns ====================
 
+const ALMOCO_MIN = 30;
+
+/**
+ * Reencaixa pedidos que ficaram sem rota quando existe FOLGA REAL na jornada.
+ *
+ * Por que existe: a distribuição decide com uma estimativa de deslocamento; o
+ * sequenciador (OSRM/haversine a 40 km/h) só roda depois e quase sempre devolve
+ * uma rota bem mais curta. Sem este passe, pedido perfeitamente entregável fica
+ * em "Aguardando Rota" enquanto o motorista termina o dia com metade da janela
+ * livre — foi o caso de COLEGIO LOGOSOFICO e TOUROS CASA DE CARNES em 28/jul/2026,
+ * com a moto fechando 23 paradas em 311 de ~600 min.
+ *
+ * Só relaxa a ESTIMATIVA. Continuam intocados: tipo de veículo, veículo exclusivo,
+ * separação Goiânia × Brasília, capacidade cadastrada e a janela de trabalho real.
+ *
+ * @returns quantos pedidos foram recuperados (removidos de `unassigned` in-place).
+ */
+function recuperarComFolgaReal(
+  assignments: Map<number, DeliveryOrder[]>,
+  vehicles: VehicleConfig[],
+  unassigned: DeliveryOrder[],
+  routes: VehicleRoute[],
+  workload: Map<number, number>,
+  eligibleByVehicle: Map<number, DeliveryOrder[]> | undefined,
+  meta: AIRouteMeta,
+): number {
+  // optimizeVehicleRoutes percorre assignments.entries() e pula veículo vazio,
+  // então a k-ésima rota corresponde ao k-ésimo veículo COM paradas.
+  const idxComParadas = Array.from(assignments.entries())
+    .filter(([, lista]) => lista.length > 0)
+    .map(([idx]) => idx);
+  const duracaoReal = new Map<number, number>();
+  idxComParadas.forEach((idx, k) => {
+    if (routes[k]) duracaoReal.set(idx, routes[k].totalDuration);
+  });
+
+  const elegivel = new Map<number, Set<string>>();
+  for (const [idx, lista] of Array.from((eligibleByVehicle || new Map()).entries())) {
+    elegivel.set(idx, new Set((lista as DeliveryOrder[]).map((o) => o.id)));
+  }
+  const anyBaruc = vehicles.some(isBaruc);
+  const anyNonBaruc = vehicles.some((v) => !isBaruc(v));
+
+  let recuperados = 0;
+
+  for (let i = unassigned.length - 1; i >= 0; i--) {
+    const o = unassigned[i];
+    let melhor = -1;
+    let melhorDist = Infinity;
+    let melhorCusto = 0;
+
+    vehicles.forEach((v, idx) => {
+      // Restrições duras — inalteradas.
+      if (eligibleByVehicle && !elegivel.get(idx)?.has(o.id)) return;
+      if (!isOrderCompatibleWithVehicle(o, v.type)) return;
+      if (anyBaruc && isBsbOrder(o) && !isBaruc(v)) return;
+      if (anyNonBaruc && !isBsbOrder(o) && isBaruc(v)) return;
+      const lista = assignments.get(idx) || [];
+      if (v.capacity && lista.length >= v.capacity) return;
+
+      // Distância até o cluster do veículo (ou até a base, se ainda estiver vazio).
+      let d = Infinity;
+      for (const outro of lista) {
+        const x = calculateDistance(o.customerLatitude, o.customerLongitude, outro.customerLatitude, outro.customerLongitude);
+        if (x < d) d = x;
+      }
+      if (!Number.isFinite(d)) {
+        d = calculateDistance(o.customerLatitude, o.customerLongitude, v.startLatitude, v.startLongitude);
+      }
+
+      // Custo marginal: ida e volta do desvio + atendimento. Conservador de propósito.
+      const desvio = (d / 40) * 60 * 2;
+      const custo = desvio + (o.averageDeliveryTime || 30);
+      const disp = timeToMinutes(v.timeWindowEnd) - timeToMinutes(v.timeWindowStart);
+      const usadoReal = (duracaoReal.get(idx) ?? 0) + ALMOCO_MIN;
+      if (usadoReal + custo > disp) return; // sem folga real — respeita a jornada
+
+      if (d < melhorDist) {
+        melhorDist = d;
+        melhor = idx;
+        melhorCusto = custo;
+      }
+    });
+
+    if (melhor >= 0) {
+      assignments.get(melhor)!.push(o);
+      workload.set(melhor, (workload.get(melhor) ?? ALMOCO_MIN) + melhorCusto);
+      duracaoReal.set(melhor, (duracaoReal.get(melhor) ?? 0) + melhorCusto);
+      unassigned.splice(i, 1);
+      recuperados++;
+      const v = vehicles[melhor];
+      const disp = timeToMinutes(v.timeWindowEnd) - timeToMinutes(v.timeWindowStart);
+      meta.ajustes.push(
+        `${o.customerName}: recuperado para ${v.driverName || `V${melhor}`} — a rota real cabia na jornada (${Math.round(duracaoReal.get(melhor)!)} de ${disp} min).`,
+      );
+    }
+  }
+
+  return recuperados;
+}
+
 async function finish(
   storage: DatabaseStorage,
   assignments: Map<number, DeliveryOrder[]>,
@@ -901,7 +1026,20 @@ async function finish(
   quotas?: Map<number, number>,
 ): Promise<AIRoutePlan> {
   // FASE 3 — sequência ótima por veículo (NN + 2-opt + OSRM), reaproveitando o motor atual
-  const routes: VehicleRoute[] = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
+  let routes: VehicleRoute[] = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
+
+  // FASE 3-B — RECUPERAÇÃO COM FOLGA REAL.
+  // A viabilidade usada na distribuição é uma estimativa; a sequência real (acima)
+  // é a verdade. Se sobrou pedido sem rota e algum veículo tem folga de jornada de
+  // verdade, encaixa e re-sequencia. Sem isso, pedidos ficavam em "Aguardando Rota"
+  // com o motorista fechando a rota em 311 de 600 min (28/jul/2026).
+  if (unassigned.length > 0) {
+    const recuperados = recuperarComFolgaReal(assignments, vehicles, unassigned, routes, workload, eligibleByVehicle, meta);
+    if (recuperados > 0) {
+      console.log(`♻️ [ROTA-IA] ${recuperados} pedido(s) recuperado(s) com folga real de jornada — re-sequenciando`);
+      routes = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
+    }
+  }
 
   // Ocupação por veículo. A barra da tela passa a medir QUANTIDADE (entregas/cota);
   // os minutos continuam expostos só como viabilidade da jornada.
@@ -936,12 +1074,18 @@ async function finish(
   }
 
   const allUnassigned = [...unassigned, ...invalidOrders.map((i) => i.order)];
+  const frotaHoje = Array.from(new Set(vehicles.map((v) => v.type))).join(', ') || 'nenhum';
   for (const inv of invalidOrders) {
-    meta.alertas.push(`${inv.order.customerName}: ${inv.reason}`);
+    // Deixa explícito qual frota foi escalada — "veículo exclusivo não disponível"
+    // sozinho não diz ao operador o que fazer.
+    const extra = inv.order.exclusiveVehicle && Array.isArray(inv.order.vehicleTypes) && inv.order.vehicleTypes.length
+      ? ` (exige ${inv.order.vehicleTypes.join('/')}; frota escalada hoje: ${frotaHoje})`
+      : '';
+    meta.alertas.push(`${inv.order.customerName}: ${inv.reason}${extra}`);
   }
   if (unassigned.length > 0) {
     meta.alertas.push(
-      `${unassigned.length} pedido(s) sem veículo com capacidade/janela disponível — inclua outro motorista ou amplie a janela.`,
+      `${unassigned.length} pedido(s) sem rota mesmo após a recuperação por folga real — a jornada dos veículos escalados não comporta. Inclua outro motorista ou amplie a janela.`,
     );
   }
 
