@@ -49,6 +49,18 @@ const MENU_CARD: Record<string, string> = {
   "acessos-delegacoes": "Acessos e Delegações",
 };
 
+// Espelho de SECOES_AGENTES_IA (client/src/pages/AgentesIA.tsx). Duplicado de
+// propósito para o Layout não importar a página inteira. Se mexer lá, mexa aqui.
+const SECOES_AGENTES_IA = [
+  { id: 'chatgpt', icone: 'fas fa-brain', titulo: 'Configurações do ChatGPT' },
+  { id: 'disparos-1841', icone: 'fas fa-bullhorn', titulo: 'Disparos 1841' },
+  { id: 'ia-atendimento', icone: 'fas fa-robot', titulo: 'IA de Atendimento' },
+  { id: 'canais', icone: 'fas fa-satellite-dish', titulo: 'Gestão de Canais' },
+  { id: 'polish', icone: 'fas fa-pen-fancy', titulo: 'Correção Profissional' },
+  { id: 'notificacoes', icone: 'fas fa-bell', titulo: 'Notificações' },
+  { id: 'auto-resposta', icone: 'fas fa-power-off', titulo: 'Auto-resposta dos Agentes' },
+];
+
 interface LayoutProps {
   children: React.ReactNode;
   activeView: string;
@@ -133,9 +145,18 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       }
       try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(next)); } catch { /* noop */ }
       fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: next }) }).catch(() => { /* noop */ });
+      try { window.dispatchEvent(new CustomEvent('integra:favorites', { detail: next })); } catch { /* noop */ }
       return next;
     });
   };
+
+  // Favoritos alterados por outra tela (ex.: estrela dos cards da página
+  // Agentes de IA) → atualiza a barra de atalhos sem recarregar.
+  useEffect(() => {
+    const onFav = (e: any) => { if (Array.isArray(e?.detail)) setFavorites(e.detail); };
+    window.addEventListener('integra:favorites', onFav as any);
+    return () => window.removeEventListener('integra:favorites', onFav as any);
+  }, []);
 
   // (busca global) Campo de busca no cabeçalho para localizar qualquer
   // função, módulo ou atividade do sistema — mostra um dropdown estilo menu
@@ -184,19 +205,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     refetchInterval: 30000,
   });
   const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
-
-  // Solicitações de Alteração pendentes (inbox) — badge no card e no atalho (admin).
-  const { data: changeRequestsData } = useQuery<{ pendingCount: number }>({
-    queryKey: ['/api/change-requests'],
-    enabled: user?.role === 'admin',
-    refetchInterval: 30000,
-  });
-  const changeRequestsCount = changeRequestsData?.pendingCount || 0;
-  const shortcutBadge: Record<string, number> = {
-    'solicitacoes-alteracao': changeRequestsCount,
-    'fin-blocked': blockedOrdersCount,
-    'hotsite-orders': hotsiteOrdersCount,
-  };
 
   type MenuItem = { id: string; label: string; icon: string; available: boolean | string | null | undefined; badge: number | null };
   type MenuGroup = { groupLabel: string; color: string; bgColor: string; textColor: string; icon: string; hexColor: string; items: MenuItem[]; subGroups?: { label: string; icon: string; items: MenuItem[]; stateKey: string }[] };
@@ -442,7 +450,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
-      { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: changeRequestsCount > 0 ? changeRequestsCount : null },
       ],
     },
   ];
@@ -453,6 +460,15 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     for (const it of g.items) {
       if (!itemIndex.has(it.id)) itemIndex.set(it.id, { label: it.label, icon: it.icon, hexColor: g.hexColor });
     }
+  }
+  // Seções da página Agentes de IA: NÃO são itens de menu (não aparecem na
+  // lista lateral nem na tela de cards do grupo), mas podem ser favoritadas
+  // pela estrela na própria página — por isso precisam de label/ícone aqui
+  // para o atalho aparecer no cabeçalho. Espelha SECOES_AGENTES_IA de
+  // client/src/pages/AgentesIA.tsx.
+  for (const s of SECOES_AGENTES_IA) {
+    const id = 'agentes-ia-' + s.id;
+    if (!itemIndex.has(id)) itemIndex.set(id, { label: s.titulo, icon: s.icone, hexColor: '#8b5cf6' });
   }
 
   const getRoleLabel = (role: string) => {
@@ -473,11 +489,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       // Aplicação das permissões salvas: esconde o item se o usuário configurado
       // não tem "ver" no card correspondente. Itens sem card mapeado passam livres.
       .filter(item => { const card = MENU_CARD[item.id]; return !card || perms.can(card, "ver"); })
-      // As whitelists por função abaixo são o PADRÃO da função (para quem NÃO tem ajuste
-      // individual). Quem TEM configuração salva em "Acessos por Usuário" (hasConfig) já foi
-      // resolvido pelo mapa efetivo acima (perms.can) — assim add/remover acesso individual VALE.
-      .filter(item => perms.hasConfig || !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => perms.hasConfig || !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'sales-goals', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
+      .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
+      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
   };
 
   const visibleGroups = useMemo(() => {
@@ -563,7 +576,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
-    if (itemId === 'solicitacoes-alteracao') { navigate('/admin/solicitacoes-alteracao'); return; }
 
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
@@ -582,6 +594,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'agentes-ia') {
       navigate('/admin/agentes');
+      return;
+    }
+
+    // Atalho favoritado de uma seção da página Agentes de IA
+    if (itemId.startsWith('agentes-ia-')) {
+      navigate('/admin/agentes?sec=' + itemId.slice('agentes-ia-'.length));
       return;
     }
 
@@ -685,6 +703,19 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   };
 
   const selectedGroup = visibleGroups.find(g => g.groupLabel === selectedSection);
+
+  // Grupo com um único item não precisa da tela "Selecione uma opção" (que
+  // ficaria com 1 card só): vai direto para o item. O handleSectionClick já
+  // fazia isso; aqui cobre também quem chega pela URL "?secao=<grupo>".
+  useEffect(() => {
+    if (!showingSectionOptions || !selectedGroup) return;
+    const items = roleFilterItems(selectedGroup.items);
+    if (items.length === 1) {
+      setShowingSectionOptions(false);
+      handleMenuItemClick(items[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showingSectionOptions, selectedGroup?.groupLabel]);
 
   const findGroupForActiveView = () => {
     for (const group of visibleGroups) {
@@ -833,40 +864,10 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     });
   };
 
-  const _realRole = (user as any)?._realRole || user?.role;
-  const _isRealAdmin = _realRole === 'admin';
-  const _impersonatingRole = (user as any)?._impersonatingRole as string | undefined;
-  const verComo = async (role: string) => {
-    if (!role) return;
-    try {
-      await fetch('/api/admin/impersonate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
-      window.location.reload();
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Erro', description: 'Não foi possível entrar como esta função.' });
-    }
-  };
-  const voltarAdmin = async () => {
-    try {
-      await fetch('/api/admin/impersonate/stop', { method: 'POST', credentials: 'include' });
-      window.location.reload();
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Erro', description: 'Não foi possível voltar para administrador.' });
-    }
-  };
-
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
-      {_impersonatingRole && (
-        <div className="bg-amber-500 text-white px-4 py-2 text-sm flex items-center justify-center gap-3 flex-shrink-0">
-          <i className="fas fa-user-secret"></i>
-          <span>Você está vendo o sistema como <b>{getRoleLabel(_impersonatingRole)}</b> (visão de administrador).</span>
-          <button onClick={voltarAdmin} className="ml-2 bg-white text-amber-700 font-semibold rounded px-3 py-1 text-xs hover:bg-amber-50" data-testid="button-voltar-admin">
-            Voltar para Administrador
-          </button>
-        </div>
-      )}
       {/* Header */}
-      <header className="relative bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
         {/* Mobile Menu Button */}
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
@@ -985,8 +986,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             )}
           </div>
 
-          {/* Atalhos favoritos (até 7) — centralizados no cabeçalho */}
-          <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+          {/* Atalhos favoritos (até 7) */}
+          <div className="flex items-center justify-end gap-2 ml-auto">
             {favorites.map((favId) => {
               const info = itemIndex.get(favId);
               if (!info) return null;
@@ -1000,11 +1001,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
                 >
                   <i className={`${info.icon} text-base`}></i>
-                  {shortcutBadge[favId] > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
-                      {shortcutBadge[favId]}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -1013,23 +1009,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-3">
-            {_isRealAdmin && !_impersonatingRole && (
-              <select
-                defaultValue=""
-                onChange={(e) => { const v = e.target.value; if (v) verComo(v); }}
-                title="Entrar como — ver o sistema com a visão de outra função"
-                className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-700 bg-white cursor-pointer"
-                data-testid="select-ver-como"
-              >
-                <option value="">Ver como…</option>
-                <option value="coordinator">Coordenador</option>
-                <option value="administrative">Administrativo</option>
-                <option value="vendedor">Vendedor</option>
-                <option value="telemarketing">Telemarketing</option>
-                <option value="motorista">Motorista</option>
-                <option value="industria">Indústria</option>
-              </select>
-            )}
             <div className="text-right">
               <p className="text-sm font-medium text-gray-800">
                 {user?.firstName} {user?.lastName}
