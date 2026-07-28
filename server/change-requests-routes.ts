@@ -60,6 +60,8 @@ const DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_cr_created ON change_requests (created_at DESC);`,
   // No máximo UMA solicitação pendente por entidade (bloqueia duplicadas no mesmo card).
   `CREATE UNIQUE INDEX IF NOT EXISTS ux_cr_pending ON change_requests (entity_type, entity_id) WHERE status = 'pending';`,
+  // 💬 Histórico de conversa (vendedor ⇄ admin) — mensagens da solicitação.
+  `ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS messages jsonb NOT NULL DEFAULT '[]'::jsonb;`,
 ];
 
 let _tablesReady: Promise<void> | null = null;
@@ -83,6 +85,37 @@ const userName = (u: any): string => {
   return n || (u?.email ? String(u.email).split("@")[0] : "") || "Usuário";
 };
 
+// 💬 Conversa: rótulos e helpers para montar as mensagens do histórico.
+const TYPE_LABEL_SRV: Record<string, string> = {
+  periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
+  inicio_atendimento: "Início de atendimento", inativar: "Inativar", outro: "Outro",
+};
+const RESOLUTION_LABEL: Record<string, string> = {
+  efetuadas: "Alterações efetuadas", parcial: "Alterações efetuadas parcialmente", rejeitadas: "Alterações rejeitadas",
+};
+function summarizeRequest(types: string[], details: any): string {
+  const d = details || {};
+  const parts: string[] = [];
+  for (const t of (types || [])) {
+    if (t === "periodicidade" && d.periodicidade) parts.push(`Periodicidade → ${d.periodicidade}`);
+    else if (t === "dia_rota" && Array.isArray(d.diaRota) && d.diaRota.length) parts.push(`Dia de Rota → ${d.diaRota.join(", ")}`);
+    else if (t === "area_vendas" && d.areaVendas) parts.push(`Área de vendas → ${d.areaVendas}`);
+    else if (t === "inicio_atendimento" && d.inicioAtendimento) parts.push(`Início de atendimento → ${d.inicioAtendimento}`);
+    else if (t === "outro" && d.outro) parts.push(`Outro: ${d.outro}`);
+    else parts.push(TYPE_LABEL_SRV[t] || t);
+  }
+  return parts.join("; ");
+}
+function newMsgId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function mkMsg(role: "seller" | "admin", u: any, text: string, kind: string, extra?: any) {
+  return {
+    id: newMsgId(), role, by: u?.id || null, byName: userName(u),
+    text: String(text || "").slice(0, 4000), at: new Date().toISOString(), kind, ...(extra || {}),
+  };
+}
+
 const mapRow = (r: any) => ({
   id: r.id,
   entityType: r.entity_type,
@@ -99,6 +132,7 @@ const mapRow = (r: any) => ({
   resolvedBy: r.resolved_by,
   resolvedByName: r.resolved_by_name,
   resolutionNote: r.resolution_note,
+  messages: Array.isArray(r.messages) ? r.messages : [],
   createdAt: r.created_at,
   resolvedAt: r.resolved_at,
 });
@@ -159,15 +193,20 @@ export function registerChangeRequestsRoutes(app: Express) {
     const sellerId = b.sellerId ? String(b.sellerId) : null;
     const sellerName = b.sellerName ? String(b.sellerName).slice(0, 200) : null;
 
+    // 💬 Primeira mensagem do histórico: a própria solicitação (do vendedor).
+    const seedMsg = mkMsg("seller", u, summarizeRequest(types, details) || "Solicitação de alteração", "request");
+    const messages = [seedMsg];
+
     let inserted;
     try {
       inserted = rowsOf(await db.execute(sql`
         INSERT INTO change_requests
           (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
-           types, details, status, requested_by, requested_by_name)
+           types, details, status, requested_by, requested_by_name, messages)
         VALUES
           (${entityType}, ${entityId}, ${customerId}, ${entityName}, ${sellerId}, ${sellerName},
-           ${JSON.stringify(types)}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', ${u?.id || null}, ${userName(u)})
+           ${JSON.stringify(types)}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', ${u?.id || null}, ${userName(u)},
+           ${JSON.stringify(messages)}::jsonb)
         RETURNING *`));
     } catch (e: any) {
       // Corrida com o índice único parcial → tratar como "já existe pendente".
@@ -247,13 +286,71 @@ export function registerChangeRequestsRoutes(app: Express) {
     const status = String((req.body || {}).status || "");
     if (!VALID_RESOLUTION.has(status)) return res.status(400).json({ error: "status de resolução inválido" });
     const note = (req.body || {}).note ? String((req.body || {}).note).slice(0, 2000) : null;
+    // 💬 Anexa a resposta do admin ao histórico (texto = observação; senão o rótulo do resultado).
+    const adminMsg = mkMsg("admin", u, note || RESOLUTION_LABEL[status] || status, "resolution", { status });
     const updated = rowsOf(await db.execute(sql`
       UPDATE change_requests
       SET status = ${status}, resolution_note = ${note},
-          resolved_by = ${u?.id || null}, resolved_by_name = ${userName(u)}, resolved_at = now()
+          resolved_by = ${u?.id || null}, resolved_by_name = ${userName(u)}, resolved_at = now(),
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([adminMsg])}::jsonb
       WHERE id = ${id}
       RETURNING *`));
     if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    res.json(mapRow(updated[0]));
+  }));
+
+  // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/reply — mensagem no histórico (vendedor ⇄ admin).
+  //   body: { text: string, resend?: boolean }
+  //   - Qualquer usuário logado pode responder (papel = admin | seller).
+  //   - resend=true (retorno do vendedor): REABRE a solicitação para 'pending'
+  //     (volta à caixa do admin), preservando toda a conversa.
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/reply", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const text = String((req.body || {}).text || "").trim();
+    const resend = (req.body || {}).resend === true;
+    if (!text && !resend) return res.status(400).json({ error: "Escreva uma mensagem." });
+    const role: "admin" | "seller" = (u?.role === "admin") ? "admin" : "seller";
+
+    const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
+    if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    const row = cur[0];
+
+    // Reabrir para pending exige que não haja OUTRA pendente para a mesma entidade.
+    if (resend && row.status !== "pending") {
+      const other = rowsOf(await db.execute(sql`
+        SELECT id FROM change_requests
+        WHERE entity_type = ${row.entity_type} AND entity_id = ${row.entity_id}
+          AND status = 'pending' AND id <> ${id} LIMIT 1`));
+      if (other.length > 0) return res.status(409).json({ error: "Já existe outra solicitação pendente para este cadastro." });
+    }
+
+    const msg = mkMsg(role, u, text || "Solicitação reenviada para nova análise.", resend ? "resend" : "reply");
+    let updated;
+    try {
+      if (resend) {
+        updated = rowsOf(await db.execute(sql`
+          UPDATE change_requests
+          SET status = 'pending', resolved_by = NULL, resolved_by_name = NULL,
+              resolution_note = NULL, resolved_at = NULL,
+              messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+          WHERE id = ${id}
+          RETURNING *`));
+      } else {
+        updated = rowsOf(await db.execute(sql`
+          UPDATE change_requests
+          SET messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+          WHERE id = ${id}
+          RETURNING *`));
+      }
+    } catch (e: any) {
+      if (String(e?.message || "").includes("ux_cr_pending"))
+        return res.status(409).json({ error: "Já existe outra solicitação pendente para este cadastro." });
+      throw e;
+    }
     res.json(mapRow(updated[0]));
   }));
 
