@@ -185,6 +185,19 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   });
   const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
 
+  // Solicitações de Alteração pendentes (inbox) — badge no card e no atalho (admin).
+  const { data: changeRequestsData } = useQuery<{ pendingCount: number }>({
+    queryKey: ['/api/change-requests'],
+    enabled: user?.role === 'admin',
+    refetchInterval: 30000,
+  });
+  const changeRequestsCount = changeRequestsData?.pendingCount || 0;
+  const shortcutBadge: Record<string, number> = {
+    'solicitacoes-alteracao': changeRequestsCount,
+    'fin-blocked': blockedOrdersCount,
+    'hotsite-orders': hotsiteOrdersCount,
+  };
+
   type MenuItem = { id: string; label: string; icon: string; available: boolean | string | null | undefined; badge: number | null };
   type MenuGroup = { groupLabel: string; color: string; bgColor: string; textColor: string; icon: string; hexColor: string; items: MenuItem[]; subGroups?: { label: string; icon: string; items: MenuItem[]; stateKey: string }[] };
 
@@ -429,7 +442,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
-      { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: null },
+      { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: changeRequestsCount > 0 ? changeRequestsCount : null },
       ],
     },
   ];
@@ -984,6 +997,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
                 >
                   <i className={`${info.icon} text-base`}></i>
+                  {shortcutBadge[favId] > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                      {shortcutBadge[favId]}
+                    </span>
+                  )}
                 </button>
               );
             })}
