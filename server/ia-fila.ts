@@ -38,6 +38,22 @@ async function getSetting(key: string, def: string): Promise<string> {
   } catch { return def; }
 }
 
+async function setSetting(key: string, value: string): Promise<void> {
+  try {
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${key}, ${value}, 'ia-fila')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+  } catch {}
+}
+
+// Marca a conversa como "ja transferida pela IA para um humano". A partir dai a
+// responsabilidade de FINALIZAR e do atendente: a conversa deixa de ser encerrada
+// automaticamente e passa a receber o lembrete de finalizacao.
+// Fica em system_settings (tabela que sempre existe) para os SELECTs de outros
+// modulos nao dependerem da tabela ia_handoff, que e criada sob demanda.
+async function marcarTransferida(conversationId: string): Promise<void> {
+  await setSetting('ia_transferida:' + conversationId, new Date().toISOString());
+}
+
 const PLACEHOLDERS = ['chatgpt-ai', 'instagram', 'system', 'auto', 'reconcile', 'unknown-vendor', ''];
 
 export async function ensureFilaTable(): Promise<void> {
@@ -223,12 +239,17 @@ export async function lembreteTick(): Promise<{ ran: boolean; lembradas: number;
     await ensureFilaTable();
     const mins = Math.max(5, parseInt(await getSetting('ia_lembrete_min', '120'), 10) || 120);
     const repeteH = Math.max(1, parseInt(await getSetting('ia_lembrete_repete_h', '24'), 10) || 24);
-    const r: any = await db.execute(sql`SELECT id, customer_name, customer_phone FROM chat_conversations
-      WHERE coalesce(initiated_by::text, 'customer') = 'user'
-        AND status <> 'resolved'
-        AND last_message_time IS NOT NULL
-        AND last_message_time < now() - make_interval(mins => ${mins})
-      ORDER BY last_message_time ASC LIMIT 20`);
+    // Duas origens entram no lembrete: (a) conversa ABERTA pelo atendente e
+    // (b) conversa TRANSFERIDA pela IA — nos dois casos quem finaliza e a pessoa.
+    const r: any = await db.execute(sql`SELECT c.id, c.customer_name, c.customer_phone,
+        (s.key IS NOT NULL) AS veio_da_ia
+      FROM chat_conversations c
+      LEFT JOIN system_settings s ON s.key = 'ia_transferida:' || c.id
+      WHERE (coalesce(c.initiated_by::text, 'customer') = 'user' OR s.key IS NOT NULL)
+        AND c.status <> 'resolved'
+        AND c.last_message_time IS NOT NULL
+        AND c.last_message_time < now() - make_interval(mins => ${mins})
+      ORDER BY c.last_message_time ASC LIMIT 20`);
     for (const c of (r.rows || []) as any[]) {
       const k = 'ia_lembrete_ts:' + c.id;
       const ultimo = await getSetting(k, '');
@@ -236,8 +257,9 @@ export async function lembreteTick(): Promise<{ ran: boolean; lembradas: number;
         const t = Date.parse(ultimo);
         if (!isNaN(t) && (Date.now() - t) < repeteH * 3600 * 1000) continue;
       }
+      const origem = c.veio_da_ia ? 'transferida pela IA' : 'aberta por voce';
       await marcarAguardando(String(c.id),
-        `[IA] Esta conversa com ${c.customer_name || c.customer_phone || 'o cliente'} continua aberta e sem movimento. Se o atendimento terminou, finalize a conversa; se ainda falta algo, retome com o cliente.`);
+        `[IA] Esta conversa com ${c.customer_name || c.customer_phone || 'o cliente'} (${origem}) continua aberta e sem movimento. Se o atendimento terminou, finalize a conversa; se ainda falta algo, retome com o cliente.`);
       try {
         await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${new Date().toISOString()}, 'ia-fila')
           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
@@ -315,6 +337,7 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
           target_user_id = EXCLUDED.target_user_id, target_agent_id = EXCLUDED.target_agent_id, exclusivo = false,
           motivo = EXCLUDED.motivo, status = 'proximo_dia_util', notified_at = now(), deadline_at = NULL,
           answered_at = NULL, updated_at = now()`);
+      await marcarTransferida(conversationId);
       await marcarAguardando(conversationId,
         `[IA] ${cliente} pediu para falar com uma pessoa fora do expediente (fim de semana/feriado). Foi informado que o retorno acontece ${retorno}.${nomeAlvo ? ' Carteira: ' + nomeAlvo + '.' : ''} Entrar em contato no proximo dia util.`);
       console.log(`[IA-FILA] conv=${conversationId} fora de expediente, retorno ${retorno}`);
@@ -363,6 +386,7 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
           target_user_id = EXCLUDED.target_user_id, target_agent_id = EXCLUDED.target_agent_id, exclusivo = false,
           motivo = EXCLUDED.motivo, status = 'sem_atendente', notified_at = now(), deadline_at = NULL,
           answered_at = NULL, updated_at = now()`);
+      await marcarTransferida(conversationId);
       await marcarAguardando(conversationId,
         `[IA] ${cliente} pediu para falar com uma pessoa e nao havia nenhum atendente online. O cliente foi avisado que sera atendido em breve.${nomeDono ? ' Carteira: ' + nomeDono + '.' : ''} Entrar em contato.`);
       await avisarAtendente(foneDono, nomeDono || 'atendente', cliente, false);
@@ -378,6 +402,7 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
         motivo = EXCLUDED.motivo, status = 'waiting', notified_at = now(), deadline_at = EXCLUDED.deadline_at,
         answered_at = NULL, updated_at = now()`);
 
+    await marcarTransferida(conversationId);
     await msgSistema(conversationId, exclusivo
       ? `[IA] Aguardando atendimento de ${alvoAgent.name} (dono da carteira).`
       : `[IA] Aguardando atendimento de ${alvoAgent.name}.`);

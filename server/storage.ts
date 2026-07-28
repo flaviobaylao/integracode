@@ -6180,6 +6180,9 @@ export class DatabaseStorage implements IStorage {
             // Conversa ABERTA PELO ATENDENTE nunca e finalizada automaticamente:
             // so o proprio atendente finaliza (botao "Finalizar") ou transfere.
             sql`coalesce(${chatConversations.initiatedBy}::text, 'customer') <> 'user'`,
+            // Conversa TRANSFERIDA PELA IA para um humano tambem nao: dali em diante
+            // quem finaliza e o atendente que assumiu.
+            sql`NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || ${chatConversations.id})`,
             lt(chatConversations.lastMessageTime, cutoffTime),
             sql`(${chatConversations.lastAttendedAt} IS NULL OR ${chatConversations.lastAttendedAt} < ${cutoffTime})`
           )

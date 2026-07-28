@@ -78,6 +78,7 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
       AND coalesce(c.initiated_by::text, 'customer') <> 'user'  -- conversa aberta pelo atendente: so ele finaliza
+      AND NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id)  -- transferida pela IA: quem finaliza e o atendente
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
