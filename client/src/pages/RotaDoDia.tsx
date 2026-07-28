@@ -1009,14 +1009,19 @@ export default function RotaDoDia() {
     return crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(id)));
   };
   const presentialActiveCount = filteredPresentialVisits.filter((v: any) => !isVisitEfetuada(v)).length;
+  // 🔎 Com busca ou filtro (Atendidos/Pendentes) ativo, os cards "Efetuada" NÃO aparecem
+  // (só Parciais/Rejeitadas e cards normais). Sem filtro, o card Efetuada aparece colapsado.
+  const rotaFilterAtivo = presentialSearch.trim().length > 0 || presentialFilter !== 'todos';
+  const visiblePresentialVisits = rotaFilterAtivo ? filteredPresentialVisits.filter((v: any) => !isVisitEfetuada(v)) : filteredPresentialVisits;
+  const visibleVirtualVisits = rotaFilterAtivo ? filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))) : filteredVirtualVisits;
   // Numeração exibida no card: cards Efetuados ficam SEM número; os demais renumeram em sequência (1,2,3…).
   const presCardNumbers: (number | null)[] = (() => {
     let n = 0;
-    return filteredPresentialVisits.map((v: any) => (isVisitEfetuada(v) ? null : ++n));
+    return visiblePresentialVisits.map((v: any) => (isVisitEfetuada(v) ? null : ++n));
   })();
   const virtCardNumbers: (number | null)[] = (() => {
     let n = 0;
-    return filteredVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
+    return visibleVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
   })();
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
   const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
@@ -1667,7 +1672,7 @@ export default function RotaDoDia() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {filteredPresentialVisits.map((visit: any, index: number) => {
+                {visiblePresentialVisits.map((visit: any, index: number) => {
                   const checkInCheckpoint = route.checkpoints?.find(
                     cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
                   );
@@ -1763,6 +1768,26 @@ export default function RotaDoDia() {
                       className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : `hover:shadow-md ${borderColor}`}`}
                       data-testid={`visit-${visit.customerId || visit.id}`}
                     >
+                      {crEfetuada ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className={`font-semibold ${statusColor} flex items-center gap-1 min-w-0`}>
+                            {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
+                            <span className="truncate">{visit.customerName}</span>
+                          </p>
+                          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <ChangeRequestControl
+                              disabled
+                              entityType={isLead ? 'lead' : 'customer'}
+                              entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                              customerId={visit.customerId}
+                              entityName={visit.customerName}
+                              sellerId={selectedSellerId}
+                              state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                      <>
                       <div className="flex items-start justify-between gap-3">
                         <div
                           className={`flex items-start gap-3 flex-1 min-w-0 ${crEfetuada ? 'cursor-default' : 'cursor-pointer'}`}
@@ -2027,11 +2052,13 @@ export default function RotaDoDia() {
                           Adicionado manualmente
                         </div>
                       )}
+                      </>
+                      )}
                     </div>
                   );
                 })}
 
-                {filteredPresentialVisits.length === 0 && presentialVisits.length > 0 && (
+                {visiblePresentialVisits.length === 0 && presentialVisits.length > 0 && (
                   <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="presential-empty">
                     Nenhuma visita corresponde à busca/filtro.
                   </div>
@@ -2051,13 +2078,13 @@ export default function RotaDoDia() {
                         <Phone className="h-5 w-5" />
                         Atendimentos Virtuais ({virtualActiveCount}{virtualActiveCount !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
                       </h3>
-                      {filteredVirtualVisits.length === 0 && (
+                      {visibleVirtualVisits.length === 0 && (
                         <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="virtual-empty">
                           Nenhum atendimento virtual corresponde à busca/filtro.
                         </div>
                       )}
                       <div className="space-y-2">
-                        {filteredVirtualVisits.map((visit, index) => {
+                        {visibleVirtualVisits.map((visit, index) => {
                           const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
                           const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                           const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
@@ -2085,6 +2112,25 @@ export default function RotaDoDia() {
                               }
                             }}
                           >
+                            {crEfetuada ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2 min-w-0">
+                                  <Phone className="h-4 w-4 shrink-0" />
+                                  <span className="truncate">{visit.customerName}</span>
+                                </p>
+                                <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <ChangeRequestControl
+                                    disabled
+                                    entityType="customer"
+                                    entityId={String(visit.customerId)}
+                                    customerId={visit.customerId}
+                                    entityName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    state={changeRequestStates[crKey('customer', String(visit.customerId))]}
+                                  />
+                                </div>
+                              </div>
+                            ) : (
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1 min-w-0">
                                 <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
@@ -2254,6 +2300,7 @@ export default function RotaDoDia() {
                                 )}
                               </div>
                             </div>
+                            )}
                           </div>
                         );
                         })}
