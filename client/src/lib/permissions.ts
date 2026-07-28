@@ -16,9 +16,9 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Geral", "Dashboard", [A, C, D, V, T, I]],
   ["Vendas", "Cards de Venda", [A, C, D, V, T]],
   ["Vendas", "Agenda de Vendas", [A, C, D, V, T]],
-  ["Vendas", "Metas de Vendas", [A, C, D, V]],
+  ["Vendas", "Metas de Vendas", [A, C, D, V, T]],
   ["Vendas", "Rota de Visitas", [A, C, D, V, T]],
-  ["Vendas", "Rota do Dia", [A, C, D, V]],
+  ["Vendas", "Rota do Dia", [A, C, D, V, T]],
   ["Vendas", "Vendedores", REPORTS],
   ["Vendas", "Vendas Digitais", REPORTS],
   ["Vendas", "SDR Digital", [A, C, D, V, T]],
@@ -36,7 +36,7 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Logística", "Dashboard de Entregas", [A, C, D, V]],
   ["Logística", "Gestão de Entregas", [A, C, D, V]],
   ["Logística", "Resumo das Rotas", REPORTS],
-  ["Logística", "Mapa de Clientes", [A, C, D, V, T]],
+  ["Logística", "Mapa de Clientes", [A, C, D, V]],
   ["Logística", "Motoristas", REPORTS],
   ["Logística", "Relatórios de Entregas", REPORTS],
   ["Produtos & Estoque", "Produtos", REPORTS],
@@ -47,14 +47,14 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Produtos & Estoque", "Fornecedores", REPORTS],
   ["Faturamento", "Faturamentos", [A, C, D, V]],
   ["Faturamento", "Faturamento NF-e", REPORTS],
-  ["Faturamento", "Pipeline Faturamento", REPORTS],
+  ["Faturamento", "Pipeline Faturamento", [A, C, D, T]],
   ["Faturamento", "Pedido de Venda", REPORTS],
   ["Faturamento", "Faturar / Faturado", REPORTS],
   ["Faturamento", "Recuperação de Faturamento", REPORTS],
-  ["Financeiro", "Contas a Receber", REPORTS],
+  ["Financeiro", "Contas a Receber", [A, C, D, T]],
   ["Financeiro", "Contas a Pagar", REPORTS],
   ["Financeiro", "Débitos Vencidos", [A, C, D, V, T]],
-  ["Financeiro", "Pedidos Bloqueados", [A, C, D, V, T]],
+  ["Financeiro", "Pedidos Bloqueados", [A, C, D, V]],
   ["Financeiro", "Plano de Contas / DRE", REPORTS],
   ["Financeiro", "Contas Financeiras", REPORTS],
   ["Financeiro", "XMLs / SPED Fiscal", REPORTS],
@@ -79,7 +79,7 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Administração", "Ambiente Fiscal", REPORTS],
   ["Administração", "Agentes IA", REPORTS],
   ["Administração", "Logs Etapas Omie", REPORTS],
-  ["Administração", "RH / Métricas", [A, C, D, V, T, M, I]],
+  ["Administração", "RH / Métricas", [A, C, D, V, M, I]],
   ["Administração", "Usuários", [A]],
   ["Administração", "Administração do Sistema", [A]],
   ["Administração", "Cenários Fiscais", REPORTS],
@@ -180,6 +180,7 @@ export interface UsePermissionsResult {
   ready: boolean;
   role: string;
   map: Record<string, Flags> | undefined;
+  hasConfig: boolean; // true = usuário TEM ajustes individuais salvos em "Acessos por Usuário"
   can: (label: string, cap?: CapKey) => boolean;
 }
 
@@ -206,6 +207,7 @@ export function usePermissions(): UsePermissionsResult {
     ready: !!data,
     role: data?.role || "",
     map,
+    hasConfig,
     can: (label: string, cap: CapKey = "ver") => {
       if (!map) return true;                       // carregando → fail-open
       if ((data?.role || "") === "admin") return true; // admin nunca é restringido (evita auto-lockout)
