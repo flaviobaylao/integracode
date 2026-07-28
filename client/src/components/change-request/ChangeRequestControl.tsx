@@ -451,6 +451,16 @@ export function ChangeRequestControl(props: ControlProps) {
                 </div>
               )}
 
+              {/* 📌 Fallback: solicitações antigas (sem histórico) — mostra o motivo do admin */}
+              {state.status !== "pending" && (!Array.isArray(state.messages) || state.messages.length === 0) && state.resolutionNote && (
+                <div className="pt-2 mt-1 border-t">
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1">Resposta do admin</div>
+                  <div className="rounded-lg px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-900 border border-indigo-200 whitespace-pre-wrap break-words">
+                    {state.resolutionNote}
+                  </div>
+                </div>
+              )}
+
               {/* ↩️ Reenvio: só para Parcial/Rejeitadas — o vendedor devolve ao admin */}
               {(state.status === "parcial" || state.status === "rejeitadas") && (
                 <div className="pt-2 mt-1 border-t space-y-2">
