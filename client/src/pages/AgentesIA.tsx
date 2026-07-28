@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import ChatAISettings from "@/pages/ChatAISettings";
+import { useToast } from "@/hooks/use-toast";
 
 type Agente = {
   id: string;
@@ -727,7 +729,133 @@ function NotificacoesManager() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Seções da página Agentes de IA. Cada uma vira um CARD na grade de entrada,
+// no mesmo padrão visual das telas de seção do menu (ex.: Faturamento).
+// O `id` também é o deep-link: /admin/agentes?sec=<id>
+// ⚠️ Se mexer nesta lista, espelhe em SECOES_AGENTES_IA no Layout.tsx (usado
+//    para desenhar o atalho favoritado no cabeçalho).
+// ---------------------------------------------------------------------------
+type SecaoAgentes = { id: string; icone: string; titulo: string };
+
+export const SECOES_AGENTES_IA: SecaoAgentes[] = [
+  { id: "chatgpt", icone: "fas fa-brain", titulo: "Configurações do ChatGPT" },
+  { id: "disparos-1841", icone: "fas fa-bullhorn", titulo: "Disparos 1841" },
+  { id: "ia-atendimento", icone: "fas fa-robot", titulo: "IA de Atendimento" },
+  { id: "canais", icone: "fas fa-satellite-dish", titulo: "Gestão de Canais" },
+  { id: "polish", icone: "fas fa-pen-fancy", titulo: "Correção Profissional" },
+  { id: "notificacoes", icone: "fas fa-bell", titulo: "Notificações" },
+  { id: "auto-resposta", icone: "fas fa-power-off", titulo: "Auto-resposta dos Agentes" },
+];
+
+// Roxo do grupo "Agentes IA" no menu — mantém a identidade visual dos cards.
+const COR_AGENTES = "#8b5cf6";
+
+// Favoritos: mesma chave, mesmo endpoint e mesmo limite do cabeçalho (Layout.tsx).
+// O evento "integra:favorites" mantém as duas telas em sincronia sem recarregar.
+const FAVORITES_KEY = "integra_favorites";
+const MAX_FAVORITES = 7;
+
+function useFavoritos() {
+  const [favorites, setFavorites] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const local = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
+      if (Array.isArray(local)) setFavorites(local);
+    } catch { /* noop */ }
+    fetch("/api/user/favorites", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.favorites) && d.favorites.length > 0) setFavorites(d.favorites);
+      })
+      .catch(() => { /* mantém o localStorage */ });
+
+    const onFav = (e: any) => {
+      if (Array.isArray(e?.detail)) setFavorites(e.detail);
+    };
+    window.addEventListener("integra:favorites", onFav as any);
+    return () => window.removeEventListener("integra:favorites", onFav as any);
+  }, []);
+
+  const salvar = (next: string[]) => {
+    setFavorites(next);
+    try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(next)); } catch { /* noop */ }
+    fetch("/api/user/favorites", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ favorites: next }),
+    }).catch(() => { /* noop */ });
+    try { window.dispatchEvent(new CustomEvent("integra:favorites", { detail: next })); } catch { /* noop */ }
+  };
+
+  return { favorites, salvar };
+}
+
+function CardSecao({
+  secao,
+  favorito,
+  onAbrir,
+  onFavoritar,
+}: {
+  secao: SecaoAgentes;
+  favorito: boolean;
+  onAbrir: () => void;
+  onFavoritar: () => void;
+}) {
+  return (
+    <button
+      onClick={onAbrir}
+      data-testid={`menu-agentes-ia-${secao.id}`}
+      className="group relative flex flex-col items-center justify-center p-5 rounded-xl border-2 border-gray-100 bg-white hover:border-opacity-50 hover:shadow-lg transition-all duration-200 min-h-[120px]"
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.borderColor = COR_AGENTES;
+        (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${COR_AGENTES}30`;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.borderColor = "#f3f4f6";
+        (e.currentTarget as HTMLElement).style.boxShadow = "";
+      }}
+    >
+      <div
+        className="w-12 h-12 rounded-xl flex items-center justify-center mb-3 transition-transform group-hover:scale-110"
+        style={{ backgroundColor: `${COR_AGENTES}15`, color: COR_AGENTES }}
+      >
+        <i className={`${secao.icone} text-xl`}></i>
+      </div>
+      <span className="text-sm font-medium text-gray-700 text-center leading-tight">{secao.titulo}</span>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); onFavoritar(); }}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onFavoritar(); } }}
+        title={favorito ? "Remover dos atalhos favoritos" : "Adicionar aos atalhos favoritos"}
+        data-testid={`fav-star-agentes-ia-${secao.id}`}
+        className="absolute top-2 left-2 w-6 h-6 flex items-center justify-center rounded-md hover:bg-gray-100 cursor-pointer z-10"
+      >
+        <i className="fas fa-star text-sm" style={{ color: favorito ? "#f59e0b" : "#d1d5db" }}></i>
+      </span>
+    </button>
+  );
+}
+
+function PainelIframe({ src, titulo, altura }: { src: string; titulo: string; altura: number }) {
+  return (
+    <Card>
+      <CardContent>
+        <iframe
+          src={src}
+          style={{ width: "100%", height: altura + "px", border: 0, borderRadius: 12 }}
+          title={titulo}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AgentesIA() {
+  const { toast } = useToast();
   const { data, isLoading, refetch } = useQuery<{ baseComum: string | null; agentes: Agente[] }>({
     queryKey: ["/api/admin/agentes"],
     queryFn: () => apiGet("/api/admin/agentes"),
@@ -737,6 +865,46 @@ export default function AgentesIA() {
   const [baseStatus, setBaseStatus] = useState("");
   const [savingBase, setSavingBase] = useState(false);
   const [mostrarNovo, setMostrarNovo] = useState(false);
+
+  // Seção aberta vem da URL (?sec=...) — assim o botão "voltar" do navegador
+  // funciona e dá para mandar o link direto de uma seção para alguém.
+  const [, navigate] = useLocation();
+  const searchString = useSearch();
+  const secAtual = (() => {
+    let s = "";
+    try {
+      s = new URLSearchParams(searchString || "").get("sec") || "";
+    } catch {
+      s = "";
+    }
+    return SECOES_AGENTES_IA.find((x) => x.id === s) || null;
+  })();
+
+  const abrirSecao = (id: string) => navigate("/admin/agentes?sec=" + id);
+  const voltarParaCards = () => navigate("/admin/agentes");
+
+  const { favorites, salvar: salvarFavoritos } = useFavoritos();
+  const alternarFavorito = (secId: string) => {
+    const id = "agentes-ia-" + secId;
+    if (favorites.includes(id)) {
+      salvarFavoritos(favorites.filter((x) => x !== id));
+      return;
+    }
+    if (favorites.length >= MAX_FAVORITES) {
+      toast({
+        title: "Limite de atalhos",
+        description: `Você pode favoritar até ${MAX_FAVORITES} atalhos. Remova um para adicionar outro.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    salvarFavoritos([...favorites, id]);
+  };
+
+  // Ao trocar de seção, volta para o topo (as seções com iframe são altas).
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [secAtual?.id]);
 
   useEffect(() => {
     if (data?.baseComum != null) setBaseComum(data.baseComum);
@@ -762,174 +930,158 @@ export default function AgentesIA() {
 
   const agentes = data?.agentes || [];
 
-  return (
-    <div className="p-6 space-y-6">
-      <BackToDashboardButton />
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <i className="fas fa-robot text-primary" /> Agentes de IA
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          Configure o comportamento dos agentes de atendimento do WhatsApp. O prompt que cada agente
-          recebe é a BASE_COMUM + o bloco do agente. Edição salva direto no banco (sem deploy).
-        </p>
-      </div>
+  // Conteúdo de cada seção (só monta a que está aberta — página abre bem mais leve)
+  const renderSecao = (id: string) => {
+    switch (id) {
+      case "chatgpt":
+        return <ChatAISettings />;
+      case "disparos-1841":
+        return <PainelIframe src="/api/admin/oficial/painel" titulo="Painel de Disparos 1841" altura={820} />;
+      case "ia-atendimento":
+        return <PainelIframe src="/api/admin/ia-atendimento/painel" titulo="Painel de IA de Atendimento" altura={760} />;
+      case "canais":
+        return <PainelIframe src="/api/admin/canais/painel" titulo="Painel de Gestao de Canais" altura={760} />;
+      case "polish":
+        return <PainelIframe src="/api/admin/polish/painel" titulo="Painel de Correcao Profissional" altura={620} />;
+      case "notificacoes":
+        return <NotificacoesManager />;
+      case "auto-resposta":
+        return (
+          <div className="space-y-6">
+            <RuntimeControl agentes={agentes} />
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <i className="fas fa-layer-group text-muted-foreground" /> Base Comum (compartilhada por todos)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Regras gerais (tom, veracidade, privacidade, escalonamento, dados da empresa). Vale para
+                  todos os agentes. Preencha aqui os [placeholders] de área de entrega, horários e política de troca.
+                </p>
+                <Textarea
+                  rows={16}
+                  value={baseComum}
+                  onChange={(e) => setBaseComum(e.target.value)}
+                />
+                <div className="flex items-center gap-3">
+                  <Button onClick={salvarBase} disabled={savingBase}>
+                    {savingBase ? "Salvando..." : "Salvar Base Comum"}
+                  </Button>
+                  {baseStatus && (
+                    <span
+                      className={
+                        "text-sm " + (baseStatus.startsWith("erro") ? "text-red-600" : "text-green-600")
+                      }
+                    >
+                      {baseStatus}
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
-  {/* Configurações do ChatGPT (atendimento automático) — estrutura completa embutida */}
-      <details open>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          🧠 Configurações do ChatGPT (atendimento automático) — mostrar/ocultar
-        </summary>
-        <div className="mt-2">
-          <ChatAISettings />
-        </div>
-      </details>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                Agentes {isLoading ? "" : "(" + agentes.length + ")"}
+              </h2>
+              <Button variant="outline" onClick={() => setMostrarNovo((v) => !v)}>
+                <i className="fas fa-plus mr-2" /> {mostrarNovo ? "Cancelar" : "Novo agente"}
+              </Button>
+            </div>
 
-  {/* Disparos 1841 — agora ACIMA, com mostrar/ocultar */}
-      <details>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          📣 Disparos 1841 (WhatsApp API oficial) — mostrar/ocultar
-        </summary>
-        <Card className="mt-2">
-          <CardContent>
-            <iframe
-              src="/api/admin/oficial/painel"
-              style={{ width: "100%", height: "820px", border: 0, borderRadius: 12 }}
-              title="Painel de Disparos 1841"
-            />
-          </CardContent>
-        </Card>
-      </details>
+            {mostrarNovo && (
+              <AgenteEditor
+                novo
+                inicial={{ id: "", nome: "", modelo: "claude-sonnet-4-6", system_prompt: "", ferramentas: [], limites: {}, ativo: true }}
+                onSaved={() => {
+                  setMostrarNovo(false);
+                  refetch();
+                }}
+              />
+            )}
 
-      {/* IA de Atendimento — regras da IA (Fase 1) */}
-      <details>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          🤖 IA de Atendimento (regras da IA) — mostrar/ocultar
-        </summary>
-        <Card className="mt-2">
-          <CardContent>
-            <iframe
-              src="/api/admin/ia-atendimento/painel"
-              style={{ width: "100%", height: "760px", border: 0, borderRadius: 12 }}
-              title="Painel de IA de Atendimento"
-            />
-          </CardContent>
-        </Card>
-      </details>
-
-      {/* Gestao de Canais — liga/desliga canais e IA, horarios e aviso de fora do horario */}
-      <details>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          📡 Gestao de Canais (numeros do ChatCenter) — mostrar/ocultar
-        </summary>
-        <Card className="mt-2">
-          <CardContent>
-            <iframe
-              src="/api/admin/canais/painel"
-              style={{ width: "100%", height: "760px", border: 0, borderRadius: 12 }}
-              title="Painel de Gestao de Canais"
-            />
-          </CardContent>
-        </Card>
-      </details>
-
-      {/* Correcao Profissional por usuario (telemarketing) */}
-      <details open>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          ✍️ Correcao Profissional (por usuario telemarketing) — mostrar/ocultar
-        </summary>
-        <Card className="mt-2">
-          <CardContent>
-            <iframe
-              src="/api/admin/polish/painel"
-              style={{ width: "100%", height: "620px", border: 0, borderRadius: 12 }}
-              title="Painel de Correcao Profissional"
-            />
-          </CardContent>
-        </Card>
-      </details>
-
-      {/* Notificações (Automações de Comunicação) — gestão completa */}
-      <details>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          🔔 Notificações (Automações de Comunicação) — mostrar/ocultar
-        </summary>
-        <div className="mt-2">
-          <NotificacoesManager />
-        </div>
-      </details>
-
-      {/* Auto-resposta dos Agentes — agora ABAIXO, com mostrar/ocultar */}
-      <details>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 18, padding: "10px 0" }}>
-          🤖 Auto-resposta dos Agentes — mostrar/ocultar
-        </summary>
-     <div className="mt-2 space-y-6">
-          <RuntimeControl agentes={agentes} />
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <i className="fas fa-layer-group text-muted-foreground" /> Base Comum (compartilhada por todos)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Regras gerais (tom, veracidade, privacidade, escalonamento, dados da empresa). Vale para
-            todos os agentes. Preencha aqui os [placeholders] de área de entrega, horários e política de troca.
-          </p>
-          <Textarea
-            rows={16}
-            value={baseComum}
-            onChange={(e) => setBaseComum(e.target.value)}
-          />
-          <div className="flex items-center gap-3">
-            <Button onClick={salvarBase} disabled={savingBase}>
-              {savingBase ? "Salvando..." : "Salvar Base Comum"}
-            </Button>
-            {baseStatus && (
-              <span
-                className={
-                  "text-sm " + (baseStatus.startsWith("erro") ? "text-red-600" : "text-green-600")
-                }
-              >
-                {baseStatus}
-              </span>
+            {isLoading ? (
+              <p className="text-muted-foreground">Carregando...</p>
+            ) : (
+              <div className="space-y-6">
+                {agentes.map((ag) => (
+                  <AgenteEditor key={ag.id} inicial={ag} onSaved={() => refetch()} />
+                ))}
+              </div>
             )}
           </div>
-        </CardContent>
-      </Card>
+        );
+      default:
+        return null;
+    }
+  };
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">
-          Agentes {isLoading ? "" : "(" + agentes.length + ")"}
-        </h2>
-        <Button variant="outline" onClick={() => setMostrarNovo((v) => !v)}>
-          <i className="fas fa-plus mr-2" /> {mostrarNovo ? "Cancelar" : "Novo agente"}
-        </Button>
+  // ---- Seção aberta -------------------------------------------------------
+  if (secAtual) {
+    return (
+      <div className="p-4 md:p-6 space-y-6">
+        <BackToDashboardButton />
+        <div>
+          <button
+            onClick={voltarParaCards}
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-3 transition-colors"
+            data-testid="voltar-agentes-cards"
+          >
+            <i className="fas fa-arrow-left h-4 w-4" />
+            Voltar
+          </button>
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-white"
+              style={{ backgroundColor: COR_AGENTES }}
+            >
+              <i className={`${secAtual.icone} text-lg`}></i>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">{secAtual.titulo}</h2>
+              <p className="text-sm text-gray-500">Agentes de IA</p>
+            </div>
+          </div>
+        </div>
+
+        {renderSecao(secAtual.id)}
+      </div>
+    );
+  }
+
+  // ---- Grade de cards (entrada da página) ---------------------------------
+  // Mesmo layout das telas de seção do menu (ex.: Faturamento).
+  return (
+    <div className="p-4 md:p-6">
+      <BackToDashboardButton />
+      <div className="mb-6 mt-4">
+        <div className="flex items-center gap-3">
+          <div
+            className="w-10 h-10 rounded-lg flex items-center justify-center text-white"
+            style={{ backgroundColor: COR_AGENTES }}
+          >
+            <i className="fas fa-robot text-lg"></i>
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">Agentes de IA</h2>
+            <p className="text-sm text-gray-500">Selecione uma opção</p>
+          </div>
+        </div>
       </div>
 
-      {mostrarNovo && (
-        <AgenteEditor
-          novo
-          inicial={{ id: "", nome: "", modelo: "claude-sonnet-4-6", system_prompt: "", ferramentas: [], limites: {}, ativo: true }}
-          onSaved={() => {
-            setMostrarNovo(false);
-            refetch();
-          }}
-        />
-      )}
-
-      {isLoading ? (
-        <p className="text-muted-foreground">Carregando...</p>
-      ) : (
-        <div className="space-y-6">
-          {agentes.map((ag) => (
-            <AgenteEditor key={ag.id} inicial={ag} onSaved={() => refetch()} />
-          ))}
-        </div>
-)}
-        </div>
-      </details>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {SECOES_AGENTES_IA.map((s) => (
+          <CardSecao
+            key={s.id}
+            secao={s}
+            favorito={favorites.includes("agentes-ia-" + s.id)}
+            onAbrir={() => abrirSecao(s.id)}
+            onFavoritar={() => alternarFavorito(s.id)}
+          />
+        ))}
+      </div>
     </div>
   );
 }
