@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -80,6 +81,13 @@ function PendingCard({ r }: { r: any }) {
       </div>
       <Detalhes details={r.details} />
 
+      {Array.isArray(r.messages) && r.messages.length > 0 && (
+        <div className="pt-1 border-t">
+          <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
+          <MessageThread messages={r.messages} />
+        </div>
+      )}
+
       <Textarea placeholder="Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
 
       <div className="flex flex-wrap gap-2">
@@ -116,7 +124,12 @@ function ResolvedCard({ r }: { r: any }) {
         {(r.types || []).map((t: string) => <Badge key={t} variant="secondary" className="text-[11px]">{TYPE_LABEL[t] || t}</Badge>)}
       </div>
       <Detalhes details={r.details} />
-      {r.resolutionNote && <div className="text-xs">Obs.: {r.resolutionNote}</div>}
+      {Array.isArray(r.messages) && r.messages.length > 0 && (
+        <div className="pt-1 border-t">
+          <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
+          <MessageThread messages={r.messages} />
+        </div>
+      )}
       <div className="text-xs text-muted-foreground">Resolvido por {r.resolvedByName || "—"} • {fmtDate(r.resolvedAt)}</div>
     </Card>
   );
