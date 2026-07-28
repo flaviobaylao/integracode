@@ -3,7 +3,18 @@
 // ----------------------------------------------------------------------------
 // Modelo HÍBRIDO (decisão do Flavio, 26/jul/2026):
 //   • A IA decide a DISTRIBUIÇÃO: qual pedido vai em qual veículo/motorista,
-//     equilíbrio de carga, prioridades, Brasília × Goiânia, janelas do cliente.
+//     por GEOGRAFIA, Brasília × Goiânia e janelas do cliente.
+//
+// Revisão 28/jul/2026 (decisão do Flavio):
+//   • SEM BALANCEAMENTO DE CARGA. Tempo de rota, distância, valor e peso NÃO são
+//     critério de distribuição nem entram na função objetivo. A única regra de
+//     divisão é a QUANTIDADE de paradas: teto cadastrado do veículo quando existe,
+//     senão divisão igualitária (cota = floor(n/v), com o resto nos primeiros).
+//     Ver `computeQuotas` e `ESPEC_Roteirizacao_IA_SEM_BALANCEAMENTO.md`.
+//   • PRIORIDADE É FLAG. Só é prioritário o pedido com `isUrgent` gravado no banco
+//     (estrela ★ / etiqueta PRIORIDADE, marcada à mão pela operação). A IA não pode
+//     criar, inferir ou derivar prioridade — nem por janela de horário, nem por
+//     valor, cliente ou distância. Janela de horário é RESTRIÇÃO de sequenciamento.
 //   • O ALGORITMO decide a SEQUÊNCIA: Nearest-Neighbor + 2-opt + distâncias
 //     reais de rua (OSRM), reaproveitando `optimizeVehicleRoutes`.
 //   • Uma camada de REPARO determinística valida a proposta da IA contra as
@@ -58,11 +69,19 @@ export interface AIRouteMeta {
   alertas: string[];
   /** Correções determinísticas aplicadas por cima da proposta da IA. */
   ajustes: string[];
-  /** Utilização por veículo, para a tela mostrar equilíbrio de carga. */
+  /**
+   * Ocupação por veículo. A métrica que MANDA é `entregas / cota` (quantidade).
+   * Minutos continuam expostos apenas como informação operacional (viabilidade da
+   * janela de trabalho) — nunca como objetivo de equilíbrio.
+   */
   cargaPorVeiculo: Array<{
     veiculo: string;
     motorista?: string;
     entregas: number;
+    /** Cota de paradas: capacidade cadastrada, ou divisão igualitária. */
+    cota: number;
+    /** true quando a cota veio de capacidade cadastrada no veículo. */
+    cotaCadastrada: boolean;
     minutosEstimados: number;
     minutosDisponiveis: number;
     utilizacaoPct: number;
@@ -87,6 +106,11 @@ export type AIRoutePlan = RoutePlan & { ai: AIRouteMeta };
 
 interface AIProposal {
   resumo?: string;
+  /**
+   * `urgente` foi REMOVIDO do schema em 28/jul/2026 — a IA não promove pedido.
+   * O campo continua declarado só para detectar (e descartar) modelos que
+   * insistam em devolvê-lo; ver `applyAndRepair`.
+   */
   atribuicoes?: Array<{ pedido: string; veiculo: number; urgente?: boolean; motivo?: string }>;
   nao_atribuidos?: Array<{ pedido: string; motivo?: string }>;
   alertas?: string[];
@@ -179,18 +203,31 @@ Sua tarefa é DISTRIBUIR os pedidos do dia entre os veículos/motoristas dispon�
 
 OBJETIVO, nesta ordem de importância:
 1. Nenhuma restrição dura violada.
-2. Cada veículo atende uma REGIÃO COESA (pedidos vizinhos entre si, mesmo setor), para minimizar quilometragem. Evite rotas que se cruzam.
-3. Carga equilibrada entre os motoristas — mas SEM quebrar a coesão do item 2. Uma diferença de até ~30% no nº de entregas é aceitável se isso mantém cada motorista na sua região. NÃO divida uma região só para deixar a contagem igual.
-4. Pedidos marcados PRIORIDADE e clientes com janela de horário apertada em veículos com folga — a prioridade foi marcada à mão pela operação e o algoritmo já os coloca no início da rota do motorista.
+2. Cada veículo atende uma REGIÃO COESA (pedidos vizinhos entre si, mesmo setor), com o MENOR deslocamento possível. Evite rotas que se cruzam e territórios sobrepostos entre motoristas.
+3. Respeitar a COTA de paradas de cada veículo (campo "cota" na lista de veículos). A cota é a ÚNICA regra de divisão que existe.
+
+NÃO FAÇA BALANCEAMENTO DE CARGA (regra dura):
+- É PROIBIDO equalizar entre os motoristas: minutos de rota, percentual de jornada, quilometragem, valor em R$, peso ou "esforço".
+- Nenhuma dessas grandezas pode ser critério de atribuição nem justificativa para separar pedidos.
+- A divisão é por QUANTIDADE de paradas e só: cada veículo recebe exatamente a sua "cota". Se a cota já está cheia, o pedido vai para o veículo elegível mais próximo — e é isso que você escreve como motivo.
+- Nunca escreva "equilíbrio de carga", "balanceamento" ou "distribuir o tempo" nas justificativas.
 
 REGRA DE VIZINHANÇA (importante):
-- Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura que impeça.
+- Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura ou cota cheia.
 - Pedidos no mesmo endereço (vizinhos 0.0km) SEMPRE no mesmo veículo — são uma parada só.
 - Use a lista "vizinhos" de cada pedido: se os vizinhos de um pedido foram para outro veículo, revise.
 
+PRIORIDADE — VOCÊ NÃO CRIA PRIORIDADE (regra dura):
+- Prioritário é SOMENTE o pedido que já vem marcado "PRIORIDADE" na lista. Essa marca é um campo do banco, colocada à mão pela operação.
+- É PROIBIDO inferir, derivar ou atribuir prioridade/urgência por qualquer outro motivo: janela de horário, horário de fechamento do cliente, valor do pedido, tamanho do cliente, perecibilidade, pedido antigo, atraso, distância ou isolamento geográfico.
+- "janela" é RESTRIÇÃO DE SEQUENCIAMENTO, não prioridade: significa apenas que a parada precisa acontecer dentro daquele intervalo. Descreva como "janela: atender até 17h" — nunca como "urgente" ou "prioritário".
+- A prioridade não muda a atribuição de veículo nem a cota; ela só faz o algoritmo colocar a parada no início da rota, e isso já acontece automaticamente.
+- As palavras "prioridade", "prioritário" e "urgente" só podem aparecer no seu texto quando o pedido tem a marca PRIORIDADE.
+
 RESTRIÇÕES DURAS (nunca viole):
-- Capacidade máxima de entregas de cada veículo.
-- Minutos disponíveis do veículo (janela de trabalho menos 30 min de almoço). Use ~15 min de deslocamento entre paradas + o tempo de atendimento do pedido.
+- Cota de paradas de cada veículo (campo "cota").
+- Capacidade máxima de entregas de cada veículo, quando cadastrada.
+- Minutos disponíveis do veículo (janela de trabalho menos 30 min de almoço). Use ~15 min de deslocamento entre paradas + o tempo de atendimento do pedido. Isso é viabilidade da jornada, NÃO é critério de equilíbrio.
 - "veíc:" no pedido indica exigência de tipo de veículo — só pode ir em veículo de tipo compatível.
 - Pedidos marcados [BSB] são de Brasília/DF: SÓ podem ir em veículo do tipo "baruc". E veículos "baruc" SÓ levam pedidos [BSB].
 - Só use veículos da lista. Só use pedidos da lista.
@@ -199,7 +236,7 @@ REGRAS DE SAÍDA:
 - Todo pedido deve aparecer EXATAMENTE UMA VEZ: em "atribuicoes" ou em "nao_atribuidos".
 - Use os códigos curtos (P1, P2… / V0, V1…), nunca nomes ou ids longos.
 - Se um pedido não couber em lugar nenhum, coloque em "nao_atribuidos" com o motivo real.
-- Em "alertas", liste observações operacionais que o humano precisa ver (ex.: cliente que hoje não recebe, janela incompatível, pedido muito distante do restante).
+- Em "alertas", liste observações operacionais que o humano precisa ver (ex.: cliente que hoje não recebe, janela de horário a respeitar, pedido muito distante do restante).
 - Escreva resumo e justificativas em português do Brasil, curtos e objetivos.
 
 Responda SEMPRE chamando a ferramenta distribuir_entregas.`;
@@ -212,7 +249,7 @@ const TOOL_DEF = {
     properties: {
       resumo: {
         type: 'string',
-        description: 'Resumo em 1–3 frases da estratégia adotada (regiões, equilíbrio, exceções).',
+        description: 'Resumo em 1–3 frases da estratégia adotada (regiões atendidas por cada veículo, cotas, exceções). Não fale em equilíbrio de carga.',
       },
       atribuicoes: {
         type: 'array',
@@ -222,8 +259,7 @@ const TOOL_DEF = {
           properties: {
             pedido: { type: 'string', description: 'Código curto do pedido, ex.: P12' },
             veiculo: { type: 'integer', description: 'Índice do veículo, ex.: 0 para V0' },
-            urgente: { type: 'boolean', description: 'Marque true para atender no início da rota.' },
-            motivo: { type: 'string', description: 'Motivo curto (opcional).' },
+            motivo: { type: 'string', description: 'Motivo curto (opcional). Nunca cite equilíbrio de carga nem invente prioridade.' },
           },
           required: ['pedido', 'veiculo'],
         },
@@ -256,6 +292,63 @@ const TOOL_DEF = {
   },
 };
 
+/**
+ * COTA DE PARADAS POR VEÍCULO — a única regra de divisão que existe.
+ *
+ * • Veículo COM capacidade cadastrada → a própria capacidade é a cota (teto duro).
+ * • Veículo SEM capacidade cadastrada → divisão IGUALITÁRIA por QUANTIDADE dentro
+ *   do seu polo: base = floor(restante / nº de veículos sem teto), e o resto vai
+ *   para os primeiros (ex.: 29 pedidos / 2 veículos → 15 e 14).
+ *
+ * Goiânia e Brasília são polos separados quando há veículo dos dois tipos
+ * escalados, porque um não pode atender o outro.
+ *
+ * Nunca usa tempo, distância, valor ou peso. Não existe balanceamento de carga.
+ */
+export function computeQuotas(
+  orders: DeliveryOrder[],
+  vehicles: VehicleConfig[],
+): Map<number, number> {
+  const quotas = new Map<number, number>();
+
+  const barucIdx: number[] = [];
+  const outrosIdx: number[] = [];
+  vehicles.forEach((v, i) => (isBaruc(v) ? barucIdx : outrosIdx).push(i));
+
+  const totalBsb = orders.filter(isBsbOrder).length;
+  const pools: Array<{ idxs: number[]; total: number }> =
+    barucIdx.length > 0 && outrosIdx.length > 0
+      ? [
+          { idxs: barucIdx, total: totalBsb },
+          { idxs: outrosIdx, total: orders.length - totalBsb },
+        ]
+      : [{ idxs: vehicles.map((_, i) => i), total: orders.length }];
+
+  for (const pool of pools) {
+    const comTeto = pool.idxs.filter((i) => Number(vehicles[i].capacity) > 0);
+    const semTeto = pool.idxs.filter((i) => !(Number(vehicles[i].capacity) > 0));
+
+    let restante = pool.total;
+    for (const i of comTeto) {
+      const cap = Number(vehicles[i].capacity);
+      quotas.set(i, cap);
+      restante -= cap;
+    }
+
+    if (semTeto.length === 0) continue;
+
+    restante = Math.max(0, restante);
+    const base = Math.floor(restante / semTeto.length);
+    const resto = restante - base * semTeto.length;
+    semTeto.forEach((i, k) => quotas.set(i, base + (k < resto ? 1 : 0)));
+  }
+
+  vehicles.forEach((_, i) => {
+    if (!quotas.has(i)) quotas.set(i, 0);
+  });
+  return quotas;
+}
+
 function buildBriefing(
   orders: DeliveryOrder[],
   codeByOrderId: Map<string, string>,
@@ -263,6 +356,7 @@ function buildBriefing(
   eligibleByVehicle: Map<number, DeliveryOrder[]>,
   routeDate: Date,
   weekdayWarnings: Array<{ order: DeliveryOrder; reason: string }>,
+  quotas: Map<number, number>,
 ): string {
   const depotLat = vehicles[0]?.startLatitude ?? 0;
   const depotLon = vehicles[0]?.startLongitude ?? 0;
@@ -315,8 +409,8 @@ function buildBriefing(
       v.type + (isBaruc(v) ? ' (Brasília)' : ''),
       `motorista ${v.driverName || 's/ nome'}${v.licensePlate ? ` placa ${v.licensePlate}` : ''}`,
       `base ${v.startAddress || `${v.startLatitude},${v.startLongitude}`}`,
-      `${v.timeWindowStart}-${v.timeWindowEnd} (~${disp}min úteis)`,
-      `capacidade ${v.capacity ? `${v.capacity} entregas` : 'sem limite declarado'}`,
+      `${v.timeWindowStart}-${v.timeWindowEnd} (~${disp}min úteis — só viabilidade, não é meta de equilíbrio)`,
+      `cota ${quotas.get(idx) ?? 0} paradas${Number(v.capacity) > 0 ? ' (capacidade cadastrada — teto duro)' : ' (divisão igualitária por quantidade)'}`,
       `elegíveis: ${elegiveis.length === orders.length ? 'todos' : (elegiveis.join(',') || 'nenhum')}`,
     ];
     return partes.join(' | ');
@@ -334,6 +428,7 @@ function buildBriefing(
     `PEDIDOS A DISTRIBUIR (${orders.length}):`,
     ...linhasPedidos,
     '',
+    'Lembretes: respeite a "cota" de cada veículo (é a única regra de divisão); distribua por proximidade geográfica; não equilibre carga/tempo; e só trate como prioritário o pedido marcado PRIORIDADE.',
     'Distribua todos os pedidos chamando distribuir_entregas.',
   ].join('\n');
 }
@@ -372,6 +467,7 @@ interface RepairContext {
   orders: DeliveryOrder[];
   vehicles: VehicleConfig[];
   eligibleByVehicle: Map<number, DeliveryOrder[]>;
+  quotas: Map<number, number>;
 }
 
 function buildEligibilitySet(eligibleByVehicle: Map<number, DeliveryOrder[]>): Map<number, Set<string>> {
@@ -409,13 +505,24 @@ function applyAndRepair(
   const availableMinutes = (idx: number) =>
     timeToMinutes(vehicles[idx].timeWindowEnd) - timeToMinutes(vehicles[idx].timeWindowStart);
 
-  const fits = (idx: number, o: DeliveryOrder): boolean => {
+  /**
+   * @param ignorarCota só é usado no último passe, quando um pedido não caberia
+   * em lugar nenhum. Melhor estourar a cota em 1 parada do que deixar o pedido
+   * sem rota — o estouro fica registrado em `ajustes`.
+   */
+  const fits = (idx: number, o: DeliveryOrder, ignorarCota = false): boolean => {
     const v = vehicles[idx];
     if (!eligible.get(idx)?.has(o.id)) return false;
     if (!isOrderCompatibleWithVehicle(o, v.type)) return false;
     if (anyBaruc && isBsbOrder(o) && !isBaruc(v)) return false;
     if (anyNonBaruc && !isBsbOrder(o) && isBaruc(v)) return false;
+    // Capacidade cadastrada é teto duro — não pode ser estourada nunca.
     if (v.capacity && assignments.get(idx)!.length >= v.capacity) return false;
+    // Cota de quantidade: única regra de divisão. Ver computeQuotas().
+    if (!ignorarCota) {
+      const cota = ctx.quotas.get(idx) ?? Infinity;
+      if (assignments.get(idx)!.length >= cota) return false;
+    }
     if (workload.get(idx)! + (o.averageDeliveryTime || 30) > availableMinutes(idx)) return false;
     return true;
   };
@@ -426,18 +533,21 @@ function applyAndRepair(
   };
 
   /**
-   * Melhor veículo alternativo.
-   * ⚠️ Antes escolhia só pela MENOR CARGA, o que espalhava pedidos vizinhos entre
-   * motoristas diferentes (era a causa de dois clientes lado a lado caírem em rotas
-   * distintas). Agora pesa PROXIMIDADE primeiro: distância do pedido até a parada
-   * mais próxima já atribuída àquele veículo (ou até a base, se ainda estiver vazio),
-   * com um empurrãozinho pela carga só para desempatar veículos igualmente perto.
+   * Melhor veículo alternativo — 100% PROXIMIDADE.
+   *
+   * Histórico: escolhia pela MENOR CARGA, o que espalhava pedidos vizinhos entre
+   * motoristas diferentes. Depois passou a pesar distância + uma penalidade de
+   * carga; a penalidade ainda separava vizinhos (caso GUSTO MARISTA × EMPÓRIO
+   * MILÃO, 1,26 km, 28/jul/2026). Em 28/jul/2026 a penalidade foi REMOVIDA:
+   * o critério é só a distância do pedido até a parada mais próxima já atribuída
+   * ao veículo (ou até a base, se ele ainda estiver vazio). O que impede um
+   * veículo de engolir tudo é a COTA, checada em `fits`, não a carga.
    */
-  const bestAlternative = (o: DeliveryOrder): number => {
+  const bestAlternative = (o: DeliveryOrder, ignorarCota = false): number => {
     let best = -1;
     let melhorCusto = Infinity;
     vehicles.forEach((_, idx) => {
-      if (!fits(idx, o)) return;
+      if (!fits(idx, o, ignorarCota)) return;
       const v = vehicles[idx];
       const jaAtribuidos = assignments.get(idx)!;
       let distancia = Infinity;
@@ -448,9 +558,7 @@ function applyAndRepair(
       if (!Number.isFinite(distancia)) {
         distancia = calculateDistance(o.customerLatitude, o.customerLongitude, v.startLatitude, v.startLongitude);
       }
-      // Carga entra como penalidade suave: 1 km equivale a ~4 min de fila.
-      const penalidadeCarga = (workload.get(idx)! - 30) / 4;
-      const custo = distancia + penalidadeCarga * 0.25;
+      const custo = distancia; // sem penalidade de carga: não existe balanceamento
       if (custo < melhorCusto) {
         melhorCusto = custo;
         best = idx;
@@ -475,7 +583,14 @@ function applyAndRepair(
       continue;
     }
     decided.add(o.id);
-    if (a.urgente) (o as any).isUrgent = true;
+
+    // 🔒 PRIORIDADE NÃO VEM DA IA. Antes, `a.urgente` promovia o pedido — era como
+    // pedidos com janela de horário viravam "urgentes" no relatório. A prioridade
+    // é exclusivamente o flag isUrgent gravado no banco pela operação (estrela ★).
+    if (a.urgente && !o.isUrgent) {
+      ajustes.push(`${o.customerName}: a IA tentou marcar como prioritário — ignorado (prioridade só pela marcação manual da operação).`);
+      console.warn(`⚠️ [ROTA-IA] tentativa de prioridade inventada em "${o.customerName}" — descartada`);
+    }
 
     const idx = Number(a.veiculo);
     if (!Number.isInteger(idx) || idx < 0 || idx >= vehicles.length) {
@@ -494,8 +609,10 @@ function applyAndRepair(
       const motivo = isBsbOrder(o) && !isBaruc(vehicles[idx])
         ? 'pedido de Brasília exige veículo BSB'
         : (vehicles[idx].capacity && assignments.get(idx)!.length >= (vehicles[idx].capacity as number))
-          ? 'veículo cheio'
-          : 'janela/compatibilidade do veículo';
+          ? 'capacidade máxima do veículo atingida'
+          : (assignments.get(idx)!.length >= (ctx.quotas.get(idx) ?? Infinity))
+            ? `cota de ${ctx.quotas.get(idx)} paradas do veículo já completa`
+            : 'janela/compatibilidade do veículo';
       ajustes.push(`${o.customerName}: movido de V${idx} para V${alt} (${motivo}).`);
     } else {
       overflow.push(o);
@@ -520,11 +637,20 @@ function applyAndRepair(
     ajustes.push(`${o.customerName}: não foi citado pela IA — alocado pelo algoritmo.`);
   }
 
-  // Guloso (menor carga) para tudo que sobrou
+  // Sobras: alocação por PROXIMIDADE, respeitando a cota. Só se não houver nenhum
+  // veículo com cota livre é que se permite estourar a cota (nunca a capacidade
+  // cadastrada nem a janela de trabalho) — melhor 1 parada a mais do que um pedido
+  // sem rota. Prioritários primeiro: `isUrgent` aqui é sempre o flag do banco.
   const unassigned: DeliveryOrder[] = [];
   overflow.sort((a, b) => Number(!!b.isUrgent) - Number(!!a.isUrgent));
   for (const o of overflow) {
-    const idx = bestAlternative(o);
+    let idx = bestAlternative(o);
+    if (idx < 0) {
+      idx = bestAlternative(o, true);
+      if (idx >= 0) {
+        ajustes.push(`${o.customerName}: nenhum veículo com cota livre — alocado no mais próximo (${vehicles[idx].driverName || `V${idx}`}), 1 parada acima da cota.`);
+      }
+    }
     if (idx >= 0) place(idx, o);
     else unassigned.push(o);
   }
@@ -542,6 +668,7 @@ function diagnosticarVizinhosSeparados(
   assignments: Map<number, DeliveryOrder[]>,
   vehicles: VehicleConfig[],
   eligibleByVehicle: Map<number, DeliveryOrder[]>,
+  quotas: Map<number, number>,
   raioKm = 2,
 ): AIRouteMeta['vizinhosSeparados'] {
   const porPedido = new Map<string, number>();
@@ -590,7 +717,12 @@ function diagnosticarVizinhosSeparados(
         const v2 = vehicles[destino];
         const carga = assignments.get(destino)!.length;
         if (v2.capacity && carga >= v2.capacity) {
-          motivos.push(`${nomeVeic(destino)} já está na capacidade máxima (${v2.capacity} entregas)`);
+          motivos.push(`${nomeVeic(destino)} já está na capacidade máxima cadastrada (${v2.capacity} entregas)`);
+          return;
+        }
+        const cota = quotas.get(destino);
+        if (cota != null && carga >= cota) {
+          motivos.push(`a cota de ${cota} paradas de ${nomeVeic(destino)} já estava completa`);
           return;
         }
         const disp = timeToMinutes(v2.timeWindowEnd) - timeToMinutes(v2.timeWindowStart);
@@ -610,7 +742,7 @@ function diagnosticarVizinhosSeparados(
         distanciaKm: Math.round(d * 100) / 100,
         motivo: motivos.length
           ? Array.from(new Set(motivos)).join('; ')
-          : 'nenhuma restrição impedia juntá-los — foi decisão de distribuição (equilíbrio de carga entre os motoristas). Dá para arrastar um dos dois manualmente se preferir.',
+          : 'nenhuma restrição de cota, capacidade ou janela impedia juntá-los — provável escolha subótima da distribuição. Dá para arrastar um dos dois manualmente.',
       });
     }
   }
@@ -640,6 +772,13 @@ export async function planDeliveryRoutesWithAI(
   applyBsbEligibility(eligibleByVehicle, vehicles);
 
   const validOrders = [...urgentOrders, ...regularOrders];
+
+  // COTA por veículo: teto cadastrado, ou divisão igualitária por quantidade.
+  // É a única regra de divisão — não existe balanceamento de carga.
+  const quotas = computeQuotas(validOrders, vehicles);
+  console.log(
+    `📦 [ROTA-IA] cotas de paradas: ${vehicles.map((v, i) => `${v.driverName || `V${i}`}=${quotas.get(i)}${Number(v.capacity) > 0 ? '(cap)' : ''}`).join(' · ')}`,
+  );
   const alertas: string[] = weekdayWarnings.map((w) => `${w.order.customerName}: ${w.reason}`);
 
   // Pedido do DF sem veículo BSB escalado (ou o contrário) fica sem rota — avisa em vez de sumir.
@@ -685,7 +824,7 @@ export async function planDeliveryRoutesWithAI(
     });
 
     try {
-      const briefing = buildBriefing(validOrders, codeByOrderId, vehicles, eligibleByVehicle, routeDate, weekdayWarnings);
+      const briefing = buildBriefing(validOrders, codeByOrderId, vehicles, eligibleByVehicle, routeDate, weekdayWarnings, quotas);
       console.log(`🤖 [ROTA-IA] ${validOrders.length} pedidos × ${vehicles.length} veículos → ${modelo} (briefing ${briefing.length} chars)`);
       const { ok, status, j } = await callAnthropic(modelo, SYSTEM_PROMPT, briefing, TOOL_DEF);
       if (!ok) {
@@ -709,7 +848,7 @@ export async function planDeliveryRoutesWithAI(
     }
 
     if (proposal) {
-      const rep = applyAndRepair(proposal, { orders: validOrders, vehicles, eligibleByVehicle }, codeToOrderId);
+      const rep = applyAndRepair(proposal, { orders: validOrders, vehicles, eligibleByVehicle, quotas }, codeToOrderId);
       assignments = rep.assignments;
       workload = rep.workload;
       unassigned = rep.unassigned;
@@ -725,7 +864,7 @@ export async function planDeliveryRoutesWithAI(
           texto: String(x.texto || ''),
         }));
 
-      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle);
+      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle, quotas);
       return plan;
     }
   }
@@ -739,10 +878,10 @@ export async function planDeliveryRoutesWithAI(
     const list = assignments.get(idx) || [];
     workload.set(idx, 30 + list.reduce((s, o) => s + (o.averageDeliveryTime || 30) + 15, 0));
   });
-  meta.resumo = 'Distribuição automática por proximidade e menor carga (sem agente de IA nesta execução).';
+  meta.resumo = 'Distribuição automática por proximidade (sem agente de IA nesta execução).';
   meta.ajustes = [];
 
-  return finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle);
+  return finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle, quotas);
 }
 
 // ==================== FASE 3/4 comuns ====================
@@ -759,22 +898,27 @@ async function finish(
   meta: AIRouteMeta,
   t0: number,
   eligibleByVehicle?: Map<number, DeliveryOrder[]>,
+  quotas?: Map<number, number>,
 ): Promise<AIRoutePlan> {
   // FASE 3 — sequência ótima por veículo (NN + 2-opt + OSRM), reaproveitando o motor atual
   const routes: VehicleRoute[] = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
 
-  // Carga por veículo (para a tela mostrar equilíbrio)
+  // Ocupação por veículo. A barra da tela passa a medir QUANTIDADE (entregas/cota);
+  // os minutos continuam expostos só como viabilidade da jornada.
   meta.cargaPorVeiculo = vehicles.map((v, idx) => {
     const list = assignments.get(idx) || [];
     const disp = timeToMinutes(v.timeWindowEnd) - timeToMinutes(v.timeWindowStart);
     const usados = workload.get(idx) ?? 30;
+    const cota = quotas?.get(idx) ?? list.length;
     return {
       veiculo: `V${idx} · ${v.type}`,
       motorista: v.driverName,
       entregas: list.length,
+      cota,
+      cotaCadastrada: Number(v.capacity) > 0,
       minutosEstimados: Math.round(usados),
       minutosDisponiveis: disp,
-      utilizacaoPct: disp > 0 ? Math.round((usados / disp) * 1000) / 10 : 0,
+      utilizacaoPct: cota > 0 ? Math.round((list.length / cota) * 1000) / 10 : 0,
     };
   });
 
@@ -782,7 +926,7 @@ async function finish(
   // entregadores diferentes?" direto na tela).
   if (eligibleByVehicle) {
     try {
-      meta.vizinhosSeparados = diagnosticarVizinhosSeparados(assignments, vehicles, eligibleByVehicle);
+      meta.vizinhosSeparados = diagnosticarVizinhosSeparados(assignments, vehicles, eligibleByVehicle, quotas || new Map());
       if (meta.vizinhosSeparados.length) {
         console.log(`🔎 [ROTA-IA] ${meta.vizinhosSeparados.length} par(es) de pedidos vizinhos em rotas diferentes`);
       }
