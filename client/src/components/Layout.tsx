@@ -473,8 +473,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       // Aplicação das permissões salvas: esconde o item se o usuário configurado
       // não tem "ver" no card correspondente. Itens sem card mapeado passam livres.
       .filter(item => { const card = MENU_CARD[item.id]; return !card || perms.can(card, "ver"); })
-      .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
+      // As whitelists por função abaixo são o PADRÃO da função (para quem NÃO tem ajuste
+      // individual). Quem TEM configuração salva em "Acessos por Usuário" (hasConfig) já foi
+      // resolvido pelo mapa efetivo acima (perms.can) — assim add/remover acesso individual VALE.
+      .filter(item => perms.hasConfig || !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
+      .filter(item => perms.hasConfig || !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'sales-goals', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
   };
 
   const visibleGroups = useMemo(() => {
