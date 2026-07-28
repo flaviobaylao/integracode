@@ -38,6 +38,20 @@ export default function PersistentHeader() {
     return () => window.removeEventListener("storage", load);
   }, []);
 
+  // Solicitações de Alteração pendentes (inbox) — badge no atalho (admin).
+  const [pendingCR, setPendingCR] = useState(0);
+  useEffect(() => {
+    if ((user as any)?.role !== 'admin') { setPendingCR(0); return; }
+    let alive = true;
+    const load = () => fetch('/api/change-requests', { credentials: 'include' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (alive && d && typeof d.pendingCount === 'number') setPendingCR(d.pendingCount); })
+      .catch(() => { /* noop */ });
+    load();
+    const iv = setInterval(() => { if (alive && document.visibilityState !== 'hidden') load(); }, 30000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [user]);
+
   const u = user as any;
   const roleLabel = u?.role ? (ROLE_LABELS[u.role] || u.role) : "";
 
@@ -92,6 +106,11 @@ export default function PersistentHeader() {
                   style={{ backgroundColor: `${info.hexColor}15`, color: info.hexColor }}
                 >
                   <i className={`${info.icon} text-base`}></i>
+                  {favId === 'solicitacoes-alteracao' && pendingCR > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                      {pendingCR}
+                    </span>
+                  )}
                 </button>
               </Link>
             );
