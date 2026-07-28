@@ -130,6 +130,9 @@ function ResolvedCard({ r }: { r: any }) {
           <MessageThread messages={r.messages} />
         </div>
       )}
+      {(!Array.isArray(r.messages) || r.messages.length === 0) && r.resolutionNote && (
+        <div className="text-xs">Obs.: {r.resolutionNote}</div>
+      )}
       <div className="text-xs text-muted-foreground">Resolvido por {r.resolvedByName || "—"} • {fmtDate(r.resolvedAt)}</div>
     </Card>
   );
