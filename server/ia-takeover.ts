@@ -48,8 +48,70 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
       } catch {}
     }
   } catch {}
+  // Fora do 1841 (ou com a janela fechada), responde pelo Umbler Talk — pelo MESMO numero
+  // que o cliente usou. Sem o override, toda resposta saia do numero padrao (2630), mesmo
+  // para quem escreveu no 7169.
+  let from: string | undefined;
+  try {
+    const c2: any = await db.execute(sql`SELECT channel_phone FROM chat_conversations WHERE id = ${convId} LIMIT 1`);
+    from = c2.rows?.[0]?.channel_phone || undefined;
+  } catch {}
   const { sendUmblerTalkText } = await import('./chat-routes');
-  return sendUmblerTalkText(toPhone, text);
+  return sendUmblerTalkText(toPhone, text, from);
+}
+
+// ============================================================================
+// MODO "IA NA FRENTE" (ia_front_line)
+// A IA atende sozinha desde o primeiro "oi": a conversa NAO entra na fila humana
+// (round-robin) enquanto ela estiver atendendo, e so e distribuida no momento em que
+// a IA chama transferir_humano. Se um humano escrever mesmo assim, a IA recua daquela
+// conversa (quem falou por ultimo entre os nao-clientes deixa de ser 'agent:%').
+// ============================================================================
+
+// A IA vai mesmo atender esta conversa agora? Usado pelo webhook para decidir se
+// pula a distribuicao. Se qualquer gate estiver fechado, a fila humana funciona
+// exatamente como hoje — nenhuma conversa fica orfa.
+export async function iaAssumeSozinha(conversationId: string, phone: string): Promise<boolean> {
+  try {
+    if ((await getSetting('ia_front_line', 'off')) !== 'on') return false;
+    const mode = await getSetting('agents_runtime_mode', 'off');
+    if (mode === 'off') return false;
+    if (mode === 'test') {
+      const d = String(phone || '').replace(/\D/g, '');
+      const allow = (await getSetting('agents_test_numbers', '')).split(/[,;\s]+/).map(x => x.replace(/\D/g, '')).filter(Boolean);
+      if (!allow.includes(d)) return false;
+    }
+    if ((await getSetting('chat_ai_paused:' + conversationId, '')) !== '') return false; // ja transferida
+    const { avaliarCanal } = await import('./canais-gestao');
+    const av = await avaliarCanal(conversationId);
+    return !!(av.ativo && av.iaAtiva && av.dentroHorario);
+  } catch { return false; } // na duvida, mantem a fila humana de hoje
+}
+
+// Um humano escreveu por ultimo nesta conversa? (mensagens da IA tem sender_id 'agent:%';
+// avisos do sistema usam 'system')
+async function humanoFalouPorUltimo(conversationId: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`SELECT sender_id FROM chat_messages
+      WHERE conversation_id = ${conversationId} AND sender_type <> 'customer'
+      ORDER BY created_at DESC LIMIT 1`);
+    const id = r.rows?.[0]?.sender_id;
+    if (!id) return false;
+    const sid = String(id);
+    return !sid.startsWith('agent:') && sid !== 'system';
+  } catch { return false; }
+}
+
+// Envio de IMAGEM (QR do PIX). O 1841 nao tem endpoint de midia proprio; como ele tambem e um
+// canal do Umbler, a midia sai pelo mesmo numero que o cliente usou (channel_phone da conversa).
+async function replyImageVia(convId: string, toPhone: string, url: string, caption?: string): Promise<any> {
+  let from: string | undefined;
+  try {
+    const c: any = await db.execute(sql`SELECT channel_phone FROM chat_conversations WHERE id = ${convId} LIMIT 1`);
+    from = c.rows?.[0]?.channel_phone || undefined;
+  } catch {}
+  const { sendUmblerTalkMedia } = await import('./chat-routes');
+  return sendUmblerTalkMedia(toPhone, url, caption || '', from);
 }
 
 // Enforcement de canal (painel Gestão de Canais). Decide se a IA pode agir nesta conversa:
@@ -57,26 +119,8 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
 //   - a IA precisa estar LIGADA naquele canal (ia_canal_<n>; mesmas chaves do painel Fase 1);
 //   - precisa estar DENTRO DO HORÁRIO de atividade (dias + início/fim, fuso de Brasília).
 // Fora do horário: envia o aviso automático 1x (throttle de 4h por conversa) e NÃO aciona a IA.
-// A conversa e com um FUNCIONARIO (vendedor/telemarketing/admin/etc.)? Se sim, a IA NAO atende —
-// evita a IA responder os proprios vendedores/admins que recebem avisos de gestao no WhatsApp.
-async function ehConversaDeFuncionario(phone: string): Promise<boolean> {
-  try {
-    const ph = String(phone || '').replace(/[^0-9]/g, '');
-    if (ph.length < 8) return false;
-    const semDDI = ph.replace(/^55/, '');
-    const comDDI = '55' + semDDI;
-    const r: any = await db.execute(sql`
-      SELECT 1 FROM users
-      WHERE role IN ('vendedor','telemarketing','admin','administrative','motorista','industria')
-        AND regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') IN (${ph}, ${semDDI}, ${comDDI})
-      LIMIT 1`);
-    return (r.rows || []).length > 0;
-  } catch { return false; }
-}
-
 async function canalLiberaIA(conversationId: string, toPhone: string): Promise<boolean> {
   try {
-    if (await ehConversaDeFuncionario(toPhone)) return false; // nunca atende os proprios funcionarios
     const { avaliarCanal, podeEnviarForaMsg, registrarForaMsgEnviado } = await import('./canais-gestao');
     const av = await avaliarCanal(conversationId);
     if (!av.ativo) return false;    // canal inteiro desligado
@@ -94,6 +138,9 @@ async function canalLiberaIA(conversationId: string, toPhone: string): Promise<b
 // Decide se o disparo IMEDIATO (inbound) deve rodar agora. Ver regras no cabeçalho.
 export async function shouldRespondNow(conversationId: string): Promise<boolean> {
   try {
+    // Modo "IA na frente": se um humano interveio nesta conversa, a IA sai dela
+    // (evita os dois respondendo o mesmo cliente).
+    if ((await getSetting('ia_front_line', 'off')) === 'on' && (await humanoFalouPorUltimo(conversationId))) return false;
     if ((await getSetting('ia_regra_timeout_on', 'off')) !== 'on') return true; // regra off -> comportamento atual
     const r: any = await db.execute(sql`SELECT sender_id, sender_type FROM chat_messages
       WHERE conversation_id = ${conversationId} AND sender_type <> 'customer'
@@ -109,16 +156,6 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
 // O porteiro shouldRespondNow aplica a regra de takeover: se ligada e a IA ainda não assumiu,
 // espera o humano (o sweep assume em X min); se a IA já assumiu, responde na hora.
 // maybeRunAgent reaplica canal/modo/allowlist/paused — cliente real protegido em modo test.
-// Aplica a etiqueta "Atendimento IA" na conversa (sem remover as outras) quando a IA assume.
-async function marcarEtiquetaIA(conversationId: string): Promise<void> {
-  try {
-    await db.execute(sql`
-      INSERT INTO chat_conversation_labels (conversation_id, label_id)
-      SELECT ${conversationId}, id FROM chat_labels WHERE name = 'Atendimento IA' LIMIT 1
-      ON CONFLICT DO NOTHING`);
-  } catch (e: any) { console.error('[IA-ETIQUETA]', e?.message || e); }
-}
-
 export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
   try {
     if (!incomingText || !incomingText.trim()) return;
@@ -130,9 +167,9 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       conversationId,
       incomingText,
       sendText: (to: string, text: string) => replyVia(conversationId, to, text),
+      sendImage: (url: string) => replyImageVia(conversationId, phone, url),
       channel: 'whatsapp',
     });
-    await marcarEtiquetaIA(conversationId);
   } catch (e: any) { console.error('[IA-REACTIVE]', e?.message || e); }
 }
 
@@ -187,9 +224,9 @@ export async function takeoverTick(force = false): Promise<{ ran: boolean; reaso
         conversationId: row.id,
         incomingText: String(row.last_text || ''),
         sendText: (to: string, text: string) => replyVia(row.id, to, text),
+        sendImage: (url: string) => replyImageVia(row.id, row.customer_phone, url),
         channel: 'whatsapp',
       });
-      await marcarEtiquetaIA(row.id);
       assumidas++;
       detalhes.push({ conv: row.id });
       console.log(`[IA-TAKEOVER] conv=${row.id} assumida (mode=${mode})`);
@@ -219,6 +256,29 @@ export function registerIaTakeover(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const force = String(req.query.force || '') === '1';
     res.json(await takeoverTick(force));
+  });
+
+  // Retomar a IA numa conversa transferida para humano (limpa chat_ai_paused).
+  //   ?conv=<id>  -> limpa aquela conversa
+  //   ?todas=1    -> limpa todas as pausas LEGADAS (valor '1', que nunca expiravam)
+  app.get('/api/admin/ia-atendimento/retomar', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const conv = String(req.query.conv || '').trim();
+    const todas = String(req.query.todas || '') === '1';
+    if (!conv && !todas) return res.status(400).json({ error: 'informe ?conv=<id> ou ?todas=1' });
+    const { limparPausa } = await import('./agent-runtime');
+    const n = await limparPausa(conv || undefined);
+    res.json({ ok: true, limpas: n, escopo: conv ? conv : 'legadas' });
+  });
+
+  // Quantas conversas estao pausadas hoje (diagnostico).
+  app.get('/api/admin/ia-atendimento/pausadas', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const r: any = await db.execute(sql`SELECT count(*) FILTER (WHERE value = '1') AS legadas,
+                                               count(*) FILTER (WHERE value <> '1') AS com_data,
+                                               count(*) AS total
+                                        FROM system_settings WHERE key LIKE 'chat_ai_paused:%'`);
+    res.json(r.rows?.[0] || {});
   });
 
   // Varredura automática a cada 1 min (para o takeover reagir perto do limite de X min).

@@ -657,7 +657,7 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
   }
 }
 
-async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');
@@ -2081,12 +2081,20 @@ export function registerChatRoutes(app: Express): void {
         });
         debugInfo.createdConversationId = conversation.id;
         
-        // 🔄 Distribuir nova conversa para atendente disponível (round-robin)
+        // 🔄 Distribuir nova conversa para atendente disponível (round-robin).
+        // No modo "IA na frente" (ia_front_line), a conversa NAO entra na fila enquanto a
+        // IA atende — ela e distribuida so quando a IA chamar transferir_humano.
         try {
           debugInfo.steps.push('7c-distribute-conversation');
+          const { iaAssumeSozinha } = await import("./ia-takeover");
+          if (await iaAssumeSozinha(conversation.id, normalizedPhone)) {
+            debugInfo.steps.push('7c-skip-ia-front-line');
+            console.log(`🤖 [WEBHOOK] Conversa ${conversation.id} fica com a IA (front-line) — sem distribuir`);
+          } else {
           const { distributeNewConversation } = await import("./chat-distribution-service");
           await distributeNewConversation(conversation.id);
           console.log(`🔄 [WEBHOOK] Nova conversa ${conversation.id} distribuída via round-robin`);
+          }
         } catch (distErr: any) {
           console.error(`⚠️ [WEBHOOK] Erro ao distribuir conversa:`, distErr.message);
         }
@@ -2231,10 +2239,16 @@ export function registerChatRoutes(app: Express): void {
           if (nomeUp.includes('SPAM') || nomeUp.includes('GRUPO')) {
             console.log(`🚫 [WEBHOOK-AI] Contato "${identifiedName}" SPAM/GRUPO - ignorando IA`);
           } else {
-            // Conversa nova sem dono: distribui na fila (round-robin) para os humanos verem
+            // Conversa nova sem dono: distribui na fila (round-robin) para os humanos verem.
+            // No modo "IA na frente", segura a distribuicao ate a IA transferir.
             if (currentConversation && !currentConversation.assignedAgentId) {
-              try { const { distributeNewConversation } = await import("./chat-distribution-service"); await distributeNewConversation(conversation.id); }
-              catch (e: any) { console.error('[WEBHOOK-AI] distribuicao', e?.message || e); }
+              try {
+                const { iaAssumeSozinha } = await import("./ia-takeover");
+                if (!(await iaAssumeSozinha(conversation.id, normalizedPhone))) {
+                  const { distributeNewConversation } = await import("./chat-distribution-service");
+                  await distributeNewConversation(conversation.id);
+                }
+              } catch (e: any) { console.error('[WEBHOOK-AI] distribuicao', e?.message || e); }
             }
             // IA reativa oficial = Agentes de IA (Claude), mesmo motor do Instagram (ChatGPT antigo desativado).
             // shouldRespondNow aplica a regra de takeover (espera humano X min); o sweep assume depois.
@@ -3770,9 +3784,16 @@ export function registerChatRoutes(app: Express): void {
       return res.status(500).json({ found: false, error: error?.message || "erro" });
     }
   });
-  app.get("/api/chat/conversations/:conversationId/messages", async (req, res) => {
+  app.get("/api/chat/conversations/:conversationId/messages", authenticateUser, async (req, res) => {
     try {
       const { conversationId } = req.params;
+      // Antes esta rota nao tinha autenticacao nem checagem de dono: quem soubesse o id
+      // lia qualquer conversa. Agora exige login e respeita a reserva por carteira.
+      try {
+        const { podeLer } = await import('./ia-fila');
+        const v = await podeLer(conversationId, (req as any).currentUser?.id, (req as any).currentUser?.role);
+        if (!v.ok) return res.status(403).json({ error: v.message, code: v.code });
+      } catch { /* em erro, nao trava a leitura */ }
       const messages = await storage.getChatMessages(conversationId) || [];
       
       // Marcar mensagens do cliente como lidas ao abrir a conversa (limpa o badge de não lidas).
@@ -4050,6 +4071,15 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Conversa não encontrada" });
       }
 
+      // 🤖 IA NA FRENTE: enquanto a IA esta atendendo, nenhum atendente interrompe.
+      // Depois do transferir_humano, se a conversa foi reservada para o dono da carteira,
+      // so ele escreve ate o prazo (ia_handoff_min) vencer.
+      try {
+        const { podeEnviar } = await import('./ia-fila');
+        const v = await podeEnviar(conversationId, userId, currentUser?.role);
+        if (!v.ok) return res.status(403).json({ error: v.message, code: v.code });
+      } catch { /* em erro, segue para a regra antiga */ }
+
       // 🔐 REGRA DE PROPRIEDADE DA CONVERSA:
       // Quando um atendente assume a conversa (assignedAgentId), somente ele pode enviar mensagens.
       // Outro atendente só volta a poder enviar se: o proprietário transferir a conversa, ou um admin
@@ -4122,6 +4152,9 @@ export function registerChatRoutes(app: Express): void {
       });
 
       console.log(`💬 [SEND-MESSAGE] Mensagem salva: ${message.id} na conversa ${conversation.id}`);
+
+      // Atendente respondeu: encerra a espera da fila da IA (o sweep de 5 min nao repassa mais).
+      try { const { marcarAtendida } = await import('./ia-fila'); await marcarAtendida(conversation.id, userId); } catch {}
 
       // 🟢 Atualizar status para em-progresso e atribuir ao atendente que enviou a mensagem
       if (storage.updateChatConversation) {
@@ -6134,6 +6167,51 @@ export function registerChatRoutes(app: Express): void {
     } catch (e: any) { console.error('[LABELS] set conv labels:', e); res.status(500).json({ error: e?.message }); }
   });
 
+  // --- Correção Profissional: proteções contra a IA RESPONDER em vez de corrigir ---
+
+  const _polishNorm = (s: string) =>
+    String(s || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // tira acentos
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')                        // tira pontuação/emoji
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  // Saudações/confirmações curtas: não têm o que corrigir e são o caso em que
+  // o modelo mais tentava conversar. Passam direto, sem IA.
+  const _polishSaudacaoOuCurta = (raw: string) => {
+    const t = _polishNorm(raw);
+    if (!t) return true;
+    if (t.replace(/\s/g, '').length <= 12) return true;    // "bom dia", "ok", "blz"
+    const SAUDACOES = /^(oi+|ola+|opa|e ai|bom dia|boa tarde|boa noite|tudo bem|td bem|tudo bom|como vai|blz|beleza|ok|okay|certo|combinado|perfeito|show|otimo|obrigad[oa]|valeu|vlw|de nada|imagina|sim|nao|claro|ate mais|ate logo|abraco|bom final de semana|boa semana)([\s,.!?]+(oi+|ola+|bom dia|boa tarde|boa noite|tudo bem|td bem|tudo bom|como vai|voce|vc|ai|entao|por favor|pf|obrigad[oa]|valeu|sim|nao|claro))*$/;
+    return SAUDACOES.test(t);
+  };
+
+  // Rede de segurança: detecta quando a saída da IA é uma RESPOSTA, e não uma
+  // versão corrigida do rascunho. Nesses casos o original é mantido.
+  const _polishDesviou = (raw: string, out: string) => {
+    if (!out) return true;
+    // ficou desproporcionalmente maior → provavelmente respondeu/inventou
+    if (out.length > Math.max(70, Math.round(raw.length * 2.2))) return true;
+    // meta-texto típico de resposta de assistente
+    if (/^(aqui est[aá]|segue|claro[,!]|com certeza[,!]|entendi|desculpe|posso ajudar|como posso)/i.test(out.trim())) return true;
+    // baixa sobreposição de conteúdo com o original
+    const orig = _polishNorm(raw).split(' ').filter((w) => w.length > 2);
+    const novo = new Set(_polishNorm(out).split(' ').filter((w) => w.length > 2));
+    if (orig.length >= 3) {
+      const comuns = orig.filter((w) => novo.has(w)).length;
+      if (comuns / orig.length < 0.34) return true;
+    }
+    // Texto curto em que a IA acrescentou 3+ palavras novas: é continuação de
+    // conversa, não correção (ex.: "tudo bem?" -> "Tudo bem, sim! Como posso ajudá-lo?").
+    if (orig.length <= 4) {
+      const dentro = new Set(orig);
+      const inventadas = [...novo].filter((w) => !dentro.has(w)).length;
+      if (inventadas >= 3) return true;
+    }
+    return false;
+  };
+
   // ✨ Aprimorar mensagem do atendente: profissional, objetiva, cordial e com ortografia correta
   app.post("/api/chat/polish-message", authenticateUser, async (req, res) => {
     try {
@@ -6142,23 +6220,64 @@ export function registerChatRoutes(app: Express): void {
       const _polishUid = (req as any).currentUser?.id;
       if (_polishUid) { try { const { polishAtivoParaUsuario } = await import('./polish-gestao'); if (!(await polishAtivoParaUsuario(_polishUid))) return res.json({ polished: raw }); } catch {} }
       if (!process.env.ANTHROPIC_API_KEY) return res.json({ polished: raw });
+
+      // Saudações e mensagens muito curtas NÃO passam pela IA: não há o que
+      // corrigir e é exatamente onde o modelo tendia a RESPONDER o vendedor
+      // ("tudo bem?" virava "Tudo bem, sim! Como posso ajudá-lo?").
+      if (_polishSaudacaoOuCurta(raw)) return res.json({ polished: raw, motivo: 'curta-ou-saudacao' });
+
       const model = 'claude-haiku-4-5';
       const sys = [
-        'Você reescreve mensagens de atendimento e vendas via WhatsApp para ficarem profissionais, objetivas e cordiais, com ortografia e gramática corretas em português do Brasil.',
+        'Você é um CORRETOR DE TEXTO. Sua ÚNICA função é reescrever o texto recebido para ficar profissional, objetivo e cordial, com ortografia e gramática corretas em português do Brasil.',
+        '',
+        'CONTEXTO: o texto é o rascunho de uma mensagem que um ATENDENTE vai enviar para um CLIENTE no WhatsApp. Ele NUNCA é dirigido a você e NUNCA é uma pergunta para você responder.',
+        '',
+        'PROIBIDO (quebra o sistema):',
+        '- Responder, cumprimentar de volta, tirar dúvida, continuar a conversa ou escrever a fala do cliente.',
+        '- Tratar o texto como pedido ou pergunta, mesmo quando parecer um ("bom dia!", "tudo bem?", "pode me ajudar?", "quanto custa?"). Nesses casos você apenas corrige a escrita do próprio texto.',
+        '- Escrever qualquer coisa além do texto reescrito (nada de aspas, comentários, "Aqui está:" ou explicações).',
+        '',
         'REGRAS OBRIGATÓRIAS:',
         '- Preserve EXATAMENTE o significado, os fatos, valores, números, datas, horários, nomes, links, códigos e emojis. NÃO invente nem acrescente informação.',
         '- Não adicione saudações, assinaturas ou despedidas que não existam no original.',
-        '- Mantenha curto o que é curto; não deixe a mensagem mais longa que o necessário.',
+        '- Mantenha curto o que é curto; a mensagem reescrita NÃO pode ficar mais longa que o necessário.',
+        '- Mantenha o mesmo tipo de frase: pergunta continua pergunta, afirmação continua afirmação.',
         '- Tom humano e cordial, nunca robótico.',
-        '- Responda SOMENTE com o texto final reescrito, sem aspas e sem explicações.'
+        '- Se o texto já estiver correto, devolva-o EXATAMENTE como veio.',
+        '',
+        'Saída: SOMENTE o texto final reescrito, dentro de <texto_corrigido></texto_corrigido>.'
       ].join('\n');
+      // O rascunho vai delimitado por <texto>...</texto> e dentro de uma
+      // INSTRUÇÃO — assim o modelo o trata como dado a corrigir, não como
+      // uma mensagem de chat dirigida a ele.
+      const userMsg = 'Corrija a escrita do texto entre as tags <texto>. Não responda a ele. Devolva o resultado dentro de <texto_corrigido></texto_corrigido>, sem mais nada.\n\n<texto>\n' + raw + '\n</texto>';
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 600, temperature: 0.3, system: sys, messages: [ { role: 'user', content: raw } ] }),
+        body: JSON.stringify({
+          model,
+          max_tokens: 600,
+          temperature: 0.2,
+          system: sys,
+          messages: [
+            { role: 'user', content: userMsg },
+            // Prefill: o modelo continua a partir daqui, então já começa
+            // escrevendo o texto corrigido em vez de conversar.
+            { role: 'assistant', content: '<texto_corrigido>' },
+          ],
+          stop_sequences: ['</texto_corrigido>'],
+        }),
       });
       const data: any = await resp.json();
-      const polished = String((Array.isArray(data?.content) ? data.content.map((b: any) => b?.text || '').join('') : '') || '').trim();
+      let polished = String((Array.isArray(data?.content) ? data.content.map((b: any) => b?.text || '').join('') : '') || '').trim();
+      polished = polished.replace(/<\/?texto(_corrigido)?>/gi, '').trim();
+
+      // Rede de segurança: se ainda assim a IA responder em vez de corrigir,
+      // manda o texto ORIGINAL do vendedor. Nunca inventa por conta própria.
+      if (_polishDesviou(raw, polished)) {
+        console.warn('[POLISH] descartado (parece resposta, não correção) | original=%j | ia=%j', raw.slice(0, 120), polished.slice(0, 120));
+        return res.json({ polished: raw, motivo: 'descartado' });
+      }
       return res.json({ polished: polished || raw });
     } catch (e: any) {
       console.warn('[POLISH] erro ao aprimorar mensagem:', e?.message || e);

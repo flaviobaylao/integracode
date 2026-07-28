@@ -255,7 +255,7 @@ export interface IStorage {
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
-  deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void>;
+  deleteSalesCard(id: string): Promise<void>;
   deleteAllSalesCards(): Promise<number>;
   getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
@@ -1029,16 +1029,12 @@ export class DatabaseStorage implements IStorage {
     }
     
     // 1. Update customer: set isActive = false and inactivatedAt = now
-    //    omieStatus='inativo' torna a inativação DESVINCULADA do Omie: o sync não
-    //    reativa (omieIntegration não sobrescreve mais isActive/omieStatus) e o cliente
-    //    fica filtrado em todas as consultas que checam omie_status='ativo'.
     const [inactivatedCustomer] = await db
       .update(customers)
-      .set({
-        isActive: false,
-        omieStatus: 'inativo',
+      .set({ 
+        isActive: false, 
         inactivatedAt: nowBrazil(),
-        updatedAt: nowBrazil()
+        updatedAt: nowBrazil() 
       })
       .where(eq(customers.id, customerId))
       .returning();
@@ -1055,11 +1051,10 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`✅ Cliente ${customerId} removido da lista de clientes ativos`);
     
-    // 3. Apagar TODOS os cards pendentes/em andamento do cliente, exceto o card atual.
-    //    Inclui os cards PERMANENTES (datados por next_visit_date, não por scheduled_date),
-    //    que antes sobreviviam à inativação e voltavam a aparecer na rota.
-    // 🛡️ BLINDAGEM (28/jul/2026): NUNCA apaga card com VENDA (sale_value > 0) ou com PRODUTOS —
-    //    isso é um PEDIDO REAL (hotsite/instagram/vendedor), não um slot de agenda.
+    // 3. Delete all future pending sales cards for this customer, except the current one
+    const today = nowBrazil();
+    today.setHours(0, 0, 0, 0);
+    
     const result = await db
       .delete(salesCards)
       .where(
@@ -1070,17 +1065,11 @@ export class DatabaseStorage implements IStorage {
             eq(salesCards.status, 'pending'),
             eq(salesCards.status, 'in_progress')
           ),
-          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
-          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
+          gte(salesCards.scheduledDate, today)
         )
       )
       .returning();
-
-    // 4. Tirar o cliente da repescagem do dia (sai do overlay da Rota do Dia).
-    try {
-      await db.execute(sql`UPDATE repescagem_assignments SET status = 'cancelled', updated_at = now() WHERE customer_id = ${customerId} AND status IN ('pending','in_route')`);
-    } catch (e) { console.warn('inactivateCustomer: falha ao limpar repescagem', e); }
-
+    
     return {
       customer: inactivatedCustomer,
       deletedCards: result.length
@@ -1091,6 +1080,8 @@ export class DatabaseStorage implements IStorage {
   // Clientes Ativos e apaga cards futuros pendentes), porém em lote e sem preservar card.
   async bulkInactivateCustomers(ids: string[]): Promise<{ processed: number; inactivated: number; alreadyInactive: number; deletedCards: number; inactivatedIds: string[] }> {
     if (!ids || ids.length === 0) return { processed: 0, inactivated: 0, alreadyInactive: 0, deletedCards: 0, inactivatedIds: [] };
+    const today = nowBrazil();
+    today.setHours(0, 0, 0, 0);
 
     // Quais estavam ATIVOS antes (para auditoria e contagem)
     const activeBefore = await db
@@ -1099,10 +1090,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
     const inactivatedIds = activeBefore.map((r) => r.id);
 
-    // 1. customers.isActive = false + omieStatus='inativo' (desvincula do Omie: sync não reativa)
+    // 1. customers.isActive = false
     await db
       .update(customers)
-      .set({ isActive: false, omieStatus: 'inativo', inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .set({ isActive: false, inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
@@ -1111,26 +1102,17 @@ export class DatabaseStorage implements IStorage {
       .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
       .where(inArray(activeCustomers.customerId, ids));
 
-    // 3. Apagar TODOS os cards pendentes/em andamento (inclui permanentes por next_visit_date)
-    // 🛡️ BLINDAGEM (28/jul/2026): NUNCA apaga card com VENDA (sale_value > 0) ou com PRODUTOS —
-    //    isso é um PEDIDO REAL, não um slot de agenda.
+    // 3. Apagar cards futuros pendentes/em andamento
     const del = await db
       .delete(salesCards)
       .where(
         and(
           inArray(salesCards.customerId, ids),
           or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress')),
-          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
-          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
+          gte(salesCards.scheduledDate, today)
         )
       )
       .returning();
-
-    // 4. Tirar da repescagem do dia (sai do overlay da Rota do Dia).
-    try {
-      const inList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
-      await db.execute(sql`UPDATE repescagem_assignments SET status = 'cancelled', updated_at = now() WHERE customer_id IN (${inList}) AND status IN ('pending','in_route')`);
-    } catch (e) { console.warn('bulkInactivateCustomers: falha ao limpar repescagem', e); }
 
     return {
       processed: ids.length,
@@ -2411,26 +2393,7 @@ export class DatabaseStorage implements IStorage {
     return cardsWithRelations as SalesCardWithRelations[];
   }
 
-  // 🛡️ BLINDAGEM (28/jul/2026): card com VENDA (sale_value > 0) ou com PRODUTOS é um PEDIDO REAL.
-  // Exclusão só passa com { force: true } — usado apenas pelo endpoint admin de excluir pedido do
-  // hotsite, que é uma ação deliberada. Qualquer outra chamada recebe erro em vez de apagar em
-  // silêncio (era assim que um pedido sumia sem deixar rastro).
-  async deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void> {
-    if (!opts?.force) {
-      const guarded = await db
-        .delete(salesCards)
-        .where(and(
-          eq(salesCards.id, id),
-          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
-          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
-        ))
-        .returning({ id: salesCards.id });
-      if (!guarded.length) {
-        const [ainda] = await db.select({ id: salesCards.id }).from(salesCards).where(eq(salesCards.id, id));
-        if (ainda) throw new Error('CARD_COM_VENDA: este card tem valor/produtos (é um PEDIDO) e não pode ser excluído por esta rota.');
-      }
-      return;
-    }
+  async deleteSalesCard(id: string): Promise<void> {
     await db.delete(salesCards).where(eq(salesCards.id, id));
   }
 
@@ -4149,7 +4112,7 @@ export class DatabaseStorage implements IStorage {
             AND r.deleted_at IS NULL
             AND (r.amount - coalesce(r.amount_paid, 0)) > 0
             AND coalesce(r.import_origin, '') <> 'omie_historico'
-            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -5392,7 +5355,7 @@ export class DatabaseStorage implements IStorage {
     const result: any = await db.execute(sql`
       SELECT MAX(customer_name) AS client_name,
              SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
-             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_dias,
+             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)) AS max_dias,
              COUNT(*)::int AS n
       FROM receivables
       WHERE deleted_at IS NULL
@@ -5404,7 +5367,7 @@ export class DatabaseStorage implements IStorage {
         AND COALESCE(import_origin, '') <> 'omie_historico'
         AND (
           status IN ('a_vencer', 'vencida')
-          AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+          AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         )
         AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
@@ -6183,14 +6146,22 @@ export class DatabaseStorage implements IStorage {
   // Retorna objeto com conversas fechadas para envio de mensagem de finalização
   async closeInactiveConversations(): Promise<{ count: number; conversations: Array<{ id: string; customerPhone: string; customerName: string }> }> {
     try {
-      // Regra unificada: uma conversa é finalizada automaticamente após 10 min
-      // sem atividade das partes (cliente ou atendente). A finalização manual pelo
-      // vendedor é sempre permitida (botão "Finalizar"), independentemente deste tempo.
-      const timeoutMinutes = 10;
-      // 🕐 FIX FUSO: lastMessageTime/lastAttendedAt são gravados com nowBrazil() (horário de Brasília,
-      // 3h atrás do UTC). O corte precisa usar o MESMO relógio, senão toda conversa nasce "vencida"
-      // e é finalizada no próximo ciclo. Usar nowBrazil() aqui alinha o corte aos timestamps gravados.
-      const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
+      // Tempo de inatividade antes de finalizar automaticamente. Antes era FIXO em 10 min,
+      // o que encerrava a conversa de um cliente que só tinha saído para buscar o CPF.
+      // Agora vem de system_settings 'chat_auto_close_min' (padrão 120). Valor <= 0
+      // desliga o encerramento automático. A finalização manual pelo vendedor
+      // (botão "Finalizar") continua sempre permitida, independentemente deste tempo.
+      let timeoutMinutes = 120;
+      try {
+        const cfg: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'chat_auto_close_min' LIMIT 1`);
+        const raw = String(cfg.rows?.[0]?.value ?? '').replace(/^"|"$/g, '').trim();
+        if (raw !== '') {
+          const n = parseInt(raw, 10);
+          if (!isNaN(n)) timeoutMinutes = n;
+        }
+      } catch { /* mantém o padrão */ }
+      if (!(timeoutMinutes > 0)) return { count: 0, conversations: [] };
+      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
       
       // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
       // Status a fechar: 'new', 'assigned', 'in-progress'
@@ -6206,6 +6177,9 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             sql`${chatConversations.status} IN ('new', 'assigned', 'in-progress')`,
+            // Conversa ABERTA PELO ATENDENTE nunca e finalizada automaticamente:
+            // so o proprio atendente finaliza (botao "Finalizar") ou transfere.
+            sql`coalesce(${chatConversations.initiatedBy}::text, 'customer') <> 'user'`,
             lt(chatConversations.lastMessageTime, cutoffTime),
             sql`(${chatConversations.lastAttendedAt} IS NULL OR ${chatConversations.lastAttendedAt} < ${cutoffTime})`
           )
@@ -8784,11 +8758,11 @@ export class DatabaseStorage implements IStorage {
       // um título que já venceu e depois teve o vencimento REpostergado (renegociação /
       // boleto unificado) ou uma baixa desfeita fica 'vencida' no banco COM vencimento
       // hoje/futuro — e NÃO é mais vencido. Vence HOJE (qualquer hora) NÃO é vencida.
-      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate})::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status === 'a_vencer') {
       // A VENCER = título em aberto cujo vencimento é HOJE ou FUTURO (dia-calendário BRT),
       // mesmo que o status gravado seja 'vencida' (vencimento repostergado / baixa desfeita).
-      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate})::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status) {
       conditions.push(eq(receivables.status, filters.status as any));
     }
@@ -8811,10 +8785,8 @@ export class DatabaseStorage implements IStorage {
     const _hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     for (const r of rows) {
       if (((r.status as any) === 'a_vencer' || (r.status as any) === 'vencida') && r.dueDate) {
-        // Vencimento = data de calendário gravada como meia-noite UTC => ler em UTC.
-        // (Ler em BRT puxava o dia p/ trás e marcava vencida a conta que vence HOJE.)
-        const _dueCal = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'UTC' });
-        (r as any).status = _dueCal < _hojeBR ? 'vencida' : 'a_vencer';
+        const _dueBR = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        (r as any).status = _dueBR < _hojeBR ? 'vencida' : 'a_vencer';
       }
     }
     try {
@@ -8966,19 +8938,7 @@ export class DatabaseStorage implements IStorage {
   async getPayables(filters?: { supplierDocument?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; source?: string; chartAccountId?: string }): Promise<Payable[]> {
     const conditions: any[] = [isNull(payables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.supplierDocument) conditions.push(eq(payables.supplierDocument, filters.supplierDocument));
-    if (filters?.status === 'vencida') {
-      // MESMA RÉGUA da conta a receber: VENCIDA = título EM ABERTO (a_vencer/vencida)
-      // cujo vencimento JÁ PASSOU. A régua é a DATA, nunca o flag gravado. O vencimento
-      // é data de calendário (meia-noite UTC) => due_date::date direto, comparado ao dia
-      // de HOJE no fuso Brasil. Vence HOJE (qualquer hora) NÃO é vencida.
-      conditions.push(and(inArray(payables.status, ['a_vencer', 'vencida'] as any), sql`(${payables.dueDate})::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
-    } else if (filters?.status === 'a_vencer') {
-      // A VENCER = em aberto com vencimento HOJE ou FUTURO, mesmo que o flag gravado
-      // seja 'vencida' (vencimento repostergado / baixa desfeita / sync do 1.0).
-      conditions.push(and(inArray(payables.status, ['a_vencer', 'vencida'] as any), sql`(${payables.dueDate})::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
-    } else if (filters?.status) {
-      conditions.push(eq(payables.status, filters.status as any));
-    }
+    if (filters?.status) conditions.push(eq(payables.status, filters.status as any));
     if (filters?.instanceId) conditions.push(eq(payables.omieInstanceId, filters.instanceId));
     if (filters?.startDate) conditions.push(gte(payables.issueDate, filters.startDate));
     if (filters?.endDate) conditions.push(lte(payables.issueDate, filters.endDate));
@@ -8987,21 +8947,10 @@ export class DatabaseStorage implements IStorage {
     if (filters?.source) conditions.push(eq(payables.source, filters.source as any));
     if (filters?.chartAccountId) conditions.push(eq(payables.chartAccountId, filters.chartAccountId));
 
-    const rows = conditions.length > 0
-      ? await db.select().from(payables).where(and(...conditions)).orderBy(desc(payables.createdAt))
-      : await db.select().from(payables).orderBy(desc(payables.createdAt));
-    // Recomputa o status EXIBIDO de títulos EM ABERTO por DIA-CALENDÁRIO, nas DUAS
-    // direções (igual à conta a receber): vencimento ANTERIOR a hoje => vencida;
-    // vencimento HOJE ou FUTURO => a_vencer. Vencimento lido em UTC (data de calendário),
-    // hoje lido em BRT. paga/cancelada não mudam.
-    const _hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-    for (const p of rows) {
-      if (((p.status as any) === 'a_vencer' || (p.status as any) === 'vencida') && p.dueDate) {
-        const _dueCal = new Date(p.dueDate).toLocaleDateString('en-CA', { timeZone: 'UTC' });
-        (p as any).status = _dueCal < _hojeBR ? 'vencida' : 'a_vencer';
-      }
+    if (conditions.length > 0) {
+      return db.select().from(payables).where(and(...conditions)).orderBy(desc(payables.createdAt));
     }
-    return rows;
+    return db.select().from(payables).orderBy(desc(payables.createdAt));
   }
 
   async getPayable(id: string): Promise<Payable | undefined> {

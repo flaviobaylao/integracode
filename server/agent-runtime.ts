@@ -159,12 +159,58 @@ async function resolveCustomerId(ctx: any, documento?: string): Promise<string |
   return ctx?.customerId || null;
 }
 
+// Pausa da IA numa conversa (setada por transferir_humano). Expira em 'ia_pausa_horas'
+// (padrao 24h). Valores legados ('1') seguem pausados ate serem limpos pela rota
+// /api/admin/ia-atendimento/retomar.
+export async function iaPausada(conversationId: string): Promise<boolean> {
+  const v = await getSetting('chat_ai_paused:' + conversationId, '');
+  if (!v) return false;
+  const t = Date.parse(v);
+  if (isNaN(t)) return true; // legado '1'
+  const horas = Math.max(1, parseInt(await getSetting('ia_pausa_horas', '24'), 10) || 24);
+  return (Date.now() - t) < horas * 3600 * 1000;
+}
+
+// Limpa a pausa de uma conversa (ou de todas as legadas '1').
+export async function limparPausa(conversationId?: string): Promise<number> {
+  try {
+    if (conversationId) {
+      await db.execute(sql`DELETE FROM system_settings WHERE key = ${'chat_ai_paused:' + conversationId}`);
+      return 1;
+    }
+    const r: any = await db.execute(sql`DELETE FROM system_settings WHERE key LIKE 'chat_ai_paused:%' AND value = '1' RETURNING key`);
+    return (r.rows || []).length;
+  } catch { return 0; }
+}
+
 async function execTool(name: string, input: any, ctx: any): Promise<string> {
   try {
     if (name === 'transferir_humano') {
       if (ctx?.conversationId) {
-        await setSetting('chat_ai_paused:' + ctx.conversationId, '1');
+        // Grava o INSTANTE da transferencia (antes gravava '1' e nada limpava: a conversa e
+        // unica por telefone, entao aquele cliente nunca mais era atendido pela IA).
+        await setSetting('chat_ai_paused:' + ctx.conversationId, new Date().toISOString());
         try { await db.execute(sql`UPDATE chat_conversations SET status='assigned' WHERE id=${ctx.conversationId}`); } catch {}
+        // Modo "IA na frente": a conversa nao entrou na fila no primeiro contato, entao
+        // e AGORA que ela vai para um atendente. O repasse e DIRIGIDO: se o dono da
+        // carteira do cliente estiver online, a conversa vai para ele em modo exclusivo
+        // (so ele le e responde) e ele tem ia_handoff_min para responder; senao vai para
+        // qualquer atendente online.
+        try {
+          if ((await getSetting('ia_front_line', 'off')) === 'on') {
+            const { handoffParaHumano } = await import('./ia-fila');
+            const h = await handoffParaHumano(ctx.conversationId, String(ctx.phone || ''), String(input?.motivo || ''));
+            if (h?.foraExpediente) {
+              return 'OK: conversa registrada, MAS hoje NAO e dia util (fim de semana ou feriado) e nao ha atendimento humano. Explique isso ao cliente de forma simpatica, diga que um atendente entra em contato ' + (h.retorno || 'no proximo dia util') + ', e se despeça. NAO prometa retorno hoje.';
+            }
+            if (h?.semAtendente) {
+              return 'OK: conversa liberada para atendimento humano. Neste momento TODOS os atendentes estao ocupados. Diga ao cliente, de forma simpatica e curta, que todos os atendentes estao ocupados no momento e que ele sera atendido em breve. NAO prometa horario. Depois pare de responder.';
+            }
+            if (h && h.ok === false) {
+              return 'OK: conversa liberada para atendimento humano. Avise o cliente que a solicitacao foi registrada e que um atendente retorna assim que possivel. Pare de responder.';
+            }
+          }
+        } catch (e: any) { console.error('[AGENT-RUNTIME] repasse pos-transferencia', e?.message || e); }
       }
       return 'OK: conversa transferida para atendimento humano. Pare de responder e informe o cliente que um atendente assumirá em instantes.';
     }
@@ -181,8 +227,8 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       const d = onlyDigits(input?.documento);
       let row: any = null;
       // Fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado). Mesma regra de "vencida".
-      if (cid) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_days_overdue FROM receivables WHERE customer_id=${cid} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
-      if (!row && d) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_days_overdue FROM receivables WHERE regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g')=${d} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
+      if (cid) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)) AS max_days_overdue FROM receivables WHERE customer_id=${cid} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
+      if (!row && d) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)) AS max_days_overdue FROM receivables WHERE regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g')=${d} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
       if (!row) return 'Nenhum débito vencido encontrado para este cliente.';
       return `Débitos em aberto: total ${brl(row.total_amount)}; atraso máximo ${row.max_days_overdue || 0} dias.`;
     }
@@ -297,7 +343,10 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
           city: String(inp.cidade || '').trim() || null,
           neighborhood: String(inp.bairro || '').trim() || null,
           zipCode: onlyDigits(inp.cep) || null,
-          sellerId: 'chatgpt-ai',
+          // Cliente NOVO cadastrado pela IA entra na carteira padrao (system_settings
+        // 'ia_carteira_padrao'). Antes nascia com 'chatgpt-ai', ou seja, sem dono — e
+        // sem dono o pedido nao cai para ninguem.
+        sellerId: await (await import('./ia-fila')).carteiraPadrao(),
           weekdays: JSON.stringify([mapWeekday(inp.dia_entrega)]),
           visitPeriodicity: 'semanal',
           isConsumerClient: tipo !== 'revenda',
@@ -324,7 +373,9 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       customerId: customer?.id || ('ig-order-' + rid()),
       sellerId: 'chatgpt-ai',
       status: 'pending',
-      source: 'instagram',
+      // Origem real do pedido: antes era fixo 'instagram', o que rotulava errado todo
+      // pedido feito por outro canal (WhatsApp) no pipeline e nos relatorios de origem.
+      source: (String(ctx?.channel || '') === 'instagram' ? 'instagram' : 'whatsapp'),
       operationType: 'venda',
       saleValue: total.toFixed(2),
       products,
@@ -356,7 +407,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     try {
       const { isTelemarketing, notifyTelemarketingOrder, broadcastLeadCapture } = await import('./lead-capture');
       const _on = 'INT-' + String(card?.id || '').substring(0, 8);
-      const info: any = { salesCardId: card?.id || null, orderNumber: _on, channel: 'instagram', customerId: customer?.id || null, customerName: String(inp.nome || ''), customerDocument: doc };
+      const info: any = { salesCardId: card?.id || null, orderNumber: _on, channel: String(ctx?.channel || 'whatsapp'), customerId: customer?.id || null, customerName: String(inp.nome || ''), customerDocument: doc };
       if (walletSellerId) {
         const owner = await storage.getUser(walletSellerId).catch(() => null);
         if (owner && isTelemarketing(owner)) await notifyTelemarketingOrder(owner, info);
@@ -412,7 +463,7 @@ async function gerarPix(_input: any, ctx: any): Promise<string> {
         description: ('Pedido Honest ' + (row.order_number || '')).slice(0, 100),
         expirationSeconds: 3600,
         customerId: erpCustomerId || undefined,
-        createdBy: 'instagram-ai',
+        createdBy: 'ia:' + String(ctx?.channel || 'whatsapp'),
       });
       chargeId = charge.id;
       pixCopia = String(charge.pixCopiaECola || '');
@@ -511,7 +562,16 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     while (conv.length && conv[0].role !== 'user') conv.shift();
     if (!conv.length) return { ok: false, error: 'sem mensagem de usuario' };
     const model = normModel(agent.modelo);
-    const tools = ctx ? (String((ctx as any).channel || '') === 'instagram' ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL] : [...TOOL_DEFS, CARD_LINK_TOOL]) : undefined;
+    // Ferramentas de venda (registrar_pedido + gerar_pix) fora do Instagram ficam atras da
+    // chave 'ia_wpp_vendas' (off por padrao): liga/desliga o "modo Instagram" no WhatsApp
+    // sem precisar de deploy. Instagram continua sempre com o pacote completo.
+    const _canal = String((ctx as any)?.channel || '');
+    const _vendasFora = !!ctx && _canal !== 'instagram' && (await getSetting('ia_wpp_vendas', 'off')) === 'on';
+    const tools = ctx
+      ? ((_canal === 'instagram' || _vendasFora)
+          ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL]
+          : [...TOOL_DEFS, CARD_LINK_TOOL])
+      : undefined;
     const usedTools: string[] = [];
     for (let i = 0; i < 4; i++) {
       const { ok, status, j } = await callAnthropic(model, systemPrompt, conv, tools);
@@ -551,8 +611,8 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
       }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
-    // se a conversa foi transferida p/ humano, não responder mais
-    if ((await getSetting('chat_ai_paused:' + opts.conversationId, '')) === '1') return;
+    // se a conversa foi transferida p/ humano, não responder mais (expira em ia_pausa_horas)
+    if (await iaPausada(opts.conversationId)) return;
     const defId = await getSetting(isIG ? 'agents_ig_default' : 'agents_default', isIG ? 'instagram' : 'sdr');
     const routing = await getSetting('agents_routing', 'keyword');
     // contexto do cliente (p/ ferramentas)

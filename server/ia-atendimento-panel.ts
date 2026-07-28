@@ -30,10 +30,24 @@ const KEYS: Record<string, string> = {
   ia_despedida: 'Foi um prazer falar com voce! Qualquer coisa e so chamar aqui. 🧡',
   ia_canal_2630: 'on',                     // liga/desliga a acao da IA no numero 2630 (atendimento)
   ia_canal_1841: 'on',                     // liga/desliga a acao da IA no numero 1841 (HONESTAPI)
+  ia_wpp_vendas: 'off',                    // "modo Instagram" no WhatsApp: registrar pedido + PIX
+  ia_front_line: 'off',                    // IA atende sozinha; humano so entra quando a IA transferir
+  ia_handoff_min: '5',                     // minutos que o dono da carteira tem para responder
+  ia_notifica_wa: 'on',                    // avisa o atendente por WhatsApp ao receber a conversa
+  ia_trava_admin: 'off',                   // 'on' = nem admin escreve por cima da IA
+  ia_carteira_padrao: '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest 1: dono do cliente novo
+  ia_dias_uteis: '1,2,3,4,5',              // dias com atendimento humano (0=dom ... 6=sab)
+  ia_feriados: '',                         // feriados extras YYYY-MM-DD separados por virgula
+  ia_lembrete_on: 'on',                    // lembrar o atendente de finalizar a conversa dele
+  ia_lembrete_min: '120',                  // minutos parados antes do lembrete
+  ia_lembrete_repete_h: '24',              // nao repete o lembrete antes disso
+  agents_routing: 'keyword',               // keyword = roteia por palavra-chave; fixo = sempre o agente padrao
+  ia_pausa_horas: '24',                    // horas que a IA fica fora da conversa apos transferir p/ humano
+  chat_auto_close_min: '120',              // minutos de inatividade p/ encerrar conversa automaticamente
 };
 const MODES = ['agents_runtime_mode', 'agents_ig_mode'];
-const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841'];
-const NUMS = ['ia_timeout_min', 'ia_finalizar_min'];
+const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841', 'ia_wpp_vendas', 'ia_front_line', 'ia_notifica_wa', 'ia_trava_admin', 'ia_lembrete_on'];
+const NUMS = ['ia_timeout_min', 'ia_finalizar_min', 'ia_pausa_horas', 'chat_auto_close_min', 'ia_handoff_min', 'ia_lembrete_min', 'ia_lembrete_repete_h'];
 
 export function registerIaAtendimento(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
@@ -53,6 +67,7 @@ export function registerIaAtendimento(app: any) {
     if (MODES.includes(key) && !['off', 'test', 'on'].includes(value)) return res.status(400).json({ error: 'value invalido' });
     if (TOGGLES.includes(key) && !['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
     if (NUMS.includes(key)) { const n = parseInt(value, 10); if (!(n >= 1 && n <= 100000)) return res.status(400).json({ error: 'minutos invalidos' }); value = String(n); }
+    if (key === 'agents_routing' && !['keyword', 'fixo'].includes(value)) return res.status(400).json({ error: 'value invalido (keyword|fixo)' });
     if (key === 'ia_despedida') value = value.slice(0, 500);
     await setSetting(key, value);
     res.json({ ok: true, key, value });
@@ -131,6 +146,50 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
       <input type="number" id="n_ia_finalizar_min" min="1" onchange="setNum('ia_finalizar_min', this.value)"> min
       <span id="t_ia_regra_finalizar_on"></span></div></div>
 
+  <div class="row"><div>IA na frente (humano so quando a IA transferir)
+      <div class="desc">A conversa NAO entra na fila dos atendentes enquanto a IA atende — ela e distribuida no momento em que a IA chama transferir_humano. Se um humano escrever mesmo assim, a IA recua daquela conversa.</div></div>
+    <div id="t_ia_front_line"></div></div>
+
+  <div class="row"><div>Prazo do dono da carteira
+      <div class="desc">Depois que a IA transfere, a conversa fica reservada ao dono da carteira por este tempo. Se ele nao responder, passa para outro atendente online.</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" id="n_ia_handoff_min" min="1" onchange="setNum('ia_handoff_min', this.value)"> min</div></div>
+
+  <div class="row"><div>Avisar o atendente por WhatsApp
+      <div class="desc">Manda "cliente aguardando atendimento" no WhatsApp de quem recebeu a conversa.</div></div>
+    <div id="t_ia_notifica_wa"></div></div>
+
+  <div class="row"><div>Trava vale tambem para admin
+      <div class="desc">Por padrao, admin e coordenador conseguem escrever mesmo com a IA atendendo. Ligue para travar todo mundo.</div></div>
+    <div id="t_ia_trava_admin"></div></div>
+
+  <div class="row"><div>Lembrar o atendente de finalizar
+      <div class="desc">Conversa aberta PELO ATENDENTE nunca e finalizada sozinha. Se ficar parada por X minutos, a IA escreve na conversa e marca "Aguardando resposta".</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" id="n_ia_lembrete_min" min="5" onchange="setNum('ia_lembrete_min', this.value)"> min
+      <span id="t_ia_lembrete_on"></span></div></div>
+
+  <div class="row"><div>Vender pelo WhatsApp (modo Instagram)
+      <div class="desc">Libera no WhatsApp as ferramentas de registrar pedido no pipeline e gerar/enviar PIX — o mesmo que a IA ja faz no Direct do Instagram.</div></div>
+    <div id="t_ia_wpp_vendas"></div></div>
+
+  <div class="row"><div>Roteamento de agente
+      <div class="desc">keyword = escolhe o agente por palavra-chave (cobranca/vendas/sdr). fixo = usa sempre o agente padrao.</div></div>
+    <div>
+      <button class="b-on" onclick="setRouting('keyword')">keyword</button>
+      <button class="b-off" onclick="setRouting('fixo')">fixo</button>
+      <span id="v_agents_routing" class="sub" style="margin-left:8px"></span></div></div>
+
+  <div class="row"><div>Voltar a atender apos transferir para humano
+      <div class="desc">Horas que a IA fica fora da conversa depois de chamar transferir_humano. Antes era para sempre.</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" id="n_ia_pausa_horas" min="1" onchange="setNum('ia_pausa_horas', this.value)"> h</div></div>
+
+  <div class="row"><div>Encerrar conversa inativa (job do sistema)
+      <div class="desc">Minutos sem mensagem antes de encerrar e mandar a despedida. Era fixo em 10 min.</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" id="n_chat_auto_close_min" min="1" onchange="setNum('chat_auto_close_min', this.value)"> min</div></div>
+
   <div style="padding-top:12px;border-top:1px solid var(--line);margin-top:6px">
     <div style="margin-bottom:6px">Mensagem de despedida</div>
     <textarea id="txt_ia_despedida" rows="2" style="width:100%"></textarea>
@@ -149,15 +208,21 @@ async function load(){
   try{
     const d = await (await fetch('/api/admin/ia-atendimento/estado'+q(''))).json();
     for(const m of ['agents_runtime_mode','agents_ig_mode']){ const b=document.getElementById('b_'+m); b.textContent=d[m]; b.className='badge m-'+d[m]; }
-    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
+    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841','ia_wpp_vendas','ia_front_line','ia_notifica_wa','ia_trava_admin','ia_lembrete_on']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
     document.getElementById('n_ia_timeout_min').value=d.ia_timeout_min;
     document.getElementById('n_ia_finalizar_min').value=d.ia_finalizar_min;
+    document.getElementById('n_ia_pausa_horas').value=d.ia_pausa_horas;
+    document.getElementById('n_chat_auto_close_min').value=d.chat_auto_close_min;
+    document.getElementById('n_ia_handoff_min').value=d.ia_handoff_min;
+    document.getElementById('n_ia_lembrete_min').value=d.ia_lembrete_min;
+    document.getElementById('v_agents_routing').textContent='atual: '+d.agents_routing;
     const ta=document.getElementById('txt_ia_despedida'); if(document.activeElement!==ta) ta.value=d.ia_despedida;
     document.getElementById('foot').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
   }catch(e){ document.getElementById('foot').textContent='Erro: '+e; }
 }
 async function setMode(key,v){ if(v==='on' && !confirm('Ligar em ON faz a IA responder CLIENTES REAIS neste canal. Confirma?')) return; await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
 async function setTgl(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
+async function setRouting(v){ await fetch('/api/admin/ia-atendimento/set'+q('&key=agents_routing&value='+v)); load(); }
 async function setNum(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v))); load(); }
 async function salvarDespedida(){ const t=document.getElementById('txt_ia_despedida').value; const m=document.getElementById('despMsg'); m.textContent='Salvando...';
   try{ const r=await(await fetch('/api/admin/ia-atendimento/set'+q('&key=ia_despedida&value='+encodeURIComponent(t)))).json(); m.textContent=r.ok?'✓ salvo':('erro: '+(r.error||'')); }catch(e){ m.textContent='erro: '+e; } }

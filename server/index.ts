@@ -2,13 +2,13 @@ import { registerOfficialPanel } from "./official-panel";
 import { registerIaAtendimento } from "./ia-atendimento-panel";
 import { registerIaFinalizar } from "./ia-finalizar";
 import { registerIaTakeover } from "./ia-takeover";
+import { registerIaFila } from "./ia-fila";
 import { registerIaDiag } from "./ia-diag";
 import { registerCanaisGestao } from "./canais-gestao";
 import { registerPolishGestao } from "./polish-gestao";
 import { registerCommunicationAutomationsRoutes } from "./communication-automations-routes";
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
 import { registerDelegationRoutes } from "./delegations-routes";
-import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerHotsitePix } from "./hotsite-pix";
 import { registerHotsiteCard } from "./hotsite-card";
 import { registerPaymentLink } from "./payment-link";
@@ -29,7 +29,6 @@ import { ensureFinancialAuditSchema } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
-import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
 import { registerReconciliation } from "./reconciliation-routes";
 import { registerPaymentTerms } from "./payment-terms-routes";
 import { registerChargeGuarantee } from "./charge-guarantee-routes";
@@ -49,6 +48,7 @@ registerOfficialPanel(app);
 registerIaAtendimento(app);
 registerIaFinalizar(app);
 registerIaTakeover(app);
+registerIaFila(app);
 registerIaDiag(app);
 registerCanaisGestao(app);
 registerPolishGestao(app);
@@ -311,7 +311,6 @@ run();
   registerInstagram(app);
   registerLeadCapture(app);
   registerDelegationRoutes(app);
-  registerChangeRequestsRoutes(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
   app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
@@ -665,14 +664,11 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
-  // GEOCODIFICACAO (02/jul/2026): preenche lat/long por endereco p/ clientes da lista de Ativos sem coordenada.
-  // Provedor: Google Geocoding quando ha GOOGLE_MAPS_API_KEY; senao Nominatim/OSM (ver geocode-provider.ts).
-  // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro.
-  // {skipApproximate:true} descarta centroide de bairro/cidade em vez de grava-lo. Fire-and-forget (resumo em geocode_missing_last).
+  // GEOCODIFICACAO (02/jul/2026): preenche lat/long por endereco (Nominatim/OSM) p/ clientes da lista de Ativos sem coordenada.
+  // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro. Fire-and-forget (resumo em geocode_missing_last).
   app.post('/api/admin/customers/geocode-missing', async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
-      const skipApproximate = !!(req.body && req.body.skipApproximate);
       const limit = Math.min(Number((req.body && req.body.limit) || 80), 200);
       const sel: any = await db.execute(sql`SELECT c.id, c.name, c.address, c.city FROM customers c WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND COALESCE(TRIM(c.address), '') <> '' AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE) ORDER BY c.name LIMIT ${limit}`);
       const cands = ((sel.rows || sel) as any[]);
@@ -680,31 +676,29 @@ run();
       (async () => {
         const norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
         const results: any[] = [];
-        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, aproximados = 0;
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0;
         for (const c of cands) {
           try {
             const q = [c.address, c.city, 'Brasil'].filter(Boolean).join(', ');
-            const hit = await geocodeOne(q);
+            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+            const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
+            const arr: any = resp.ok ? await resp.json() : [];
+            const hit = Array.isArray(arr) && arr.length ? arr[0] : null;
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, status: 'nao_encontrado' }); }
-            else if (skipApproximate && hit.aproximado) {
-              // Centroide de bairro/cidade: varios clientes cairiam no mesmo ponto.
-              aproximados++;
-              results.push({ id: c.id, name: c.name, status: 'aproximado_ignorado', precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) });
-            }
             else {
               const cityToken = norm(c.city).split(' ')[0] || '';
               const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
               if (cityOk && apply) {
                 await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
-                updated++; results.push({ id: c.id, name: c.name, status: 'atualizado', precisao: hit.precisao, lat: hit.lat, lon: hit.lon });
-              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, status: 'ok_dry_run', precisao: hit.precisao, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
-              else { unverified++; results.push({ id: c.id, name: c.name, status: 'cidade_nao_confere', precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) }); }
+                updated++; results.push({ id: c.id, name: c.name, status: 'atualizado', lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, status: 'ok_dry_run', lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, status: 'cidade_nao_confere', display: String(hit.display_name).slice(0, 90) }); }
             }
           } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
-          await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
+          await new Promise((rs) => setTimeout(rs, 1200));
         }
         try {
-          const payload = JSON.stringify({ at: new Date().toISOString(), provider: geocodeProvider(), apply, skipApproximate, candidates: cands.length, updated, dryOk, unverified, notFound, aproximados, errors, results });
+          const payload = JSON.stringify({ at: new Date().toISOString(), apply, candidates: cands.length, updated, dryOk, unverified, notFound, errors, results });
           const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_missing_last'"));
           if (((ex.rows || ex) as any[]).length > 0) {
             await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_missing_last'`);
@@ -726,16 +720,12 @@ run();
 
   // GEOCODIFICACAO EM LOTE - TODOS (14/jul/2026): preenche/recalcula lat/long de TODOS os clientes (exceto coordenadas travadas).
   // PJ (com CNPJ) usa o endereco fiscal ja cadastrado (origem do CNPJ); PF usa o endereco de cadastro no Integra.
-  // Provedor: Google Geocoding quando ha GOOGLE_MAPS_API_KEY; senao Nominatim/OSM (ver geocode-provider.ts).
-  // Verifica se a cidade retornada confere com a do cadastro antes de gravar. Dry-run por padrao; {apply:true} grava.
-  // {recalc:true} reprocessa quem ja tem coordenada; senao apenas os sem coordenada.
-  // {skipApproximate:true} descarta centroide de bairro/cidade em vez de grava-lo (evita clientes empilhados no mesmo ponto).
-  // Fire-and-forget (resumo em geocode_all_last, admin only).
+  // Nominatim/OSM, verifica se a cidade retornada confere com a do cadastro antes de gravar. Dry-run por padrao; {apply:true} grava.
+  // {recalc:true} reprocessa quem ja tem coordenada; senao apenas os sem coordenada. Fire-and-forget (resumo em geocode_all_last, admin only).
   app.post('/api/admin/customers/geocode-all', authenticateUser, requireRole(['admin']), async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
       const recalc = !!(req.body && req.body.recalc);
-      const skipApproximate = !!(req.body && req.body.skipApproximate);
       const limit = Math.min(Math.max(Number((req.body && req.body.limit) || 1200), 1), 3000);
       // Escopo opcional: geocodificar SOMENTE os clientes selecionados (edição em massa).
       const customerIds: string[] | null = Array.isArray(req.body?.customerIds)
@@ -755,14 +745,14 @@ run();
         eligibleTotal = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
       } catch {}
       const remainingAfter = Math.max(0, eligibleTotal - cands.length);
-      res.json({ ok: true, started: true, provider: geocodeProvider(), apply, recalc, skipApproximate, candidates: cands.length, eligibleTotal, remainingAfter });
+      res.json({ ok: true, started: true, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter });
       (async () => {
         const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\(.*?\)/g, ' ').replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
         const results: any[] = [];
-        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, pj = 0, pf = 0, processed = 0, aproximados = 0;
+        let updated = 0, dryOk = 0, unverified = 0, notFound = 0, errors = 0, pj = 0, pf = 0, processed = 0;
         const saveSummary = async (running: boolean) => {
           try {
-            const payload = JSON.stringify({ at: new Date().toISOString(), running, provider: geocodeProvider(), apply, recalc, skipApproximate, candidates: cands.length, eligibleTotal, remainingAfter, processed, pj, pf, updated, dryOk, unverified, notFound, aproximados, errors, results: results.slice(-400) });
+            const payload = JSON.stringify({ at: new Date().toISOString(), running, apply, recalc, candidates: cands.length, eligibleTotal, remainingAfter, processed, pj, pf, updated, dryOk, unverified, notFound, errors, results: results.slice(-400) });
             const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key = 'geocode_all_last'"));
             if (((ex.rows || ex) as any[]).length > 0) {
               await db.execute(sql`UPDATE system_settings SET value = ${payload}, updated_at = now() WHERE key = 'geocode_all_last'`);
@@ -799,41 +789,38 @@ run();
             for (let ai = 0; ai < attempts.length; ai++) {
               const q = attempts[ai].parts.filter(Boolean).join(', ');
               if (!q) continue;
-              const cand = await geocodeOne(q);
+              const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(q);
+              const resp = await fetch(url, { headers: { 'User-Agent': 'INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)' } });
+              const arr: any = resp.ok ? await resp.json() : [];
+              const cand = Array.isArray(arr) && arr.length ? arr[0] : null;
               if (cand) {
-                // Rua vaga faz o geocodificador devolver ponto errado na mesma cidade. Se o cliente tem CEP
+                // Rua vaga faz o Nominatim devolver ponto errado na mesma cidade. Se o cliente tem CEP
                 // e o CEP do resultado nao bate (5 primeiros digitos), rejeita e tenta o proximo nivel.
                 if (attempts[ai].level === 'endereco' && cepRaw.length === 8) {
-                  const dc = cand.postcode || '';
+                  const dc = ((String(cand.display_name).match(/\b\d{5}-?\d{3}\b/) || [''])[0]).replace(/\D/g, '');
                   if (dc && dc.slice(0, 5) !== cepRaw.slice(0, 5)) {
-                    if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
+                    if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
                     continue;
                   }
                 }
                 hit = cand; matchLevel = attempts[ai].level; break;
               }
-              if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
+              if (ai < attempts.length - 1) await new Promise((rs) => setTimeout(rs, 1100));
             }
             if (!hit) { notFound++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'nao_encontrado' }); }
-            else if (skipApproximate && hit.aproximado) {
-              // Centroide de bairro/cidade: gravar isso e o que empilha varios
-              // clientes exatamente na mesma coordenada. Melhor reportar.
-              aproximados++;
-              results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'aproximado_ignorado', nivel: matchLevel, precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) });
-            }
             else {
               const cityToken = norm(c.city).split(' ')[0] || '';
               const cityOk = !!cityToken && norm(hit.display_name).includes(cityToken);
               if (cityOk && apply) {
                 await db.execute(sql`UPDATE customers SET latitude = ${String(hit.lat)}, longitude = ${String(hit.lon)}, updated_at = now() WHERE id = ${c.id}`);
-                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', nivel: matchLevel, precisao: hit.precisao, lat: hit.lat, lon: hit.lon });
-              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', nivel: matchLevel, precisao: hit.precisao, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
-              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', nivel: matchLevel, precisao: hit.precisao, display: String(hit.display_name).slice(0, 90) }); }
+                updated++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'atualizado', nivel: matchLevel, lat: hit.lat, lon: hit.lon });
+              } else if (cityOk) { dryOk++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'ok_dry_run', nivel: matchLevel, lat: hit.lat, lon: hit.lon, display: String(hit.display_name).slice(0, 90) }); }
+              else { unverified++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'cidade_nao_confere', nivel: matchLevel, display: String(hit.display_name).slice(0, 90) }); }
             }
           } catch (e: any) { errors++; results.push({ id: c.id, name: c.name, tipo: isPJ ? 'PJ' : 'PF', status: 'erro', err: String((e && e.message) || e).slice(0, 80) }); }
           processed++;
           if (processed % 25 === 0) await saveSummary(true);
-          await new Promise((rs) => setTimeout(rs, geocodeThrottleMs()));
+          await new Promise((rs) => setTimeout(rs, 1200));
         }
         await saveSummary(false);
       })().catch((e) => console.error('geocode-all: erro geral', e));
@@ -2022,19 +2009,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       for (const r of s1 as any[]) { const d = dg(r.cnpj) || dg(r.cpf); if (d && d.length >= 11 && !docToSeller.has(d)) docToSeller.set(d, r.seller_id); }
       const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
       const rows2 = (t2.rows || t2) as any[];
-      // PROTEÇÃO DO REZONEAMENTO MANUAL DO 2.0: clientes cujo vendedor já foi alterado à mão no 2.0
-      // (histórico do campo sellerId por edição individual ou em massa) NÃO são sobrescritos pelo 1.0
-      // — o rezoneamento manual prevalece sobre o sync por documento.
-      const rezonedIds = new Set<string>();
-      try {
-        const rz: any = await db.execute(sql.raw("SELECT DISTINCT customer_id FROM customer_change_history WHERE field = 'sellerId' AND source IN ('edit','bulk')"));
-        for (const r of (rz.rows || rz) as any[]) rezonedIds.add(String(r.customer_id));
-      } catch (_e) {}
       const toFix: Array<{ id: string; val: string }> = [];
-      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; if (rezonedIds.has(String(c.id))) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
+      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
       const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
       const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
-      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, protegidosPorRezoneamento: rezonedIds.size, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
       if (apply && toFix.length) {
         let upd = 0;
         for (const d of toFix) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${d.val}, updated_at = now() WHERE id = ${d.id}`); upd += (u.rowCount || 0); } catch (e) {} }
@@ -2044,104 +2023,6 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       }
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 200) }); }
-    finally { await src.end().catch(() => {}); }
-  });
-
-  // =============================================================================
-  // AUDITORIA DE INATIVACOES (1.0 + 2.0) desde <since>. READ-ONLY (nao escreve).
-  //   body: { since?, list?, flagCol?, dateCol?, activeVal? }
-  //     2.0: customers.inactivated_at >= since (inativacoes feitas no INTEGRA 2.0)
-  //     1.0: customers[flagCol] IS DISTINCT FROM activeVal [AND dateCol >= since]
-  //          (schema do 1.0 e' descoberto e devolvido em cols10; passe flagCol/activeVal)
-  //   Confere p/ cada inativado: inativo hoje?, existe em Gestao (customers)?,
-  //   existe em Clientes Ativos (active_customers.is_active=true)?, vinculo Omie?
-  //   Devolve os ids que precisam ser reinativados (estao em Clientes Ativos).
-  // ============================================================================
-  app.post('/api/admin/audit/inact', async (req: Request, res: Response) => {
-    const b: any = req.body || {};
-    const since: string = b.since || '2026-01-01';
-    const wantList: boolean = b.list === true;
-    const pgMod = await import('pg');
-    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-    const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
-    const out: any = { since };
-    try {
-      // ---------- active_customers ativos (lista Clientes Ativos) ----------
-      const acr: any = await db.execute(sql.raw("SELECT customer_id FROM active_customers WHERE is_active = true AND customer_id IS NOT NULL"));
-      const activeSet = new Set<string>(((acr.rows || acr) as any[]).map((r: any) => String(r.customer_id)));
-
-      // ---------- 2.0: inativados desde 'since' ----------
-      const c20r: any = await db.execute(sql`
-        SELECT id, name, cnpj, cpf, is_active, omie_status, situacao, inactivated_at, omie_client_code
-        FROM customers WHERE inactivated_at >= ${since}::timestamptz`);
-      const c20 = (c20r.rows || c20r) as any[];
-      const list20 = c20.map((c: any) => ({
-        id: String(c.id), name: c.name, doc: dg(c.cnpj) || dg(c.cpf),
-        inativoHoje: c.is_active === false,
-        omieDesvinc: c.omie_status === 'inativo',
-        omieClientCode: c.omie_client_code || null,
-        emClientesAtivos: activeSet.has(String(c.id)),
-      }));
-      out.c20 = {
-        total: list20.length,
-        aindaAtivoHoje: list20.filter((x) => !x.inativoHoje).map((x) => x.id),
-        emClientesAtivos: list20.filter((x) => x.emClientesAtivos).map((x) => x.id),
-        comOmieVinculo: list20.filter((x) => !x.omieDesvinc || x.omieClientCode).length,
-      };
-      if (wantList) out.c20.rows = list20;
-
-      // ---------- 1.0: schema + inativados desde 'since' ----------
-      await src.connect();
-      const colsR = await src.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' ORDER BY ordinal_position");
-      const cols10: string[] = (colsR.rows as any[]).map((r: any) => r.column_name);
-      out.cols10 = cols10;
-
-      const flagCol = typeof b.flagCol === 'string' && cols10.includes(b.flagCol) ? b.flagCol : null;
-      const dateCol = typeof b.dateCol === 'string' && cols10.includes(b.dateCol) ? b.dateCol : null;
-      if (!flagCol) {
-        out.hint = 'passe flagCol (coluna ativo/inativo do 1.0) + activeVal (valor de ATIVO, ex: true | "ativo" | "S") e opcional dateCol p/ filtrar por data';
-        return res.json(out);
-      }
-      const activeVal = b.activeVal;
-      let q = 'SELECT cnpj, cpf FROM customers WHERE "' + flagCol + '" IS DISTINCT FROM $1';
-      const params: any[] = [activeVal];
-      if (dateCol) { q += ' AND "' + dateCol + '" >= $2'; params.push(since); }
-      const inact10 = (await src.query(q, params)).rows as any[];
-      const docs10 = [...new Set(inact10.map((r: any) => dg(r.cnpj) || dg(r.cpf)).filter((d: string) => d && d.length >= 11))];
-      out.c10 = { totalInativados10: inact10.length, docsUnicos: docs10.length };
-
-      // status 2.0 desses documentos (em lotes)
-      const found: any[] = [];
-      const CH = 500;
-      for (let i = 0; i < docs10.length; i += CH) {
-        const chunk = docs10.slice(i, i + CH);
-        const inList = sql.join(chunk.map((d: string) => sql`${d}`), sql`, `);
-        const r: any = await db.execute(sql`
-          SELECT id, name, cnpj, cpf, is_active, omie_status, omie_client_code
-          FROM customers
-          WHERE regexp_replace(coalesce(cnpj,''),'[^0-9]','','g') IN (${inList})
-             OR regexp_replace(coalesce(cpf,''),'[^0-9]','','g') IN (${inList})`);
-        for (const c of (r.rows || r) as any[]) found.push(c);
-      }
-      const found20 = found.map((c: any) => ({
-        id: String(c.id), name: c.name, doc: dg(c.cnpj) || dg(c.cpf),
-        inativoHoje: c.is_active === false,
-        omieDesvinc: c.omie_status === 'inativo',
-        emClientesAtivos: activeSet.has(String(c.id)),
-      }));
-      const foundDocs = new Set(found20.map((x) => x.doc));
-      out.c10.casadosNo20 = found20.length;
-      out.c10.semCadastroNo20 = docs10.filter((d: string) => !foundDocs.has(d)).length;
-      out.c10.aindaAtivoHoje = found20.filter((x) => !x.inativoHoje).map((x) => x.id);
-      out.c10.emClientesAtivos = found20.filter((x) => x.emClientesAtivos).map((x) => x.id);
-      if (wantList) out.c10.rows = found20;
-
-      // ---------- UNIAO: quem precisa reinativar (esta em Clientes Ativos) ----------
-      const reinativarSet = new Set<string>([...out.c20.emClientesAtivos, ...out.c10.emClientesAtivos]);
-      out.reinativar = { total: reinativarSet.size, ids: [...reinativarSet] };
-
-      return res.json(out);
-    } catch (e: any) { out.err = (e?.message || String(e)).slice(0, 300); return res.status(500).json(out); }
     finally { await src.end().catch(() => {}); }
   });
 
@@ -3181,7 +3062,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         const visits = Array.from(cellMap.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: false, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         return { customerId: cid, customerName: info.customer_name || "-", sellerId: info.seller_name ? info.seller_id : "admin-flavio", sellerName: info.seller_name || "Flavio Administrador", visits };
       });
-      const sellerDailyRows = await q2("WITH fx AS (SELECT fi.total_invoice AS v, (COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE((SELECT COALESCE(NULLIF(TRIM(CONCAT(up.first_name,' ',up.last_name)),''), NULLIF(TRIM(bp.seller_name),'')) FROM billing_pipeline bp LEFT JOIN users up ON (up.omie_vendor_code=bp.seller_id OR up.omie_vendor_code=replace(COALESCE(bp.seller_id,''),'omie-vendor-','') OR up.id=bp.seller_id) WHERE bp.sales_card_id=fi.sales_card_id ORDER BY bp.created_at DESC NULLS LAST LIMIT 1), (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM sales_cards sc JOIN users u ON (u.omie_vendor_code=sc.seller_id OR u.omie_vendor_code=replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id=sc.seller_id) WHERE sc.id=fi.sales_card_id LIMIT 1), (SELECT NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),'') FROM customers c JOIN users u2 ON (u2.omie_vendor_code=c.seller_id OR u2.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u2.id=c.seller_id) WHERE regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')<>'' AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') LIMIT 1), 'Sem vendedor') AS seller FROM fiscal_invoices fi WHERE fi.status='authorized' AND COALESCE(fi.operation_type,'saida')<>'entrada' AND COALESCE(fi.fin_nfe,'1')<>'4' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (fi.import_origin IS NULL OR TRIM(fi.import_origin)='') AND (COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month',(now() AT TIME ZONE 'America/Sao_Paulo'))::date) SELECT seller, d, COALESCE(SUM(v),0) AS v FROM fx GROUP BY seller, d");
+      const sellerDailyRows = await q2("WITH fx AS (SELECT fi.total_invoice AS v, (COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE((SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM sales_cards sc JOIN users u ON (u.omie_vendor_code=sc.seller_id OR u.omie_vendor_code=replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id=sc.seller_id) WHERE sc.id=fi.sales_card_id LIMIT 1), (SELECT NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),'') FROM customers c JOIN users u2 ON (u2.omie_vendor_code=c.seller_id OR u2.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u2.id=c.seller_id) WHERE regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')<>'' AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') LIMIT 1), 'Sem vendedor') AS seller FROM fiscal_invoices fi WHERE fi.status='authorized' AND COALESCE(fi.operation_type,'saida')<>'entrada' AND COALESCE(fi.fin_nfe,'1')<>'4' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (fi.import_origin IS NULL OR TRIM(fi.import_origin)='') AND (COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date >= date_trunc('month',(now() AT TIME ZONE 'America/Sao_Paulo'))::date) SELECT seller, d, COALESCE(SUM(v),0) AS v FROM fx GROUP BY seller, d");
       // REGRA (Flavio): faturamento por vendedor no comparativo = quem COLOCOU o pedido (billing_pipeline.seller_name),
       // e nao o dono atual do cliente. O cliente permanece na carteira de origem.
       const visitSummary = { start: startDate, end: endDate, dates, rows, sellerDaily: sellerDailyRows.map((r) => ({ seller: r.seller, d: r.d, v: Number(r.v) || 0 })) };
@@ -3577,12 +3458,12 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const debitosTop: any = await db.execute(sql`
         SELECT max(customer_name) AS client_name,
                sum(amount - coalesce(amount_paid, 0))::float AS total_amount,
-               max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date))::int AS max_days_overdue
+               max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date))::int AS max_days_overdue
         FROM receivables
         WHERE deleted_at IS NULL
           AND (amount - coalesce(amount_paid, 0)) > 0
           AND coalesce(import_origin, '') <> 'omie_historico'
-          AND (status IN ('a_vencer', 'vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+          AND (status IN ('a_vencer', 'vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ORDER BY total_amount DESC LIMIT 15
       `);
@@ -3593,7 +3474,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           WHERE deleted_at IS NULL
             AND (amount - coalesce(amount_paid, 0)) > 0
             AND coalesce(import_origin, '') <> 'omie_historico'
-            AND (status IN ('a_vencer', 'vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            AND (status IN ('a_vencer', 'vencida') AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
           GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ) t
       `);

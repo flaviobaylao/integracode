@@ -71,23 +71,13 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
   const q: any = await db.execute(sql`
     SELECT c.id, c.customer_phone
     FROM chat_conversations c
-    JOIN LATERAL (
-      SELECT sender_type FROM chat_messages
-      WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1
-    ) lm ON true
     LEFT JOIN chat_customers cu ON cu.id = c.customer_id
     WHERE c.customer_phone IS NOT NULL
       AND c.customer_phone NOT LIKE 'ig:%'
       AND c.customer_phone NOT LIKE '%@g.us%'
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
-      AND lm.sender_type <> 'customer'
-      AND NOT EXISTS (
-        SELECT 1 FROM users u
-        WHERE u.role IN ('vendedor','telemarketing','admin','administrative','motorista','industria')
-          AND length(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g')) >= 10
-          AND right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 11) = right(regexp_replace(coalesce(c.customer_phone, ''), '[^0-9]', '', 'g'), 11)
-      )
+      AND coalesce(c.initiated_by::text, 'customer') <> 'user'  -- conversa aberta pelo atendente: so ele finaliza
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
@@ -119,6 +109,10 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
     }
     const sent = await sendDespedida(row.id, row.customer_phone, despedida);
     if (sent.ok) enviadas++;
+    try {
+      await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+        VALUES (${row.id}, 'system', 'system', ${'[IA · finalização] ' + despedida}, 'text', true)`);
+    } catch {}
     await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
     try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
     encerradas++;

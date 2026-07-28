@@ -272,7 +272,9 @@ export async function redistributeTimedOutConversations(): Promise<number> {
       and(
         lt(chatConversations.lastAttendedAt, timeoutDate),
         ne(chatConversations.assignedAgentId, "chatgpt"),
-        eq(chatConversations.status, "assigned")
+        eq(chatConversations.status, "assigned"),
+        // Conversa aberta pelo atendente permanece com ele: nao entra no rodizio.
+        sql`coalesce(${chatConversations.initiatedBy}::text, 'customer') <> 'user'`
       )
     );
   
