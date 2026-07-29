@@ -3551,7 +3551,11 @@ export function registerChatRoutes(app: Express): void {
           const pausadas: any = await db.execute(sql`SELECT replace(key, 'chat_ai_paused:', '') AS id FROM system_settings WHERE key LIKE 'chat_ai_paused:%'`);
           const fora = new Set((pausadas.rows || []).map((r: any) => String(r.id)));
           for (const c of filteredConversations) {
-            if (!fora.has(String(c.id)) && String(c.status || '') !== 'resolved') iaConvs.add(String(c.id));
+            const dono = String((c as any).assignedAgentId || '');
+            // Mesma regra do servidor (iaComAConversa): sem pausa, aberta e sem dono humano.
+            if (!fora.has(String(c.id)) && String(c.status || '') !== 'resolved' && (!dono || dono === 'chatgpt')) {
+              iaConvs.add(String(c.id));
+            }
           }
         }
       } catch (e: any) { console.error('[CHAT-LIST] flag IA', e?.message || e); }

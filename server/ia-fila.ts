@@ -472,6 +472,18 @@ async function iaComAConversa(conversationId: string): Promise<boolean> {
   // A pausa (setada pelo transferir_humano) e o que tira a conversa da IA. Ela expira em
   // ia_pausa_horas — quando expirar, a IA volta a ser a linha de frente daquela conversa.
   if ((await getSetting('chat_ai_paused:' + conversationId, '')) !== '') return false;
+  // A IA so "esta com" a conversa quando ninguem assumiu e ela esta aberta.
+  // Sem esta checagem, QUALQUER conversa sem pausa era considerada da IA — inclusive
+  // as ja FINALIZADAS e as que tem um atendente atribuido — e o atendente levava
+  // 403 IA_ATENDENDO num chat que a IA nem estava conduzindo.
+  try {
+    const r: any = await db.execute(sql`SELECT status, assigned_agent_id FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
+    const row = r.rows?.[0];
+    if (!row) return false;
+    if (String(row.status || '') === 'resolved') return false;
+    const dono = String(row.assigned_agent_id || '');
+    if (dono && dono !== 'chatgpt') return false;
+  } catch { return false; } // na duvida, nao trava o atendente
   return true;
 }
 
