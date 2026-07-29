@@ -54,6 +54,20 @@ async function marcarTransferida(conversationId: string): Promise<void> {
   await setSetting('ia_transferida:' + conversationId, new Date().toISOString());
 }
 
+// Conversa FINALIZADA encerra o ciclo: a IA volta a poder atender esse cliente na
+// proxima mensagem dele. Sem isso, uma conversa transferida ficava sem IA por 24h
+// (ia_pausa_horas) mesmo depois de finalizada — o cliente escrevia de novo e ninguem
+// respondia automaticamente.
+export async function liberarIA(conversationId: string): Promise<void> {
+  if (!conversationId) return;
+  try {
+    await db.execute(sql`DELETE FROM system_settings WHERE key IN (${'chat_ai_paused:' + conversationId}, ${'ia_transferida:' + conversationId}, ${'ia_lembrete_ts:' + conversationId})`);
+  } catch { /* noop */ }
+  try {
+    await db.execute(sql`DELETE FROM ia_handoff WHERE conversation_id = ${conversationId}`);
+  } catch { /* a tabela pode ainda nao existir */ }
+}
+
 // ---------------------------------------------------------------------------
 // Telefone: leitura canonica
 // ---------------------------------------------------------------------------

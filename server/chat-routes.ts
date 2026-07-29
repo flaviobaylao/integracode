@@ -4067,6 +4067,10 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
+      // 🤖 Ciclo encerrado: libera a IA para atender este cliente de novo na proxima
+      // mensagem dele (a pausa da transferencia duraria 24h se ficasse).
+      try { const { liberarIA } = await import('./ia-fila'); await liberarIA(conversationId); } catch { /* noop */ }
+
       // Registrar atendimento virtual se havia agente humano atribuído
       if (conversation.assignedAgentId && conversation.assignedAgentId !== 'chatgpt') {
         const agents = await storage.getChatAgents();
