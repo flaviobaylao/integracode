@@ -411,6 +411,13 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     const sid = coordById.get(custId)?.sellerId;
     return !!sid && ownerRoleById.get(sid) === 'vendedor';
   };
+  // 🧭 Dono TELEMARKETING do cliente (id do vendedor), ou null se o dono não é telemarketing.
+  // Regra de carteira: um cliente de telemarketing NUNCA pode cair na repescagem de OUTRO
+  // telemarketing — só do próprio dono (se habilitado). (30/jul/2026)
+  const ownerTelemarketingId = (custId: string): string | null => {
+    const sid = coordById.get(custId)?.sellerId || null;
+    return (sid && ownerRoleById.get(sid) === 'telemarketing') ? sid : null;
+  };
 
   // Ancoras (paradas com coordenada) da rota do dia de cada vendedor externo habilitado.
   const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
@@ -499,6 +506,38 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     }
   }
 
+  // 2.6) 🧭 CARTEIRA (telemarketing): cliente de UM telemarketing atribuído a OUTRO telemarketing
+  // volta para o DONO (se habilitado na repescagem) ou é CANCELADO (se o dono não está habilitado).
+  // Corrige as atribuições cruzadas existentes — nenhum cliente fica na repescagem de outra
+  // carteira de telemarketing. (30/jul/2026)
+  for (const a of pendingNow) {
+    if (!candidateByCustomerId.has(a.customerId)) continue;
+    const ownerTmId = ownerTelemarketingId(a.customerId);
+    if (!ownerTmId) continue;                     // dono não é telemarketing → regra não se aplica
+    if (a.assignedUserId === ownerTmId) continue; // já está com o dono
+    if (externalSet.has(a.assignedUserId)) continue; // atribuído a externo (perímetro) → não mexe
+    if (internalSet.has(ownerTmId)) {
+      await db.update(repescagemAssignments).set({
+        assignedUserId: ownerTmId, phase: 'telemarketing',
+        carteiraSellerId: ownerTmId, assignedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id, customerId: a.customerId,
+        fromUserId: a.assignedUserId, toUserId: ownerTmId,
+        action: 'reassigned', reason: 'Carteira: cliente volta ao telemarketing dono',
+      });
+    } else {
+      await db.update(repescagemAssignments).set({
+        status: 'cancelled', completedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id, customerId: a.customerId,
+        fromUserId: a.assignedUserId, toUserId: null,
+        action: 'cancelled', reason: 'Carteira: dono telemarketing nao habilitado na repescagem',
+      });
+    }
+  }
+
   // 3) Carga atual por atendente habilitado (externos e internos), a partir dos pendentes validos
   const stillPending = await db.select().from(repescagemAssignments)
     .where(eq(repescagemAssignments.status, 'pending'));
@@ -542,6 +581,13 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         }
         return { userId: pick, phase: 'external' };
       }
+    }
+    // Fase B (telemarketing): NÃO cruzar carteira. Cliente de um TELEMARKETING só pode ir para o
+    // PRÓPRIO dono (se habilitado na repescagem); nunca para outro telemarketing. Se o dono é
+    // telemarketing mas NÃO está habilitado, o cliente fica SEM repescagem (não vai para ninguém).
+    const ownerTmId = ownerTelemarketingId(customerId);
+    if (ownerTmId) {
+      return internalSet.has(ownerTmId) ? { userId: ownerTmId, phase: 'telemarketing' } : null;
     }
     const t = pickLeastLoadedInternal();
     if (t) return { userId: t, phase: 'telemarketing' };
@@ -648,7 +694,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     while (safety-- > 0) {
       const max = getMax(); const min = getMin();
       if (!max.id || !min.id || max.v - min.v <= 1) break;
-      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id);
+      // Só move clientes SEM dono de telemarketing (externos/sem dono). Cliente de carteira de
+      // telemarketing fica preso ao próprio dono — o rebalanceamento nunca cruza carteira.
+      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId));
       if (!toMove) break;
       await db.update(repescagemAssignments).set({
         assignedUserId: min.id,
