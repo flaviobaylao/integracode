@@ -669,7 +669,10 @@ run();
   // Provedor: Google Geocoding quando ha GOOGLE_MAPS_API_KEY; senao Nominatim/OSM (ver geocode-provider.ts).
   // Dry-run por padrao; {apply:true} grava apenas quando a cidade retornada confere com a do cadastro.
   // {skipApproximate:true} descarta centroide de bairro/cidade em vez de grava-lo. Fire-and-forget (resumo em geocode_missing_last).
-  app.post('/api/admin/customers/geocode-missing', async (req: Request, res: Response) => {
+  // ADMIN ONLY: a rota grava lat/long no banco quando {apply:true}. Estava sem
+  // authenticateUser/requireRole — qualquer um com a URL podia disparar
+  // geocodificacao em massa e gravar em producao. Alinhada com geocode-all.
+  app.post('/api/admin/customers/geocode-missing', authenticateUser, requireRole(['admin']), async (req: Request, res: Response) => {
     try {
       const apply = !!(req.body && req.body.apply);
       const skipApproximate = !!(req.body && req.body.skipApproximate);
@@ -716,7 +719,8 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
   });
 
-  app.get('/api/admin/customers/geocode-missing/status', async (_req: Request, res: Response) => {
+  // ADMIN ONLY: o resumo expõe nome e coordenada dos clientes processados.
+  app.get('/api/admin/customers/geocode-missing/status', authenticateUser, requireRole(['admin']), async (_req: Request, res: Response) => {
     try {
       const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key = 'geocode_missing_last'"));
       const rows = (r.rows || r) as any[];
