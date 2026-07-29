@@ -628,11 +628,26 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
   }
 }
 
+// Numero de saida usado quando a conversa nao tem canal proprio (ex.: conversa aberta
+// pelo atendente). Configuravel em system_settings 'canal_saida_padrao' — hoje o 7169,
+// enquanto o 2630 estiver bloqueado. Sem a chave, cai no padrao do Umbler.
+export async function canalSaidaPadrao(): Promise<string | undefined> {
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'canal_saida_padrao' LIMIT 1`);
+    const v = String(r.rows?.[0]?.value ?? '').replace(/^"|"$/g, '').replace(/\D/g, '');
+    return v || undefined;
+  } catch { return undefined; }
+}
+
 export async function sendUmblerTalkText(toPhone: string, text: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  // Numero de saida real desta mensagem (o mesmo que sera usado no envio).
+  const _from = fromPhoneOverride || (await canalSaidaPadrao());
   // Gestao de Canais: se o numero de envio estiver DESLIGADO no painel, bloqueia o envio (humano ou IA).
+  // ANTES a checagem usava o 2630 fixo quando nao havia override — entao desligar o 2630
+  // no painel derrubava TODOS os envios, mesmo os que sairiam por outro numero.
   try {
     const { canalAtivoPorTelefone } = await import('./canais-gestao');
-    const _chan = fromPhoneOverride || '5562992682630';
+    const _chan = _from || '5562992682630';
     if (!(await canalAtivoPorTelefone(_chan))) { console.warn('[CANAL-OFF] envio bloqueado (canal desligado):', _chan); return { success: false, error: 'canal_desligado' }; }
   } catch {}
   const token = process.env.UMBLER_TALK_TOKEN;
@@ -643,7 +658,7 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
   const cfg = await resolveUmblerTalkConfig();
   if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
   try {
-    const fromPhone = String(fromPhoneOverride || cfg.fromPhone || '').replace(/\D/g, '');
+    const fromPhone = String(_from || cfg.fromPhone || '').replace(/\D/g, '');
     const body = JSON.stringify({ organizationId: cfg.orgId, fromPhone, toPhone: digits, message: text });
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body });
     const raw = await resp.text();
@@ -658,6 +673,7 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
 }
 
 export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  if (!fromPhoneOverride) fromPhoneOverride = await canalSaidaPadrao();
   const token = process.env.UMBLER_TALK_TOKEN;
   if (!token) return { success: false, error: 'UMBLER_TALK_TOKEN ausente' };
   let digits = String(toPhone || '').replace(/\D/g, '');
@@ -1218,6 +1234,16 @@ export function registerChatRoutes(app: Express): void {
         status: "new",
         priority: "normal"
       });
+      // Conversa ABERTA PELO ATENDENTE: o cliente nao escreveu, entao nao ha canal de
+      // entrada para espelhar. Carimba o canal de saida configurado (canal_saida_padrao)
+      // para que ela e todas as respostas seguintes fiquem no MESMO numero.
+      try {
+        const _saida = await canalSaidaPadrao();
+        if (_saida) {
+          await db.execute(sql`UPDATE chat_conversations SET channel_phone = ${_saida} WHERE id = ${conversation.id} AND (channel_phone IS NULL OR channel_phone = '')`);
+          console.log(`📤 [START-CONVERSATION] Canal de saida da conversa: ${_saida}`);
+        }
+      } catch (e: any) { console.error('[START-CONVERSATION] canal saida', e?.message || e); }
       console.log(`✅ [START-CONVERSATION] Conversa criada/atualizada:`, conversation.id);
 
       // 🔧 NOVO: Atribuir conversa ao atendente que iniciou (não passa pelo ChatGPT)
@@ -1866,6 +1892,7 @@ export function registerChatRoutes(app: Express): void {
               };
               (debugInfo as any).umblerTalk = true;
               (data as any).__channelId = (chat.Channel && (chat.Channel.Id || chat.Channel.id)) || null;
+              (data as any).__channelPhone = (chat.Channel && (chat.Channel.PhoneNumber || chat.Channel.phoneNumber || chat.Channel.Phone)) || null;
               debugInfo.steps.push('umbler-talk-normalized');
             }
           }
@@ -2103,6 +2130,17 @@ export function registerChatRoutes(app: Express): void {
         await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
       }
 // 1841: etiqueta de canal + janela 24h + opt-out (canal oficial)
+   // ESPELHAMENTO DE CANAL: grava em qual numero da Honest a mensagem entrou, para que
+   // toda resposta (IA ou atendente) saia pelo MESMO numero. Sem isso o campo ficava
+   // sempre vazio e o envio caia no numero padrao do Umbler — o cliente escrevia num
+   // numero e era respondido por outro.
+   if (!isFromMe && (data as any).__channelPhone) {
+     try {
+       const _cp = String((data as any).__channelPhone).replace(/\D/g, '');
+       if (_cp) await db.execute(sql`UPDATE chat_conversations SET channel_phone = ${_cp} WHERE id = ${conversation.id}`);
+     } catch (e: any) { console.error('[CANAL-ESPELHO] erro', e?.message || e); }
+   }
+
    if (!isFromMe && (data as any).__channelId === 'ajqNf-Vjp4yjcaJf') {
      try {
        await db.execute(sql`UPDATE chat_conversations SET last_inbound_channel='oficial_1841', window_open_until = now() + interval '24 hours' WHERE id = ${conversation.id}`);
