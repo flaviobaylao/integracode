@@ -2302,6 +2302,22 @@ export function registerChatRoutes(app: Express): void {
       const normalizedPhone = normalizePhoneNumber(targetPhone);
       console.log(`📨 [WHATSAPP-SEND] Enviando para: ${phoneNumber} -> ${normalizedPhone}`);
 
+      // 🤖 Mesma trava do envio por conversa: enquanto a IA estiver atendendo aquele
+      // cliente, ninguem escreve por cima dela. Esta rota envia POR TELEFONE, entao
+      // resolve a conversa antes de aplicar a regra.
+      try {
+        const cv: any = await db.execute(sql`SELECT id FROM chat_conversations
+          WHERE RIGHT(REGEXP_REPLACE(coalesce(customer_phone, ''), '[^0-9]', '', 'g'), 8)
+              = RIGHT(REGEXP_REPLACE(${String(normalizedPhone)}, '[^0-9]', '', 'g'), 8)
+          ORDER BY updated_at DESC NULLS LAST LIMIT 1`);
+        const convId = cv.rows?.[0]?.id;
+        if (convId) {
+          const { podeEnviar } = await import('./ia-fila');
+          const v = await podeEnviar(String(convId), (req as any).currentUser?.id, (req as any).currentUser?.role);
+          if (!v.ok) return res.status(403).json({ error: v.message, code: v.code });
+        }
+      } catch { /* em erro, nao bloqueia o envio */ }
+
       // Get Evolution API config
       const config = evolutionAPIService.getConfig();
       if (!config || !config.instanceName) {
