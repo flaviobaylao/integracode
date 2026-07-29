@@ -974,11 +974,39 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateCustomer(id: string, customer: Partial<InsertCustomer>): Promise<Customer> {
+    // Guarda o vendedor ANTERIOR só quando o patch mexe em sellerId (para detectar rezoneamento).
+    let prevSellerId: string | undefined;
+    if (customer.sellerId !== undefined) {
+      const prev = await db.select({ sellerId: customers.sellerId }).from(customers).where(eq(customers.id, id));
+      prevSellerId = (prev[0]?.sellerId ?? undefined) as any;
+    }
+
     const [updatedCustomer] = await db
       .update(customers)
       .set({ ...customer, updatedAt: nowBrazil() })
       .where(eq(customers.id, id))
       .returning();
+
+    // 🔁 REZONEAMENTO: se o vendedor MUDOU, a agenda PENDENTE acompanha o novo dono.
+    // Sem isso, as linhas antigas de visit_agenda ficavam com o seller_id anterior e o cliente
+    // continuava aparecendo na rota do vendedor ANTIGO (e sumia da do NOVO até a próxima regen).
+    if (
+      customer.sellerId !== undefined &&
+      updatedCustomer?.sellerId &&
+      prevSellerId &&
+      prevSellerId !== updatedCustomer.sellerId
+    ) {
+      try {
+        await db
+          .update(visitAgenda)
+          .set({ sellerId: updatedCustomer.sellerId, updatedAt: nowBrazil() })
+          .where(and(eq(visitAgenda.customerId, id), eq(visitAgenda.visitStatus, 'pending')));
+        console.log(`🔁 [REZONEAMENTO] Agenda pendente de ${id} movida de ${prevSellerId} → ${updatedCustomer.sellerId}`);
+      } catch (e: any) {
+        console.warn('updateCustomer: falha ao propagar sellerId para visit_agenda:', e?.message);
+      }
+    }
+
     return updatedCustomer;
   }
 
@@ -1225,10 +1253,22 @@ export class DatabaseStorage implements IStorage {
       );
       
       if (virtualVisits.length === 0) return [];
-      
-      const customerIds = [...new Set(virtualVisits.map(v => v.customerId))];
-      
-      return await db.select().from(customers).where(inArray(customers.id, customerIds));
+
+      const customerIds = [...new Set(virtualVisits.map(v => v.customerId).filter(Boolean))];
+      if (customerIds.length === 0) return [];
+
+      // 🔒 RECONFERE O DONO ATUAL do cliente (customers.seller_id = sellerId) além do ativo/omie.
+      // Sem isso, uma linha ANTIGA de visit_agenda (com seller_id desatualizado após rezoneamento)
+      // fazia o cliente de OUTRA carteira aparecer na rota deste vendedor. O caminho presencial
+      // (getCustomersForDate) já faz essa reconferência; aqui faltava. (29/jul/2026)
+      return await db.select().from(customers).where(
+        and(
+          inArray(customers.id, customerIds),
+          eq(customers.sellerId, sellerId),
+          eq(customers.isActive, true),
+          eq(customers.omieStatus, 'ativo')
+        )
+      );
     } catch (error: any) {
       console.warn(`⚠️ Erro em getCustomersWithVirtualVisitsOnDate:`, error.message);
       return [];
