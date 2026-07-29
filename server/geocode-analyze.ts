@@ -63,27 +63,58 @@ export function limparEndereco(addr: any): string {
 /** Coordenada util = resolve o endereco, nao a regiao. */
 const util = (hit: any) => !!hit && !hit.aproximado;
 
+/**
+ * Text Search da PLACES API (NEW) — places.googleapis.com/v1/places:searchText.
+ *
+ * Por que a API nova e nao a antiga: a chave do projeto esta restrita a
+ * "Places API (New)", que e a unica ativada em honest-396719. O endpoint legado
+ * (maps/api/place/textsearch/json) exige a "Places API" antiga, que o Google
+ * nao habilita mais em projetos novos. Chamar o legado devolveria REQUEST_DENIED
+ * mesmo com a chave correta.
+ *
+ * Diferencas de protocolo em relacao ao legado: e POST com JSON no corpo, a
+ * chave vai no header X-Goog-Api-Key, e o FieldMask e OBRIGATORIO — sem ele a
+ * API responde 400. O FieldMask tambem define o que e cobrado, entao pedimos
+ * so o minimo: id, nome, endereco e coordenada.
+ */
 async function buscarPlaces(nome: string, cidade: string, uf: string) {
   if (!PLACES_KEY()) return { ok: false as const, motivo: "GOOGLE_PLACES_API_KEY ausente" };
-  const query = [nome, cidade, uf, "Brasil"].filter(Boolean).join(", ");
-  const url =
-    "https://maps.googleapis.com/maps/api/place/textsearch/json" +
-    `?query=${encodeURIComponent(query)}&language=pt-BR&region=br&key=${encodeURIComponent(PLACES_KEY())}`;
-  const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!resp.ok) return { ok: false as const, motivo: `Places HTTP ${resp.status}` };
-  const j: any = await resp.json();
-  if (j?.status === "ZERO_RESULTS") return { ok: false as const, motivo: "sem resultado" };
-  if (j?.status !== "OK") return { ok: false as const, motivo: `Places: ${j?.status || "erro"}` };
-  const r = j?.results?.[0];
-  if (!r?.geometry?.location) return { ok: false as const, motivo: "sem geometria" };
+  const textQuery = [nome, cidade, uf, "Brasil"].filter(Boolean).join(", ");
+  const resp = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": PLACES_KEY(),
+      // Cobrado pelo que se pede: manter enxuto e proposital.
+      "X-Goog-FieldMask":
+        "places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus",
+    },
+    body: JSON.stringify({
+      textQuery,
+      languageCode: "pt-BR",
+      regionCode: "BR",
+      maxResultCount: 1,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const j: any = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    // A API nova devolve o motivo em error.message — util para distinguir chave
+    // invalida de API nao habilitada de FieldMask errado.
+    const msg = j?.error?.message || `HTTP ${resp.status}`;
+    return { ok: false as const, motivo: `Places(New): ${String(msg).slice(0, 120)}` };
+  }
+  const r = j?.places?.[0];
+  if (!r) return { ok: false as const, motivo: "sem resultado" };
+  if (typeof r?.location?.latitude !== "number") return { ok: false as const, motivo: "sem geometria" };
   return {
     ok: true as const,
-    lat: String(r.geometry.location.lat),
-    lon: String(r.geometry.location.lng),
-    nomeEncontrado: String(r.name || ""),
-    endereco: String(r.formatted_address || ""),
+    lat: String(r.location.latitude),
+    lon: String(r.location.longitude),
+    nomeEncontrado: String(r.displayName?.text || ""),
+    endereco: String(r.formattedAddress || ""),
     // Places nao devolve location_type; o endereco formatado indica a qualidade.
-    status: String(r.business_status || ""),
+    status: String(r.businessStatus || ""),
   };
 }
 
