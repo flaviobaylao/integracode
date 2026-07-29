@@ -14,6 +14,7 @@ import { registerHotsiteCard } from "./hotsite-card";
 import { registerPaymentLink } from "./payment-link";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
@@ -185,6 +186,12 @@ run();
 
   const { fireAutomation } = await import('./automation-engine');
   const server = await registerRoutes(app);
+
+  // 📋 Solicitações de Alteração (inbox admin + botão nos cards). DEVE ficar aqui, entre
+  // registerRoutes e o catch-all do SPA (app.use("*")). Removido por engano no refactor
+  // "IA linha de frente" (b257db4) — sem isto, POST/GET /api/change-requests caíam no
+  // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
+  registerChangeRequestsRoutes(app);
 
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
   (async () => {
