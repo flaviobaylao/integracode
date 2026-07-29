@@ -75,7 +75,31 @@ export function registerIaAtendimento(app: any) {
     }
     if (key === 'ia_despedida') value = value.slice(0, 500);
     await setSetting(key, value);
-    res.json({ ok: true, key, value });
+
+    // ⚠️ REGRAS MUTUAMENTE EXCLUSIVAS.
+    // 'ia_front_line' = a IA responde NA HORA e trava o atendente.
+    // 'ia_regra_timeout_on' = a IA ESPERA o humano por X min antes de assumir.
+    // Ligar as duas juntas trava o atendimento: a IA espera, e a conversa costuma ser
+    // finalizada antes de ela assumir — foi o que derrubou a Central duas vezes.
+    // Ligar uma desliga a outra automaticamente.
+    let ajustou: string | null = null;
+    if (value === 'on' && key === 'ia_front_line' && (await getSetting('ia_regra_timeout_on', 'off')) === 'on') {
+      await setSetting('ia_regra_timeout_on', 'off');
+      ajustou = 'ia_regra_timeout_on';
+    }
+    if (value === 'on' && key === 'ia_regra_timeout_on' && (await getSetting('ia_front_line', 'off')) === 'on') {
+      await setSetting('ia_front_line', 'off');
+      ajustou = 'ia_front_line';
+    }
+    if (ajustou) console.warn(`[IA-PAINEL] ${key}=on desligou automaticamente ${ajustou} (regras incompativeis)`);
+
+    // Aviso (nao bloqueia): tempos muito curtos encerram conversa de cliente que
+    // so foi buscar um documento.
+    let aviso: string | null = null;
+    if ((key === 'ia_finalizar_min' || key === 'chat_auto_close_min') && parseInt(value, 10) > 0 && parseInt(value, 10) < 10) {
+      aviso = 'Tempo muito curto: conversas serao encerradas em ' + value + ' min de silencio.';
+    }
+    res.json({ ok: true, key, value, ajustou, aviso });
   });
 
   app.get('/api/admin/ia-atendimento/painel', (req: any, res: any) => {
@@ -140,7 +164,7 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
     <div id="t_ia_regra_responder_novas"></div></div>
 
   <div class="row"><div>Assumir após X min sem resposta humana
-      <div class="desc">Se um vendedor/telemarketing ficar sem responder uma pergunta do cliente por X minutos, a IA assume a conversa.</div></div>
+      <div class="desc">⚠️ INCOMPATÍVEL com "IA na frente" — ligar esta DESLIGA aquela. Aqui o humano atende primeiro e a IA só assume se ninguém responder em X minutos.</div></div>
     <div style="display:flex;align-items:center;gap:8px">
       <input type="number" id="n_ia_timeout_min" min="1" onchange="setNum('ia_timeout_min', this.value)"> min
       <span id="t_ia_regra_timeout_on"></span></div></div>
@@ -157,7 +181,7 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
       <input type="text" id="n_canal_saida_padrao" placeholder="5562993227169" style="width:180px" onchange="setTxt('canal_saida_padrao', this.value)"></div></div>
 
   <div class="row"><div>IA na frente (humano so quando a IA transferir)
-      <div class="desc">A conversa NAO entra na fila dos atendentes enquanto a IA atende — ela e distribuida no momento em que a IA chama transferir_humano. Se um humano escrever mesmo assim, a IA recua daquela conversa.</div></div>
+      <div class="desc">⚠️ INCOMPATÍVEL com "Assumir após X min" — ligar esta DESLIGA aquela. A conversa não entra na fila enquanto a IA atende; ela é distribuída quando a IA chamar transferir_humano.</div></div>
     <div id="t_ia_front_line"></div></div>
 
   <div class="row"><div>Prazo do dono da carteira
@@ -232,10 +256,23 @@ async function load(){
   }catch(e){ document.getElementById('foot').textContent='Erro: '+e; }
 }
 async function setMode(key,v){ if(v==='on' && !confirm('Ligar em ON faz a IA responder CLIENTES REAIS neste canal. Confirma?')) return; await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
-async function setTgl(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
+async function setTgl(key,v){
+  try{
+    const r = await (await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v))).json();
+    if(r && r.ajustou){ alert('Atenção: "'+key+'" e "'+r.ajustou+'" não podem ficar ligados juntos.\n\n"'+r.ajustou+'" foi DESLIGADO automaticamente.'); }
+    if(r && r.aviso){ alert('Atenção: '+r.aviso); }
+  }catch(e){}
+  load();
+}
 async function setTxt(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v))); load(); }
 async function setRouting(v){ await fetch('/api/admin/ia-atendimento/set'+q('&key=agents_routing&value='+v)); load(); }
-async function setNum(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v))); load(); }
+async function setNum(key,v){
+  try{
+    const r = await (await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v)))).json();
+    if(r && r.aviso){ alert('Atenção: '+r.aviso); }
+  }catch(e){}
+  load();
+}
 async function salvarDespedida(){ const t=document.getElementById('txt_ia_despedida').value; const m=document.getElementById('despMsg'); m.textContent='Salvando...';
   try{ const r=await(await fetch('/api/admin/ia-atendimento/set'+q('&key=ia_despedida&value='+encodeURIComponent(t)))).json(); m.textContent=r.ok?'✓ salvo':('erro: '+(r.error||'')); }catch(e){ m.textContent='erro: '+e; } }
 load(); setInterval(load, 15000);
