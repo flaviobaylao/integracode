@@ -24,9 +24,12 @@ export default function Login() {
 
   const loginMutation = useMutation({
     mutationFn: async (data: LoginForm) => {
+      // Normaliza o email (minúsculas + sem espaços) antes de enviar, para não
+      // falhar por causa de autocapitalize do teclado ou espaços acidentais.
+      const payload = { ...data, email: (data.email || '').trim().toLowerCase() };
       const response = await fetch('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
         headers: {
           'Content-Type': 'application/json',
         },
