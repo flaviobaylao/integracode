@@ -229,7 +229,14 @@ async function runSync(startedBy: string | null, opts?: { mode?: "missing" | "ad
           };
           const campos: { campo: string; de: string; para: string }[] = [];
           for (const k of Object.keys(novo)) {
-            if (normalizeCmp(atual[k]) !== normalizeCmp(novo[k])) {
+            // CEP compara so por digitos: "74215022" e "74215-022" sao o MESMO
+            // CEP. A normalizeCmp troca pontuacao por espaco, entao sozinha ela
+            // acusava divergencia onde so muda a formatacao — 264 dos 272 CEPs
+            // "divergentes" da primeira execucao eram exatamente isso.
+            const iguais = k === "zipCode"
+              ? onlyDigits(atual[k]) === onlyDigits(novo[k])
+              : normalizeCmp(atual[k]) === normalizeCmp(novo[k]);
+            if (!iguais) {
               upd[k] = novo[k];
               campos.push({ campo: k, de: atual[k], para: novo[k] });
             }
