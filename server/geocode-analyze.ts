@@ -87,6 +87,37 @@ async function buscarPlaces(nome: string, cidade: string, uf: string) {
   };
 }
 
+/**
+ * Busca no Places tentando o NOME FANTASIA primeiro e a razao social depois.
+ *
+ * Motivo: o Places acha estabelecimento por como ele e conhecido na rua. Um
+ * cadastro como "22.348.633 SELMA MARIA MENDES FRANCA" (razao social de MEI)
+ * nao existe no Maps; o nome fantasia do ponto existe. Registrar QUAL termo
+ * acertou e o dado que decide se vale padronizar a busca pelo fantasia.
+ */
+async function buscarPlacesComFallback(
+  fantasia: string,
+  razaoSocial: string,
+  cidade: string,
+  uf: string,
+) {
+  const tentativas: { termo: string; origem: "fantasia" | "razao_social" }[] = [];
+  const f = String(fantasia || "").trim();
+  const r = String(razaoSocial || "").trim();
+  if (f) tentativas.push({ termo: f, origem: "fantasia" });
+  // So tenta a razao social se for diferente do fantasia (evita chamada duplicada e cobrada).
+  if (r && r.toUpperCase() !== f.toUpperCase()) tentativas.push({ termo: r, origem: "razao_social" });
+
+  const falhas: string[] = [];
+  for (const t of tentativas) {
+    const res = await buscarPlaces(t.termo, cidade, uf);
+    if (res.ok) return { ...res, termoUsado: t.termo, origemDoTermo: t.origem };
+    falhas.push(`${t.origem}: ${res.motivo}`);
+    if (tentativas.length > 1) await esperar();
+  }
+  return { ok: false as const, motivo: falhas.join(" | ") || "sem nome para buscar" };
+}
+
 export function registerGeocodeAnalyze(app: Express) {
   // POST /api/admin/customers/geocode-analyze  { limit?: number, incluirPlaces?: boolean }
   // NAO GRAVA NADA. Devolve o comparativo direto na resposta.
@@ -100,7 +131,7 @@ export function registerGeocodeAnalyze(app: Express) {
         const incluirPlaces = (req.body as any)?.incluirPlaces !== false;
 
         const sel: any = await db.execute(sql`
-          SELECT c.id, c.name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
+          SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
           FROM customers c
           WHERE (c.is_supplier IS NOT TRUE)
             AND (c.coordinates_locked IS NOT TRUE)
@@ -112,6 +143,9 @@ export function registerGeocodeAnalyze(app: Express) {
 
         const linhas: any[] = [];
         let jaOk = 0, ganhoLimpeza = 0, ganhoPlaces = 0, semSolucao = 0, erros = 0;
+        // Quebra do ganho do Places por qual termo acertou — e o dado que decide
+        // se vale padronizar a busca pelo nome fantasia.
+        let placesPorFantasia = 0, placesPorRazaoSocial = 0;
 
         for (const c of cands) {
           const cidade = String(c.city || "");
@@ -119,8 +153,10 @@ export function registerGeocodeAnalyze(app: Express) {
           const sufixo = [c.neighborhood, cidade, uf, "Brasil"].filter(Boolean).join(", ");
           const original = String(c.address || "");
           const limpo = limparEndereco(original);
+          const fantasia = String(c.fantasy_name || "");
           const linha: any = {
-            id: String(c.id), nome: c.name, tipo: c.cnpj ? "PJ" : "PF",
+            id: String(c.id), nome: c.name, nomeFantasia: fantasia, temFantasia: !!fantasia.trim(),
+            tipo: c.cnpj ? "PJ" : "PF",
             enderecoOriginal: original, enderecoLimpo: limpo, mudouNaLimpeza: limpo !== original.trim(),
           };
 
@@ -138,14 +174,23 @@ export function registerGeocodeAnalyze(app: Express) {
               if (util(b)) { linha.veredito = "resolvido_pela_limpeza"; ganhoLimpeza++; linhas.push(linha); await esperar(); continue; }
             }
 
-            // C — Places por nome (estabelecimento comercial costuma estar no Maps)
+            // C — Places: nome FANTASIA primeiro, razao social como segunda tentativa.
             if (incluirPlaces && c.cnpj) {
               await esperar();
-              const p = await buscarPlaces(String(c.name || ""), cidade, uf);
+              const p = await buscarPlacesComFallback(fantasia, String(c.name || ""), cidade, uf);
               linha.C = p.ok
-                ? { nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90), lat: p.lat, lon: p.lon }
+                ? {
+                    origemDoTermo: p.origemDoTermo, termoUsado: p.termoUsado,
+                    nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90),
+                    lat: p.lat, lon: p.lon,
+                  }
                 : { falhou: p.motivo };
-              if (p.ok) { linha.veredito = "resolvido_pelo_places"; ganhoPlaces++; linhas.push(linha); await esperar(); continue; }
+              if (p.ok) {
+                linha.veredito = "resolvido_pelo_places";
+                ganhoPlaces++;
+                if (p.origemDoTermo === "fantasia") placesPorFantasia++; else placesPorRazaoSocial++;
+                linhas.push(linha); await esperar(); continue;
+              }
             }
 
             linha.veredito = "sem_solucao_automatica";
@@ -171,6 +216,12 @@ export function registerGeocodeAnalyze(app: Express) {
             recuperadosPeloPlaces: ganhoPlaces,
             semSolucaoAutomatica: semSolucao,
             erros,
+          },
+          places: {
+            acertosPeloNomeFantasia: placesPorFantasia,
+            acertosPelaRazaoSocial: placesPorRazaoSocial,
+            clientesComFantasiaPreenchido: linhas.filter((l) => l.temFantasia).length,
+            clientesSemFantasia: linhas.filter((l) => l.tipo === "PJ" && !l.temFantasia).length,
           },
           percentuais: {
             jaResolvidoHoje: pct(jaOk),
