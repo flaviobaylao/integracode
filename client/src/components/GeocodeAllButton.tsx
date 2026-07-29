@@ -28,6 +28,10 @@ interface GeocodeStatus {
   dryOk?: number;
   unverified?: number;
   notFound?: number;
+  /** Recusados por serem centroide de bairro/cidade (skipApproximate). */
+  aproximados?: number;
+  /** "google" ou "nominatim" — define o ritmo e se há campo de precisão. */
+  provider?: string;
   errors?: number;
   none?: boolean;
 }
@@ -73,7 +77,12 @@ export default function GeocodeAllButton({ size = "sm", variant = "default", cla
         stopPolling();
         toast({
           title: "Geocodificação concluída",
-          description: `${s.updated || 0} clientes atualizados (PJ: ${s.pj || 0}, PF: ${s.pf || 0}).` + ((s.remainingAfter || 0) > 0 ? ` Restam ${s.remainingAfter} — clique novamente para continuar.` : ""),
+          description: `${s.updated || 0} clientes atualizados (PJ: ${s.pj || 0}, PF: ${s.pf || 0}).`
+            // Os recusados nao sao falha da geocodificacao: o endereco do cadastro
+            // nao resolve para um ponto. Dizer isso evita que alguem clique de novo
+            // esperando resultado diferente.
+            + ((s.aproximados || 0) > 0 ? ` ${s.aproximados} sem coordenada precisa — endereço do cadastro só resolve até o bairro, precisa ser corrigido.` : "")
+            + ((s.remainingAfter || 0) > 0 ? ` Restam ${s.remainingAfter} — clique novamente para continuar.` : ""),
         });
       }
     } catch (e) {
@@ -85,9 +94,16 @@ export default function GeocodeAllButton({ size = "sm", variant = "default", cla
     setStarting(true);
     startedAtRef.current = Date.now();
     try {
-      const r = await apiRequest("POST", "/api/admin/customers/geocode-all", scoped ? { apply: true, recalc: true, customerIds } : { apply: true, recalc: true });
+      // skipApproximate: recusa gravar centroide de bairro/cidade. Sem isso, varios
+      // clientes do mesmo bairro recebem a MESMA coordenada — origem dos duplicados.
+      // Quem for recusado aparece como "aproximado_ignorado" e precisa de correcao
+      // de endereco no cadastro, nao de outra rodada de geocodificacao.
+      const base = { apply: true, recalc: true, skipApproximate: true };
+      const r = await apiRequest("POST", "/api/admin/customers/geocode-all", scoped ? { ...base, customerIds } : base);
       const total = r?.candidates || 0;
-      const mins = Math.max(1, Math.round((total * 1.3) / 60));
+      // Com o Google o intervalo entre chamadas cai para 120ms; com Nominatim segue ~1,2s.
+      const porCliente = r?.provider === "google" ? 0.25 : 1.3;
+      const mins = Math.max(1, Math.round((total * porCliente) / 60));
       setRunning(true);
       setResultOpen(true);
       setStatus({ running: true, candidates: total, eligibleTotal: r?.eligibleTotal, remainingAfter: r?.remainingAfter, processed: 0 });
