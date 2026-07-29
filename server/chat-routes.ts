@@ -3538,6 +3538,24 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
+      // 🤖 Quais conversas estao COM A IA agora (para o ChatCenter pintar o card).
+      // Uma consulta so: front-line ligado + IA ligada + conversa nao transferida.
+      let iaAtiva = false;
+      const iaConvs = new Set<string>();
+      try {
+        const cfg: any = await db.execute(sql`SELECT key, value FROM system_settings WHERE key IN ('ia_front_line','agents_runtime_mode')`);
+        const map: Record<string, string> = {};
+        for (const r of (cfg.rows || [])) map[String(r.key)] = String(r.value ?? '').replace(/^"|"$/g, '');
+        iaAtiva = map['ia_front_line'] === 'on' && (map['agents_runtime_mode'] || 'off') !== 'off';
+        if (iaAtiva) {
+          const pausadas: any = await db.execute(sql`SELECT replace(key, 'chat_ai_paused:', '') AS id FROM system_settings WHERE key LIKE 'chat_ai_paused:%'`);
+          const fora = new Set((pausadas.rows || []).map((r: any) => String(r.id)));
+          for (const c of filteredConversations) {
+            if (!fora.has(String(c.id)) && String(c.status || '') !== 'resolved') iaConvs.add(String(c.id));
+          }
+        }
+      } catch (e: any) { console.error('[CHAT-LIST] flag IA', e?.message || e); }
+
       // Enriquecer conversas com dados relacionados
       const enrichedConversations = filteredConversations.map((conv: any) => {
         const assignedAgent = agents.find(a => a.id === conv.assignedAgentId);
@@ -3565,6 +3583,8 @@ export function registerChatRoutes(app: Express): void {
         
         return {
           id: conv.id,
+          // true = a IA esta conduzindo esta conversa agora (card roxo + envio travado no ChatCenter)
+          iaAtendendo: iaConvs.has(String(conv.id)),
           customerId: conv.customerId,
           customerName: displayName,
           contactName: contactNameByPhone[normalizedPhone] || (phonebookContact ? contactNameByPhone[String((phonebookContact as any).phone || '').replace(/\D/g, '')] : '') || null,
@@ -4140,7 +4160,16 @@ export function registerChatRoutes(app: Express): void {
       // transferir/finalizar (a finalização limpa o assignedAgentId, liberando a conversa).
       // Gestores (admin/coordenador/administrativo) podem enviar em qualquer conversa.
       // As regras da IA (ChatGPT) seguem valendo à parte deste bloqueio, pois rodam por outro fluxo.
-      const isManager = currentUser?.role === 'admin' || currentUser?.role === 'coordinator'; // administrativo NÃO ignora a trava de propriedade
+      // Gestor ignora a trava de propriedade — MAS quando 'ia_trava_admin' esta ligado,
+      // ninguem escreve em conversa de outro atendente (era por aqui que o admin
+      // conseguia intervir numa conversa ja atribuida a outra pessoa).
+      let isManager = currentUser?.role === 'admin' || currentUser?.role === 'coordinator'; // administrativo NÃO ignora a trava de propriedade
+      if (isManager) {
+        try {
+          const _t: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'ia_trava_admin' LIMIT 1`);
+          if (String(_t.rows?.[0]?.value ?? '').replace(/^"|"$/g, '') === 'on') isManager = false;
+        } catch { /* mantem o comportamento antigo */ }
+      }
       const conversationOwner = conversation.assignedAgentId;
       if (!isManager && conversationOwner && conversationOwner !== 'chatgpt') {
         const agents = await storage.getChatAgents();

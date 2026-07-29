@@ -547,7 +547,23 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     const g: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum' LIMIT 1`);
     const base = g.rows?.[0]?.valor || '';
     const kb = (agent.base_conhecimento || '').trim();
-    const systemPrompt = (base ? base + '\n\n' : '')
+    // Data e hora de Brasilia no prompt: sem isso o modelo nao sabe que horas sao e
+    // erra a saudacao (dizia "boa tarde" as 10h da manha).
+    const _agora = new Date();
+    const _dataBR = _agora.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const _horaBR = _agora.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+    const _h = parseInt(_horaBR.slice(0, 2), 10);
+    const _saudacao = _h < 12 ? 'bom dia' : (_h < 18 ? 'boa tarde' : 'boa noite');
+    const _tempo = [
+      '# AGORA (fuso de Brasilia)',
+      'Data: ' + _dataBR,
+      'Hora: ' + _horaBR,
+      'Saudacao correta neste momento: "' + _saudacao + '". Use EXATAMENTE essa — nunca outra.',
+      'Regra: ate 11:59 e "bom dia"; das 12:00 as 17:59 e "boa tarde"; a partir das 18:00 e "boa noite".',
+      'Se o cliente saudar com o periodo errado, responda com o periodo CERTO, sem corrigi-lo.',
+    ].join('\n');
+    const systemPrompt = _tempo + '\n\n'
+      + (base ? base + '\n\n' : '')
       + (kb ? '# BASE DE CONHECIMENTO (fatos da Honest — responda so com o que esta aqui; se faltar, ofereca falar com uma pessoa)\n' + kb + '\n\n' : '')
       + (agent.system_prompt || '');
     // normaliza histórico inicial (texto): começa com user, alterna
