@@ -41,6 +41,7 @@ const KEYS: Record<string, string> = {
   ia_lembrete_on: 'on',                    // lembrar o atendente de finalizar a conversa dele
   ia_lembrete_min: '120',                  // minutos parados antes do lembrete
   ia_lembrete_repete_h: '24',              // nao repete o lembrete antes disso
+  canal_saida_padrao: '',                  // numero de saida quando a conversa nao tem canal proprio
   agents_routing: 'keyword',               // keyword = roteia por palavra-chave; fixo = sempre o agente padrao
   ia_pausa_horas: '24',                    // horas que a IA fica fora da conversa apos transferir p/ humano
   chat_auto_close_min: '120',              // minutos de inatividade p/ encerrar conversa automaticamente
@@ -68,6 +69,10 @@ export function registerIaAtendimento(app: any) {
     if (TOGGLES.includes(key) && !['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
     if (NUMS.includes(key)) { const n = parseInt(value, 10); if (!(n >= 1 && n <= 100000)) return res.status(400).json({ error: 'minutos invalidos' }); value = String(n); }
     if (key === 'agents_routing' && !['keyword', 'fixo'].includes(value)) return res.status(400).json({ error: 'value invalido (keyword|fixo)' });
+    if (key === 'canal_saida_padrao') {
+      value = value.replace(/\D/g, '');
+      if (value && value.length < 12) return res.status(400).json({ error: 'telefone invalido (use 55DDNNNNNNNNN)' });
+    }
     if (key === 'ia_despedida') value = value.slice(0, 500);
     await setSetting(key, value);
     res.json({ ok: true, key, value });
@@ -146,6 +151,11 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
       <input type="number" id="n_ia_finalizar_min" min="1" onchange="setNum('ia_finalizar_min', this.value)"> min
       <span id="t_ia_regra_finalizar_on"></span></div></div>
 
+  <div class="row"><div>Numero de saida padrao
+      <div class="desc">Usado quando a conversa nao tem canal proprio (conversa aberta pelo atendente). Conversa iniciada pelo cliente sempre responde pelo numero em que ele escreveu. Formato 55DDNNNNNNNNN. Vazio = padrao do Umbler.</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="text" id="n_canal_saida_padrao" placeholder="5562993227169" style="width:180px" onchange="setTxt('canal_saida_padrao', this.value)"></div></div>
+
   <div class="row"><div>IA na frente (humano so quando a IA transferir)
       <div class="desc">A conversa NAO entra na fila dos atendentes enquanto a IA atende — ela e distribuida no momento em que a IA chama transferir_humano. Se um humano escrever mesmo assim, a IA recua daquela conversa.</div></div>
     <div id="t_ia_front_line"></div></div>
@@ -215,6 +225,7 @@ async function load(){
     document.getElementById('n_chat_auto_close_min').value=d.chat_auto_close_min;
     document.getElementById('n_ia_handoff_min').value=d.ia_handoff_min;
     document.getElementById('n_ia_lembrete_min').value=d.ia_lembrete_min;
+    { const el=document.getElementById('n_canal_saida_padrao'); if(document.activeElement!==el) el.value=d.canal_saida_padrao||''; }
     document.getElementById('v_agents_routing').textContent='atual: '+d.agents_routing;
     const ta=document.getElementById('txt_ia_despedida'); if(document.activeElement!==ta) ta.value=d.ia_despedida;
     document.getElementById('foot').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
@@ -222,6 +233,7 @@ async function load(){
 }
 async function setMode(key,v){ if(v==='on' && !confirm('Ligar em ON faz a IA responder CLIENTES REAIS neste canal. Confirma?')) return; await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
 async function setTgl(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v)); load(); }
+async function setTxt(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v))); load(); }
 async function setRouting(v){ await fetch('/api/admin/ia-atendimento/set'+q('&key=agents_routing&value='+v)); load(); }
 async function setNum(key,v){ await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+encodeURIComponent(v))); load(); }
 async function salvarDespedida(){ const t=document.getElementById('txt_ia_despedida').value; const m=document.getElementById('despMsg'); m.textContent='Salvando...';
