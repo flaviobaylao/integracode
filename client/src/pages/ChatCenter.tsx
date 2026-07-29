@@ -228,12 +228,25 @@ function ConversationItem({ conv, selectedConversation, setSelectedConversation,
   return (
     <div
       className={`w-full text-left p-3 rounded-lg transition-colors relative ${
-        selectedConversation === conv.id
-          ? "bg-green-100 border-2 border-green-600 shadow-sm"
-          : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
+        conv.iaAtendendo
+          // 🤖 IA conduzindo a conversa: card ROXO (o atendente nao deve interromper)
+          ? (selectedConversation === conv.id
+              ? "bg-violet-100 border-2 border-violet-600 shadow-sm"
+              : "bg-violet-50 hover:bg-violet-100 border border-violet-300")
+          : (selectedConversation === conv.id
+              ? "bg-green-100 border-2 border-green-600 shadow-sm"
+              : "bg-gray-50 hover:bg-gray-100 border border-gray-200")
       }`}
       data-testid={`conversation-item-${conv.id}`}
     >
+      {conv.iaAtendendo && (
+        <span
+          className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-violet-600 text-white text-[9px] font-semibold px-1.5 h-4 shrink-0 z-10"
+          title="A IA está conduzindo este atendimento"
+        >
+          <i className="fas fa-robot text-[8px]"></i> IA
+        </span>
+      )}
       {(conv.unreadCount || 0) > 0 && (
         <span
           className="absolute bottom-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center shadow-sm z-10"
@@ -1132,8 +1145,11 @@ function ChatCenterInner() {
   const currentAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
   const isLockManager = user?.role === 'admin' || user?.role === 'coordinator'; // só admin e coordenador ignoram a trava (administrativo NÃO)
   const ownerOnline = !!selectedChat?.assignedAgentId && onlineAgents.some((a: any) => a.id === selectedChat.assignedAgentId); // dono atualmente online?
-  const conversationLocked = !isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline;
-  const lockedOwnerName = conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null;
+  // 🤖 IA conduzindo: ninguem escreve por cima dela (o servidor tambem bloqueia com 403
+  // IA_ATENDENDO; aqui e so para o atendente ver antes de digitar).
+  const iaAtendendo = !!(selectedChat as any)?.iaAtendendo;
+  const conversationLocked = iaAtendendo || (!isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
+  const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   const setChannelMutation = useMutation({
     mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
@@ -1346,7 +1362,7 @@ function ChatCenterInner() {
   const handleSendMessage = async () => {
     if (polishing || sendMessageMutation.isPending) return;
     if (!messageText.trim()) return;
-    if (conversationLocked) { toast({ title: "Envio bloqueado", description: `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
+    if (conversationLocked) { toast({ title: iaAtendendo ? "IA atendendo" : "Envio bloqueado", description: iaAtendendo ? "A IA está conduzindo este atendimento. Ela libera a conversa assim que o cliente pedir para falar com uma pessoa." : `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
     let toSend = messageText;
     const shouldPolish = user?.role === 'telemarketing' || user?.role === 'vendedor';
     if (shouldPolish && messageText.trim().length >= 3) {
@@ -1392,7 +1408,7 @@ function ChatCenterInner() {
 
   const handleSendMedia = async () => {
     if (!selectedFile) return;
-    if (conversationLocked) { toast({ title: "Envio bloqueado", description: `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
+    if (conversationLocked) { toast({ title: iaAtendendo ? "IA atendendo" : "Envio bloqueado", description: iaAtendendo ? "A IA está conduzindo este atendimento. Ela libera a conversa assim que o cliente pedir para falar com uma pessoa." : `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
     
     try {
       const uploadResult = await uploadFileMutation.mutateAsync(selectedFile);
@@ -2311,14 +2327,18 @@ function ChatCenterInner() {
                       />
                     )}
                     {conversationLocked && (
-                      <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-1" data-testid="conversation-locked-banner">
+                      <div className={`flex items-center gap-2 text-xs rounded px-3 py-2 mb-1 border ${iaAtendendo ? 'text-violet-700 bg-violet-50 border-violet-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`} data-testid="conversation-locked-banner">
                         <Ban className="w-3.5 h-3.5 shrink-0" />
-                        <span>Conversa em atendimento por <b>{lockedOwnerName}</b>. Você não pode enviar mensagens até que o responsável transfira a conversa ou um administrador finalize/transfira.</span>
+                        {iaAtendendo ? (
+                          <span><b>IA atendendo este cliente.</b> Ninguém pode escrever por cima dela — a conversa é liberada automaticamente quando o cliente pedir para falar com uma pessoa.</span>
+                        ) : (
+                          <span>Conversa em atendimento por <b>{lockedOwnerName}</b>. Você não pode enviar mensagens até que o responsável transfira a conversa ou um administrador finalize/transfira.</span>
+                        )}
                       </div>
                     )}
                     <div className="flex gap-2 items-end">
                       <Textarea
-                        placeholder={conversationLocked ? "Envio bloqueado — conversa atendida por outro atendente" : "Digite sua mensagem (Enter envia · Shift+Enter nova linha)..."}
+                        placeholder={iaAtendendo ? "🤖 IA atendendo — aguarde o cliente pedir uma pessoa" : (conversationLocked ? "Envio bloqueado — conversa atendida por outro atendente" : "Digite sua mensagem (Enter envia · Shift+Enter nova linha)...")}
                         value={messageText}
                         onChange={(e) => setMessageText(e.target.value)}
                         onKeyDown={(e) => {
