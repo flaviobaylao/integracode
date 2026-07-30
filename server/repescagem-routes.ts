@@ -36,6 +36,16 @@ const REPESCAGEM_EXCLUDED_USER_IDS = new Set<string>([
   // Honest 1 e Honest 2 REMOVIDOS da exclusao -> agora elegiveis (telemarketing)
 ]);
 
+// Carteiras (vendedor dono do cliente) que NAO entram em repescagem: canais/sistema
+// Honest 1/2/3, HOTSITE, INSTAGRAM. Clientes dessas carteiras sao ignorados no gatilho.
+const REPESCAGEM_EXCLUDED_SELLER_IDS = new Set<string>([
+  '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest 1
+  'f87166f7-0431-4bd1-8c8c-074d13b2c861', // Honest 2
+  'c5868c11-790a-46d1-ba87-2023452c8303', // Honest 3
+  'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
+  'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
+]);
+
 function brTodayStr(): string {
   const now = new Date();
   const offset = -3 * 60; // BRT
@@ -280,6 +290,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   }
 
   for (const c of cs) {
+    // Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) NAO entram em repescagem.
+    if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
     const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
     if (scheduled.length === 0) continue;
     const lastDate = scheduled[scheduled.length - 1];
