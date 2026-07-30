@@ -88,6 +88,7 @@ const userName = (u: any): string => {
 // 💬 Conversa: rótulos e helpers para montar as mensagens do histórico.
 const TYPE_LABEL_SRV: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
+  presencial_virtual: "Presencial/Virtual",
   inicio_atendimento: "Início de atendimento", inativar: "Inativar", outro: "Outro",
 };
 const RESOLUTION_LABEL: Record<string, string> = {
@@ -100,6 +101,7 @@ function summarizeRequest(types: string[], details: any): string {
     if (t === "periodicidade" && d.periodicidade) parts.push(`Periodicidade → ${d.periodicidade}`);
     else if (t === "dia_rota" && Array.isArray(d.diaRota) && d.diaRota.length) parts.push(`Dia de Rota → ${d.diaRota.join(", ")}`);
     else if (t === "area_vendas" && d.areaVendas) parts.push(`Área de vendas → ${d.areaVendas}`);
+    else if (t === "presencial_virtual" && d.modalidade) parts.push(`Modalidade → ${d.modalidade === "virtual" ? "Virtual" : "Presencial"}`);
     else if (t === "inicio_atendimento" && d.inicioAtendimento) parts.push(`Início de atendimento → ${d.inicioAtendimento}`);
     else if (t === "outro" && d.outro) parts.push(`Outro: ${d.outro}`);
     else parts.push(TYPE_LABEL_SRV[t] || t);
