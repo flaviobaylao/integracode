@@ -31,7 +31,7 @@ import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
-import { ChangeRequestControl, useChangeRequestStates, crKey } from "@/components/change-request/ChangeRequestControl";
+import { ChangeRequestControl, useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -996,7 +996,13 @@ export default function RotaDoDia() {
   // 📋 Solicitar Alteração — regras de UI:
   //  - Efetuadas: card cinza/inativo, não clicável e FORA da contagem de clientes da rota (mas visível).
   //  - Botão de nova solicitação bloqueado quando já há check-in, atendimento virtual ou venda no dia.
-  const crEfetuadaByKey = (key: string) => changeRequestStates[key]?.status === 'efetuadas';
+  //  - EXCEÇÃO (30/jul/2026): solicitação APENAS de modalidade (Presencial↔Virtual) NÃO trava o
+  //    card — ele segue ATIVO/clicável e na contagem, pois o cliente continua sendo atendido
+  //    (só muda o canal). As demais alterações mantêm a regra de recolher/travar quando Efetuada.
+  const crEfetuadaByKey = (key: string) => {
+    const s = changeRequestStates[key];
+    return s?.status === 'efetuadas' && !isModalidadeOnlyRequest(s);
+  };
   const hasCheckinOrSale = (cid?: string | null) => {
     if (!cid) return false;
     const c = String(cid);
