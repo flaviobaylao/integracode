@@ -30,22 +30,59 @@ const PLACES_KEY = () => String(process.env.GOOGLE_PLACES_API_KEY || "").trim();
 const COMPLEMENTO =
   /\b(QUADRA|QD|QDA|LOTE|LT|LOJA|LJ|SALA|SL|BLOCO|BL|APARTAMENTO|APTO|AP|BANCA|BOX|GALPAO|GALPÃO|KM|ANDAR|CONJUNTO|CONJ|CASA|FUNDOS|TERREO|TÉRREO|EDIFICIO|EDIFÍCIO|ED)\b/i;
 
+// Ponto de referencia digitado a mao ("em frente a...", "ao lado da..."). Nao e
+// endereco: e instrucao para o entregador. O geocodificador trata como parte do
+// nome da via e erra o logradouro.
+const NOTA =
+  /\b(EM FRENTE|EMFRENTE|PROXIMO|PRÓXIMO|PROX|AO LADO|AOLADO|ESQUINA|ATRAS|ATRÁS|REFERENCIA|REFERÊNCIA|PONTO DE REF|DENTRO D[OA]|EM CIMA|FRENTE A|FRENTE AO)\b/i;
+
+// "S/N" / "SEM NUMERO": marcador de ausencia de numero. Se sobrar na string, o
+// geocodificador o trata como parte do endereco e piora o resultado.
+const SEM_NUMERO = /[,\s]+(?:S\s*\/?\s*N[ºo°]?|SEM\s+N[UÚ]MERO|SN)\s*$/i;
+
+// Numero explicitamente marcado, em QUALQUER posicao da string: "nº 69",
+// "n. 711", "numero 546". Exige o marcador (º/°/./palavra) de proposito — um
+// "\bn\b" solto destruiria vias chamadas "Rua N".
+const NUM_MARCADO = /(?:n[ºo°]\.?|n\.|num\.?|n[uú]mero)\s*:?\s*(\d+[A-Za-z]?)\b/i;
+
+/** Descarta ponto de referencia e complemento, ficando so com o nome da via. */
+function soAVia(texto: string): string {
+  let via = String(texto || "").trim();
+  const corte = via.search(/\s[-–—]\s|,/);
+  if (corte > 0) via = via.slice(0, corte);
+  const mn = via.match(NOTA);
+  if (mn && (mn.index || 0) > 0) via = via.slice(0, mn.index);
+  const mc = via.match(COMPLEMENTO);
+  if (mc && (mc.index || 0) > 0) via = via.slice(0, mc.index);
+  return via.replace(SEM_NUMERO, "").replace(/[\s,;-]+$/, "").trim();
+}
+
 /**
  * Reduz o endereco a "logradouro, numero".
  *
- * O endereco vindo da Receita e montado como `logradouro, numero complemento`
- * (ver cadastro-receita-sync). Por isso a regra primaria e estrutural — corta na
- * primeira virgula e fica com o primeiro token numerico — em vez de caçar
- * palavras. Isso preserva vias cujo NOME contem "QUADRA" (comuns no DF), que um
- * corte por palavra-chave destruiria.
+ * Tres regras, na ordem em que resolvem mais:
  *
- * Só cai no corte por palavra-chave quando o endereco foge desse formato
- * (cadastro digitado a mao, cliente PF).
+ * 1. Numero MARCADO em qualquer posicao ("nº 69"). Medido em producao: o cadastro
+ *    manual escreve "Rua X - em frente a academia, nº 69", ou seja o numero vem
+ *    DEPOIS do ponto de referencia. A regra estrutural (item 2) nao alcanca esse
+ *    caso e o Google devolvia o centro da via.
+ * 2. Formato da Receita, `logradouro, numero complemento`: corta na primeira
+ *    virgula e fica com o primeiro token numerico. Estrutural, nao por palavra —
+ *    preserva vias cujo NOME contem "QUADRA" (comuns no DF).
+ * 3. Corte por palavra-chave, para o que fugir dos dois formatos.
  */
 export function limparEndereco(addr: any): string {
   let s = String(addr || "").replace(/\s*;\s*/g, ", ").replace(/\s+/g, " ").trim();
   if (!s) return "";
 
+  // 1 — numero marcado em qualquer posicao
+  const mm = s.match(NUM_MARCADO);
+  if (mm && (mm.index || 0) > 0) {
+    const via = soAVia(s.slice(0, mm.index));
+    if (via) return `${via}, ${mm[1]}`;
+  }
+
+  // 2 — formato da Receita
   const i = s.indexOf(",");
   if (i > 0) {
     const via = s.slice(0, i).trim();
@@ -55,13 +92,32 @@ export function limparEndereco(addr: any): string {
     if (COMPLEMENTO.test((resto.split(" ")[0] || ""))) return via;
   }
 
+  // 3 — corte por palavra-chave (inclui ponto de referencia)
+  const mn = s.match(NOTA);
+  if (mn && (mn.index || 0) > 0) s = s.slice(0, mn.index).trim();
   const mc = s.match(COMPLEMENTO);
   if (mc && (mc.index || 0) > 0) s = s.slice(0, mc.index).trim();
-  return s.replace(/[\s,;-]+$/, "").trim();
+  return s.replace(SEM_NUMERO, "").replace(/[\s,;-]+$/, "").trim();
 }
 
-/** Coordenada util = resolve o endereco, nao a regiao. */
-const util = (hit: any) => !!hit && !hit.aproximado;
+/** O cadastro traz numero da casa? Sem numero, nenhum geocodificador acerta o ponto. */
+export function temNumeroDeCasa(addr: any): boolean {
+  const s = String(addr || "");
+  if (NUM_MARCADO.test(s)) return true;
+  const i = s.indexOf(",");
+  return i > 0 && /^\s*\d/.test(s.slice(i + 1));
+}
+
+/**
+ * Coordenada util = aponta o ENDERECO, nao a via nem a regiao.
+ *
+ * `centro_geometrico` (GEOMETRIC_CENTER) e o centro da rua. Quando o cadastro nao
+ * tem numero, TODO cliente daquela via recebe a mesma coordenada — era essa a
+ * origem das coordenadas empilhadas. Aceitar centro_geometrico como resolvido
+ * fazia o funil parar em A e nunca medir o ganho da limpeza nem do Places.
+ */
+const util = (hit: any) =>
+  !!hit && !hit.aproximado && hit.precisao !== "centro_geometrico";
 
 /**
  * Text Search da PLACES API (NEW) — places.googleapis.com/v1/places:searchText.
@@ -216,6 +272,11 @@ export function registerGeocodeAnalyze(app: Express) {
             id: String(c.id), nome: c.name, nomeFantasia: fantasia, temFantasia: !!fantasia.trim(),
             tipo: c.cnpj ? "PJ" : "PF",
             enderecoOriginal: original, enderecoLimpo: limpo, mudouNaLimpeza: limpo !== original.trim(),
+            // Sem numero de casa nenhum geocodificador acerta o ponto: o melhor que
+            // a Geocoding devolve e o centro da via. Separar essa populacao mostra
+            // quanto do problema e falta de informacao no cadastro, e nao estrategia.
+            temNumeroNoCadastro: temNumeroDeCasa(original),
+            numeroRecuperadoPelaLimpeza: !temNumeroDeCasa(original) && temNumeroDeCasa(limpo),
           };
 
           try {
@@ -283,6 +344,21 @@ export function registerGeocodeAnalyze(app: Express) {
             clientesComFantasiaPreenchido: linhas.filter((l) => l.temFantasia).length,
             clientesSemFantasia: linhas.filter((l) => l.tipo === "PJ" && !l.temFantasia).length,
           },
+          // Diagnostico do cadastro: separa "estrategia errada" de "informacao que
+          // nao existe". semNumeroDeCasa e o teto do que qualquer automacao alcanca
+          // por endereco — para esses, so Places por nome ou correcao manual.
+          cadastro: {
+            semNumeroDeCasa: linhas.filter((l) => !l.temNumeroNoCadastro).length,
+            comNumeroDeCasa: linhas.filter((l) => l.temNumeroNoCadastro).length,
+            numeroRecuperadoPelaLimpeza: linhas.filter((l) => l.numeroRecuperadoPelaLimpeza).length,
+          },
+          // Precisao que a Geocoding devolveu no endereco atual (etapa A).
+          // centro_geometrico = centro da via, que e o que empilha clientes.
+          precisaoNoEnderecoAtual: linhas.reduce((acc: any, l: any) => {
+            const p = (l.A && l.A.precisao) || "sem_resultado";
+            acc[p] = (acc[p] || 0) + 1;
+            return acc;
+          }, {}),
           percentuais: {
             jaResolvidoHoje: pct(jaOk),
             ganhoDaLimpeza: pct(ganhoLimpeza),
