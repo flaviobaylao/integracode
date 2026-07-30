@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -2505,6 +2505,16 @@ export default function RotaDoDia() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap mb-1">
                         <span className="font-medium truncate">{r.customerName}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); const n = r.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
+                          title="Copiar nome fantasia"
+                          aria-label="Copiar nome fantasia"
+                          className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                          data-testid={`copy-fantasy-${r.customerId}`}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
                           {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
