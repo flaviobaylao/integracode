@@ -59,11 +59,31 @@ const TYPE_DEFS: { key: string; label: string }[] = [
   { key: "periodicidade", label: "Periodicidade" },
   { key: "dia_rota", label: "Dia de Rota" },
   { key: "area_vendas", label: "Área de vendas" },
+  { key: "presencial_virtual", label: "Presencial/Virtual" },
   { key: "inicio_atendimento", label: "Início de atendimento" },
   { key: "inativar", label: "Inativar" },
   { key: "outro", label: "Outro" },
 ];
 const TYPE_LABEL: Record<string, string> = Object.fromEntries(TYPE_DEFS.map((t) => [t.key, t.label]));
+
+// ---------------------------------------------------------------------------
+// Regra (30/jul/2026): quando a solicitação é APENAS de modalidade
+// (Presencial↔Virtual), o card permanece ATIVO na rota mesmo após "Efetuada" —
+// o cliente continua sendo atendido, só muda o canal (presencial/virtual). As
+// demais alterações seguem a regra normal (Efetuada → card recolhido/travado).
+export function isModalidadeOnlyRequest(state?: { types?: string[]; details?: any } | null): boolean {
+  if (!state) return false;
+  const types = Array.isArray(state.types) ? state.types.filter(Boolean) : [];
+  if (types.length !== 1) return false;
+  if (types[0] === "presencial_virtual") return true;
+  // Compatibilidade: solicitações antigas feitas via "Outro" cujo texto é exatamente
+  // "Virtual" ou "Presencial" (ex.: GRUPO LIMA) também contam como troca de modalidade.
+  if (types[0] === "outro") {
+    const v = String(state?.details?.outro || "").trim().toLowerCase();
+    return v === "virtual" || v === "presencial";
+  }
+  return false;
+}
 const DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex"];
 
 const RESULT_META: Record<string, { label: string; cls: string; Icon: any }> = {
@@ -153,6 +173,7 @@ export function ChangeRequestControl(props: ControlProps) {
   const [periodicidade, setPeriodicidade] = useState<string>("");
   const [diaRota, setDiaRota] = useState<Set<string>>(new Set());
   const [areaVendas, setAreaVendas] = useState<string>("");
+  const [modalidade, setModalidade] = useState<string>("");
   const [inicioAtendimento, setInicioAtendimento] = useState<string>("");
   const [outro, setOutro] = useState<string>("");
 
@@ -194,7 +215,7 @@ export function ChangeRequestControl(props: ControlProps) {
 
   const resetForm = () => {
     setSelected(new Set()); setPeriodicidade(""); setDiaRota(new Set());
-    setAreaVendas(""); setInicioAtendimento(""); setOutro("");
+    setAreaVendas(""); setModalidade(""); setInicioAtendimento(""); setOutro("");
   };
 
   const toggleType = (k: string) => {
@@ -218,6 +239,7 @@ export function ChangeRequestControl(props: ControlProps) {
       if (selected.has("periodicidade") && periodicidade) details.periodicidade = periodicidade;
       if (selected.has("dia_rota")) details.diaRota = Array.from(diaRota);
       if (selected.has("area_vendas") && areaVendas) details.areaVendas = areaVendas;
+      if (selected.has("presencial_virtual") && modalidade) details.modalidade = modalidade;
       if (selected.has("inicio_atendimento") && inicioAtendimento) details.inicioAtendimento = inicioAtendimento;
       if (selected.has("outro") && outro.trim()) details.outro = outro.trim();
       return apiRequest("POST", "/api/change-requests", {
@@ -259,6 +281,7 @@ export function ChangeRequestControl(props: ControlProps) {
     (selected.has("periodicidade") && !periodicidade) ||
     (selected.has("dia_rota") && diaRota.size === 0) ||
     (selected.has("area_vendas") && !areaVendas) ||
+    (selected.has("presencial_virtual") && !modalidade) ||
     (selected.has("inicio_atendimento") && !inicioAtendimento) ||
     (selected.has("outro") && !outro.trim());
 
@@ -359,6 +382,16 @@ export function ChangeRequestControl(props: ControlProps) {
                   </RadioGroup>
                 )}
 
+                {selected.has("presencial_virtual") && t.key === "presencial_virtual" && (
+                  <RadioGroup value={modalidade} onValueChange={setModalidade} className="mt-2 ml-6 flex gap-4">
+                    {[["presencial", "Presencial"], ["virtual", "Virtual"]].map(([v, l]) => (
+                      <label key={v} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <RadioGroupItem value={v} /> {l}
+                      </label>
+                    ))}
+                  </RadioGroup>
+                )}
+
                 {selected.has("inicio_atendimento") && t.key === "inicio_atendimento" && (
                   <div className="mt-2 ml-6">
                     <input
@@ -427,6 +460,7 @@ export function ChangeRequestControl(props: ControlProps) {
                   {state.details.periodicidade && <div>Periodicidade: {state.details.periodicidade}</div>}
                   {Array.isArray(state.details.diaRota) && state.details.diaRota.length > 0 && <div>Dias: {state.details.diaRota.join(", ")}</div>}
                   {state.details.areaVendas && <div>Área de vendas: {state.details.areaVendas}</div>}
+                  {state.details.modalidade && <div>Modalidade: {state.details.modalidade === "virtual" ? "Virtual" : "Presencial"}</div>}
                   {state.details.inicioAtendimento && <div>Início de atendimento: {state.details.inicioAtendimento}</div>}
                   {state.details.outro && <div>Outro: {state.details.outro}</div>}
                 </div>
