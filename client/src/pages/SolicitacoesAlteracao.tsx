@@ -15,10 +15,11 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
-import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock } from "lucide-react";
+import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
+  presencial_virtual: "Presencial/Virtual",
   inicio_atendimento: "Início de atendimento", inativar: "Inativar", outro: "Outro",
 };
 const ENTITY_LABEL: Record<string, string> = { customer: "Cliente", lead: "Lead", repescagem: "Repescagem" };
@@ -34,6 +35,41 @@ const fmtDate = (s?: string) => {
   catch { return String(s); }
 };
 
+// 📋 Botão de copiar a razão social do cliente para a área de transferência
+// (facilita colar a busca no Omie/sistema ao efetuar a alteração manual). (30/jul/2026)
+function CopyBtn({ text }: { text: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  const copyText = async (t: string): Promise<boolean> => {
+    try { await navigator.clipboard.writeText(t); return true; }
+    catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta); return ok;
+      } catch { return false; }
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        const ok = await copyText(text);
+        if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); toast({ title: "Copiado", description: text }); }
+        else toast({ title: "Não foi possível copiar", variant: "destructive" });
+      }}
+      title="Copiar razão social"
+      className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+      data-testid="button-copy-name"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
 function Detalhes({ details }: { details: any }) {
   if (!details || Object.keys(details).length === 0) return null;
   return (
@@ -41,6 +77,7 @@ function Detalhes({ details }: { details: any }) {
       {details.periodicidade && <div>Periodicidade: <b>{details.periodicidade}</b></div>}
       {Array.isArray(details.diaRota) && details.diaRota.length > 0 && <div>Dias: <b>{details.diaRota.join(", ")}</b></div>}
       {details.areaVendas && <div>Área de vendas: <b>{details.areaVendas}</b></div>}
+      {details.modalidade && <div>Modalidade: <b>{details.modalidade === "virtual" ? "Virtual" : "Presencial"}</b></div>}
       {details.inicioAtendimento && <div>Início de atendimento: <b>{details.inicioAtendimento}</b></div>}
       {details.outro && <div>Outro: <span className="italic">{details.outro}</span></div>}
     </div>
@@ -65,7 +102,10 @@ function PendingCard({ r }: { r: any }) {
     <Card className="p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="font-semibold">{r.entityName || r.entityId}</div>
+          <div className="font-semibold flex items-center gap-1.5">
+            <span>{r.entityName || r.entityId}</span>
+            <CopyBtn text={r.entityName || r.entityId} />
+          </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.requestedByName || "—"}</span>
@@ -111,7 +151,10 @@ function ResolvedCard({ r }: { r: any }) {
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="font-semibold">{r.entityName || r.entityId}</div>
+          <div className="font-semibold flex items-center gap-1.5">
+            <span>{r.entityName || r.entityId}</span>
+            <CopyBtn text={r.entityName || r.entityId} />
+          </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.requestedByName || "—"}</span>
