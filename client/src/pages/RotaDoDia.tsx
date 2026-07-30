@@ -2172,6 +2172,16 @@ export default function RotaDoDia() {
                                     <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
                                       <Phone className="h-4 w-4" />
                                       {visit.customerName}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); const n = visit.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
+                                        title="Copiar nome fantasia"
+                                        aria-label="Copiar nome fantasia"
+                                        className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                                        data-testid={`copy-fantasy-virtual-${visit.customerId}`}
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                      </button>
                                     </p>
                                     <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                     {/* Mostrar pedidos do dia */}
