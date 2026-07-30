@@ -6088,13 +6088,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (_etp) { console.warn('[TRAVA-TELEFONE] erro (ignorado):', (_etp as any)?.message); }
 
+    // VIGIA CUPOM vendedor: cupom promocional (tabela coupons) no pedido do vendedor.
+    // Um desconto por pedido, nesta ordem: cupom > codigo de indicacao > recompensa automatica.
+    // O resgate e gravado ANTES de aplicar (sem registro nao ha desconto) e guarda a regra usada.
+    // Ao REEDITAR uma venda ja fechada, o desconto e recalculado pela regra congelada sobre o total atual.
+    let _descAplicado = false;
+    try {
+      const _cpTotal = Number((data as any).saleValue);
+      const _cpStatus = (data as any).status;
+      const _cpFechando = _cpStatus === 'completed';
+      const _cpJaFechado = !!(cardBefore && (cardBefore as any).status === 'completed');
+      if (_cpTotal > 0 && cardBefore && cardBefore.customerId) {
+        const _cpBase = 'http://127.0.0.1:' + (process.env.PORT || '5000');
+        const _cpOpts: any = (extra: any) => { try { return Object.assign({}, extra, { signal: (AbortSignal as any).timeout(5000) }); } catch { return Object.assign({}, extra); } };
+        // Referencia do PEDIDO (nao do card): card permanente reusa o mesmo id em ciclos diferentes
+        const _cpIso = (v: any) => { try { return v ? new Date(v).toISOString().slice(0, 16) : ''; } catch { return ''; } };
+        // Referencia do PEDIDO (nao do card): card permanente reusa o mesmo id em ciclos diferentes.
+        // lastVisitDate so avanca no fechamento -> estavel dentro do pedido, diferente a cada ciclo.
+        const _cpOrderRef = 'CARD-' + id + '-' + (_cpIso((cardBefore as any).lastVisitDate) || 'inicial') + '|' + _cpIso((cardBefore as any).scheduledDate);
+        if (_cpJaFechado && (!_cpStatus || _cpFechando)) {
+          // (a) venda ja fechada sendo reeditada: reaplica o cupom daquele pedido, recalculado pela regra congelada.
+          // Falha aqui NAO pode gravar o valor cheio em silencio -> tenta 2x e, se nao confirmar, recusa o salvamento.
+          let _cpRe: any = null;
+          for (let _t = 0; _t < 2 && !(_cpRe && (_cpRe.applied === true || _cpRe.applied === false)); _t++) {
+            _cpRe = await fetch(_cpBase + '/api/coupons/reapply', _cpOpts({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salesCardId: id, total: _cpTotal }) })).then((r: any) => r.json()).catch(() => null);
+          }
+          if (!_cpRe || (_cpRe.applied !== true && _cpRe.applied !== false)) {
+            console.warn('🎟️ [CUPOM vendedor] reaplicacao indisponivel — salvamento recusado p/ nao perder o desconto do pedido', id);
+            return res.status(503).json({ message: 'Não foi possível confirmar o cupom deste pedido agora. Tente salvar novamente em alguns segundos.' });
+          }
+          if (_cpRe.applied && Number(_cpRe.discount) > 0) {
+            (data as any).saleValue = (Math.round((_cpTotal - Number(_cpRe.discount)) * 100) / 100).toFixed(2);
+            _descAplicado = true;
+            console.log('🎟️ [CUPOM vendedor] reaplicado', _cpRe.code, 'de', _cpTotal, '->', (data as any).saleValue);
+          }
+        } else if (_cpFechando && !_cpJaFechado) {
+          // (b) fechamento novo: so age se o vendedor informou um codigo
+          const _cpc = String((req.body && ((req.body as any).couponCode || (req.body as any).referralCode)) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (_cpc) {
+            const _cpv: any = await fetch(_cpBase + '/api/coupons/validate?code=' + encodeURIComponent(_cpc) + '&total=' + _cpTotal + '&channel=vendedor&customerId=' + encodeURIComponent(String(cardBefore.customerId)), _cpOpts({})).then((r: any) => r.json()).catch(() => null);
+            if (_cpv && _cpv.valid && Number(_cpv.discount) > 0) {
+              const _cpD = Number(_cpv.discount);
+              // Registra o resgate PRIMEIRO: sem registro (used_count/auditoria) o desconto nao e concedido.
+              let _cpOk = false;
+              try {
+                const _rr: any = await fetch(_cpBase + '/api/coupons/redeem', _cpOpts({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _cpv.code, salesCardId: id, orderRef: _cpOrderRef, customerId: cardBefore.customerId, orderTotalBefore: _cpTotal, discountApplied: _cpD }) })).then((r: any) => r.json()).catch(() => null);
+                _cpOk = !!(_rr && _rr.ok);
+                if (!_cpOk) console.warn('🎟️ [CUPOM vendedor] resgate NAO registrado — desconto nao aplicado:', _rr && _rr.error);
+              } catch (_ecr) { console.warn('🎟️ [CUPOM vendedor] falha ao registrar resgate — desconto nao aplicado'); }
+              if (_cpOk) {
+                (data as any).saleValue = (Math.round((_cpTotal - _cpD) * 100) / 100).toFixed(2);
+                _descAplicado = true;
+                console.log('🎟️ [CUPOM vendedor]', _cpv.code, _cpv.type === 'percent' ? _cpv.value + '%' : 'R$ ' + _cpv.value, 'de', _cpTotal, '->', (data as any).saleValue);
+              }
+            } else if (_cpv && _cpv.valid === false && _cpv.reason && _cpv.reason !== 'inexistente' && _cpv.reason !== 'sem_codigo') {
+              console.log('🎟️ [CUPOM vendedor] recusado', _cpc, _cpv.reason);
+            }
+          }
+        }
+      }
+    } catch (_ecp) { console.warn('[CUPOM vendedor] erro (ignorado):', (_ecp as any)?.message); }
+
     // VIGIA 3E vendedor: desconto de indicacao no pedido do vendedor (espelha /api/public/orders). Inerte sem cupom/recompensa.
     try {
       const _rc = String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
+      if (!_descAplicado && (data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
         const _cust: any = await storage.getCustomer(cardBefore.customerId);
         const _bd = String((_cust && (_cust.cnpj || _cust.cpf)) || '').replace(/[^0-9]/g, '');
-        const _refBase = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+        const _refBase = 'http://127.0.0.1:' + (process.env.PORT || '5000');
         if (_bd) {
           let _refPct = 0; let _refMode = ''; let _refRedemptionId: any = null;
           if (_rc) { const _vr: any = await fetch(_refBase + '/api/referral/validate?code=' + encodeURIComponent(_rc) + '&referredDocument=' + _bd).then((r: any) => r.json()).catch(() => null); if (_vr && _vr.valid) { _refPct = Number(_vr.discountPct) || 15; _refMode = 'code'; } }
@@ -6104,6 +6165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const _disc = Math.round(_orig * (_refPct / 100) * 100) / 100;
             (data as any).saleValue = (Math.round((_orig - _disc) * 100) / 100).toFixed(2);
             console.log('🎟️ [3E vendedor] cupom', _refMode, _refPct + '%', 'de', _orig, '->', (data as any).saleValue);
+            _descAplicado = true;
             try {
               if (_refMode === 'code') { const _rd: any = await fetch(_refBase + '/api/referral/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: _rc, referredDocument: _bd, channel: 'vendedor', orderRef: 'CARD-' + id, orderValue: _orig }) }).then((r: any) => r.json()); if (_rd && _rd.redemptionId) await fetch(_refBase + '/api/admin/referral/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _rd.redemptionId }) }); }
               else if (_refMode === 'reward' && _refRedemptionId) { await fetch(_refBase + '/api/referral/consume-reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redemptionId: _refRedemptionId, orderRef: 'CARD-' + id }) }); }

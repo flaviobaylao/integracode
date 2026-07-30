@@ -1280,6 +1280,284 @@ app.post('/api/referral/consume-reward', async (req: Request, res: Response) => 
   } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
 });
 
+// VIGIA CUPOM: cupons promocionais (tabela coupons) — gestao no 2.0 + validacao/aplicacao server-side.
+// Regras por cupom: percentual OU valor fixo, vigencia, pedido minimo, teto de usos, 1x por cliente, canal.
+// SEGURANCA: so vale cupom habilitado no 2.0 (enabled_2_0), o registro do resgate e pre-requisito do desconto,
+// e o desconto e REAPLICADO ao reabrir o pedido (o front sempre envia o valor cheio).
+const _cupEsc = (s: any) => String(s == null ? '' : s).replace(/'/g, "''");
+const _cupCode = (s: any) => String(s || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+const _cupNum = (v: any) => {
+  let s = String(v == null ? '' : v).trim().replace(/[^0-9.,-]/g, '');
+  if (s.indexOf(',') >= 0 && s.indexOf('.') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  else s = s.replace(',', '.');
+  const n = Number(s);
+  return isFinite(n) ? n : 0;
+};
+const _cupIsPct = (t: any) => /perc|%/i.test(String(t || 'percent'));
+const _cupTrue = (v: any) => v === true || v === 't' || v === 'true' || v === 1;
+// Chamada interna (o hook do pedido chama por 127.0.0.1). Requisicao vinda de fora traz x-forwarded-for.
+const _cupInternal = (req: Request) => {
+  const ra = String((req.socket && (req.socket as any).remoteAddress) || '');
+  const loopback = ra.indexOf('127.0.0.1') >= 0 || ra === '::1' || ra === '::ffff:127.0.0.1';
+  return loopback && !req.headers['x-forwarded-for'];
+};
+// Vigencia em dia BRT: 'YYYY-MM-DD' -> inicio 00:00 BRT / fim 23:59:59 BRT (gravado em UTC, igual ao 1.0)
+const _cupFrom = (d: any) => { const s = String(d || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T00:00:00-03:00').toISOString().replace('T', ' ').replace('Z', '') : null; };
+const _cupUntil = (d: any) => { const s = String(d || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T23:59:59-03:00').toISOString().replace('T', ' ').replace('Z', '') : null; };
+
+async function _cupResolveCustomerByDoc(doc: string): Promise<string> {
+  const d = String(doc || '').replace(/[^0-9]/g, '');
+  if (!d) return '';
+  try {
+    const q: any = await db.execute(sql.raw("SELECT id FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') = '" + d + "' OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g') = '" + d + "' LIMIT 1"));
+    const r = ((q.rows || q) as any[])[0];
+    return r ? String(r.id) : '';
+  } catch { return ''; }
+}
+
+// Garante estrutura (as tabelas vieram do 1.0 via create-missing-tables: sem DEFAULT no id e sem UNIQUE).
+async function _cupEnsureSchema(): Promise<{ ok: boolean; steps: any[] }> {
+  const steps: any[] = [];
+  const run = async (label: string, ddl: string) => {
+    try { await db.execute(sql.raw(ddl)); steps.push({ step: label, ok: true }); }
+    catch (e: any) { steps.push({ step: label, ok: false, error: String(e && e.message ? e.message : e).slice(0, 200) }); }
+  };
+  await run('create_coupons', "CREATE TABLE IF NOT EXISTS coupons (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), code varchar NOT NULL, description text, discount_type varchar NOT NULL DEFAULT 'percent', discount_value numeric(10,2) NOT NULL DEFAULT 0, valid_from timestamp, valid_until timestamp, is_active boolean NOT NULL DEFAULT true, max_uses int, used_count int NOT NULL DEFAULT 0, min_order_value numeric(10,2), created_by_user_id varchar, created_at timestamp DEFAULT now(), updated_at timestamp DEFAULT now())");
+  await run('create_redemptions', "CREATE TABLE IF NOT EXISTS coupon_redemptions (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), coupon_id varchar, coupon_code varchar, sales_card_id varchar, customer_id varchar, order_total_before numeric(10,2), discount_applied numeric(10,2), order_total_after numeric(10,2), redeemed_at timestamp DEFAULT now())");
+  await run('col_once', "ALTER TABLE coupons ADD COLUMN IF NOT EXISTS once_per_customer boolean NOT NULL DEFAULT true");
+  await run('col_channels', "ALTER TABLE coupons ADD COLUMN IF NOT EXISTS channels varchar NOT NULL DEFAULT 'todos'");
+  await run('col_enabled', "ALTER TABLE coupons ADD COLUMN IF NOT EXISTS enabled_2_0 boolean NOT NULL DEFAULT false");
+  await run('red_order_ref', "ALTER TABLE coupon_redemptions ADD COLUMN IF NOT EXISTS order_ref varchar");
+  await run('red_snap_type', "ALTER TABLE coupon_redemptions ADD COLUMN IF NOT EXISTS discount_type varchar");
+  await run('red_snap_value', "ALTER TABLE coupon_redemptions ADD COLUMN IF NOT EXISTS discount_value numeric(10,2)");
+  await run('red_cancelled', "ALTER TABLE coupon_redemptions ADD COLUMN IF NOT EXISTS cancelled_at timestamp");
+  await run('def_id_coupons', "ALTER TABLE coupons ALTER COLUMN id SET DEFAULT gen_random_uuid()");
+  await run('def_id_redemptions', "ALTER TABLE coupon_redemptions ALTER COLUMN id SET DEFAULT gen_random_uuid()");
+  await run('def_used', "ALTER TABLE coupons ALTER COLUMN used_count SET DEFAULT 0");
+  await run('fix_used_null', "UPDATE coupons SET used_count = 0 WHERE used_count IS NULL");
+  await run('def_redeemed_at', "ALTER TABLE coupon_redemptions ALTER COLUMN redeemed_at SET DEFAULT now()");
+  await run('uidx_code', "CREATE UNIQUE INDEX IF NOT EXISTS coupons_code_uidx ON coupons (upper(code))");
+  await run('uidx_red', "CREATE UNIQUE INDEX IF NOT EXISTS coupon_red_order_uidx ON coupon_redemptions (upper(coupon_code), order_ref) WHERE order_ref IS NOT NULL AND cancelled_at IS NULL");
+  await run('idx_red_code', "CREATE INDEX IF NOT EXISTS idx_coupon_red_code ON coupon_redemptions(coupon_code)");
+  const ok = steps.every((s) => s.ok);
+  if (!ok) console.warn('🎟️ [CUPOM] schema incompleto:', JSON.stringify(steps.filter((s) => !s.ok)));
+  return { ok, steps };
+}
+
+let _cupSchemaOnce: Promise<any> | null = null;
+const _cupSchemaReady = () => (_cupSchemaOnce || (_cupSchemaOnce = _cupEnsureSchema().catch(() => ({ ok: false, steps: [] }))));
+
+app.post('/api/admin/coupons/setup', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: Request, res: Response) => {
+  try { const r = await _cupEnsureSchema(); res.json({ ok: true, schema: r }); }
+  catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+// Resgate ja existente para este pedido (base da reaplicacao quando a venda fechada e reeditada). Chamada interna.
+app.get('/api/coupons/applied', async (req: Request, res: Response) => {
+  try {
+    if (!_cupInternal(req)) return res.status(403).json({ error: 'somente chamada interna' });
+    await _cupSchemaReady();
+    const salesCardId = _cupEsc(String(req.query.salesCardId || '').trim());
+    if (!salesCardId) return res.json({ applied: false });
+    const q: any = await db.execute(sql.raw("SELECT * FROM coupon_redemptions WHERE sales_card_id = '" + salesCardId + "' ORDER BY redeemed_at DESC LIMIT 10"));
+    const r = ((q.rows || q) as any[]).filter((x: any) => !x.cancelled_at)[0];
+    if (!r) return res.json({ applied: false });
+    res.json({ applied: true, redemptionId: r.id, code: r.coupon_code, discountApplied: Number(r.discount_applied) || 0, orderTotalBefore: Number(r.order_total_before) || 0, redeemedAt: r.redeemed_at });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+// Reaplicacao ao reeditar um pedido ja fechado: RECALCULA pela regra do cupom sobre o total atual
+// (nao repete o valor antigo) e atualiza o resgate, mantendo o razao fiel ao pedido. Chamada interna.
+app.post('/api/coupons/reapply', async (req: Request, res: Response) => {
+  try {
+    if (!_cupInternal(req)) return res.status(403).json({ error: 'somente chamada interna' });
+    await _cupSchemaReady();
+    const b = req.body || {};
+    const salesCardId = _cupEsc(String(b.salesCardId || '').trim());
+    const total = _cupNum(b.total);
+    if (!salesCardId || !(total > 0)) return res.json({ applied: false });
+    const q: any = await db.execute(sql.raw("SELECT * FROM coupon_redemptions WHERE sales_card_id = '" + salesCardId + "' ORDER BY redeemed_at DESC LIMIT 10"));
+    const r = ((q.rows || q) as any[]).filter((x: any) => !x.cancelled_at)[0];
+    if (!r) return res.json({ applied: false });
+    // Regra congelada no momento da venda (snapshot). Sem snapshot (resgate antigo), preserva o valor concedido.
+    let disc = 0;
+    if (r.discount_value != null) {
+      const isPct = _cupIsPct(r.discount_type);
+      disc = isPct ? (total * (Number(r.discount_value) || 0) / 100) : (Number(r.discount_value) || 0);
+    } else {
+      disc = Number(r.discount_applied) || 0;
+    }
+    disc = Math.round(disc * 100) / 100;
+    const maxDisc = Math.round((total - 0.01) * 100) / 100;
+    if (disc > maxDisc) disc = maxDisc;
+    if (!(disc > 0)) return res.json({ applied: false, reason: 'desconto_invalido_para_este_valor' });
+    const after = Math.round((total - disc) * 100) / 100;
+    await db.execute(sql.raw("UPDATE coupon_redemptions SET order_total_before = " + total + ", discount_applied = " + disc + ", order_total_after = " + after + " WHERE id = '" + _cupEsc(r.id) + "'"));
+    res.json({ applied: true, code: r.coupon_code, discount: disc, totalAfter: after });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+// Validacao (read-only, nao grava): usada pelos canais de venda antes de aplicar o desconto.
+app.get('/api/coupons/validate', async (req: Request, res: Response) => {
+  try {
+    await _cupSchemaReady();
+    const code = _cupCode(req.query.code);
+    const total = _cupNum(req.query.total);
+    const channel = String(req.query.channel || '').toLowerCase().replace(/[^a-z]/g, '');
+    let customerId = _cupEsc(String(req.query.customerId || '').trim());
+    const doc = String(req.query.document || '').replace(/[^0-9]/g, '');
+    if (!code) return res.json({ valid: false, reason: 'sem_codigo' });
+    if (!(total > 0)) return res.json({ valid: false, reason: 'sem_valor' });
+    const q: any = await db.execute(sql.raw("SELECT *, (valid_from IS NULL OR valid_from <= (now() AT TIME ZONE 'UTC')) AS started, (valid_until IS NULL OR valid_until >= (now() AT TIME ZONE 'UTC')) AS not_expired FROM coupons WHERE upper(code) = '" + code + "' LIMIT 1"));
+    const c = ((q.rows || q) as any[])[0];
+    if (!c) return res.json({ valid: false, reason: 'inexistente' });
+    // Cupom so vale depois de habilitado na tela do 2.0 (protege os codigos legados espelhados do 1.0)
+    if (!_cupTrue(c.enabled_2_0)) return res.json({ valid: false, reason: 'nao_habilitado_no_2_0' });
+    if (!_cupTrue(c.is_active)) return res.json({ valid: false, reason: 'inativo' });
+    if (!c.started) return res.json({ valid: false, reason: 'nao_iniciado', validFrom: c.valid_from });
+    if (!c.not_expired) return res.json({ valid: false, reason: 'expirado', validUntil: c.valid_until });
+    if (c.max_uses != null && Number(c.used_count || 0) >= Number(c.max_uses)) return res.json({ valid: false, reason: 'esgotado', maxUses: Number(c.max_uses) });
+    if (c.min_order_value != null && total < Number(c.min_order_value)) return res.json({ valid: false, reason: 'pedido_minimo', minOrderValue: Number(c.min_order_value) });
+    if (c.channels && String(c.channels) !== 'todos' && channel && String(c.channels) !== channel) return res.json({ valid: false, reason: 'canal_nao_permitido', channels: c.channels });
+    if (!customerId && doc) customerId = _cupEsc(await _cupResolveCustomerByDoc(doc));
+    if (c.once_per_customer !== false && customerId) {
+      const dr: any = await db.execute(sql.raw("SELECT * FROM coupon_redemptions WHERE upper(coupon_code) = '" + code + "' AND customer_id = '" + customerId + "' LIMIT 20"));
+      if (((dr.rows || dr) as any[]).filter((x: any) => !x.cancelled_at).length > 0) return res.json({ valid: false, reason: 'ja_usado_por_este_cliente' });
+    }
+    const isPct = _cupIsPct(c.discount_type);
+    let disc = isPct ? (total * (Number(c.discount_value) || 0) / 100) : (Number(c.discount_value) || 0);
+    disc = Math.round(disc * 100) / 100;
+    // Nunca zera o pedido (pedido zerado sairia do pipeline de faturamento)
+    const maxDisc = Math.round((total - 0.01) * 100) / 100;
+    if (disc > maxDisc) disc = maxDisc;
+    if (!(disc > 0)) return res.json({ valid: false, reason: 'desconto_invalido_para_este_valor' });
+    res.json({ valid: true, couponId: c.id, code: c.code, type: isPct ? 'percent' : 'fixed', value: Number(c.discount_value) || 0, discount: disc, totalAfter: Math.round((total - disc) * 100) / 100, description: c.description || null, customerId: customerId || null });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+// Registro do uso (grava resgate + incrementa used_count). Idempotente por pedido. Somente chamada interna.
+app.post('/api/coupons/redeem', async (req: Request, res: Response) => {
+  try {
+    if (!_cupInternal(req)) return res.status(403).json({ error: 'somente chamada interna' });
+    await _cupSchemaReady();
+    const b = req.body || {};
+    const code = _cupCode(b.code);
+    if (!code) return res.status(400).json({ error: 'code obrigatorio' });
+    const disc = _cupNum(b.discountApplied);
+    if (!(disc > 0)) return res.status(400).json({ error: 'discountApplied invalido' });
+    const before = _cupNum(b.orderTotalBefore);
+    if (!(before > 0) || disc > before) return res.status(400).json({ error: 'valores do pedido invalidos' });
+    const cq: any = await db.execute(sql.raw("SELECT id, code, discount_type, discount_value FROM coupons WHERE upper(code) = '" + code + "' LIMIT 1"));
+    const c = ((cq.rows || cq) as any[])[0];
+    if (!c) return res.status(404).json({ error: 'codigo inexistente' });
+    const salesCardId = _cupEsc(b.salesCardId);
+    const customerId = _cupEsc(b.customerId);
+    const orderRef = _cupEsc(String(b.orderRef || '').slice(0, 120));
+    if (orderRef) {
+      const ex: any = await db.execute(sql.raw("SELECT * FROM coupon_redemptions WHERE upper(coupon_code) = '" + code + "' AND order_ref = '" + orderRef + "' LIMIT 5"));
+      const prev = ((ex.rows || ex) as any[]).filter((x: any) => !x.cancelled_at)[0];
+      if (prev) return res.json({ ok: true, already: true, redemptionId: prev.id, discountApplied: Number(prev.discount_applied) || 0 });
+    }
+    const after = Math.round((before - disc) * 100) / 100;
+    let row: any = null;
+    try {
+      const ins: any = await db.execute(sql.raw("INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, sales_card_id, customer_id, order_ref, discount_type, discount_value, order_total_before, discount_applied, order_total_after, redeemed_at) VALUES (gen_random_uuid(), '" + _cupEsc(c.id) + "', '" + _cupEsc(c.code) + "', " + (salesCardId ? "'" + salesCardId + "'" : 'NULL') + ", " + (customerId ? "'" + customerId + "'" : 'NULL') + ", " + (orderRef ? "'" + orderRef + "'" : 'NULL') + ", '" + (_cupIsPct(c.discount_type) ? 'percent' : 'fixed') + "', " + (Number(c.discount_value) || 0) + ", " + before + ", " + disc + ", " + after + ", now()) RETURNING id"));
+      row = ((ins.rows || ins) as any[])[0];
+    } catch (eIns: any) {
+      // corrida (duplo clique) barrada pelo indice unico -> trata como ja resgatado
+      const ex2: any = await db.execute(sql.raw("SELECT * FROM coupon_redemptions WHERE upper(coupon_code) = '" + code + "' AND order_ref = '" + orderRef + "' LIMIT 5"));
+      const prev2 = ((ex2.rows || ex2) as any[]).filter((x: any) => !x.cancelled_at)[0];
+      if (prev2) return res.json({ ok: true, already: true, redemptionId: prev2.id });
+      throw eIns;
+    }
+    if (!row || !row.id) return res.status(500).json({ error: 'resgate nao registrado' });
+    await db.execute(sql.raw("UPDATE coupons SET used_count = COALESCE(used_count, 0) + 1, updated_at = now() WHERE id = '" + _cupEsc(c.id) + "'"));
+    console.log('🎟️ [CUPOM] resgate', c.code, 'pedido', salesCardId || '-', 'desconto', disc);
+    res.json({ ok: true, redemptionId: row.id, code: c.code, discountApplied: disc, orderTotalAfter: after });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.get('/api/admin/coupons', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: Request, res: Response) => {
+  try {
+    await _cupSchemaReady();
+    const co: any = await db.execute(sql.raw("SELECT * FROM coupons ORDER BY is_active DESC, created_at DESC LIMIT 500"));
+    const rd: any = await db.execute(sql.raw("SELECT r.*, (SELECT name FROM customers WHERE id = r.customer_id) AS customer_name FROM coupon_redemptions r WHERE r.cancelled_at IS NULL ORDER BY r.redeemed_at DESC LIMIT 300"));
+    const coupons = (co.rows || co) as any[];
+    const redemptions = (rd.rows || rd) as any[];
+    const totalDesc = redemptions.reduce((s: number, r: any) => s + (Number(r.discount_applied) || 0), 0);
+    const resumo = { coupons: coupons.length, ativos: coupons.filter((c: any) => _cupTrue(c.is_active) && _cupTrue(c.enabled_2_0)).length, usos: redemptions.length, descontoConcedido: Math.round(totalDesc * 100) / 100 };
+    res.json({ ok: true, resumo, coupons, redemptions });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/admin/coupons', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+  try {
+    const b = req.body || {};
+    const code = _cupCode(b.code);
+    if (!code || code.length < 3) return res.status(400).json({ error: 'codigo invalido (min 3, apenas letras e numeros)' });
+    const isPct = _cupIsPct(b.discountType);
+    const value = _cupNum(b.discountValue);
+    if (!(value > 0)) return res.status(400).json({ error: 'valor do desconto deve ser maior que zero' });
+    if (isPct && value > 100) return res.status(400).json({ error: 'percentual nao pode passar de 100' });
+    const from = _cupFrom(b.validFrom);
+    const until = _cupUntil(b.validUntil);
+    if (from && until && from > until) return res.status(400).json({ error: 'vigencia invalida (inicio depois do fim)' });
+    const maxUsesRaw = b.maxUses === '' || b.maxUses == null ? null : Math.round(_cupNum(b.maxUses));
+    if (maxUsesRaw != null && !(maxUsesRaw > 0)) return res.status(400).json({ error: 'maximo de usos invalido (deixe vazio para ilimitado)' });
+    const minOrderRaw = b.minOrderValue === '' || b.minOrderValue == null ? null : _cupNum(b.minOrderValue);
+    if (minOrderRaw != null && !(minOrderRaw >= 0)) return res.status(400).json({ error: 'pedido minimo invalido' });
+    const desc = _cupEsc(String(b.description || '').slice(0, 300));
+    const active = b.isActive === false ? 'false' : 'true';
+    const once = b.oncePerCustomer === false ? 'false' : 'true';
+    const channels = ['todos', 'hotsite', 'vendedor'].includes(String(b.channels || 'todos')) ? String(b.channels || 'todos') : 'todos';
+    const by = _cupEsc(((req as any).currentUser && ((req as any).currentUser.email || (req as any).currentUser.id)) || 'admin');
+    await _cupEnsureSchema();
+    const cols = "description = " + (desc ? "'" + desc + "'" : 'NULL') + ", discount_type = '" + (isPct ? 'percent' : 'fixed') + "', discount_value = " + value + ", valid_from = " + (from ? "'" + from + "'" : 'NULL') + ", valid_until = " + (until ? "'" + until + "'" : 'NULL') + ", is_active = " + active + ", max_uses = " + (maxUsesRaw == null ? 'NULL' : maxUsesRaw) + ", min_order_value = " + (minOrderRaw == null ? 'NULL' : minOrderRaw) + ", once_per_customer = " + once + ", channels = '" + channels + "', enabled_2_0 = true, updated_at = now()";
+    const ex: any = await db.execute(sql.raw("SELECT id FROM coupons WHERE upper(code) = '" + code + "' LIMIT 1"));
+    const prev = ((ex.rows || ex) as any[])[0];
+    let row: any = null;
+    if (prev) {
+      const up: any = await db.execute(sql.raw("UPDATE coupons SET " + cols + " WHERE id = '" + _cupEsc(prev.id) + "' RETURNING *"));
+      row = ((up.rows || up) as any[])[0];
+    } else {
+      const ins: any = await db.execute(sql.raw("INSERT INTO coupons (id, code, used_count, created_by_user_id, created_at, " + "description, discount_type, discount_value, valid_from, valid_until, is_active, max_uses, min_order_value, once_per_customer, channels, enabled_2_0, updated_at) VALUES (gen_random_uuid(), '" + code + "', 0, '" + by + "', now(), " + (desc ? "'" + desc + "'" : 'NULL') + ", '" + (isPct ? 'percent' : 'fixed') + "', " + value + ", " + (from ? "'" + from + "'" : 'NULL') + ", " + (until ? "'" + until + "'" : 'NULL') + ", " + active + ", " + (maxUsesRaw == null ? 'NULL' : maxUsesRaw) + ", " + (minOrderRaw == null ? 'NULL' : minOrderRaw) + ", " + once + ", '" + channels + "', true, now()) RETURNING *"));
+      row = ((ins.rows || ins) as any[])[0];
+    }
+    console.log('🎟️ [CUPOM] cadastro', code, isPct ? value + '%' : 'R$ ' + value, 'por', by);
+    res.json({ ok: true, coupon: row });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/admin/coupons/estornar', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+  try {
+    const id = _cupEsc(String((req.body && req.body.redemptionId) || '').trim());
+    if (!id) return res.status(400).json({ error: 'redemptionId obrigatorio' });
+    await _cupEnsureSchema();
+    const q: any = await db.execute(sql.raw("SELECT id, coupon_id, coupon_code, cancelled_at FROM coupon_redemptions WHERE id = '" + id + "' LIMIT 1"));
+    const r = ((q.rows || q) as any[])[0];
+    if (!r) return res.status(404).json({ error: 'resgate inexistente' });
+    if (r.cancelled_at) return res.json({ ok: true, already: true });
+    await db.execute(sql.raw("UPDATE coupon_redemptions SET cancelled_at = now() WHERE id = '" + id + "'"));
+    if (r.coupon_id) await db.execute(sql.raw("UPDATE coupons SET used_count = GREATEST(COALESCE(used_count, 0) - 1, 0), updated_at = now() WHERE id = '" + _cupEsc(r.coupon_id) + "'"));
+    console.log('🎟️ [CUPOM] estorno do resgate', id, r.coupon_code);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
+app.post('/api/admin/coupons/active', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+  try {
+    const code = _cupCode(req.body && req.body.code);
+    if (!code) return res.status(400).json({ error: 'code obrigatorio' });
+    const active = (req.body && req.body.active) === false ? 'false' : 'true';
+    await _cupEnsureSchema();
+    const q: any = await db.execute(sql.raw("UPDATE coupons SET is_active = " + active + ", updated_at = now() WHERE upper(code) = '" + code + "' RETURNING code, is_active, used_count, enabled_2_0"));
+    const row = ((q.rows || q) as any[])[0];
+    if (!row) return res.status(404).json({ error: 'codigo inexistente' });
+    res.json({ ok: true, coupon: row });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
 // VIGIA 2D: config do limiar de distancia do check-in (anti-fraude)
 app.get('/api/admin/checkin/max-dist', async (_req: Request, res: Response) => {
   try {
@@ -3823,7 +4101,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const summary: any[] = [];
       try {
         await src.connect(); await tgt.connect();
-        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers']);
+        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers','coupons','coupon_redemptions']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
