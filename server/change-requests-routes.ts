@@ -300,6 +300,28 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/cancel — admin: CANCELA/REABRE uma solicitação já
+  //   resolvida (efetuadas/parcial/rejeitadas), devolvendo o CARD ao estado normal e
+  //   UTILIZÁVEL (deixa de ficar cinza/travado). Registra no histórico. (30/jul/2026)
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/cancel", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const note = (req.body || {}).note ? String((req.body || {}).note).slice(0, 2000) : null;
+    const msg = mkMsg("admin", u, note || "Solicitação cancelada — card reabilitado.", "cancel");
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET status = 'cancelled',
+          resolved_by = ${u?.id || null}, resolved_by_name = ${userName(u)}, resolved_at = now(),
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    res.json(mapRow(updated[0]));
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/reply — mensagem no histórico (vendedor ⇄ admin).
   //   body: { text: string, resend?: boolean }
   //   - Qualquer usuário logado pode responder (papel = admin | seller).
