@@ -160,17 +160,44 @@ export function registerGeocodeAnalyze(app: Express) {
       try {
         const limit = Math.min(Math.max(Number((req.body as any)?.limit) || 60, 1), 400);
         const incluirPlaces = (req.body as any)?.incluirPlaces !== false;
+        // escopo "duplicados" (padrao) = so clientes que COMPARTILHAM coordenada
+        // com outro. Sao os empilhados no mesmo ponto — a populacao que este
+        // trabalho quer resolver. Ordenar por nome, como era antes, sorteava
+        // sobretudo quem ja resolve: 91% da amostra vinha "ja_resolvido" e cada
+        // chamada paga do Places era gasta confirmando o que funciona.
+        const escopo = (req.body as any)?.escopo === "todos" ? "todos" : "duplicados";
+        const filtroEscopo =
+          escopo === "duplicados"
+            ? sql` AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM customers d
+                  WHERE d.latitude = c.latitude AND d.longitude = c.longitude
+                    AND d.id <> c.id AND (d.is_supplier IS NOT TRUE)
+                )`
+            : sql``;
 
         const sel: any = await db.execute(sql`
           SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
           FROM customers c
           WHERE (c.is_supplier IS NOT TRUE)
             AND (c.coordinates_locked IS NOT TRUE)
-            AND COALESCE(TRIM(c.address), '') <> ''
+            AND COALESCE(TRIM(c.address), '') <> ''${filtroEscopo}
           ORDER BY c.is_active DESC, c.name
           LIMIT ${limit}
         `);
         const cands = (sel.rows || sel) as any[];
+
+        // Quantos existem no escopo — mostra se a amostra representa o total.
+        let totalNoEscopo = cands.length;
+        try {
+          const cnt: any = await db.execute(sql`
+            SELECT COUNT(*)::int AS n FROM customers c
+            WHERE (c.is_supplier IS NOT TRUE)
+              AND (c.coordinates_locked IS NOT TRUE)
+              AND COALESCE(TRIM(c.address), '') <> ''${filtroEscopo}
+          `);
+          totalNoEscopo = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
+        } catch {}
 
         const linhas: any[] = [];
         let jaOk = 0, ganhoLimpeza = 0, ganhoPlaces = 0, semSolucao = 0, erros = 0;
@@ -240,7 +267,9 @@ export function registerGeocodeAnalyze(app: Express) {
         res.json({
           provider: geocodeProvider(),
           placesConfigurado: !!PLACES_KEY(),
+          escopo,
           amostra: cands.length,
+          totalNoEscopo,
           resumo: {
             jaResolvidoHoje: jaOk,
             recuperadosPelaLimpeza: ganhoLimpeza,
