@@ -971,13 +971,20 @@ export default function RotaDoDia() {
     });
   }, [allVirtualVisits, virtualAttendedIds, presentialSearch, presentialFilter]);
 
-  // A busca por cliente também abrange os cards de Repescagem.
+  // A repescagem segue o MESMO comportamento das ações da rota que presencial/virtual:
+  // busca por cliente + filtro Atendidos/Pendentes. "Atendido" = atendimento registrado
+  // (service log) OU pedido no dia — igual ao virtual. (30/jul/2026)
   const filteredRepescagem = useMemo(() => {
     const q = presentialSearch.trim().toLowerCase();
     const list = Array.isArray(repescagemOverlay) ? repescagemOverlay : [];
-    if (!q) return list;
-    return list.filter((r: any) => (r.customerName || '').toLowerCase().includes(q));
-  }, [repescagemOverlay, presentialSearch]);
+    return list.filter((r: any) => {
+      if (q && !((r.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [repescagemOverlay, presentialSearch, presentialFilter, attendedCustomerIds, customerInfo]);
 
   // 📋 Solicitar Alteração: chaves de todos os cards visíveis → 1 query de estados por página.
   const changeRequestKeys = useMemo(() => {
