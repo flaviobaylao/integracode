@@ -2483,7 +2483,16 @@ export default function RotaDoDia() {
                 {filteredRepescagem.map((r: any) => (
                   <div
                     key={r.assignmentId}
-                    className={`flex items-start justify-between p-2 rounded-lg border ${crEfetuadaByKey(crKey('repescagem', String(r.assignmentId))) ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'}`}
+                    className={`flex items-start justify-between p-2 rounded-lg border ${
+                      crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
+                        ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                        : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
+                          // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
+                          // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
+                          // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
+                          ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                          : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
+                    }`}
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
                     <div className="min-w-0">
