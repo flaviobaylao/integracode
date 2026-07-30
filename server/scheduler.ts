@@ -900,10 +900,28 @@ cron.schedule('0 0 * * *', async () => {
   timezone: "America/Sao_Paulo"
 });
 
+// Limpeza mensal automatica: remove da lista de Clientes Ativos os registros
+// "nao encontrado" (match_status unmatched) - deixa a lista so com clientes
+// vinculados ao cadastro. Roda no dia 1 de cada mes as 04:00 (BRT). Idempotente.
+cron.schedule('0 4 1 * *', async () => {
+  try {
+    const r: any = await db.execute(sql`
+      UPDATE active_customers
+      SET is_active = false, deactivated_at = now(), updated_at = now()
+      WHERE is_active = true AND match_status = 'unmatched'
+      RETURNING id`);
+    const n = (r.rows ? r.rows.length : (Array.isArray(r) ? r.length : (r.rowCount ?? 0)));
+    console.log(`[UNMATCHED-CLEANUP] Limpeza mensal: ${n} registros(s) nao encontrado removido(s) da lista de ativos.`);
+  } catch (e: any) {
+    console.error('[UNMATCHED-CLEANUP] falha na limpeza mensal:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 console.log('✅ Agendador configurado:');
 console.log('   - Geração de relatórios de IA diariamente às 06:00h (UTC-3)');
 console.log('   - Geração de próximas 3 visitas para clientes ativos diariamente às 00:00h (UTC-3)');
 console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
+console.log('   - Limpeza mensal de registros nao encontrado na lista de ativos (dia 1, 04:00 UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (20+ min sem pedido/não-venda) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
 console.log('   - Etapas Omie: sincronização manual via botão "Atualizar Etapas Omie" no Resumo de Rotas');
