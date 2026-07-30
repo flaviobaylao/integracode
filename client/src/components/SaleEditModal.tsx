@@ -1347,8 +1347,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </div>
 
               <div>
-                <Label>Código de indicação (opcional)</Label>
-                <Input value={referralCode} onChange={(e) => setReferralCode(e.target.value)} placeholder="Cupom de indicação" data-testid="input-referral-code" />
+                <Label>Cupom de desconto / código de indicação (opcional)</Label>
+                <Input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} placeholder="Ex.: HONEST8" data-testid="input-referral-code" />
+                <p className="text-xs text-gray-500 mt-1">O desconto é validado e aplicado pelo servidor ao finalizar a venda.</p>
               </div>
 
               {/* Agendamento de Pedido */}
