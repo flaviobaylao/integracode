@@ -162,8 +162,46 @@ function distanciaKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
 const soDigitos = (s: any) => String(s || "").replace(/\D/g, "");
 
-/** Limite de distancia: dentro disso o ponto ainda e o mesmo pedaco de cidade. */
-const RAIO_ACEITO_KM = 2;
+/**
+ * Raio aceito quando a distancia e a UNICA prova.
+ *
+ * Era 2 km e deixou passar um erro medido em producao: "CONTEINER MERCADINHO"
+ * casou com "Brasil Conteiner e Guindastes" a 1,08 km. O problema e que a
+ * referencia costuma ser o centro da via ou do bairro — nesse caso QUALQUER
+ * estabelecimento do bairro cai dentro de 2 km, entao a proximidade nao prova
+ * nada. Com 300 m o ponto do Places tem que praticamente coincidir com o que o
+ * endereco do cadastro resolve, e ai a coincidencia deixa de ser barata.
+ *
+ * Quando a rua ou o CEP conferem, esta constante nem e consultada.
+ */
+const RAIO_ACEITO_KM = 0.3;
+
+/** Palavras que nao identificam o estabelecimento (forma juridica, conectivos). */
+const GENERICO = new Set([
+  "LTDA", "ME", "MEI", "EIRELI", "EPP", "SA", "CIA", "DE", "DA", "DO", "DAS",
+  "DOS", "E", "EM", "COM", "COMERCIO", "COMERCIAL", "INDUSTRIA", "SERVICOS",
+]);
+
+/** Tokens uteis de um nome de estabelecimento, sem acento e sem palavra generica. */
+function tokensDoNome(s: any): string[] {
+  return String(s || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().split(/[^A-Z0-9]+/)
+    .filter((w) => w.length >= 3 && !GENERICO.has(w));
+}
+
+/**
+ * O nome encontrado tem alguma palavra do nome buscado?
+ *
+ * Guarda contra o caso em que a distancia aprovaria um vizinho qualquer: se o
+ * Places devolveu um estabelecimento que nao compartilha NENHUMA palavra com o
+ * que buscamos, proximidade e coincidencia geografica, nao identificacao.
+ */
+function nomeTemPalavraEmComum(buscado: any, encontrado: any): boolean {
+  const a = tokensDoNome(buscado), b = tokensDoNome(encontrado);
+  if (!a.length || !b.length) return false;
+  return a.some((w) => b.some((x) => x.startsWith(w.slice(0, 4)) || w.startsWith(x.slice(0, 4))));
+}
 
 /**
  * Decide se a coordenada do Places pode ser confiada para este cliente.
@@ -172,7 +210,7 @@ const RAIO_ACEITO_KM = 2;
  */
 function validarPlaces(
   cliente: { endereco: any; cep: any },
-  places: { lat: string; lon: string; endereco: string },
+  places: { lat: string; lon: string; endereco: string; termoBuscado?: string; nomeEncontrado?: string },
   referencia: { lat: string; lon: string } | null,
 ) {
   const via = viaDoCadastro(cliente.endereco);
@@ -193,19 +231,26 @@ function validarPlaces(
     );
     if (Number.isFinite(d)) distanciaDaReferenciaKm = Math.round(d * 100) / 100;
   }
+  // Prova por proximidade: exige coincidencia apertada E nome compativel. Sao as
+  // duas fraquezas que se cobrem — perto sem nome parecido e vizinho por acaso;
+  // nome parecido e longe e outra unidade da rede.
+  const nomeCombina = nomeTemPalavraEmComum(places.termoBuscado, places.nomeEncontrado);
   const pertoDaReferencia =
     distanciaDaReferenciaKm === null ? null : distanciaDaReferenciaKm <= RAIO_ACEITO_KM;
+  const provaPorProximidade = pertoDaReferencia === true && nomeCombina;
 
-  const aprovado = ruaConfere === true || cepConfere === true || pertoDaReferencia === true;
+  const aprovado = ruaConfere === true || cepConfere === true || provaPorProximidade;
   const motivo = aprovado
     ? ruaConfere === true ? "rua confere"
       : cepConfere === true ? "CEP confere"
-      : `a ${distanciaDaReferenciaKm} km do endereco do cadastro`
+      : `a ${distanciaDaReferenciaKm} km do endereco do cadastro, com nome compativel`
     : referencia === null
       ? "sem referencia para comparar e rua nao confere"
-      : `rua diferente e ${distanciaDaReferenciaKm} km longe do endereco do cadastro`;
+      : pertoDaReferencia === true
+        ? `perto (${distanciaDaReferenciaKm} km) mas o nome encontrado nao bate com o buscado`
+        : `rua diferente e ${distanciaDaReferenciaKm} km longe do endereco do cadastro`;
 
-  return { aprovado, motivo, ruaConfere, cepConfere, distanciaDaReferenciaKm };
+  return { aprovado, motivo, ruaConfere, cepConfere, distanciaDaReferenciaKm, nomeCombina };
 }
 
 /**
@@ -408,7 +453,10 @@ export function registerGeocodeAnalyze(app: Express) {
               if (p.ok) {
                 const v = validarPlaces(
                   { endereco: original, cep: c.zip_code },
-                  { lat: p.lat, lon: p.lon, endereco: p.endereco },
+                  {
+                    lat: p.lat, lon: p.lon, endereco: p.endereco,
+                    termoBuscado: p.termoUsado, nomeEncontrado: p.nomeEncontrado,
+                  },
                   linha.refGeo || null,
                 );
                 linha.C = {
@@ -418,6 +466,7 @@ export function registerGeocodeAnalyze(app: Express) {
                   aprovado: v.aprovado, motivo: v.motivo,
                   ruaConfere: v.ruaConfere, cepConfere: v.cepConfere,
                   distanciaDaReferenciaKm: v.distanciaDaReferenciaKm,
+                  nomeCombina: v.nomeCombina,
                 };
                 if (v.aprovado) {
                   linha.veredito = "resolvido_pelo_places";
