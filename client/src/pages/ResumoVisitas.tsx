@@ -180,6 +180,20 @@ export default function ResumoVisitas() {
   }, [filtered]);
 
   const agendadas = summary.green.n + summary.yellow.n + summary.orange.n + summary.red.n;
+
+  // Totais do topo (mesmos filtros da grade): COM PEDIDO soma as Vendas dos 4 cards com venda;
+  // SEM PEDIDO soma a Meta não cumprida dos 4 cards sem venda.
+  const totais = useMemo(() => {
+    const com = ["green", "lilac", "orange", "blue"] as StatusKey[];
+    const sem = ["yellow", "red", "teal", "sky"] as StatusKey[];
+    return {
+      comN: com.reduce((a, k) => a + summary[k].n, 0),
+      comV: com.reduce((a, k) => a + summary[k].sale, 0),
+      semN: sem.reduce((a, k) => a + summary[k].n, 0),
+      semV: sem.reduce((a, k) => a + summary[k].meta, 0),
+    };
+  }, [summary]);
+
   const cards: { key: StatusKey; label: string; sub: string }[] = [
     { key: "green", label: "Agendada + Efetuada + Pedido", sub: `Vendas: ${money(summary.green.sale)}` },
     { key: "yellow", label: "Agendada + Efetuada - Sem Pedido", sub: `Meta não cumprida: ${money(summary.yellow.meta)}` },
@@ -198,11 +212,21 @@ export default function ResumoVisitas() {
   return (
     <div className="p-4 space-y-4">
       <BackToDashboardButton />
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <i className="fas fa-calendar-check text-primary" /> Resumo de Visitas e Atendimentos
-        </h1>
-        <p className="text-muted-foreground text-sm">Calendário por cliente. Período: {ddmm(startDate)} a {ddmm(endDate)}. {clientesCount} {clientesCount === 1 ? "cliente" : "clientes"}.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <i className="fas fa-calendar-check text-primary" /> Resumo de Visitas e Atendimentos
+          </h1>
+          <p className="text-muted-foreground text-sm">Calendário por cliente. Período: {ddmm(startDate)} a {ddmm(endDate)}. {clientesCount} {clientesCount === 1 ? "cliente" : "clientes"}.</p>
+        </div>
+        <div className="rounded-lg border px-3 py-2" style={{ borderLeft: "4px solid #166534", minWidth: 190 }} title="Soma das vendas dos atendimentos COM pedido (agendada+efetuada+pedido, não agendada+pedido, não efetuada+pedido, virtual+pedido) — respeita os filtros.">
+          <div className="text-xs text-muted-foreground">Com pedido ({totais.comN})</div>
+          <div className="text-xl font-bold" style={{ color: "#166534" }}>{money(totais.comV)}</div>
+        </div>
+        <div className="rounded-lg border px-3 py-2" style={{ borderLeft: "4px solid #991b1b", minWidth: 190 }} title="Soma da meta não cumprida dos atendimentos SEM pedido (efetuada sem pedido, não efetuada, fora de rota, virtual agendado) — respeita os filtros.">
+          <div className="text-xs text-muted-foreground">Sem pedido ({totais.semN})</div>
+          <div className="text-xl font-bold" style={{ color: "#991b1b" }}>{money(totais.semV)}</div>
+        </div>
       </div>
 
       {/* Cards de resumo */}
