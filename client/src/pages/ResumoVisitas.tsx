@@ -132,6 +132,9 @@ export default function ResumoVisitas() {
     });
   }, [rows, search, seller, city, freq]);
 
+  // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
+  const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
+
   // Efetividade: nota p/ ordenar (verde=2, amarelo=1, vermelho=0), normalizada 0..1.
   const efetScore = (r: Row) => {
     const cy = r.cycles || [];
@@ -199,7 +202,7 @@ export default function ResumoVisitas() {
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <i className="fas fa-calendar-check text-primary" /> Resumo de Visitas e Atendimentos
         </h1>
-        <p className="text-muted-foreground text-sm">Calendário por cliente. Período: {ddmm(startDate)} a {ddmm(endDate)}. {filtered.length} clientes.</p>
+        <p className="text-muted-foreground text-sm">Calendário por cliente. Período: {ddmm(startDate)} a {ddmm(endDate)}. {clientesCount} {clientesCount === 1 ? "cliente" : "clientes"}.</p>
       </div>
 
       {/* Cards de resumo */}
@@ -248,7 +251,7 @@ export default function ResumoVisitas() {
           <table className="text-xs border-collapse">
             <thead>
               <tr>
-                <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente{sortArrow("cliente")}</th>
+                <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente <span style={{ fontWeight: 400, color: "#6b7280" }} title="Quantidade de clientes no filtro atual">({clientesCount})</span>{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
                 <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas{sortArrow("efet")}</th>
