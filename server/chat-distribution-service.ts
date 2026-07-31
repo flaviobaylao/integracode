@@ -107,6 +107,10 @@ export async function assignConversationToAgent(
       assignedByUserName: options?.assignedByUserName || 'Sistema',
       reason: options?.reason || 'initial'
     });
+    // 🧹 Limite do histórico: manter só as 20 atribuições mais recentes por conversa (a mais nova substitui a mais antiga)
+    try {
+      await db.execute(sql`DELETE FROM chat_assignment_history WHERE conversation_id = ${conversationId} AND id NOT IN (SELECT id FROM chat_assignment_history WHERE conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT 20)`);
+    } catch (e: any) { console.warn('⚠️ [ASSIGN-HISTORY] erro ao podar histórico:', e?.message || e); }
   }
   
   console.log(`🔄 [DISTRIBUTION] Conversa ${conversationId} atribuída ao agente ${agentId || 'ChatGPT'}`);
