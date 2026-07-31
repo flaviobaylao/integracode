@@ -20373,7 +20373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // com datas ANTERIORES ao início (cadência ancorada antes do começo), fazendo o
             // cliente aparecer antes de começar a ser atendido. Este guard vale inclusive para
             // rotas JÁ PERSISTIDAS, sem precisar regerar. (31/jul/2026)
-            or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, new Date(`${date}T23:59:59.999Z`)))
+            sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${new Date(`${date}T23:59:59.999Z`)})`
           ));
 
         const inactiveCount = customerIds.length - customersData.length;
