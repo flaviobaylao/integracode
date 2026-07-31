@@ -1226,7 +1226,7 @@ export class DatabaseStorage implements IStorage {
           // 🗓️ NÃO entra na rota antes da DATA DE INÍCIO DO FORNECIMENTO (service_start_date).
           // A agenda podia ter datas anteriores ao início (cadência ancorada antes do começo),
           // fazendo o cliente aparecer na rota antes de começar a ser atendido. (31/jul/2026)
-          or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, endOfDay)),
+          sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`,
           sql`(${customers.isSupplier} IS NOT TRUE)`,
           isNotNull(customers.latitude),
           isNotNull(customers.longitude)
@@ -1277,7 +1277,7 @@ export class DatabaseStorage implements IStorage {
           eq(customers.omieStatus, 'ativo'),
           // 🗓️ Mesmo guard do presencial: não entra na rota antes da DATA DE INÍCIO
           // DO FORNECIMENTO (service_start_date). (31/jul/2026)
-          or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, endOfDay))
+          sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`
         )
       );
     } catch (error: any) {
