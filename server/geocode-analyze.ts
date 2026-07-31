@@ -1,7 +1,14 @@
-// ─── ANALISE DE ESTRATEGIAS DE GEOCODIFICACAO ────────────────────────────────
-// SOMENTE LEITURA: nunca grava latitude/longitude nem qualquer campo. Serve para
-// medir, antes de decidir, quanto cada estrategia recupera dos clientes que hoje
-// caem em coordenada aproximada (centroide de bairro/cidade).
+// ─── ESTRATEGIAS DE GEOCODIFICACAO: ANALISE E GRAVACAO ───────────────────────
+// Dois endpoints, o mesmo funil:
+//
+//   POST .../geocode-analyze  SOMENTE LEITURA. Mede quanto cada estrategia
+//                             recupera, sem tocar em nada.
+//   POST .../places-apply     SIMULA por padrao; grava latitude/longitude
+//                             (e so isso) quando recebe `aplicar: true`.
+//
+// Os dois chamam a MESMA funcao `avaliarCliente`. Se fossem implementacoes
+// separadas, a simulacao poderia divergir do que a gravacao faz — que e
+// exatamente o erro que uma simulacao existe para evitar.
 //
 // Compara tres caminhos para o MESMO cliente:
 //   A. endereco como esta no cadastro            (linha de base — o que roda hoje)
@@ -350,8 +357,207 @@ async function buscarPlacesComFallback(
   return { ok: false as const, motivo: falhas.join(" | ") || "sem nome para buscar" };
 }
 
+// ─── SELECAO DO ESCOPO ───────────────────────────────────────────────────────
+// Um so lugar decide QUAIS clientes entram, para que a simulacao e a gravacao
+// nunca possam olhar populacoes diferentes.
+
+type Escopo = "duplicados" | "todos";
+
+function filtroDoEscopo(escopo: Escopo) {
+  // escopo "duplicados" (padrao) = so clientes que COMPARTILHAM coordenada com
+  // outro. Sao os empilhados no mesmo ponto — a populacao que este trabalho quer
+  // resolver. Ordenar por nome, como era antes, sorteava sobretudo quem ja
+  // resolve: 91% da amostra vinha "ja_resolvido".
+  return escopo === "duplicados"
+    ? sql` AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM customers d
+          WHERE d.latitude = c.latitude AND d.longitude = c.longitude
+            AND d.id <> c.id AND (d.is_supplier IS NOT TRUE)
+        )`
+    : sql``;
+}
+
+async function selecionarClientes(escopo: Escopo, limit: number, offset: number) {
+  const filtro = filtroDoEscopo(escopo);
+  const sel: any = await db.execute(sql`
+    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
+    FROM customers c
+    WHERE (c.is_supplier IS NOT TRUE)
+      AND (c.coordinates_locked IS NOT TRUE)
+      AND COALESCE(TRIM(c.address), '') <> ''${filtro}
+    ORDER BY c.is_active DESC, c.name, c.id
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+  const cands = (sel.rows || sel) as any[];
+
+  // Quantos existem no escopo — mostra se a amostra representa o total.
+  let totalNoEscopo = cands.length;
+  try {
+    const cnt: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS n FROM customers c
+      WHERE (c.is_supplier IS NOT TRUE)
+        AND (c.coordinates_locked IS NOT TRUE)
+        AND COALESCE(TRIM(c.address), '') <> ''${filtro}
+    `);
+    totalNoEscopo = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
+  } catch {}
+
+  return { cands, totalNoEscopo };
+}
+
+/**
+ * Roda o funil A -> B -> C para UM cliente e devolve o veredito.
+ *
+ * Uma unica implementacao serve tanto a analise quanto a gravacao — se fossem
+ * duas, a simulacao poderia divergir do que a gravacao faz de verdade, que e
+ * exatamente o erro que uma simulacao existe para evitar.
+ *
+ * Quando existe coordenada confiavel, ela sai em `linha.coordenada`. Quando nao
+ * existe, o campo fica ausente: quem grava nunca precisa reinterpretar o funil.
+ */
+async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
+  const cidade = String(c.city || "");
+  const uf = String(c.state || "");
+  const sufixo = [c.neighborhood, cidade, uf, "Brasil"].filter(Boolean).join(", ");
+  const original = String(c.address || "");
+  const limpo = limparEndereco(original);
+  const fantasia = String(c.fantasy_name || "");
+  const linha: any = {
+    id: String(c.id), nome: c.name, nomeFantasia: fantasia, temFantasia: !!fantasia.trim(),
+    tipo: c.cnpj ? "PJ" : "PF",
+    enderecoOriginal: original, enderecoLimpo: limpo, mudouNaLimpeza: limpo !== original.trim(),
+    // Sem numero de casa nenhum geocodificador acerta o ponto: o melhor que a
+    // Geocoding devolve e o centro da via. Separar essa populacao mostra quanto
+    // do problema e falta de informacao no cadastro, e nao estrategia.
+    temNumeroNoCadastro: temNumeroDeCasa(original),
+    numeroRecuperadoPelaLimpeza: !temNumeroDeCasa(original) && temNumeroDeCasa(limpo),
+  };
+
+  try {
+    // A — linha de base: o endereco como esta no cadastro.
+    const a = await geocodeOne([original, sufixo].filter(Boolean).join(", "));
+    linha.A = a ? { precisao: a.precisao, resultado: String(a.display_name).slice(0, 90) } : null;
+    // Ancora geografica da trava do Places: mesmo impreciso, o endereco do
+    // cadastro diz em que pedaco da cidade o cliente esta.
+    if (a) linha.refGeo = { lat: a.lat, lon: a.lon };
+    if (util(a)) { linha.veredito = "ja_resolvido"; return linha; }
+
+    // B — endereco limpo (so faz sentido se a limpeza mudou algo).
+    if (linha.mudouNaLimpeza && limpo) {
+      await esperar();
+      const b = await geocodeOne([limpo, sufixo].filter(Boolean).join(", "));
+      linha.B = b ? { precisao: b.precisao, resultado: String(b.display_name).slice(0, 90) } : null;
+      if (b && !linha.refGeo) linha.refGeo = { lat: b.lat, lon: b.lon };
+      if (util(b) && b) {
+        linha.veredito = "resolvido_pela_limpeza";
+        linha.coordenada = { lat: b.lat, lon: b.lon, origem: "limpeza", precisao: b.precisao };
+        return linha;
+      }
+    }
+
+    // C — Places: nome FANTASIA primeiro, razao social como segunda tentativa.
+    // O acerto so vale se passar na trava: o Places acha por nome, e nome
+    // parecido nao e o mesmo estabelecimento.
+    if (incluirPlaces && c.cnpj) {
+      await esperar();
+      const p = await buscarPlacesComFallback(fantasia, String(c.name || ""), cidade, uf);
+      if (p.ok) {
+        const v = validarPlaces(
+          { endereco: original, cep: c.zip_code },
+          {
+            lat: p.lat, lon: p.lon, endereco: p.endereco,
+            termoBuscado: p.termoUsado, nomeEncontrado: p.nomeEncontrado,
+          },
+          linha.refGeo || null,
+        );
+        linha.C = {
+          origemDoTermo: p.origemDoTermo, termoUsado: p.termoUsado,
+          nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90),
+          lat: p.lat, lon: p.lon,
+          aprovado: v.aprovado, motivo: v.motivo,
+          ruaConfere: v.ruaConfere, cepConfere: v.cepConfere,
+          distanciaDaReferenciaKm: v.distanciaDaReferenciaKm,
+          nomeCombina: v.nomeCombina,
+        };
+        if (v.aprovado) {
+          linha.veredito = "resolvido_pelo_places";
+          linha.coordenada = { lat: p.lat, lon: p.lon, origem: "places", precisao: "places_validado" };
+          return linha;
+        }
+      } else {
+        linha.C = { falhou: p.motivo };
+      }
+    }
+
+    linha.veredito = "sem_solucao_automatica";
+  } catch (e: any) {
+    linha.veredito = "erro";
+    linha.erro = String(e?.message || e).slice(0, 120);
+  }
+  return linha;
+}
+
+/** Contagens derivadas dos vereditos — nunca contadores paralelos que podem divergir. */
+function resumir(linhas: any[]) {
+  const n = linhas.length || 1;
+  const pct = (x: number) => `${Math.round((x / n) * 100)}%`;
+  const por = (v: string) => linhas.filter((l) => l.veredito === v).length;
+  const jaOk = por("ja_resolvido");
+  const ganhoLimpeza = por("resolvido_pela_limpeza");
+  const ganhoPlaces = por("resolvido_pelo_places");
+  const semSolucao = por("sem_solucao_automatica");
+  const erros = por("erro");
+
+  return {
+    resumo: {
+      jaResolvidoHoje: jaOk,
+      recuperadosPelaLimpeza: ganhoLimpeza,
+      recuperadosPeloPlaces: ganhoPlaces,
+      semSolucaoAutomatica: semSolucao,
+      erros,
+    },
+    places: {
+      acertosPeloNomeFantasia: linhas.filter((l) => l.veredito === "resolvido_pelo_places" && l.C?.origemDoTermo === "fantasia").length,
+      acertosPelaRazaoSocial: linhas.filter((l) => l.veredito === "resolvido_pelo_places" && l.C?.origemDoTermo === "razao_social").length,
+      // Barrados pela trava — o Places achou "um" lugar, nao "o" lugar.
+      reprovadosNaTrava: linhas.filter((l) => l.C?.nomeEncontrado && l.C?.aprovado === false).length,
+      aprovadosPelaRua: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere === true).length,
+      aprovadosPeloCep: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere === true).length,
+      aprovadosPelaDistancia: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere !== true).length,
+      clientesComFantasiaPreenchido: linhas.filter((l) => l.temFantasia).length,
+      clientesSemFantasia: linhas.filter((l) => l.tipo === "PJ" && !l.temFantasia).length,
+    },
+    // Diagnostico do cadastro: separa "estrategia errada" de "informacao que nao
+    // existe". semNumeroDeCasa e o teto do que qualquer automacao alcanca por
+    // endereco — para esses, so Places por nome ou correcao manual.
+    cadastro: {
+      semNumeroDeCasa: linhas.filter((l) => !l.temNumeroNoCadastro).length,
+      comNumeroDeCasa: linhas.filter((l) => l.temNumeroNoCadastro).length,
+      numeroRecuperadoPelaLimpeza: linhas.filter((l) => l.numeroRecuperadoPelaLimpeza).length,
+    },
+    // Precisao que a Geocoding devolveu no endereco atual (etapa A).
+    // centro_geometrico = centro da via, que e o que empilha clientes.
+    precisaoNoEnderecoAtual: linhas.reduce((acc: any, l: any) => {
+      const p = (l.A && l.A.precisao) || "sem_resultado";
+      acc[p] = (acc[p] || 0) + 1;
+      return acc;
+    }, {}),
+    percentuais: {
+      jaResolvidoHoje: pct(jaOk),
+      ganhoDaLimpeza: pct(ganhoLimpeza),
+      ganhoDoPlaces: pct(ganhoPlaces),
+      restaCorrecaoManual: pct(semSolucao),
+    },
+  };
+}
+
+const lerEscopo = (body: any): Escopo => (body?.escopo === "todos" ? "todos" : "duplicados");
+
 export function registerGeocodeAnalyze(app: Express) {
-  // POST /api/admin/customers/geocode-analyze  { limit?: number, incluirPlaces?: boolean }
+  // ─── ANALISE ───────────────────────────────────────────────────────────────
+  // POST /api/admin/customers/geocode-analyze
+  //   { limit?, offset?, escopo?: "duplicados"|"todos", incluirPlaces?: boolean }
   // NAO GRAVA NADA. Devolve o comparativo direto na resposta.
   app.post(
     "/api/admin/customers/geocode-analyze",
@@ -360,185 +566,111 @@ export function registerGeocodeAnalyze(app: Express) {
     async (req: Request, res: Response) => {
       try {
         const limit = Math.min(Math.max(Number((req.body as any)?.limit) || 60, 1), 400);
+        const offset = Math.max(Number((req.body as any)?.offset) || 0, 0);
         const incluirPlaces = (req.body as any)?.incluirPlaces !== false;
-        // escopo "duplicados" (padrao) = so clientes que COMPARTILHAM coordenada
-        // com outro. Sao os empilhados no mesmo ponto — a populacao que este
-        // trabalho quer resolver. Ordenar por nome, como era antes, sorteava
-        // sobretudo quem ja resolve: 91% da amostra vinha "ja_resolvido" e cada
-        // chamada paga do Places era gasta confirmando o que funciona.
-        const escopo = (req.body as any)?.escopo === "todos" ? "todos" : "duplicados";
-        const filtroEscopo =
-          escopo === "duplicados"
-            ? sql` AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
-                AND EXISTS (
-                  SELECT 1 FROM customers d
-                  WHERE d.latitude = c.latitude AND d.longitude = c.longitude
-                    AND d.id <> c.id AND (d.is_supplier IS NOT TRUE)
-                )`
-            : sql``;
+        const escopo = lerEscopo(req.body);
 
-        const sel: any = await db.execute(sql`
-          SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
-          FROM customers c
-          WHERE (c.is_supplier IS NOT TRUE)
-            AND (c.coordinates_locked IS NOT TRUE)
-            AND COALESCE(TRIM(c.address), '') <> ''${filtroEscopo}
-          ORDER BY c.is_active DESC, c.name
-          LIMIT ${limit}
-        `);
-        const cands = (sel.rows || sel) as any[];
-
-        // Quantos existem no escopo — mostra se a amostra representa o total.
-        let totalNoEscopo = cands.length;
-        try {
-          const cnt: any = await db.execute(sql`
-            SELECT COUNT(*)::int AS n FROM customers c
-            WHERE (c.is_supplier IS NOT TRUE)
-              AND (c.coordinates_locked IS NOT TRUE)
-              AND COALESCE(TRIM(c.address), '') <> ''${filtroEscopo}
-          `);
-          totalNoEscopo = Number(((cnt.rows || cnt) as any[])[0]?.n || cands.length);
-        } catch {}
+        const { cands, totalNoEscopo } = await selecionarClientes(escopo, limit, offset);
 
         const linhas: any[] = [];
-        let jaOk = 0, ganhoLimpeza = 0, ganhoPlaces = 0, semSolucao = 0, erros = 0;
-        // Quebra do ganho do Places por qual termo acertou — e o dado que decide
-        // se vale padronizar a busca pelo nome fantasia.
-        let placesPorFantasia = 0, placesPorRazaoSocial = 0;
-        // Achou no Places, mas a trava barrou: provavel estabelecimento errado.
-        let placesReprovados = 0;
-
         for (const c of cands) {
-          const cidade = String(c.city || "");
-          const uf = String(c.state || "");
-          const sufixo = [c.neighborhood, cidade, uf, "Brasil"].filter(Boolean).join(", ");
-          const original = String(c.address || "");
-          const limpo = limparEndereco(original);
-          const fantasia = String(c.fantasy_name || "");
-          const linha: any = {
-            id: String(c.id), nome: c.name, nomeFantasia: fantasia, temFantasia: !!fantasia.trim(),
-            tipo: c.cnpj ? "PJ" : "PF",
-            enderecoOriginal: original, enderecoLimpo: limpo, mudouNaLimpeza: limpo !== original.trim(),
-            // Sem numero de casa nenhum geocodificador acerta o ponto: o melhor que
-            // a Geocoding devolve e o centro da via. Separar essa populacao mostra
-            // quanto do problema e falta de informacao no cadastro, e nao estrategia.
-            temNumeroNoCadastro: temNumeroDeCasa(original),
-            numeroRecuperadoPelaLimpeza: !temNumeroDeCasa(original) && temNumeroDeCasa(limpo),
-          };
-
-          try {
-            // A — linha de base
-            const a = await geocodeOne([original, sufixo].filter(Boolean).join(", "));
-            linha.A = a ? { precisao: a.precisao, resultado: String(a.display_name).slice(0, 90) } : null;
-            // Ancora geografica da trava do Places: mesmo impreciso, o endereco do
-            // cadastro diz em que pedaco da cidade o cliente esta.
-            if (a) linha.refGeo = { lat: a.lat, lon: a.lon };
-            if (util(a)) { linha.veredito = "ja_resolvido"; jaOk++; linhas.push(linha); await esperar(); continue; }
-
-            // B — endereco limpo (so faz sentido se a limpeza mudou algo)
-            if (linha.mudouNaLimpeza && limpo) {
-              await esperar();
-              const b = await geocodeOne([limpo, sufixo].filter(Boolean).join(", "));
-              linha.B = b ? { precisao: b.precisao, resultado: String(b.display_name).slice(0, 90) } : null;
-              if (b && !linha.refGeo) linha.refGeo = { lat: b.lat, lon: b.lon };
-              if (util(b)) { linha.veredito = "resolvido_pela_limpeza"; ganhoLimpeza++; linhas.push(linha); await esperar(); continue; }
-            }
-
-            // C — Places: nome FANTASIA primeiro, razao social como segunda tentativa.
-            // O acerto so vale se passar na trava: o Places acha por nome, e nome
-            // parecido nao e o mesmo estabelecimento.
-            if (incluirPlaces && c.cnpj) {
-              await esperar();
-              const p = await buscarPlacesComFallback(fantasia, String(c.name || ""), cidade, uf);
-              if (p.ok) {
-                const v = validarPlaces(
-                  { endereco: original, cep: c.zip_code },
-                  {
-                    lat: p.lat, lon: p.lon, endereco: p.endereco,
-                    termoBuscado: p.termoUsado, nomeEncontrado: p.nomeEncontrado,
-                  },
-                  linha.refGeo || null,
-                );
-                linha.C = {
-                  origemDoTermo: p.origemDoTermo, termoUsado: p.termoUsado,
-                  nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90),
-                  lat: p.lat, lon: p.lon,
-                  aprovado: v.aprovado, motivo: v.motivo,
-                  ruaConfere: v.ruaConfere, cepConfere: v.cepConfere,
-                  distanciaDaReferenciaKm: v.distanciaDaReferenciaKm,
-                  nomeCombina: v.nomeCombina,
-                };
-                if (v.aprovado) {
-                  linha.veredito = "resolvido_pelo_places";
-                  ganhoPlaces++;
-                  if (p.origemDoTermo === "fantasia") placesPorFantasia++; else placesPorRazaoSocial++;
-                  linhas.push(linha); await esperar(); continue;
-                }
-                placesReprovados++;
-              } else {
-                linha.C = { falhou: p.motivo };
-              }
-            }
-
-            linha.veredito = "sem_solucao_automatica";
-            semSolucao++;
-          } catch (e: any) {
-            linha.veredito = "erro";
-            linha.erro = String(e?.message || e).slice(0, 120);
-            erros++;
-          }
-          linhas.push(linha);
+          linhas.push(await avaliarCliente(c, incluirPlaces));
           await esperar();
         }
 
-        const n = cands.length || 1;
-        const pct = (x: number) => `${Math.round((x / n) * 100)}%`;
         res.json({
           provider: geocodeProvider(),
           placesConfigurado: !!PLACES_KEY(),
           escopo,
           amostra: cands.length,
+          offset,
           totalNoEscopo,
-          resumo: {
-            jaResolvidoHoje: jaOk,
-            recuperadosPelaLimpeza: ganhoLimpeza,
-            recuperadosPeloPlaces: ganhoPlaces,
-            semSolucaoAutomatica: semSolucao,
-            erros,
-          },
-          places: {
-            acertosPeloNomeFantasia: placesPorFantasia,
-            acertosPelaRazaoSocial: placesPorRazaoSocial,
-            // Barrados pela trava — o Places achou "um" lugar, nao "o" lugar.
-            reprovadosNaTrava: placesReprovados,
-            aprovadosPelaRua: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere === true).length,
-            aprovadosPeloCep: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere === true).length,
-            aprovadosPelaDistancia: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere !== true).length,
-            clientesComFantasiaPreenchido: linhas.filter((l) => l.temFantasia).length,
-            clientesSemFantasia: linhas.filter((l) => l.tipo === "PJ" && !l.temFantasia).length,
-          },
-          // Diagnostico do cadastro: separa "estrategia errada" de "informacao que
-          // nao existe". semNumeroDeCasa e o teto do que qualquer automacao alcanca
-          // por endereco — para esses, so Places por nome ou correcao manual.
-          cadastro: {
-            semNumeroDeCasa: linhas.filter((l) => !l.temNumeroNoCadastro).length,
-            comNumeroDeCasa: linhas.filter((l) => l.temNumeroNoCadastro).length,
-            numeroRecuperadoPelaLimpeza: linhas.filter((l) => l.numeroRecuperadoPelaLimpeza).length,
-          },
-          // Precisao que a Geocoding devolveu no endereco atual (etapa A).
-          // centro_geometrico = centro da via, que e o que empilha clientes.
-          precisaoNoEnderecoAtual: linhas.reduce((acc: any, l: any) => {
-            const p = (l.A && l.A.precisao) || "sem_resultado";
-            acc[p] = (acc[p] || 0) + 1;
-            return acc;
-          }, {}),
-          percentuais: {
-            jaResolvidoHoje: pct(jaOk),
-            ganhoDaLimpeza: pct(ganhoLimpeza),
-            ganhoDoPlaces: pct(ganhoPlaces),
-            restaCorrecaoManual: pct(semSolucao),
-          },
+          ...resumir(linhas),
           linhas,
+        });
+      } catch (e: any) {
+        res.status(500).json({ error: String(e?.message || e).slice(0, 200) });
+      }
+    },
+  );
+
+  // ─── GRAVACAO ──────────────────────────────────────────────────────────────
+  // POST /api/admin/customers/places-apply
+  //   { limit?, offset?, escopo?, aplicar?: boolean }
+  //
+  // SIMULA POR PADRAO. So grava quando o corpo traz `aplicar: true` — explicito,
+  // porque escrever coordenada errada e pior que manter a empilhada: a empilhada
+  // salta aos olhos no mapa, a errada nao.
+  //
+  // Escreve SOMENTE latitude/longitude. Nenhum outro campo do cadastro e tocado.
+  app.post(
+    "/api/admin/customers/places-apply",
+    authenticateUser,
+    requireRole(["admin"]),
+    async (req: Request, res: Response) => {
+      try {
+        const limit = Math.min(Math.max(Number((req.body as any)?.limit) || 50, 1), 200);
+        const offset = Math.max(Number((req.body as any)?.offset) || 0, 0);
+        const escopo = lerEscopo(req.body);
+        const aplicar = (req.body as any)?.aplicar === true;
+
+        const { cands, totalNoEscopo } = await selecionarClientes(escopo, limit, offset);
+
+        const itens: any[] = [];
+        let gravados = 0, falhasDeGravacao = 0;
+
+        for (const c of cands) {
+          const linha = await avaliarCliente(c, true);
+          const coord = linha.coordenada;
+
+          if (coord) {
+            const item: any = {
+              id: linha.id, nome: linha.nome, nomeFantasia: linha.nomeFantasia,
+              origem: coord.origem, precisao: coord.precisao,
+              enderecoCadastro: linha.enderecoOriginal,
+              lat: coord.lat, lon: coord.lon,
+              provaDaTrava: linha.C?.motivo || (coord.origem === "limpeza" ? "endereco limpo resolveu o ponto" : ""),
+              nomeEncontrado: linha.C?.nomeEncontrado,
+              gravado: false,
+            };
+
+            if (aplicar) {
+              try {
+                // coordinates_locked repetido aqui de proposito: entre a selecao e
+                // a escrita alguem pode ter travado o cliente, e a trava do usuario
+                // tem que vencer.
+                await db.execute(sql`
+                  UPDATE customers
+                  SET latitude = ${coord.lat}, longitude = ${coord.lon}
+                  WHERE id = ${c.id} AND (coordinates_locked IS NOT TRUE)
+                `);
+                item.gravado = true;
+                gravados++;
+              } catch (e: any) {
+                item.erroDeGravacao = String(e?.message || e).slice(0, 120);
+                falhasDeGravacao++;
+              }
+            }
+            itens.push(item);
+          }
+          await esperar();
+        }
+
+        res.json({
+          aplicado: aplicar,
+          escopo,
+          offset,
+          processados: cands.length,
+          totalNoEscopo,
+          // Quantos TEM coordenada confiavel neste lote (gravados ou nao).
+          gravaveis: itens.length,
+          gravados,
+          falhasDeGravacao,
+          porOrigem: {
+            limpezaDeEndereco: itens.filter((i) => i.origem === "limpeza").length,
+            placesValidado: itens.filter((i) => i.origem === "places").length,
+          },
+          itens,
         });
       } catch (e: any) {
         res.status(500).json({ error: String(e?.message || e).slice(0, 200) });
