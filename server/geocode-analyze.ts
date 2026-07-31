@@ -396,7 +396,7 @@ async function selecionarPorIds(ids: string[]) {
     FROM customers c
     WHERE (c.is_supplier IS NOT TRUE)
       AND (c.coordinates_locked IS NOT TRUE)
-      AND c.id = ANY(${lista})
+      AND c.id IN (${sql.join(lista.map((x) => sql`${x}`), sql`, `)})
   `);
   const cands = (sel.rows || sel) as any[];
   return { cands, totalNoEscopo: cands.length };
