@@ -1223,6 +1223,10 @@ export class DatabaseStorage implements IStorage {
           eq(customers.sellerId, sellerId),
           eq(customers.omieStatus, 'ativo'),
           eq(customers.isActive, true), // cliente desativado no cadastro nao entra na rota (02/jul/2026)
+          // 🗓️ NÃO entra na rota antes da DATA DE INÍCIO DO FORNECIMENTO (service_start_date).
+          // A agenda podia ter datas anteriores ao início (cadência ancorada antes do começo),
+          // fazendo o cliente aparecer na rota antes de começar a ser atendido. (31/jul/2026)
+          or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, endOfDay)),
           sql`(${customers.isSupplier} IS NOT TRUE)`,
           isNotNull(customers.latitude),
           isNotNull(customers.longitude)
@@ -1270,7 +1274,10 @@ export class DatabaseStorage implements IStorage {
           inArray(customers.id, customerIds),
           eq(customers.sellerId, sellerId),
           eq(customers.isActive, true),
-          eq(customers.omieStatus, 'ativo')
+          eq(customers.omieStatus, 'ativo'),
+          // 🗓️ Mesmo guard do presencial: não entra na rota antes da DATA DE INÍCIO
+          // DO FORNECIMENTO (service_start_date). (31/jul/2026)
+          or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, endOfDay))
         )
       );
     } catch (error: any) {
