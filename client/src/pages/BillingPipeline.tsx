@@ -257,6 +257,13 @@ export default function BillingPipeline() {
   // Edição (mover/excluir/selecionar em lote): admins. Telemarketing tem acesso
   // SOMENTE de leitura (consulta + filtros). As mutações também são bloqueadas no backend.
   const canEdit = ['admin', 'coordinator', 'administrative'].includes(String((currentUser as any)?.role || ''));
+  // EDICAO RESTRITA: vendedor externo / telemarketing edita SOMENTE o proprio pedido
+  // (sellerId == seu id), nos status Agendado/Pedido, e so produtos/qtd, forma de pagamento
+  // e 'Faturar em'. A trava real esta no backend; aqui apenas refletimos na tela.
+  const myUserId = (currentUser as any)?.id;
+  const isSellerRole = ['vendedor', 'telemarketing'].includes(String((currentUser as any)?.role || ''));
+  const SELLER_EDIT_STAGES = ['agendado', 'pedido'];
+  const canSellerEditItem = (it: any) => isSellerRole && !!it && String(it.sellerId || '') === String(myUserId) && SELLER_EDIT_STAGES.includes(String(it.stage));
 
   const { data: rawItems = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
@@ -404,7 +411,14 @@ export default function BillingPipeline() {
     setProdSearch('');
     setEditMode(true);
   };
-  const saveEdit = () => { if (detailItem && editData) updateItemMutation.mutate({ id: detailItem.id, data: editData }); };
+  const saveEdit = () => {
+    if (!detailItem || !editData) return;
+    const restricted = !canEdit && isSellerRole; // vendedor/telemarketing dono
+    const data = restricted
+      ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate }
+      : editData;
+    updateItemMutation.mutate({ id: detailItem.id, data });
+  };
   const blockOrderMutation = useMutation({
     mutationFn: async (vars: { id: string; reason?: string }) => await apiRequest('POST', `/api/billing-pipeline/${vars.id}/block`, { reason: vars.reason || '' }),
     onSuccess: () => {
@@ -1219,7 +1233,9 @@ export default function BillingPipeline() {
                     {STAGES.find(s => s.key === detailItem.stage)?.label || detailItem.stage}
                   </Badge>
                   {!editMode ? (
-                    <Button size="sm" variant="outline" className="text-xs" onClick={startEdit} data-testid="button-edit-order">✏️ Editar</Button>
+                    (canEdit || canSellerEditItem(detailItem)) ? (
+                      <Button size="sm" variant="outline" className="text-xs" onClick={startEdit} data-testid="button-edit-order">✏️ Editar</Button>
+                    ) : null
                   ) : (<span className="text-xs text-blue-600 font-medium">Editando…</span>)}
                 </div>
               )}
@@ -1252,9 +1268,9 @@ export default function BillingPipeline() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Valor Total</label>
-                    {editMode ? (
+                    {editMode && canEdit ? (
                       <input type="number" step="0.01" value={editData?.saleValue ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, saleValue: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm font-bold" />
-                    ) : (<p className="font-bold text-lg text-green-700">{formatCurrency(detailItem.saleValue)}</p>)}
+                    ) : (<p className="font-bold text-lg text-green-700">{formatCurrency(editMode ? (editData?.saleValue ?? detailItem.saleValue) : detailItem.saleValue)}</p>)}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Pagamento</label>
@@ -1267,7 +1283,7 @@ export default function BillingPipeline() {
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Operação</label>
-                    {editMode ? (
+                    {editMode && canEdit ? (
                       <select value={editData?.operationType ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, operationType: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm">
                         <option value="">-</option>
                         {Object.entries(OPERATION_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
@@ -1289,10 +1305,10 @@ export default function BillingPipeline() {
                       <input type="date" value={editData?.scheduledBillingDate ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, scheduledBillingDate: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm" data-testid="input-faturar-em" />
                     ) : (<p className="text-sm">{detailItem.scheduledBillingDate ? new Date(detailItem.scheduledBillingDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'}</p>)}
                   </div>
-                  {(detailItem.invoiceNumber || editMode) && (
+                  {(detailItem.invoiceNumber || (editMode && canEdit)) && (
                     <div>
                       <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Nota Fiscal</label>
-                      {editMode ? (
+                      {editMode && canEdit ? (
                         <input value={editData?.invoiceNumber ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, invoiceNumber: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm font-mono" />
                       ) : (<p className="text-sm font-mono font-semibold text-orange-700">{detailItem.invoiceNumber}</p>)}
                     </div>
@@ -1329,9 +1345,9 @@ export default function BillingPipeline() {
                         {editMode ? (editData?.products || []).map((p: any, i: number) => (
                           <tr key={i} className="border-t">
                             <td className="p-1.5 text-gray-400">{i + 1}</td>
-                            <td className="p-1.5"><input value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
+                            <td className="p-1.5"><input disabled={!canEdit} value={p.name || ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; pr[i] = { ...pr[i], name: e.target.value }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-full border rounded px-1 py-0.5 text-xs" /></td>
                             <td className="text-right p-1.5"><input type="number" step="0.001" value={p.quantity ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const q = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], quantity: q, totalPrice: q * (parseFloat(pr[i].unitPrice) || 0) }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-16 border rounded px-1 py-0.5 text-xs text-right" /></td>
-                            <td className="text-right p-1.5"><input type="number" step="0.01" value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
+                            <td className="text-right p-1.5"><input type="number" step="0.01" disabled={!canEdit} value={p.unitPrice ?? ''} onChange={(e) => setEditData((d: any) => { const pr = [...d.products]; const u = parseFloat(e.target.value) || 0; pr[i] = { ...pr[i], unitPrice: u, totalPrice: (parseFloat(pr[i].quantity) || 0) * u }; const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="w-20 border rounded px-1 py-0.5 text-xs text-right" /></td>
                             <td className="text-right p-1.5 font-semibold whitespace-nowrap">{formatCurrency(p.totalPrice)} <button onClick={() => setEditData((d: any) => { const pr = d.products.filter((_: any, x: number) => x !== i); const _sv = pr.reduce((t: number, x: any) => t + (parseFloat(x.totalPrice) || 0), 0); return { ...d, products: pr, saleValue: _sv.toFixed(2) }; })} className="text-red-500 ml-1">✕</button></td>
                           </tr>
                         )) : detailItem.products?.map((p, i) => (
@@ -1397,10 +1413,10 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {(detailItem.notes || editMode) && (
+              {(detailItem.notes || (editMode && canEdit)) && (
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
-                  {editMode ? (
+                  {editMode && canEdit ? (
                     <textarea value={editData?.notes ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, notes: e.target.value }))} rows={2} className="w-full border rounded px-2 py-1 text-sm" />
                   ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>)}
                 </div>
