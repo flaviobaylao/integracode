@@ -83,6 +83,37 @@ export function normalizeNcm(raw: string | null | undefined): string {
   return INVALID_NCM_REMAP[v] || v;
 }
 
+// ─── Reforma Tributária do Consumo (NT 2025.002) — IBS / CBS ─────────────────
+// 2026 é o ANO-TESTE: alíquotas simbólicas, apuração meramente informativa e SEM
+// recolhimento (Ato Conjunto RFB/CGIBS nº 1/2025). Os valores são "por fora" —
+// NÃO entram em vProd nem em vNF, então nada muda no recebível/boleto/cobrança.
+//
+// A partir de 03/08/2026 a SEFAZ REJEITA (rejeição 1115) NF-e de emitente do
+// REGIME REGULAR (CRT=3) sem estes grupos. No INTEGRA isso é só o PURO SERVIÇOS
+// (52921727000105). Simples Nacional (CRT 1/2/4) só entra em jan/2027 — por isso
+// o default é 'crt3': ligar para o Simples agora exigiria CST/cClassTrib
+// próprios (a confirmar com o contador) e arriscaria os 3 CNPJs que hoje emitem
+// sem problema (GYN sozinho fez 811 notas em julho).
+//
+// Override SEM DEPLOY pela env RT_IBSCBS_MODE:
+//   'crt3' (default) = só regime normal · 'all' = todos · 'off' = desliga tudo
+const RT_ALIQ_2026 = { pIBSUF: '0.1000', pIBSMun: '0.0000', pCBS: '0.9000' };
+const RT_PCT_2026 = { ibsUf: 0.1, ibsMun: 0, cbs: 0.9 };
+const RT_CST_PADRAO = '000';          // 000 = tributação integral
+const RT_CCLASSTRIB_PADRAO = '000001'; // idem, sem benefício/redução
+
+export function rtIbsCbsAtivo(crt: string | null | undefined): boolean {
+  const modo = String(process.env.RT_IBSCBS_MODE || 'crt3').trim().toLowerCase();
+  if (modo === 'off') return false;
+  if (modo === 'all') return true;
+  return String(crt || '') === '3';
+}
+
+// Arredonda para 2 casas sem o erro de ponto flutuante do toFixed cru.
+function rt2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 // Substituição tributária da filial BSB (CNPJ 28295493000315, PURO IND COM
 // PROD NATURAIS LTDA DF, Simples Nacional CRT=1). Toda VENDA onerosa de
 // mercadoria dessa emissora sai como contribuinte substituído: CFOP 5405
@@ -762,6 +793,12 @@ function buildDocumento(
   let sumVicmsDeson = 0;
   let sumVPis = 0;
   let sumVCofins = 0;
+  // Reforma Tributária: acumuladores do grupo de totais IBSCBSTot (W03).
+  const rtAtivo = rtIbsCbsAtivo(crt);
+  let sumRtBc = 0;
+  let sumRtIbsUf = 0;
+  let sumRtIbsMun = 0;
+  let sumRtCbs = 0;
   let usedRcteRedBc = false;
   // Crédito de ICMS do Simples Nacional (CSOSN 101) acumulado para a legenda
   // do rodapé (infCpl), nos termos do art. 23 da LC 123/2006.
@@ -1182,6 +1219,31 @@ function buildDocumento(
       };
     }
 
+    // ── IBS / CBS por item (NT 2025.002) ────────────────────────────────────
+    // ATENÇÃO: no XSD o IBSCBS é o ÚLTIMO filho de <imposto> (depois de ICMS,
+    // PIS, COFINS, ICMSUFDest e IS). Manter esta atribuição no fim do bloco.
+    if (rtAtivo) {
+      const rtBc = Math.max(0, parseFloat(totPrc) - (descVal > 0 ? descVal : 0));
+      const vIbsUf = rt2((rtBc * RT_PCT_2026.ibsUf) / 100);
+      const vIbsMun = rt2((rtBc * RT_PCT_2026.ibsMun) / 100);
+      const vCbs = rt2((rtBc * RT_PCT_2026.cbs) / 100);
+      sumRtBc += rtBc;
+      sumRtIbsUf += vIbsUf;
+      sumRtIbsMun += vIbsMun;
+      sumRtCbs += vCbs;
+      imposto.IBSCBS = {
+        CST: String((item as any).cstIbsCbs || RT_CST_PADRAO),
+        cClassTrib: String((item as any).cClassTrib || RT_CCLASSTRIB_PADRAO),
+        gIBSCBS: {
+          vBC: rtBc.toFixed(2),
+          gIBSUF: { pIBSUF: RT_ALIQ_2026.pIBSUF, vIBSUF: vIbsUf.toFixed(2) },
+          gIBSMun: { pIBSMun: RT_ALIQ_2026.pIBSMun, vIBSMun: vIbsMun.toFixed(2) },
+          vIBS: rt2(vIbsUf + vIbsMun).toFixed(2),
+          gCBS: { pCBS: RT_ALIQ_2026.pCBS, vCBS: vCbs.toFixed(2) },
+        },
+      };
+    }
+
     let lotInfo = '';
     if (item.lotNumber) {
       lotInfo = sanitizeStr(`Lote: ${item.lotNumber}`, 500);
@@ -1308,6 +1370,27 @@ function buildDocumento(
         vOutro: totalOther.toFixed(2),
         vNF: totalInvoice.toFixed(2),
       },
+      // Reforma Tributária: totais de IBS/CBS. Ficam FORA de vNF (por fora).
+      // gMono/gEstornoCred omitidos de propósito (sem monofasia na operação).
+      ...(rtAtivo ? {
+        IBSCBSTot: {
+          vBCIBSCBS: sumRtBc.toFixed(2),
+          gIBS: {
+            gIBSUF: { vDif: '0.00', vDevTrib: '0.00', vIBSUF: sumRtIbsUf.toFixed(2) },
+            gIBSMun: { vDif: '0.00', vDevTrib: '0.00', vIBSMun: sumRtIbsMun.toFixed(2) },
+            vIBS: rt2(sumRtIbsUf + sumRtIbsMun).toFixed(2),
+            vCredPres: '0.00',
+            vCredPresCondSus: '0.00',
+          },
+          gCBS: {
+            vDif: '0.00',
+            vDevTrib: '0.00',
+            vCBS: sumRtCbs.toFixed(2),
+            vCredPres: '0.00',
+            vCredPresCondSus: '0.00',
+          },
+        },
+      } : {}),
     },
     transp: {
       modFrete: '9',
