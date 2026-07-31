@@ -184,6 +184,22 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
 
 import { fireAutomation } from './automation-engine';
 
+// NCM do item fiscal. Espelha a regra do normalizeNcm() do sefaz-service, mas
+// mantida LOCAL de proposito: este arquivo so carrega sefaz-service por import
+// dinamico (await import) para nao puxar node-nfe-nfce no boot; um import
+// estatico aqui mudaria a ordem de carga do modulo.
+// 2009.90.00 = "misturas de sucos", unico NCM de suco com NF-e autorizada no
+// historico. 2009.89.00 nunca foi autorizado e 2202.90.00 foi reclassificado
+// em 2022 - ambos remapeiam.
+const NCM_SUCO_MISTO = '20099000';
+const NCM_INVALIDOS = new Set(['20098900', '22029000', '00000000']);
+function ncmDoProduto(raw: unknown): string {
+  const d = String(raw ?? '').replace(/\D/g, '');
+  if (!d) return NCM_SUCO_MISTO;
+  const v = d.padStart(8, '0').slice(0, 8);
+  return NCM_INVALIDOS.has(v) ? NCM_SUCO_MISTO : v;
+}
+
 // Throttle para a promoção oportunista no GET /api/billing-pipeline (evita rodar o UPDATE a cada request).
 let _lastScheduledPromoteAt = 0;
 
@@ -2230,10 +2246,12 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
       let productCode = `PROD-${i + 1}`;
+      let itemNcm = NCM_SUCO_MISTO;
       if (p.id) {
         const productData = await storage.getProduct(p.id);
         if (productData) {
           productCode = (productData as any).omieCode || (productData as any).omieCodigo || `PROD-${i + 1}`;
+          itemNcm = ncmDoProduto((productData as any).ncm);
         }
       }
       let productName = p.name;
@@ -2247,7 +2265,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
         productName,
         productCode,
         productId: p.id || null,
-        ncm: '22029000',
+        ncm: itemNcm,
         cfop,
         unit: 'UN',
         quantity: p.quantity.toString(),
