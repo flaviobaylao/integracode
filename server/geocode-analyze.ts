@@ -108,6 +108,106 @@ export function temNumeroDeCasa(addr: any): boolean {
   return i > 0 && /^\s*\d/.test(s.slice(i + 1));
 }
 
+// ─── TRAVA DE VALIDACAO DO PLACES ────────────────────────────────────────────
+// Medido em producao: buscar pelo nome fantasia resolve ~28% dos empilhados, mas
+// parte dos acertos e o estabelecimento ERRADO — nome parecido ("Pasticceria
+// Goiana" -> "Pastel Goiano oficial") ou outra unidade da rede (Casa do Pao de
+// Queijo -> a do aeroporto). Gravar sem conferir trocaria coordenada empilhada
+// por coordenada errada, que e pior: a empilhada pelo menos se ve no mapa.
+//
+// Duas evidencias independentes, e basta uma:
+//   1. a rua do resultado e a rua do cadastro;
+//   2. o ponto esta perto do que o proprio endereco do cadastro geocodifica.
+
+/** Abreviaturas de logradouro. Sem expandir, "Av. Eng. Fuad Rassi" nunca casa
+ *  com "ENGENHEIRO FUAD RASSI" e a trava reprova acerto bom. */
+const ABREV: Record<string, string> = {
+  ENG: "ENGENHEIRO", MIN: "MINISTRO", MAL: "MARECHAL", MAR: "MARECHAL",
+  DR: "DOUTOR", DRA: "DOUTORA", PROF: "PROFESSOR", PROFA: "PROFESSORA",
+  PRES: "PRESIDENTE", CEL: "CORONEL", GEN: "GENERAL", SEN: "SENADOR",
+  DEP: "DEPUTADO", GOV: "GOVERNADOR", PREF: "PREFEITO", DES: "DESEMBARGADOR",
+  CONS: "CONSELHEIRO", BRIG: "BRIGADEIRO", VISC: "VISCONDE", MARQ: "MARQUES",
+  ALM: "ALMIRANTE", VER: "VEREADOR", PE: "PADRE", STO: "SANTO", STA: "SANTA",
+  JD: "JARDIM", PQ: "PARQUE", VL: "VILA",
+};
+
+/** Palavras de TIPO de logradouro: nao identificam a via, so atrapalham a comparacao. */
+const TIPO_VIA =
+  /\b(RUA|R|AVENIDA|AV|AVN|ALAMEDA|AL|PRACA|PC|TRAVESSA|TV|RODOVIA|ROD|ESTRADA|EST|VIA|SETOR|ST|QUADRA|QD|QDA|LOTE|LT|BLOCO|BL|LOJA|LJ|SALA|SL)\b/g;
+
+function normVia(s: any): string {
+  let t = String(s || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ");
+  t = t.split(" ").map((w) => ABREV[w] || w).join(" ");
+  return t.replace(TIPO_VIA, " ").replace(/[^A-Z0-9]/g, "");
+}
+
+/** Nome da via do cadastro: o que vem antes da primeira virgula ou traco. */
+function viaDoCadastro(endereco: any): string {
+  const bruto = String(endereco || "").split(/[,\-–—]/)[0];
+  return normVia(bruto);
+}
+
+/** Distancia em km entre dois pontos (haversine). */
+function distanciaKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371, rad = (g: number) => (g * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const soDigitos = (s: any) => String(s || "").replace(/\D/g, "");
+
+/** Limite de distancia: dentro disso o ponto ainda e o mesmo pedaco de cidade. */
+const RAIO_ACEITO_KM = 2;
+
+/**
+ * Decide se a coordenada do Places pode ser confiada para este cliente.
+ * `referencia` e o que o endereco do cadastro geocodificou (mesmo que impreciso):
+ * serve de ancora geografica.
+ */
+function validarPlaces(
+  cliente: { endereco: any; cep: any },
+  places: { lat: string; lon: string; endereco: string },
+  referencia: { lat: string; lon: string } | null,
+) {
+  const via = viaDoCadastro(cliente.endereco);
+  // Via curta demais casa com qualquer coisa e nao serve de prova — "53" aparece
+  // dentro de qualquer numero. A excecao sao as vias alfanumericas de Goiania
+  // ("6A", "T7"): duas posicoes, mas com letra e digito juntos ja discriminam.
+  const viaDiscrimina = via.length >= 3 || (via.length === 2 && /[A-Z]/.test(via) && /\d/.test(via));
+  const ruaConfere = viaDiscrimina ? normVia(places.endereco).includes(via) : null;
+
+  const cepCad = soDigitos(cliente.cep);
+  const cepConfere = cepCad.length === 8 ? soDigitos(places.endereco).includes(cepCad) : null;
+
+  let distanciaDaReferenciaKm: number | null = null;
+  if (referencia) {
+    const d = distanciaKm(
+      Number(referencia.lat), Number(referencia.lon),
+      Number(places.lat), Number(places.lon),
+    );
+    if (Number.isFinite(d)) distanciaDaReferenciaKm = Math.round(d * 100) / 100;
+  }
+  const pertoDaReferencia =
+    distanciaDaReferenciaKm === null ? null : distanciaDaReferenciaKm <= RAIO_ACEITO_KM;
+
+  const aprovado = ruaConfere === true || cepConfere === true || pertoDaReferencia === true;
+  const motivo = aprovado
+    ? ruaConfere === true ? "rua confere"
+      : cepConfere === true ? "CEP confere"
+      : `a ${distanciaDaReferenciaKm} km do endereco do cadastro`
+    : referencia === null
+      ? "sem referencia para comparar e rua nao confere"
+      : `rua diferente e ${distanciaDaReferenciaKm} km longe do endereco do cadastro`;
+
+  return { aprovado, motivo, ruaConfere, cepConfere, distanciaDaReferenciaKm };
+}
+
 /**
  * Coordenada util = aponta o ENDERECO, nao a via nem a regiao.
  *
@@ -260,6 +360,8 @@ export function registerGeocodeAnalyze(app: Express) {
         // Quebra do ganho do Places por qual termo acertou — e o dado que decide
         // se vale padronizar a busca pelo nome fantasia.
         let placesPorFantasia = 0, placesPorRazaoSocial = 0;
+        // Achou no Places, mas a trava barrou: provavel estabelecimento errado.
+        let placesReprovados = 0;
 
         for (const c of cands) {
           const cidade = String(c.city || "");
@@ -283,6 +385,9 @@ export function registerGeocodeAnalyze(app: Express) {
             // A — linha de base
             const a = await geocodeOne([original, sufixo].filter(Boolean).join(", "));
             linha.A = a ? { precisao: a.precisao, resultado: String(a.display_name).slice(0, 90) } : null;
+            // Ancora geografica da trava do Places: mesmo impreciso, o endereco do
+            // cadastro diz em que pedaco da cidade o cliente esta.
+            if (a) linha.refGeo = { lat: a.lat, lon: a.lon };
             if (util(a)) { linha.veredito = "ja_resolvido"; jaOk++; linhas.push(linha); await esperar(); continue; }
 
             // B — endereco limpo (so faz sentido se a limpeza mudou algo)
@@ -290,25 +395,39 @@ export function registerGeocodeAnalyze(app: Express) {
               await esperar();
               const b = await geocodeOne([limpo, sufixo].filter(Boolean).join(", "));
               linha.B = b ? { precisao: b.precisao, resultado: String(b.display_name).slice(0, 90) } : null;
+              if (b && !linha.refGeo) linha.refGeo = { lat: b.lat, lon: b.lon };
               if (util(b)) { linha.veredito = "resolvido_pela_limpeza"; ganhoLimpeza++; linhas.push(linha); await esperar(); continue; }
             }
 
             // C — Places: nome FANTASIA primeiro, razao social como segunda tentativa.
+            // O acerto so vale se passar na trava: o Places acha por nome, e nome
+            // parecido nao e o mesmo estabelecimento.
             if (incluirPlaces && c.cnpj) {
               await esperar();
               const p = await buscarPlacesComFallback(fantasia, String(c.name || ""), cidade, uf);
-              linha.C = p.ok
-                ? {
-                    origemDoTermo: p.origemDoTermo, termoUsado: p.termoUsado,
-                    nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90),
-                    lat: p.lat, lon: p.lon,
-                  }
-                : { falhou: p.motivo };
               if (p.ok) {
-                linha.veredito = "resolvido_pelo_places";
-                ganhoPlaces++;
-                if (p.origemDoTermo === "fantasia") placesPorFantasia++; else placesPorRazaoSocial++;
-                linhas.push(linha); await esperar(); continue;
+                const v = validarPlaces(
+                  { endereco: original, cep: c.zip_code },
+                  { lat: p.lat, lon: p.lon, endereco: p.endereco },
+                  linha.refGeo || null,
+                );
+                linha.C = {
+                  origemDoTermo: p.origemDoTermo, termoUsado: p.termoUsado,
+                  nomeEncontrado: p.nomeEncontrado, endereco: p.endereco.slice(0, 90),
+                  lat: p.lat, lon: p.lon,
+                  aprovado: v.aprovado, motivo: v.motivo,
+                  ruaConfere: v.ruaConfere, cepConfere: v.cepConfere,
+                  distanciaDaReferenciaKm: v.distanciaDaReferenciaKm,
+                };
+                if (v.aprovado) {
+                  linha.veredito = "resolvido_pelo_places";
+                  ganhoPlaces++;
+                  if (p.origemDoTermo === "fantasia") placesPorFantasia++; else placesPorRazaoSocial++;
+                  linhas.push(linha); await esperar(); continue;
+                }
+                placesReprovados++;
+              } else {
+                linha.C = { falhou: p.motivo };
               }
             }
 
@@ -341,6 +460,11 @@ export function registerGeocodeAnalyze(app: Express) {
           places: {
             acertosPeloNomeFantasia: placesPorFantasia,
             acertosPelaRazaoSocial: placesPorRazaoSocial,
+            // Barrados pela trava — o Places achou "um" lugar, nao "o" lugar.
+            reprovadosNaTrava: placesReprovados,
+            aprovadosPelaRua: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere === true).length,
+            aprovadosPeloCep: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere === true).length,
+            aprovadosPelaDistancia: linhas.filter((l) => l.C?.aprovado && l.C?.ruaConfere !== true && l.C?.cepConfere !== true).length,
             clientesComFantasiaPreenchido: linhas.filter((l) => l.temFantasia).length,
             clientesSemFantasia: linhas.filter((l) => l.tipo === "PJ" && !l.temFantasia).length,
           },
