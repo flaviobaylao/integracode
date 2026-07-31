@@ -378,6 +378,30 @@ function filtroDoEscopo(escopo: Escopo) {
     : sql``;
 }
 
+/**
+ * Selecao por lista explicita de ids.
+ *
+ * Existe porque o escopo "duplicados" ENCOLHE conforme se grava: se A e B
+ * compartilhavam o ponto e A recebe coordenada nova, B deixa de ser duplicado e
+ * sai da consulta — mesmo mantendo a coordenada velha. Medido em producao: dos
+ * 42 aprovados, 3 sairam do escopo no meio da gravacao. Paginar sobre um filtro
+ * que a propria escrita invalida perde linhas; por isso existe este caminho
+ * direto, que nao depende do estado das coordenadas.
+ */
+async function selecionarPorIds(ids: string[]) {
+  const lista = ids.map((x) => String(x)).filter(Boolean).slice(0, 200);
+  if (!lista.length) return { cands: [] as any[], totalNoEscopo: 0 };
+  const sel: any = await db.execute(sql`
+    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
+    FROM customers c
+    WHERE (c.is_supplier IS NOT TRUE)
+      AND (c.coordinates_locked IS NOT TRUE)
+      AND c.id = ANY(${lista})
+  `);
+  const cands = (sel.rows || sel) as any[];
+  return { cands, totalNoEscopo: cands.length };
+}
+
 async function selecionarClientes(escopo: Escopo, limit: number, offset: number) {
   const filtro = filtroDoEscopo(escopo);
   const sel: any = await db.execute(sql`
@@ -570,7 +594,12 @@ export function registerGeocodeAnalyze(app: Express) {
         const incluirPlaces = (req.body as any)?.incluirPlaces !== false;
         const escopo = lerEscopo(req.body);
 
-        const { cands, totalNoEscopo } = await selecionarClientes(escopo, limit, offset);
+        // `ids` tem precedencia: quando o chamador sabe exatamente quem quer
+        // tratar, nenhum filtro dinamico deve poder tirar linhas do caminho.
+        const idsPedidos: string[] = Array.isArray((req.body as any)?.ids) ? (req.body as any).ids : [];
+        const { cands, totalNoEscopo } = idsPedidos.length
+          ? await selecionarPorIds(idsPedidos)
+          : await selecionarClientes(escopo, limit, offset);
 
         const linhas: any[] = [];
         for (const c of cands) {
@@ -614,7 +643,12 @@ export function registerGeocodeAnalyze(app: Express) {
         const escopo = lerEscopo(req.body);
         const aplicar = (req.body as any)?.aplicar === true;
 
-        const { cands, totalNoEscopo } = await selecionarClientes(escopo, limit, offset);
+        // `ids` tem precedencia: quando o chamador sabe exatamente quem quer
+        // tratar, nenhum filtro dinamico deve poder tirar linhas do caminho.
+        const idsPedidos: string[] = Array.isArray((req.body as any)?.ids) ? (req.body as any).ids : [];
+        const { cands, totalNoEscopo } = idsPedidos.length
+          ? await selecionarPorIds(idsPedidos)
+          : await selecionarClientes(escopo, limit, offset);
 
         const itens: any[] = [];
         let gravados = 0, falhasDeGravacao = 0;
