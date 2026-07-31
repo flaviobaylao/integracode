@@ -1536,8 +1536,32 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Update item details (notes, invoice number, etc.)
-  app.patch('/api/billing-pipeline/:id', authenticateUser, isAdminOnly, async (req: any, res) => {
+  app.patch('/api/billing-pipeline/:id', authenticateUser, async (req: any, res) => {
     try {
+      // AUTORIZACAO: managers (admin/coord/adm) editam tudo, como antes. Vendedor externo e
+      // Telemarketing so editam o PROPRIO pedido (sellerId == user.id), so nos status Agendado/
+      // Pedido, e SOMENTE produtos/quantidades, forma de pagamento e 'Faturar em'. Nunca outros
+      // campos e nunca troca de status/raia manual (unica variacao e' agendado<->pedido pela data).
+      const _u = req.currentUser || req.user;
+      const _role = String(_u?.role || '');
+      const _isManager = ['admin', 'coordinator', 'administrative'].includes(_role);
+      const _isSeller = ['vendedor', 'telemarketing'].includes(_role);
+      if (!_isManager && !_isSeller) return res.status(403).json({ message: 'Access denied' });
+      if (!_isManager) {
+        const _cur = await storage.getBillingPipelineItem(req.params.id);
+        if (!_cur) return res.status(404).json({ message: 'Pedido nao encontrado' });
+        if (String(_cur.sellerId || '') !== String(_u.id)) {
+          return res.status(403).json({ message: 'Voce so pode editar pedidos sob sua responsabilidade.' });
+        }
+        if (!['agendado', 'pedido'].includes(String(_cur.stage))) {
+          return res.status(403).json({ message: 'Edicao permitida apenas nos status Agendado ou Pedido.' });
+        }
+        req.body = {
+          products: req.body?.products,
+          paymentMethod: req.body?.paymentMethod,
+          scheduledBillingDate: req.body?.scheduledBillingDate,
+        };
+      }
       const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
       const updates: any = {};
       if (notes !== undefined) updates.notes = notes;
