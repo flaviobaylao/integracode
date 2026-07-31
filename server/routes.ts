@@ -20367,7 +20367,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(and(
             inArray(customers.id, customerIds),
             eq(customers.omieStatus, 'ativo'),
-            eq(customers.isActive, true) // cliente "Inativo" no cadastro (isActive=false) NÃO entra na rota do dia
+            eq(customers.isActive, true), // cliente "Inativo" no cadastro (isActive=false) NÃO entra na rota do dia
+            // 🗓️ DATA DE INÍCIO DO FORNECIMENTO: o cliente só entra na rota a partir do
+            // service_start_date. A rota (optimizedOrder) e a agenda podiam ter sido geradas
+            // com datas ANTERIORES ao início (cadência ancorada antes do começo), fazendo o
+            // cliente aparecer antes de começar a ser atendido. Este guard vale inclusive para
+            // rotas JÁ PERSISTIDAS, sem precisar regerar. (31/jul/2026)
+            or(isNull(customers.serviceStartDate), lte(customers.serviceStartDate, new Date(`${date}T23:59:59.999Z`)))
           ));
 
         const inactiveCount = customerIds.length - customersData.length;
