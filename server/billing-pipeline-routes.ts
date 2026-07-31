@@ -1556,11 +1556,48 @@ export function registerBillingPipelineRoutes(app: Express) {
         if (!['agendado', 'pedido'].includes(String(_cur.stage))) {
           return res.status(403).json({ message: 'Edicao permitida apenas nos status Agendado ou Pedido.' });
         }
-        req.body = {
-          products: req.body?.products,
-          paymentMethod: req.body?.paymentMethod,
-          scheduledBillingDate: req.body?.scheduledBillingDate,
-        };
+        // Reancoragem de precos (vendedor NUNCA define preco): mantem o preco unitario original das
+        // linhas ja existentes no pedido; para linhas NOVAS usa o preco do catalogo. Ignora qualquer
+        // preco vindo do cliente. So a QUANTIDADE e o incluir/excluir de produtos sao do vendedor.
+        const _norm = (x: any) => String(x || '').trim().toLowerCase();
+        const _origLines: any[] = Array.isArray((_cur as any).products) ? (_cur as any).products : [];
+        const _origById = new Map<string, number>();
+        const _origByName = new Map<string, number>();
+        for (const o of _origLines) {
+          const _q = parseFloat(String(o?.quantity ?? 1)) || 1;
+          const _up = (o?.unitPrice != null && String(o.unitPrice) !== '')
+            ? (parseFloat(String(o.unitPrice)) || 0)
+            : ((parseFloat(String(o?.totalPrice ?? 0)) || 0) / (_q || 1));
+          if (o?.id != null && String(o.id) !== '') _origById.set(String(o.id), _up);
+          if (o?.name) _origByName.set(_norm(o.name), _up);
+        }
+        let _catalog: any[] = [];
+        try { _catalog = await storage.getProducts(); } catch (_e) { _catalog = []; }
+        const _catById = new Map<string, { price: number; name: string }>();
+        for (const c of _catalog) {
+          const _cp = parseFloat(String((c as any)?.price ?? '0')) || 0;
+          if ((c as any)?.id != null) _catById.set(String((c as any).id), { price: _cp, name: (c as any)?.name });
+        }
+        if (req.body?.products !== undefined) {
+          const _incoming: any[] = Array.isArray(req.body.products) ? req.body.products : [];
+          const _repriced: any[] = [];
+          for (const _l of _incoming) {
+            const _qty = parseFloat(String(_l?.quantity ?? 0)) || 0;
+            let _up: number | undefined;
+            let _nm = _l?.name;
+            if (_l?.id != null && _origById.has(String(_l.id))) _up = _origById.get(String(_l.id));
+            else if (_l?.name && _origByName.has(_norm(_l.name))) _up = _origByName.get(_norm(_l.name));
+            else if (_l?.id != null && _catById.has(String(_l.id))) { const _c = _catById.get(String(_l.id))!; _up = _c.price; _nm = _c.name || _nm; }
+            if (_up === undefined) {
+              return res.status(400).json({ message: 'Produto sem preco de referencia - adicione a partir do catalogo.' });
+            }
+            const _total = Math.round(_qty * _up * 100) / 100;
+            _repriced.push({ ..._l, name: _nm, quantity: _qty, unitPrice: _up, totalPrice: _total });
+          }
+          req.body = { products: _repriced, paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate };
+        } else {
+          req.body = { paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate };
+        }
       }
       const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
       const updates: any = {};
