@@ -97,10 +97,22 @@ export function normalizeNcm(raw: string | null | undefined): string {
 //
 // Override SEM DEPLOY pela env RT_IBSCBS_MODE:
 //   'crt3' (default) = só regime normal · 'all' = todos · 'off' = desliga tudo
+// Alíquotas NOMINAIS do ano-teste. Com redução, o XSD manda informar a NOMINAL em
+// pIBSUF/pIBSMun/pCBS e a redução no grupo gRed (pRedAliq + pAliqEfet); o valor do
+// tributo é calculado sobre a pAliqEfet ("alíquota efetiva que será aplicada à base
+// de cálculo", conforme a documentação do próprio XSD).
 const RT_ALIQ_2026 = { pIBSUF: '0.1000', pIBSMun: '0.0000', pCBS: '0.9000' };
 const RT_PCT_2026 = { ibsUf: 0.1, ibsMun: 0, cbs: 0.9 };
-const RT_CST_PADRAO = '000';          // 000 = tributação integral
-const RT_CCLASSTRIB_PADRAO = '000001'; // idem, sem benefício/redução
+
+// Classificação tributária dos produtos da Honest — DEFINIDA PELO CONTADOR (31/jul/2026):
+// sucos = alimentos destinados ao consumo humano, Anexo VII da LC 214/2025, art. 135,
+// com redução de 60% das alíquotas de IBS e CBS.
+//   CST 200        = alíquota reduzida
+//   cClassTrib 200034 = "Fornecimento dos alimentos destinados ao consumo humano (Anexo VII)"
+// ⚠️ Itens do Anexo I (alíquota zero, cesta básica) usariam 200003 — NÃO é o caso aqui.
+const RT_CST_PADRAO = '200';           // 200 = alíquota reduzida
+const RT_CCLASSTRIB_PADRAO = '200034'; // Anexo VII — alimentos p/ consumo humano
+const RT_RED_PADRAO = 60;              // % de redução (art. 135 da LC 214/2025)
 
 export function rtIbsCbsAtivo(crt: string | null | undefined): boolean {
   const modo = String(process.env.RT_IBSCBS_MODE || 'crt3').trim().toLowerCase();
@@ -112,6 +124,11 @@ export function rtIbsCbsAtivo(crt: string | null | undefined): boolean {
 // Arredonda para 2 casas sem o erro de ponto flutuante do toFixed cru.
 function rt2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// Idem para 4 casas (alíquotas efetivas).
+function rt4(n: number): number {
+  return Math.round((n + Number.EPSILON) * 10000) / 10000;
 }
 
 // Substituição tributária da filial BSB (CNPJ 28295493000315, PURO IND COM
@@ -1224,22 +1241,34 @@ function buildDocumento(
     // PIS, COFINS, ICMSUFDest e IS). Manter esta atribuição no fim do bloco.
     if (rtAtivo) {
       const rtBc = Math.max(0, parseFloat(totPrc) - (descVal > 0 ? descVal : 0));
-      const vIbsUf = rt2((rtBc * RT_PCT_2026.ibsUf) / 100);
-      const vIbsMun = rt2((rtBc * RT_PCT_2026.ibsMun) / 100);
-      const vCbs = rt2((rtBc * RT_PCT_2026.cbs) / 100);
+      // Redução de alíquota (0 = sem redução). Override futuro por item.
+      const redPct = Math.min(100, Math.max(0, Number((item as any).rtPRedAliq ?? RT_RED_PADRAO)));
+      const fatorEfet = (100 - redPct) / 100;
+      // Alíquotas EFETIVAS = nominal × (1 − redução). 4 casas, como o XSD pede.
+      const efetUf = rt4(RT_PCT_2026.ibsUf * fatorEfet);
+      const efetMun = rt4(RT_PCT_2026.ibsMun * fatorEfet);
+      const efetCbs = rt4(RT_PCT_2026.cbs * fatorEfet);
+      // O tributo incide sobre a alíquota EFETIVA, não sobre a nominal.
+      const vIbsUf = rt2((rtBc * efetUf) / 100);
+      const vIbsMun = rt2((rtBc * efetMun) / 100);
+      const vCbs = rt2((rtBc * efetCbs) / 100);
       sumRtBc += rtBc;
       sumRtIbsUf += vIbsUf;
       sumRtIbsMun += vIbsMun;
       sumRtCbs += vCbs;
+      // gRed só existe quando há redução; e no XSD ele vem ANTES do valor (v*).
+      const gRed = (p: number) => (redPct > 0
+        ? { gRed: { pRedAliq: redPct.toFixed(4), pAliqEfet: p.toFixed(4) } }
+        : {});
       imposto.IBSCBS = {
         CST: String((item as any).cstIbsCbs || RT_CST_PADRAO),
         cClassTrib: String((item as any).cClassTrib || RT_CCLASSTRIB_PADRAO),
         gIBSCBS: {
           vBC: rtBc.toFixed(2),
-          gIBSUF: { pIBSUF: RT_ALIQ_2026.pIBSUF, vIBSUF: vIbsUf.toFixed(2) },
-          gIBSMun: { pIBSMun: RT_ALIQ_2026.pIBSMun, vIBSMun: vIbsMun.toFixed(2) },
+          gIBSUF: { pIBSUF: RT_ALIQ_2026.pIBSUF, ...gRed(efetUf), vIBSUF: vIbsUf.toFixed(2) },
+          gIBSMun: { pIBSMun: RT_ALIQ_2026.pIBSMun, ...gRed(efetMun), vIBSMun: vIbsMun.toFixed(2) },
           vIBS: rt2(vIbsUf + vIbsMun).toFixed(2),
-          gCBS: { pCBS: RT_ALIQ_2026.pCBS, vCBS: vCbs.toFixed(2) },
+          gCBS: { pCBS: RT_ALIQ_2026.pCBS, ...gRed(efetCbs), vCBS: vCbs.toFixed(2) },
         },
       };
     }
