@@ -40,6 +40,7 @@ const TOOL_DEFS: any[] = [
   { name: 'transferir_humano', description: 'Transfere a conversa para um atendente humano quando o cliente pede falar com pessoa, reclama, ou o caso foge do seu escopo. Após chamar, avise o cliente que um atendente vai continuar.', input_schema: { type: 'object', properties: { motivo: { type: 'string', description: 'motivo da transferência' } }, required: [] } },
   { name: 'buscar_boleto', description: 'Busca a 2ª via de boleto/cobrança em aberto do cliente. Retorna link de pagamento, valor e vencimento. Use o documento se o cliente informar; senão usa o cliente da conversa.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ (somente se o cliente informar)' } }, required: [] } },
   { name: 'consultar_debitos', description: 'Consulta os débitos/títulos em aberto (vencidos) do cliente. Retorna total e dias de atraso.', input_schema: { type: 'object', properties: { documento: { type: 'string' } }, required: [] } },
+  { name: 'consultar_pedido', description: 'Le o pedido do cliente e devolve tudo sobre ele: numero, data, situacao, valor, forma de pagamento, previsao de entrega, nota fiscal e a LISTA DE PRODUTOS com quantidades. Use SEMPRE que o cliente perguntar qualquer coisa sobre "esse pedido" / "meu pedido" — o que veio, quando chega, quanto ficou, por que travou. NAO peca CPF/CNPJ nem diga que nao ha pedido nesta conversa: consulte primeiro.', input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'numero do pedido, apenas se o cliente citar um especifico' } }, required: [] } },
   { name: 'segunda_via', description: 'Envia a 2ª via de TODOS os títulos vencidos em aberto do cliente: um PIX copia-e-cola por título, com número, vencimento e valor, mais o total. Use SEMPRE que o cliente pedir 2ª via, boleto, chave PIX, "como pago" ou responder pedindo a via de um aviso de pedido. Você JÁ sabe quem é o cliente pela conversa — NÃO peça CPF/CNPJ.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ, apenas se o cliente informar espontaneamente' } }, required: [] } },
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
 ];
@@ -260,6 +261,7 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
+    if (name === 'consultar_pedido') return await consultarPedido(input || {}, ctx);
     if (name === 'segunda_via') return await segundaVia(input || {}, ctx);
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
@@ -499,6 +501,90 @@ async function gerarPix(_input: any, ctx: any): Promise<string> {
   } catch (e: any) {
     console.error('[IG-PIX]', e?.message || e);
     return 'Não consegui gerar o PIX agora (erro interno). Peça desculpas ao cliente e transfira para um atendente humano.';
+  }
+}
+
+// CONSULTA DO PEDIDO
+// O cliente que responde "tenho uma duvida" a um aviso de pedido esta perguntando SOBRE
+// AQUELE PEDIDO. Antes, a IA so enxergava pedidos criados por ela mesma dentro da
+// conversa (instagram_pix) e respondia "nao ha nenhum pedido registrado nessa conversa"
+// para um cliente que tinha acabado de receber a confirmacao — a pior resposta possivel.
+// Aqui ela le o pedido de verdade: sales_card + etapa do faturamento + bloqueio.
+function _situacaoPedido(r: any): string {
+  const bloqueado = r.block_status === 'blocked';
+  if (bloqueado) {
+    return r.block_reason === 'overdue_debt'
+      ? 'RETIDO por titulo(s) em aberto — libera sozinho assim que o pagamento for identificado'
+      : 'em aprovacao interna';
+  }
+  const etapa: Record<string, string> = {
+    agendado: 'agendado', pedido: 'em preparacao', a_faturar: 'em faturamento',
+    faturado: 'faturado', impresso: 'faturado', aguardando_rota: 'aguardando rota',
+    em_rota: 'saiu para entrega', entregue: 'entregue',
+  };
+  if (r.stage && etapa[String(r.stage)]) return etapa[String(r.stage)];
+  if (String(r.delivery_status || '') === 'delivered') return 'entregue';
+  if (String(r.delivery_status || '') === 'in_transit') return 'saiu para entrega';
+  return 'registrado';
+}
+
+async function consultarPedido(input: any, ctx: any): Promise<string> {
+  try {
+    const cid = await resolveCustomerId(ctx, undefined);
+    if (!cid) return 'Cliente nao identificado nesta conversa. Peca o CPF/CNPJ ou o numero do pedido e chame a ferramenta de novo.';
+    const numero = String(input?.numero || '').trim();
+
+    const r: any = await db.execute(sql`
+      SELECT sc.id, sc.status, sc.sale_value, sc.products, sc.payment_method, sc.operation_type,
+             sc.completed_date, sc.delivery_status, sc.delivery_scheduled_date, sc.invoice_number,
+             bp.stage, bp.order_number, bp.invoice_number AS bp_invoice, bp.scheduled_billing_date,
+             bo.block_reason, bo.status AS block_status
+      FROM sales_cards sc
+      LEFT JOIN LATERAL (SELECT stage, order_number, invoice_number, scheduled_billing_date
+                         FROM billing_pipeline b WHERE b.sales_card_id = sc.id
+                         ORDER BY created_at DESC LIMIT 1) bp ON true
+      LEFT JOIN LATERAL (SELECT block_reason, status FROM blocked_orders o WHERE o.sales_card_id = sc.id
+                         ORDER BY blocked_at DESC LIMIT 1) bo ON true
+      WHERE sc.customer_id = ${cid}
+        AND COALESCE(sc.status,'') NOT IN ('cancelled','telemarketing')
+        AND (sc.completed_date IS NOT NULL OR COALESCE(sc.status,'') IN ('blocked','completed','invoiced'))
+        AND (${numero || ''} = '' OR COALESCE(bp.order_number,'') = ${numero} OR sc.id::text LIKE ${'%' + numero.replace(/^INT-/i, '') + '%'})
+      ORDER BY COALESCE(sc.completed_date, sc.updated_at, sc.created_at) DESC
+      LIMIT 1`);
+    const p = r.rows?.[0];
+    if (!p) return numero
+      ? `Nao encontrei o pedido ${numero} para este cliente. Peca desculpas, confirme o numero com o cliente e, se insistir, transfira para um atendente.`
+      : 'Este cliente nao tem pedido registrado. Diga isso de forma simpatica e ofereca ajuda para fazer um pedido.';
+
+    const num = p.order_number || ('INT-' + String(p.id).substring(0, 8));
+    const data = p.completed_date ? new Date(p.completed_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-';
+    const itens: any[] = Array.isArray(p.products) ? p.products : [];
+    const lista = itens.length
+      ? itens.slice(0, 20).map((i: any) => `${i.quantity || 1}x ${i.name}${i.totalPrice ? ' (' + brl(i.totalPrice) + ')' : ''}`).join('; ')
+      : 'nao consta a lista de itens neste pedido';
+    const entrega = p.delivery_scheduled_date
+      ? new Date(p.delivery_scheduled_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+      : (p.scheduled_billing_date ? new Date(p.scheduled_billing_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : null);
+    const nf = p.bp_invoice || p.invoice_number;
+
+    const partes = [
+      `Pedido ${num}`,
+      `data ${data}`,
+      `situacao: ${_situacaoPedido(p)}`,
+      `valor ${brl(p.sale_value)}`,
+      p.payment_method ? `pagamento ${String(p.payment_method).replace(/_/g, ' ')}` : '',
+      entrega ? `entrega prevista ${entrega}` : '',
+      nf ? `NF ${nf}` : '',
+      `itens: ${lista}`,
+    ].filter(Boolean);
+
+    return 'DADOS DO PEDIDO (responda so o que o cliente perguntou, com estes dados, sem inventar): '
+      + partes.join(' · ')
+      + (p.block_status === 'blocked' && p.block_reason === 'overdue_debt'
+        ? ' | Se o cliente perguntar por que travou ou quiser pagar, use a ferramenta segunda_via.' : '');
+  } catch (e: any) {
+    console.error('[IA-PEDIDO]', e?.message || e);
+    return 'Nao consegui consultar o pedido agora. Peca desculpas e transfira para um atendente humano.';
   }
 }
 
