@@ -130,8 +130,9 @@ export async function createCieloLink(args: CreateCieloLinkArgs): Promise<Create
     if (!(cents > 0)) return { ok: false, error: 'valor invalido' };
 
     const token = await getLinkToken();
-    const body: any = {
-      type: args.type || 'Payment',
+    const build = (tipo: string) => {
+      const b: any = {
+      type: tipo,
       name: String(args.name || 'Pagamento').slice(0, 128),
       price: cents,
       orderNumber: String(args.orderNumber).slice(0, 20),
@@ -140,20 +141,37 @@ export async function createCieloLink(args: CreateCieloLinkArgs): Promise<Create
       fixedinstallments: 1,
       // link de uso único: 1 transação válida
       quantity: '1',
+      // A API exige o objeto de frete mesmo em cobranca sem entrega — a entrega
+      // da Honest e feita pela propria rota, entao nunca ha frete no link.
+      shipping: { type: 'WithoutShipping' },
+      };
+      if (args.description) { b.description = String(args.description).slice(0, 256); b.showDescription = true; }
+      if (args.expirationDate) b.expirationDate = args.expirationDate;
+      if (args.softDescriptor) b.softDescriptor = String(args.softDescriptor).slice(0, 13);
+      if (args.sku) b.sku = String(args.sku).slice(0, 32);
+      return b;
     };
-    if (args.description) { body.description = String(args.description).slice(0, 256); body.showDescription = true; }
-    if (args.expirationDate) body.expirationDate = args.expirationDate;
-    if (args.softDescriptor) body.softDescriptor = String(args.softDescriptor).slice(0, 13);
-    if (args.sku) body.sku = String(args.sku).slice(0, 32);
 
-    const r = await linkFetch(`${cfg.base}/api/public/v1/products/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const txt = await r.text();
-    let j: any = null;
-    try { j = txt ? JSON.parse(txt) : null; } catch { /* ignora */ }
+    const post = async (tipo: string) => {
+      const r = await linkFetch(`${cfg.base}/api/public/v1/products/`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(build(tipo)),
+      });
+      const txt = await r.text();
+      let j: any = null;
+      try { j = txt ? JSON.parse(txt) : null; } catch { /* ignora */ }
+      return { r, j, txt };
+    };
+
+    const tipo1 = args.type || 'Payment';
+    let { r, j, txt } = await post(tipo1);
+    // Alguns cadastros nao aceitam o tipo "Payment" (regra de negocio da Cielo).
+    // Nesse caso tentamos UMA vez como "Service", que aceita frete WithoutShipping.
+    if (r.status === 400 && tipo1 !== 'Service') {
+      console.warn(`⚠️ [CIELO-LINK] tipo ${tipo1} recusado (${String(j?.message || txt || '').slice(0, 160)}) — tentando como Service`);
+      ({ r, j, txt } = await post('Service'));
+    }
 
     if (!r.ok || !j) {
       return { ok: false, httpStatus: r.status, error: String(j?.message || txt || `HTTP ${r.status}`).slice(0, 300), raw: j };
@@ -162,7 +180,7 @@ export async function createCieloLink(args: CreateCieloLinkArgs): Promise<Create
     const url = extractCheckoutUrl(j);
     if (!url) return { ok: false, httpStatus: r.status, error: 'resposta da Cielo sem URL do link', raw: j };
 
-    return { ok: true, checkoutUrl: url, productId: String(j.id || j.productId || ''), orderNumber: body.orderNumber, httpStatus: r.status, raw: j };
+    return { ok: true, checkoutUrl: url, productId: String(j.id || j.productId || ''), orderNumber: String(args.orderNumber).slice(0, 20), httpStatus: r.status, raw: j };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }
