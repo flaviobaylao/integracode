@@ -12,8 +12,18 @@ const UMBLER_TALK_BASE = 'https://app-utalk.umbler.com/api';
 const OFICIAL_CHANNEL_ID = process.env.UMBLER_OFFICIAL_CHANNEL_ID || 'ajqNf-Vjp4yjcaJf';
 function orgId(): string { return process.env.UMBLER_TALK_ORG_ID || 'aZiQMy9bnyeDpiaY'; }
 function testPhones(): string[] { return (process.env.INTEGRA_OFICIAL_TEST_PHONES || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean); }
-function dailyCap(): number { return parseInt(process.env.INTEGRA_OFICIAL_DAILY_CAP || '200', 10); }
-function ratePerMin(): number { return parseInt(process.env.INTEGRA_OFICIAL_RATE_PER_MIN || '10', 10); }
+// Teto diario e ritmo: painel primeiro (system_settings), depois variavel de ambiente,
+// depois o padrao. Antes so existia a variavel — mudar o teto exigia deploy no Railway.
+export async function dailyCap(): Promise<number> {
+  const s = parseInt(await getSetting('oficial_daily_cap', ''), 10);
+  if (s > 0) return s;
+  return parseInt(process.env.INTEGRA_OFICIAL_DAILY_CAP || '200', 10) || 200;
+}
+export async function ratePerMin(): Promise<number> {
+  const s = parseInt(await getSetting('oficial_rate_min', ''), 10);
+  if (s > 0) return s;
+  return parseInt(process.env.INTEGRA_OFICIAL_RATE_PER_MIN || '10', 10) || 10;
+}
 
 async function getSetting(key: string, def: string): Promise<string> {
   try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
@@ -146,10 +156,10 @@ let _sentMin = 0, _minMark = 0;
 export async function processDispatchQueueTick() {
   if (await mode() === 'off') return;   // trava mestra
   const nm = Math.floor(Date.now()/60000); if (nm !== _minMark) { _minMark = nm; _sentMin = 0; }
-  if (_sentMin >= ratePerMin()) return;
+  if (_sentMin >= await ratePerMin()) return;
   const st: any = await db.execute(sql`SELECT count(*)::int n FROM official_dispatches
     WHERE status IN ('enviada','entregue','lida','resposta') AND sent_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
-  if ((st.rows?.[0]?.n || 0) >= dailyCap()) return;
+  if ((st.rows?.[0]?.n || 0) >= await dailyCap()) return;
   // Pega ate 20 da fila e envia a primeira elegivel — assim uma linha "on" fora do
   // expediente nao trava as linhas "test" que estao atras dela.
   const q: any = await db.execute(sql`SELECT * FROM official_dispatches WHERE status='fila' ORDER BY created_at LIMIT 20`);
@@ -239,8 +249,8 @@ export function registerOfficialDispatch(app: any) {
       porCaso,
       testPhones: testPhones().map(mascara),
       testPhonesOk: testPhones().length > 0,
-      dailyCap: dailyCap(),
-      ratePerMin: ratePerMin(),
+      dailyCap: await dailyCap(),
+      ratePerMin: await ratePerMin(),
       tokenUmbler: !!process.env.UMBLER_TALK_TOKEN,
       canalOficial: OFICIAL_CHANNEL_ID,
       organizationId: orgId(),

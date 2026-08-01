@@ -38,14 +38,28 @@ export function registerOfficialPanel(app: any) {
       useCases[uc] = await getSetting('oficial_' + uc, 'off');
       useCaseModes[uc] = (await getSetting('oficial_mode_' + uc, '')) || 'herda';
     }
+    // Datas SEMPRE convertidas para Brasilia dos dois lados: comparar created_at em UTC
+    // com a data de hoje em BRT joga as 3 primeiras horas do dia para o dia anterior.
     const fila: any = (await db.execute(sql`SELECT status, count(*)::int n FROM official_dispatches
-      WHERE created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY status`)).rows || [];
+      WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      GROUP BY status`)).rows || [];
+    // Contador do dia por template — para ver de onde vem o volume e o custo.
+    const porTemplate: any = (await db.execute(sql`
+      SELECT template_label,
+             count(*) FILTER (WHERE status IN ('enviada','entregue','lida','resposta'))::int AS enviadas,
+             count(*) FILTER (WHERE status = 'fila')::int AS fila,
+             count(*) FILTER (WHERE status = 'falha')::int AS falhas,
+             count(*)::int AS total,
+             COALESCE(sum(estimated_cost) FILTER (WHERE status IN ('enviada','entregue','lida','resposta')), 0)::float AS custo
+      FROM official_dispatches
+      WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      GROUP BY template_label ORDER BY total DESC`)).rows || [];
     const ultimos: any = (await db.execute(sql`SELECT customer_phone, template_label, status, use_case, error,
       to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS quando
       FROM official_dispatches ORDER BY created_at DESC LIMIT 20`)).rows || [];
     const custo: any = (await db.execute(sql`SELECT coalesce(sum(estimated_cost),0)::float c FROM official_dispatches
       WHERE status IN ('enviada','entregue','lida','resposta')
-        AND created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
+        AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
     let diag: any = null;
     try {
       const { modeFor } = await import('./official-dispatch');
@@ -58,7 +72,12 @@ export function registerOfficialPanel(app: any) {
         efetivo,
       };
     } catch {}
-    res.json({ mode, useCases, useCaseModes, fila, ultimos, custoHoje: custo, diag });
+    let limites: any = null;
+    try {
+      const { dailyCap, ratePerMin } = await import('./official-dispatch');
+      limites = { tetoDia: await dailyCap(), porMinuto: await ratePerMin() };
+    } catch {}
+    res.json({ mode, useCases, useCaseModes, fila, porTemplate, ultimos, custoHoje: custo, diag, limites });
   });
 
   // Alterar um ajuste
@@ -66,8 +85,16 @@ export function registerOfficialPanel(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const key = String(req.query.key || '');
     const value = String(req.query.value || '');
-    const allowed = ['oficial_dispatch_mode', ...USE_CASES.map(u => 'oficial_' + u), ...USE_CASES.map(u => 'oficial_mode_' + u)];
+    const LIMITES = ['oficial_daily_cap', 'oficial_rate_min'];
+    const allowed = ['oficial_dispatch_mode', ...USE_CASES.map(u => 'oficial_' + u), ...USE_CASES.map(u => 'oficial_mode_' + u), ...LIMITES];
     if (!allowed.includes(key)) return res.status(400).json({ error: 'key invalida' });
+    if (LIMITES.includes(key)) {
+      const n = parseInt(value, 10);
+      const teto = key === 'oficial_daily_cap' ? 5000 : 60;
+      if (!(n > 0) || n > teto) return res.status(400).json({ error: `valor entre 1 e ${teto}` });
+      await setSetting(key, String(n));
+      return res.json({ ok: true, key, value: String(n) });
+    }
     const ehModo = key === 'oficial_dispatch_mode' || key.startsWith('oficial_mode_');
     if (key === 'oficial_dispatch_mode' && !['off', 'test', 'on'].includes(value)) return res.status(400).json({ error: 'value invalido' });
     if (key.startsWith('oficial_mode_') && !['', 'off', 'test', 'on'].includes(value)) return res.status(400).json({ error: 'value invalido' });
@@ -132,8 +159,28 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </div>
 
 <div class="card">
+  <div class="row" style="border:0;padding:0 0 10px">
+    <div><b>Limites</b><br><span class="sub" style="margin:0">Teto do dia e ritmo de envio, compartilhados por TODOS os casos de uso.</span></div>
+    <div>
+      <label class="sub" style="margin:0 6px 0 0">por dia</label>
+      <input id="capDia" type="number" min="1" max="5000" style="width:90px;background:#111827;border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:7px 9px">
+      <label class="sub" style="margin:0 6px 0 14px">por minuto</label>
+      <input id="capMin" type="number" min="1" max="60" style="width:70px;background:#111827;border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:7px 9px">
+      <button class="b-on" style="margin-left:8px" onclick="salvarLimites()">salvar</button>
+      <span id="msgLim" style="margin-left:10px;font-size:13px"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
   <div style="font-weight:700;margin-bottom:12px">Hoje</div>
   <div class="tiles" id="tiles"></div>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">Hoje por template</div>
+  <table><thead><tr><th>Template</th><th>Enviadas</th><th>Na fila</th><th>Falhas</th><th>Total</th><th>Custo</th></tr></thead>
+  <tbody id="porTpl"></tbody></table>
 </div>
 
 <div class="card">
@@ -181,6 +228,18 @@ async function load(){
     const tiles = [['Total hoje',total],['Enviadas',(byStatus.enviada||0)+(byStatus.entregue||0)+(byStatus.lida||0)],
       ['Na fila',byStatus.fila||0],['Falhas',byStatus.falha||0],['Custo estimado','R$ '+(d.custoHoje||0).toFixed(2)]];
     document.getElementById('tiles').innerHTML = tiles.map(t=>'<div class="tile"><b>'+t[1]+'</b><span>'+t[0]+'</span></div>').join('');
+    if (d.limites) {
+      const cd = document.getElementById('capDia'), cm = document.getElementById('capMin');
+      if (document.activeElement !== cd) cd.value = d.limites.tetoDia;
+      if (document.activeElement !== cm) cm.value = d.limites.porMinuto;
+    }
+    const pt = d.porTemplate || [];
+    document.getElementById('porTpl').innerHTML = pt.length ? pt.map(t =>
+      '<tr><td><b>'+(t.template_label||'—')+'</b></td>'+
+      '<td>'+t.enviadas+'</td><td>'+t.fila+'</td>'+
+      '<td'+(t.falhas>0?' style="color:#f0a1ae;font-weight:600"':'')+'>'+t.falhas+'</td>'+
+      '<td>'+t.total+'</td><td>R$ '+Number(t.custo||0).toFixed(2)+'</td></tr>').join('')
+      : '<tr><td colspan="6" style="color:#8b98b0">Nenhum disparo hoje.</td></tr>';
     document.getElementById('rows').innerHTML = (d.ultimos||[]).map(m=>
       '<tr><td>'+m.quando+'</td><td>'+m.customer_phone+'</td><td>'+(m.template_label||'')+'</td><td>'+(m.use_case||'')+
       '</td><td><span class="st s-'+m.status+'">'+m.status+'</span></td><td style="color:#f0a1ae">'+(m.error||'')+'</td></tr>').join('')
@@ -193,6 +252,17 @@ async function setMode(v){
   await fetch('/api/admin/oficial/set'+q('&key=oficial_dispatch_mode&value='+v)); load();
 }
 async function setUC(uc,v){ await fetch('/api/admin/oficial/set'+q('&key=oficial_'+uc+'&value='+v)); load(); }
+async function salvarLimites(){
+  const dia = parseInt(document.getElementById('capDia').value,10);
+  const min = parseInt(document.getElementById('capMin').value,10);
+  const msg = document.getElementById('msgLim');
+  msg.textContent = 'salvando...';
+  const r1 = await (await fetch('/api/admin/oficial/set'+q('&key=oficial_daily_cap&value='+dia))).json();
+  const r2 = await (await fetch('/api/admin/oficial/set'+q('&key=oficial_rate_min&value='+min))).json();
+  msg.innerHTML = (r1.ok && r2.ok) ? '<span style="color:#7ee0a6">salvo</span>'
+    : '<span style="color:#f0a1ae">'+((r1.error||'')+' '+(r2.error||'')).trim()+'</span>';
+  load();
+}
 async function setUCMode(uc,v){
   if(v==='on' && !confirm('Modo ON neste caso de uso envia para CLIENTES REAIS. Confirma?')) return;
   await fetch('/api/admin/oficial/set'+q('&key=oficial_mode_'+uc+'&value='+v)); load();
