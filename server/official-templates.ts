@@ -136,8 +136,14 @@ export async function linhaDebitos(documento: string): Promise<{
   if (!titulos.length) return vazio;
   const brl = (n: number) => 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const totalNum = titulos.reduce((s: number, t: any) => s + Number(t.saldo || 0), 0);
+  // O title_number ja costuma vir rotulado ("NF-104434"). So prefixa quando nao vem.
+  const rotulo = (n: any) => {
+    const s = String(n || '').trim();
+    if (!s) return 'Titulo s/n';
+    return /^(nf|nfe|titulo)/i.test(s) ? s : 'NF ' + s;
+  };
   const mostra = titulos.slice(0, TETO_TITULOS)
-    .map((t: any) => `NF ${t.title_number || 's/n'} venc. ${t.venc} ${brl(t.saldo)}`);
+    .map((t: any) => `${rotulo(t.title_number)} venc. ${t.venc} ${brl(t.saldo)}`);
   const sobra = titulos.length - mostra.length;
   if (sobra > 0) mostra.push(`e mais ${sobra} título${sobra > 1 ? 's' : ''}`);
   // Blindagem: a variavel nao pode ter quebra de linha, tab, nem 4+ espacos seguidos.
