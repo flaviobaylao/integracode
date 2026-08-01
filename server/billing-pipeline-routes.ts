@@ -367,7 +367,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
         console.log(`🚫 [BILLING-PIPELINE] Pedido ${salesCard.id} BLOQUEADO (${blk.reason}: ${(customer as any)?.fantasyName || (customer as any)?.name || salesCard.customerId}) - coluna Bloqueados`);
 
         // NOTIFICAÇÃO (mesma automação 'pedido.criado' da implantação), agora TAMBÉM quando o
-        // pedido nasce BLOQUEADO — com um aviso de bloqueio em CAIXA ALTA anexado à mesma mensagem.
+        // pedido nasce BLOQUEADO — com um aviso de bloqueio anexado à mesma mensagem.
         // Dispara só quando o bloqueio é NOVO (blkIsNew), para não repetir a cada reprocessamento.
         if (blkIsNew) {
           try {
@@ -375,10 +375,10 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
             let regUserB: any = null;
             if (_cbeB && !/^(system|auto|reconcile)/i.test(_cbeB)) { try { regUserB = await storage.getUserByEmail(_cbeB); } catch {} }
             const sellerB = regUserB || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
-            const motivoUp = blk.reason === 'overdue_debt'
-              ? 'DÉBITO VENCIDO DO CLIENTE'
-              : 'OPERAÇÃO REQUER LIBERAÇÃO MANUAL (AMOSTRA / TROCA / BONIFICAÇÃO)';
-            const blockNotice = `🚫 *PEDIDO BLOQUEADO — ${motivoUp}.*\n${String(blk.details || '').toUpperCase()}\nESTE PEDIDO NÃO SERÁ FATURADO ATÉ A LIBERAÇÃO.`;
+            const motivo = blk.reason === 'overdue_debt'
+              ? 'Débito vencido do cliente'
+              : 'Operação requer liberação manual (amostra / troca / bonificação)';
+            const blockNotice = `🚫 PEDIDO BLOQUEADO — ${motivo}. O Pedido não será faturado até liberação.`;
             void fireAutomation('pedido.criado', {
               customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
               order: {

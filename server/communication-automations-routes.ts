@@ -14,7 +14,7 @@ import { normalizeBrPhone } from "./automation-engine";
 // Gatilhos que o CÓDIGO realmente dispara hoje (fired=true). Outros podem existir
 // na base por herança do 1.0, mas não enviam até haver um gancho no código.
 const KNOWN_TRIGGERS = [
-  { event: "pedido.criado", label: "Pedido implantado (inclui bloqueados, com aviso em CAIXA ALTA)", fired: true },
+  { event: "pedido.criado", label: "Pedido implantado (inclui bloqueados, com aviso de bloqueio)", fired: true },
   { event: "entrega.finalizada", label: "Entrega finalizada", fired: true },
   { event: "pedido.bloqueado", label: "Pedido bloqueado (evento NÃO disparado pelo código — use 'pedido.criado')", fired: false },
 ];
@@ -26,7 +26,7 @@ const PLACEHOLDERS = [
   { token: "{{seller.name}}", desc: "Nome do vendedor" },
   { token: "{{delivery.orderNumber}}", desc: "Nº do pedido na entrega" },
   { token: "{{driver.name}}", desc: "Nome do motorista" },
-  { token: "{{blockNotice}}", desc: "Aviso de bloqueio em CAIXA ALTA (só quando o pedido nasce bloqueado)" },
+  { token: "{{blockNotice}}", desc: "Aviso de bloqueio (só quando o pedido nasce bloqueado)" },
 ];
 
 function renderTemplate(tpl: string, ctx: any): string {
@@ -178,7 +178,7 @@ export function registerCommunicationAutomationsRoutes(app: Express) {
         seller: { name: "Vendedor Teste" },
         delivery: { orderNumber: "INT-TESTE01" },
         driver: { name: "Motorista Teste" },
-        blockNotice: "🚫 *PEDIDO BLOQUEADO — DÉBITO VENCIDO DO CLIENTE.* (exemplo de teste)",
+        blockNotice: "🚫 PEDIDO BLOQUEADO — Débito vencido do cliente. O Pedido não será faturado até liberação.",
       };
       let msg = renderTemplate(a.message_template, ctx);
       msg = "🧪 [TESTE] " + msg;
