@@ -183,6 +183,24 @@ const soDigitos = (s: any) => String(s || "").replace(/\D/g, "");
  */
 const RAIO_ACEITO_KM = 0.3;
 
+/**
+ * Deslocamento a partir do qual vale reescrever uma coordenada que ja existe.
+ *
+ * 50 m e maior que o ruido normal entre duas geocodificacoes do mesmo endereco,
+ * e menor que qualquer erro que atrapalhe uma rota. Abaixo disso, reescrever so
+ * gera churn no cadastro sem melhorar o mapa.
+ */
+const DESLOCAMENTO_MINIMO_KM = 0.05;
+
+/** Distancia entre a coordenada gravada e uma nova; null quando nao ha gravada. */
+function distanciaEntre(latGravada: any, lonGravada: any, latNova: any, lonNova: any): number | null {
+  const a = Number(latGravada), b = Number(lonGravada);
+  const c = Number(latNova), d = Number(lonNova);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c) || !Number.isFinite(d)) return null;
+  const km = distanciaKm(a, b, c, d);
+  return Number.isFinite(km) ? Math.round(km * 100) / 100 : null;
+}
+
 /** Palavras que nao identificam o estabelecimento (forma juridica, conectivos). */
 const GENERICO = new Set([
   "LTDA", "ME", "MEI", "EIRELI", "EPP", "SA", "CIA", "DE", "DA", "DO", "DAS",
@@ -392,7 +410,8 @@ async function selecionarPorIds(ids: string[]) {
   const lista = ids.map((x) => String(x)).filter(Boolean).slice(0, 200);
   if (!lista.length) return { cands: [] as any[], totalNoEscopo: 0 };
   const sel: any = await db.execute(sql`
-    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
+    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code,
+           c.latitude, c.longitude
     FROM customers c
     WHERE (c.is_supplier IS NOT TRUE)
       AND (c.coordinates_locked IS NOT TRUE)
@@ -405,7 +424,8 @@ async function selecionarPorIds(ids: string[]) {
 async function selecionarClientes(escopo: Escopo, limit: number, offset: number) {
   const filtro = filtroDoEscopo(escopo);
   const sel: any = await db.execute(sql`
-    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code
+    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code,
+           c.latitude, c.longitude
     FROM customers c
     WHERE (c.is_supplier IS NOT TRUE)
       AND (c.coordinates_locked IS NOT TRUE)
@@ -465,7 +485,21 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
     // Ancora geografica da trava do Places: mesmo impreciso, o endereco do
     // cadastro diz em que pedaco da cidade o cliente esta.
     if (a) linha.refGeo = { lat: a.lat, lon: a.lon };
-    if (util(a)) { linha.veredito = "ja_resolvido"; return linha; }
+    if (util(a) && a) {
+      linha.veredito = "ja_resolvido";
+      // O endereco resolve com precisao — mas a coordenada GRAVADA pode ser
+      // outra, e velha. Medido em producao: 10 de 60 clientes tinham endereco
+      // resolvendo em rooftop/interpolado e coordenada gravada a 1, 5, ate 7 km
+      // dali, herdada de varreduras anteriores. "Ja resolvido" descrevia o
+      // ENDERECO, nao o cadastro; sem comparar com o gravado, esses nunca eram
+      // corrigidos porque o funil parava aqui.
+      const desloc = distanciaEntre(c.latitude, c.longitude, a.lat, a.lon);
+      linha.gravadoDivergeKm = desloc;
+      if (desloc === null || desloc > DESLOCAMENTO_MINIMO_KM) {
+        linha.coordenada = { lat: a.lat, lon: a.lon, origem: "endereco_atual", precisao: a.precisao };
+      }
+      return linha;
+    }
 
     // B — endereco limpo (so faz sentido se a limpeza mudou algo).
     if (linha.mudouNaLimpeza && limpo) {
@@ -475,6 +509,7 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
       if (b && !linha.refGeo) linha.refGeo = { lat: b.lat, lon: b.lon };
       if (util(b) && b) {
         linha.veredito = "resolvido_pela_limpeza";
+        linha.gravadoDivergeKm = distanciaEntre(c.latitude, c.longitude, b.lat, b.lon);
         linha.coordenada = { lat: b.lat, lon: b.lon, origem: "limpeza", precisao: b.precisao };
         return linha;
       }
@@ -506,6 +541,7 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
         };
         if (v.aprovado) {
           linha.veredito = "resolvido_pelo_places";
+          linha.gravadoDivergeKm = distanciaEntre(c.latitude, c.longitude, p.lat, p.lon);
           linha.coordenada = { lat: p.lat, lon: p.lon, origem: "places", precisao: "places_validado" };
           return linha;
         }
@@ -663,8 +699,13 @@ export function registerGeocodeAnalyze(app: Express) {
               origem: coord.origem, precisao: coord.precisao,
               enderecoCadastro: linha.enderecoOriginal,
               lat: coord.lat, lon: coord.lon,
-              provaDaTrava: linha.C?.motivo || (coord.origem === "limpeza" ? "endereco limpo resolveu o ponto" : ""),
+              provaDaTrava: linha.C?.motivo
+                || (coord.origem === "limpeza" ? "endereco limpo resolveu o ponto" : "")
+                || (coord.origem === "endereco_atual" ? `endereco resolve em ${coord.precisao}; gravada estava a ${linha.gravadoDivergeKm} km` : ""),
               nomeEncontrado: linha.C?.nomeEncontrado,
+              // Quanto a coordenada vai se mover. Numero grande merece um olhar
+              // antes de virar rota.
+              deslocamentoKm: linha.gravadoDivergeKm,
               gravado: false,
             };
 
@@ -701,6 +742,9 @@ export function registerGeocodeAnalyze(app: Express) {
           gravados,
           falhasDeGravacao,
           porOrigem: {
+            // Coordenada gravada estava velha; o proprio endereco do cadastro ja
+            // resolvia melhor. Nao custa chamada de Places.
+            enderecoAtualDesatualizado: itens.filter((i) => i.origem === "endereco_atual").length,
             limpezaDeEndereco: itens.filter((i) => i.origem === "limpeza").length,
             placesValidado: itens.filter((i) => i.origem === "places").length,
           },
