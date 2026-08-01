@@ -33,6 +33,15 @@ import {
   luhnOk,
   friendlyDecline,
 } from './hotsite-card';
+import {
+  cieloLinkEnabled,
+  createCieloLink,
+  shortOrderNumber,
+  parseLinkWebhook,
+  queryCieloOrder,
+  logLinkWebhook,
+  cieloLinkDiag,
+} from './cielo-link';
 
 const APP_URL = (process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
 // Domínio "limpo" da loja — melhor para mandar num DM. Cai no mesmo servidor.
@@ -87,6 +96,18 @@ async function ensurePaymentLinkTable(): Promise<void> {
   try { await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_paylink_card ON payment_links (sales_card_id)`)); } catch {}
   try { await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_paylink_status ON payment_links (status)`)); } catch {}
   try { await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_paylink_conv ON payment_links (conversation_id)`)); } catch {}
+  // Colunas do provedor "Cielo Link & Checkout" (matriz 0001-53) — aditivas e idempotentes.
+  for (const c of [
+    `provider varchar NOT NULL DEFAULT 'ecommerce'`,
+    `checkout_url text`,
+    `cielo_product_id varchar`,
+    `nsu varchar`,
+    `authorization_code varchar`,
+    `is_test boolean NOT NULL DEFAULT false`,
+  ]) {
+    try { await db.execute(sql.raw(`ALTER TABLE payment_links ADD COLUMN IF NOT EXISTS ${c}`)); } catch {}
+  }
+  try { await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_paylink_moid ON payment_links (merchant_order_id)`)); } catch {}
   _plReady = true;
 }
 
@@ -113,8 +134,13 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<{
   try {
     const amount = Math.round((Number(args.amount) || 0) * 100) / 100;
     if (!(amount > 0)) return { ok: false, error: 'valor invalido' };
-    const cfg = cieloConfig();
-    if (!cfg.merchantId || !cfg.merchantKey) return { ok: false, error: 'cielo nao configurada' };
+    // Provedor: quando CIELO_LINK_ENABLED=true usamos o "Link & Checkout" da MATRIZ
+    // (0001-53). Senao, o caminho antigo da API E-commerce 3.0 (filial 0002-34).
+    const useLink = cieloLinkEnabled();
+    if (!useLink) {
+      const cfg = cieloConfig();
+      if (!cfg.merchantId || !cfg.merchantKey) return { ok: false, error: 'cielo nao configurada' };
+    }
     await ensurePaymentLinkTable();
 
     if (args.salesCardId) {
@@ -138,14 +164,44 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<{
     const token = crypto.randomBytes(16).toString('hex'); // 32 chars, imprevisível
     const ttl = Math.max(1, Number(args.ttlHours || DEFAULT_TTL_HOURS));
     const expiresAt = new Date(Date.now() + ttl * 3600 * 1000).toISOString();
+
+    // Com o Link & Checkout, quem hospeda a tela de pagamento e a Cielo. Criamos o
+    // link LA antes de gravar aqui — se a Cielo recusar, nao deixamos link orfao.
+    let provider = 'ecommerce';
+    let checkoutUrl: string | null = null;
+    let cieloProductId: string | null = null;
+    let merchantOrderId: string | null = null;
+
+    if (useLink) {
+      merchantOrderId = shortOrderNumber('PL'); // <= 20 chars: e a CHAVE do webhook
+      const created = await createCieloLink({
+        name: args.orderNumber ? `Pedido ${args.orderNumber} - Honest Sucos` : 'Pagamento - Honest Sucos',
+        amount,
+        orderNumber: merchantOrderId,
+        description: args.description || (args.customerName ? `Cliente: ${args.customerName}` : null),
+        expirationDate: new Date(Date.now() + ttl * 3600 * 1000).toISOString().slice(0, 10),
+        softDescriptor: 'HONEST',
+        sku: args.orderNumber || null,
+      });
+      if (!created.ok || !created.checkoutUrl) {
+        console.error('❌ [PAY-LINK] Cielo Link recusou a criacao:', created.error);
+        return { ok: false, error: created.error || 'falha ao criar o link na Cielo' };
+      }
+      provider = 'cielolink';
+      checkoutUrl = created.checkoutUrl;
+      cieloProductId = created.productId || null;
+    }
+
     await db.execute(sql`INSERT INTO payment_links
       (token, kind, sales_card_id, order_number, conversation_id, channel, customer_name,
-       customer_document, customer_phone, amount, description, expires_at, created_by)
+       customer_document, customer_phone, amount, description, expires_at, created_by,
+       provider, checkout_url, cielo_product_id, merchant_order_id)
       VALUES (${token}, ${args.kind || (args.salesCardId ? 'order' : 'avulso')}, ${args.salesCardId || null},
               ${args.orderNumber || null}, ${args.conversationId || null}, ${args.channel || null},
               ${args.customerName || null}, ${onlyDigits(args.customerDocument) || null},
               ${onlyDigits(args.customerPhone) || null}, ${amount.toFixed(2)}, ${args.description || null},
-              ${expiresAt}::timestamptz, ${args.createdBy || null})`);
+              ${expiresAt}::timestamptz, ${args.createdBy || null},
+              ${provider}, ${checkoutUrl}, ${cieloProductId}, ${merchantOrderId})`);
     console.log(`🔗 [PAY-LINK] criado token=${token.slice(0, 8)}… card=${args.salesCardId || '-'} total=${amount.toFixed(2)} canal=${args.channel || '-'}`);
     return { ok: true, token, url: `${LINK_BASE}/pay/${token}`, amount, reused: false };
   } catch (e: any) {
@@ -257,6 +313,106 @@ async function beginAttempt(link: any, prefix: string): Promise<string> {
   return merchantOrderId;
 }
 
+// ---------------------------------------------------------------------------
+// CIELO LINK & CHECKOUT — aplica o status recebido por webhook (ou por consulta)
+// no payment_links e, quando PAGO, dispara o MESMO afterApproved() de sempre.
+// Idempotente: link ja pago nao e reprocessado.
+// ---------------------------------------------------------------------------
+async function applyCieloLinkStatus(orderNumber: string, n: any): Promise<void> {
+  await ensurePaymentLinkTable();
+  const r: any = await db.execute(sql`SELECT * FROM payment_links WHERE merchant_order_id = ${orderNumber} LIMIT 1`);
+  const link = (r.rows || r)[0];
+  if (!link) { console.warn(`⚠️ [CIELO-LINK] ${orderNumber} nao encontrado em payment_links`); return; }
+  if (String(link.status) === 'paid') return; // ja processado
+
+  // Transacao de TESTE (Modo de teste do painel) NUNCA vira venda.
+  if (n.isTest) {
+    console.log(`🧪 [CIELO-LINK] ${orderNumber} e TESTE (${n.statusLabel}) — ignorado para o pipeline.`);
+    try {
+      await db.execute(sql`UPDATE payment_links SET is_test = true, return_code = ${String(n.statusCode ?? '')},
+        return_message = ${'teste: ' + String(n.statusLabel || '')}, updated_at = now() WHERE id = ${link.id}`);
+    } catch {}
+    return;
+  }
+
+  if (n.paid) {
+    // Conferencia de valor: o link e a fonte da verdade do quanto se cobra.
+    if (n.amount != null && Math.abs(Number(n.amount) - Number(link.amount)) > 0.01) {
+      console.error(`❌ [CIELO-LINK] valor divergente em ${orderNumber}: cielo=${n.amount} link=${link.amount} — NAO marcado como pago.`);
+      return;
+    }
+    await db.execute(sql`UPDATE payment_links SET status = 'paid', paid_at = now(),
+      payment_id = ${n.tid || null}, tid = ${n.tid || null}, nsu = ${n.nsu || null},
+      authorization_code = ${n.authorizationCode || null}, brand = ${n.brand || null},
+      card_last4 = ${n.last4 || null}, return_code = ${String(n.statusCode ?? '')},
+      return_message = ${String(n.statusLabel || 'pago')}, updated_at = now()
+      WHERE id = ${link.id}`);
+    const fresh: any = await db.execute(sql`SELECT * FROM payment_links WHERE id = ${link.id} LIMIT 1`);
+    const l2 = (fresh.rows || fresh)[0] || link;
+    await afterApproved(l2,
+      { paymentId: n.tid, returnCode: String(n.statusCode ?? ''), returnMessage: String(n.statusLabel || 'pago') },
+      { last4: n.last4 || undefined, brand: n.brand || undefined });
+    console.log(`✅ [CIELO-LINK] ${orderNumber} PAGO (tid ${n.tid || '-'}) → pipeline atualizado.`);
+    return;
+  }
+
+  try {
+    await db.execute(sql`UPDATE payment_links SET return_code = ${String(n.statusCode ?? '')},
+      return_message = ${String(n.statusLabel || '')}, updated_at = now() WHERE id = ${link.id}`);
+  } catch {}
+  const map: Record<number, string> = { 3: 'denied', 4: 'expired', 5: 'canceled' };
+  const novo = map[Number(n.statusCode)];
+  if (novo) {
+    try { await db.execute(sql`UPDATE payment_links SET status = ${novo}, updated_at = now() WHERE id = ${link.id}`); } catch {}
+  }
+  console.log(`ℹ️ [CIELO-LINK] ${orderNumber} status=${n.statusLabel} (${n.statusCode})`);
+}
+
+// Rede de seguranca contra webhook perdido: consulta na Cielo os links ainda
+// pendentes das ultimas N horas e aplica o status. Usada pela rota admin e pelo
+// cron horario do scheduler.
+export async function reconcileCieloLinks(hours = 48): Promise<{ checked: number; paid: number; erros: number }> {
+  let checked = 0, paid = 0, erros = 0;
+  if (!cieloLinkEnabled()) return { checked, paid, erros };
+  try {
+    await ensurePaymentLinkTable();
+    const r: any = await db.execute(sql`SELECT merchant_order_id FROM payment_links
+      WHERE provider = 'cielolink' AND status = 'pending' AND merchant_order_id IS NOT NULL
+        AND created_at > now() - (${String(hours)} || ' hours')::interval
+      ORDER BY created_at DESC LIMIT 300`);
+    const rows = (r.rows || r) as any[];
+    for (const row of rows) {
+      const on = String(row.merchant_order_id || '');
+      if (!on) continue;
+      checked++;
+      try {
+        const q = await queryCieloOrder(on);
+        if (q.ok && q.paid) {
+          const raw: any = q.raw || {};
+          await applyCieloLinkStatus(on, {
+            orderNumber: on, paid: true, statusCode: 2, statusLabel: 'pago',
+            amount: raw?.price != null ? Math.round(Number(raw.price)) / 100 : null,
+            tid: raw?.payment?.tid || null, nsu: raw?.payment?.nsu || null,
+            authorizationCode: raw?.payment?.authorizationCode || null,
+            brand: raw?.payment?.brand || null, last4: null, isTest: false,
+          });
+          paid++;
+        }
+      } catch { erros++; }
+      await new Promise((ok) => setTimeout(ok, 250)); // gentil com a API da Cielo
+    }
+    console.log(`🔁 [CIELO-LINK] reconciliacao: ${checked} verificados, ${paid} pagos, ${erros} erros`);
+    try {
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by)
+        VALUES ('cielo_link_reconcile_last', ${JSON.stringify({ at: new Date().toISOString(), hours, checked, paid, erros })}, 'cielo-link')
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+    } catch {}
+  } catch (e: any) {
+    console.error('❌ [CIELO-LINK] reconciliacao:', e?.message || e);
+  }
+  return { checked, paid, erros };
+}
+
 export function registerPaymentLink(app: Express): void {
   // --------------------------------------------------- criacao (atendente/interno)
   // Usado pelo ChatCenter (atendente humano) e por qualquer fluxo interno que precise
@@ -327,6 +483,12 @@ export function registerPaymentLink(app: Express): void {
   // ------------------------------------------------------- cartão digitado
   app.post('/api/public/pay-link/:token/card', async (req, res) => {
     try {
+      // Com o Link & Checkout o cartao e digitado NA PAGINA DA CIELO — este
+      // endpoint (checkout proprio) fica indisponivel para esses links.
+      { const l = await loadLink(req.params.token);
+        if (l && String(l.provider || '') === 'cielolink') {
+          return res.status(410).json({ message: 'Este link e pago na pagina da Cielo.', state: 'redirect', url: l.checkout_url || null });
+        } }
       const cfg = cieloConfig();
       if (!cfg.merchantId || !cfg.merchantKey) return res.status(503).json({ message: 'Pagamento indisponível no momento.' });
 
@@ -394,6 +556,10 @@ export function registerPaymentLink(app: Express): void {
   // ------------------------------------------------------------- Google Pay
   app.post('/api/public/pay-link/:token/googlepay', async (req, res) => {
     try {
+      { const l = await loadLink(req.params.token);
+        if (l && String(l.provider || '') === 'cielolink') {
+          return res.status(410).json({ message: 'Este link e pago na pagina da Cielo.', state: 'redirect', url: l.checkout_url || null });
+        } }
       const cfg = cieloConfig();
       if (!cfg.merchantId || !cfg.merchantKey) return res.status(503).json({ message: 'Pagamento indisponível no momento.' });
 
@@ -451,6 +617,65 @@ export function registerPaymentLink(app: Express): void {
     }
   });
 
+  // ============== CIELO LINK & CHECKOUT (matriz 0001-53) ==============
+  // Notificacao de FINALIZACAO da transacao (form-urlencoded, ~40 campos).
+  // SEMPRE responde 200: se devolvermos erro a Cielo repete 3x, de hora em hora.
+  app.post('/api/webhooks/cielo-link', async (req: any, res) => {
+    res.status(200).send('OK');
+    try {
+      await logLinkWebhook('pagamento', req.body);
+      const n = parseLinkWebhook(req.body);
+      if (!n) { console.warn('⚠️ [CIELO-LINK] webhook sem order_number'); return; }
+      await applyCieloLinkStatus(n.orderNumber, n);
+    } catch (e: any) {
+      console.error('❌ [CIELO-LINK] webhook pagamento:', e?.message || e);
+    }
+  });
+
+  // Notificacao de MUDANCA DE STATUS (payload reduzido: so identifica o pedido).
+  // E por aqui que chega cancelamento/estorno depois de pago -> consultamos a Cielo.
+  app.post('/api/webhooks/cielo-link/status', async (req: any, res) => {
+    res.status(200).send('OK');
+    try {
+      await logLinkWebhook('status', req.body);
+      const b = req.body || {};
+      const on = String(b.MerchantOrderNumber || b.merchantOrderNumber || b.order_number || b.orderNumber || '').trim();
+      if (!on) { console.warn('⚠️ [CIELO-LINK] status sem MerchantOrderNumber'); return; }
+      const q = await queryCieloOrder(on);
+      if (!q.ok) { console.warn(`⚠️ [CIELO-LINK] consulta de ${on} falhou: ${q.error}`); return; }
+      const raw: any = q.raw || {};
+      await applyCieloLinkStatus(on, {
+        orderNumber: on,
+        paid: !!q.paid,
+        statusCode: q.paid ? 2 : null,
+        statusLabel: String(q.status ?? 'desconhecido'),
+        amount: raw?.price != null ? Math.round(Number(raw.price)) / 100 : null,
+        tid: raw?.payment?.tid || null,
+        nsu: raw?.payment?.nsu || null,
+        authorizationCode: raw?.payment?.authorizationCode || null,
+        brand: raw?.payment?.brand || null,
+        last4: null,
+        isTest: false,
+      });
+    } catch (e: any) {
+      console.error('❌ [CIELO-LINK] webhook status:', e?.message || e);
+    }
+  });
+
+  // Diagnostico (admin) — NUNCA devolve credencial.
+  app.get('/api/admin/cielo-link-diag', async (_req, res) => {
+    try { res.json(await cieloLinkDiag()); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Rede de seguranca: webhook perdido. Consulta na Cielo os links ainda pendentes
+  // e aplica o status. Fire-and-forget (nao segura a resposta HTTP).
+  app.get('/api/admin/cielo-link/reconcile', async (req: any, res) => {
+    const hours = Math.min(720, Math.max(1, Number(req.query.hours || 48)));
+    res.json({ ok: true, started: true, hours });
+    reconcileCieloLinks(hours).catch(() => {});
+  });
+
   // ---------------------------------------------------------- página pública
   app.get('/pay/:token', async (req, res) => {
     res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -462,6 +687,11 @@ export function registerPaymentLink(app: Express): void {
       if (st === 'expired') return res.send(pageMessage('Link expirado', 'Este link de pagamento venceu. Peça um novo ao atendimento.'));
       if (st === 'canceled') return res.send(pageMessage('Link cancelado', 'Este link foi cancelado. Fale com o atendimento.'));
       if (st === 'blocked') return res.send(pageMessage('Muitas tentativas', 'Por segurança, este link foi bloqueado. Fale com o atendimento para receber um novo.'));
+      // Cielo Link & Checkout: o pagamento acontece na pagina da Cielo. Mantemos o
+      // nosso link curto (TTL, canal, anti-cobranca-dupla) e redirecionamos.
+      if (String(link.provider || '') === 'cielolink' && link.checkout_url) {
+        return res.redirect(302, String(link.checkout_url));
+      }
       return res.send(pageCheckout(link));
     } catch (e: any) {
       console.error('❌ [PAY-LINK] page:', e?.message || e);

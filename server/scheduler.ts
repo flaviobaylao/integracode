@@ -917,6 +917,17 @@ cron.schedule('0 4 1 * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// Cielo Link & Checkout (matriz): rede de seguranca contra webhook perdido.
+// Roda de hora em hora; e no-op quando CIELO_LINK_ENABLED nao esta ligado.
+cron.schedule('35 * * * *', async () => {
+  try {
+    const { reconcileCieloLinks } = await import('./payment-link');
+    await reconcileCieloLinks(48);
+  } catch (e: any) {
+    console.error('[CIELO-LINK] cron de reconciliacao falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 console.log('✅ Agendador configurado:');
 console.log('   - Geração de relatórios de IA diariamente às 06:00h (UTC-3)');
 console.log('   - Geração de próximas 3 visitas para clientes ativos diariamente às 00:00h (UTC-3)');
