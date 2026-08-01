@@ -151,7 +151,7 @@ export async function enqueueOfficialDispatch(item: {
   } else {
   const dup: any = await db.execute(sql`SELECT 1 FROM official_dispatches
     WHERE customer_phone = ${phone} AND use_case = ${item.useCase}
-      AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
+      AND (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
   if (dup.rows?.length) return 'duplicado';
   }
   await db.execute(sql`INSERT INTO official_dispatches
@@ -168,7 +168,7 @@ export async function processDispatchQueueTick() {
   const nm = Math.floor(Date.now()/60000); if (nm !== _minMark) { _minMark = nm; _sentMin = 0; }
   if (_sentMin >= await ratePerMin()) return;
   const st: any = await db.execute(sql`SELECT count(*)::int n FROM official_dispatches
-    WHERE status IN ('enviada','entregue','lida','resposta') AND sent_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
+    WHERE status IN ('enviada','entregue','lida','resposta') AND (sent_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
   if ((st.rows?.[0]?.n || 0) >= await dailyCap()) return;
   // Pega ate 20 da fila e envia a primeira elegivel — assim uma linha "on" fora do
   // expediente nao trava as linhas "test" que estao atras dela.
@@ -275,7 +275,7 @@ export function registerOfficialDispatch(app: any) {
   app.get('/api/admin/rota-do-dia/fila', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const rows: any = await db.execute(sql`SELECT status, count(*)::int n FROM official_dispatches
-      WHERE created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY status`);
+      WHERE (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY status`);
     res.json(rows.rows || []);
   });
 

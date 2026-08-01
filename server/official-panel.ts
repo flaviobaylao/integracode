@@ -41,7 +41,7 @@ export function registerOfficialPanel(app: any) {
     // Datas SEMPRE convertidas para Brasilia dos dois lados: comparar created_at em UTC
     // com a data de hoje em BRT joga as 3 primeiras horas do dia para o dia anterior.
     const fila: any = (await db.execute(sql`SELECT status, count(*)::int n FROM official_dispatches
-      WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      WHERE (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       GROUP BY status`)).rows || [];
     // Contador do dia por template — para ver de onde vem o volume e o custo.
     const porTemplate: any = (await db.execute(sql`
@@ -52,14 +52,14 @@ export function registerOfficialPanel(app: any) {
              count(*)::int AS total,
              COALESCE(sum(estimated_cost) FILTER (WHERE status IN ('enviada','entregue','lida','resposta')), 0)::float AS custo
       FROM official_dispatches
-      WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      WHERE (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       GROUP BY template_label ORDER BY total DESC`)).rows || [];
     const ultimos: any = (await db.execute(sql`SELECT customer_phone, template_label, status, use_case, error,
       to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS quando
       FROM official_dispatches ORDER BY created_at DESC LIMIT 20`)).rows || [];
     const custo: any = (await db.execute(sql`SELECT coalesce(sum(estimated_cost),0)::float c FROM official_dispatches
       WHERE status IN ('enviada','entregue','lida','resposta')
-        AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
+        AND (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
     let diag: any = null;
     try {
       const { modeFor } = await import('./official-dispatch');
