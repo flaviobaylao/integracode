@@ -27,7 +27,11 @@ export function registerOfficialPanel(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const mode = await getSetting('oficial_dispatch_mode', 'off');
     const useCases: any = {};
-    for (const uc of USE_CASES) useCases[uc] = await getSetting('oficial_' + uc, 'off');
+    const useCaseModes: any = {};
+    for (const uc of USE_CASES) {
+      useCases[uc] = await getSetting('oficial_' + uc, 'off');
+      useCaseModes[uc] = (await getSetting('oficial_mode_' + uc, '')) || 'herda';
+    }
     const fila: any = (await db.execute(sql`SELECT status, count(*)::int n FROM official_dispatches
       WHERE created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY status`)).rows || [];
     const ultimos: any = (await db.execute(sql`SELECT customer_phone, template_label, status, use_case, error,
@@ -36,7 +40,19 @@ export function registerOfficialPanel(app: any) {
     const custo: any = (await db.execute(sql`SELECT coalesce(sum(estimated_cost),0)::float c FROM official_dispatches
       WHERE status IN ('enviada','entregue','lida','resposta')
         AND created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
-    res.json({ mode, useCases, fila, ultimos, custoHoje: custo });
+    let diag: any = null;
+    try {
+      const { modeFor } = await import('./official-dispatch');
+      const tp = (process.env.INTEGRA_OFICIAL_TEST_PHONES || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean);
+      const efetivo: any = {};
+      for (const uc of USE_CASES) efetivo[uc] = await modeFor(uc);
+      diag = {
+        testPhones: tp.map(p => p.length < 6 ? p : p.slice(0, 4) + '*'.repeat(p.length - 8) + p.slice(-4)),
+        testPhonesOk: tp.length > 0,
+        efetivo,
+      };
+    } catch {}
+    res.json({ mode, useCases, useCaseModes, fila, ultimos, custoHoje: custo, diag });
   });
 
   // Alterar um ajuste
@@ -44,10 +60,12 @@ export function registerOfficialPanel(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const key = String(req.query.key || '');
     const value = String(req.query.value || '');
-    const allowed = ['oficial_dispatch_mode', ...USE_CASES.map(u => 'oficial_' + u)];
+    const allowed = ['oficial_dispatch_mode', ...USE_CASES.map(u => 'oficial_' + u), ...USE_CASES.map(u => 'oficial_mode_' + u)];
     if (!allowed.includes(key)) return res.status(400).json({ error: 'key invalida' });
+    const ehModo = key === 'oficial_dispatch_mode' || key.startsWith('oficial_mode_');
     if (key === 'oficial_dispatch_mode' && !['off', 'test', 'on'].includes(value)) return res.status(400).json({ error: 'value invalido' });
-    if (key !== 'oficial_dispatch_mode' && !['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
+    if (key.startsWith('oficial_mode_') && !['', 'off', 'test', 'on'].includes(value)) return res.status(400).json({ error: 'value invalido' });
+    if (!ehModo && !['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
     await setSetting(key, value);
     res.json({ ok: true, key, value });
   });
@@ -100,7 +118,9 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </div>
 
 <div class="card">
-  <div style="font-weight:700;margin-bottom:6px">Casos de uso (liga/desliga)</div>
+  <div style="font-weight:700;margin-bottom:6px">Casos de uso</div>
+  <div class="sub" style="margin:0 0 8px">Cada caso pode ter modo proprio: <b>herda</b> segue o modo geral · <b>test</b> envia so para o numero de teste · <b>on</b> envia para o cliente real. O modo geral em <b>off</b> desliga tudo.</div>
+  <div id="diagWarn"></div>
   <div id="useCases"></div>
 </div>
 
@@ -126,11 +146,27 @@ async function load(){
     const d = await r.json();
     const mb = document.getElementById('modeBadge');
     mb.textContent = d.mode; mb.className = 'badge m-'+d.mode;
+    const dg = d.diag || {};
+    document.getElementById('diagWarn').innerHTML = (dg.testPhonesOk === false)
+      ? '<div style="background:rgba(224,87,107,.15);border:1px solid #e0576b;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px">'+
+        '<b>Atencao:</b> a variavel INTEGRA_OFICIAL_TEST_PHONES esta vazia no servidor. Enquanto isso, disparo em modo <b>test</b> nao envia — fica marcado como falha, em vez de ir para o cliente real.</div>'
+      : (dg.testPhones && dg.testPhones.length
+        ? '<div class="sub" style="margin:0 0 10px">Numero de teste: <b>'+dg.testPhones.join(', ')+'</b></div>' : '');
     document.getElementById('useCases').innerHTML = Object.keys(UC_LABEL).map(uc=>{
       const on = d.useCases[uc]==='on';
-      return '<div class="row"><div>'+UC_LABEL[uc]+'</div><div class="tgl">'+
+      const md = (d.useCaseModes && d.useCaseModes[uc]) || 'herda';
+      const ef = (dg.efetivo && dg.efetivo[uc]) || (on ? d.mode : 'off');
+      const mdv = (md==='herda') ? '' : md;
+      const mbtn = (v,rot) => '<button class="'+(mdv===v?(v==='on'?'b-on':(v==='test'?'b-test':'b-off')):'b-off dim')+
+        '" onclick="setUCMode(\\''+uc+'\\',\\''+v+'\\')">'+rot+'</button>';
+      return '<div class="row"><div>'+UC_LABEL[uc]+
+        '<br><span class="sub" style="margin:0">efetivo agora: <b>'+ef+'</b></span></div>'+
+        '<div class="tgl">'+
         '<button class="'+(on?'b-on':'b-off dim')+'" onclick="setUC(\\''+uc+'\\',\\'on\\')">on</button>'+
-        '<button class="'+(!on?'b-off':'b-off dim')+'" onclick="setUC(\\''+uc+'\\',\\'off\\')">off</button></div></div>';
+        '<button class="'+(!on?'b-off':'b-off dim')+'" onclick="setUC(\\''+uc+'\\',\\'off\\')">off</button>'+
+        '<span style="display:inline-block;width:18px"></span>'+
+        mbtn('','herda')+mbtn('test','test')+mbtn('on','on')+
+        '</div></div>';
     }).join('');
     const byStatus = {}; (d.fila||[]).forEach(x=>byStatus[x.status]=x.n);
     const total = Object.values(byStatus).reduce((a,b)=>a+b,0);
@@ -149,6 +185,10 @@ async function setMode(v){
   await fetch('/api/admin/oficial/set'+q('&key=oficial_dispatch_mode&value='+v)); load();
 }
 async function setUC(uc,v){ await fetch('/api/admin/oficial/set'+q('&key=oficial_'+uc+'&value='+v)); load(); }
+async function setUCMode(uc,v){
+  if(v==='on' && !confirm('Modo ON neste caso de uso envia para CLIENTES REAIS. Confirma?')) return;
+  await fetch('/api/admin/oficial/set'+q('&key=oficial_mode_'+uc+'&value='+v)); load();
+}
 load(); setInterval(load, 10000);
 </script>
 </body></html>`;

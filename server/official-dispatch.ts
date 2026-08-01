@@ -21,6 +21,15 @@ async function getSetting(key: string, def: string): Promise<string> {
 }
 async function mode(): Promise<'off'|'test'|'on'> { return (await getSetting('oficial_dispatch_mode', 'off')) as any; }
 async function useCaseEnabled(uc: string): Promise<boolean> { return (await getSetting('oficial_' + uc, 'off')) === 'on'; }
+// Modo por caso de uso: `oficial_mode_<uc>` sobrepoe o modo geral.
+// Vazio/"auto" = herda o geral. O geral em "off" e trava mestra: desliga tudo.
+export async function modeFor(uc: string): Promise<'off'|'test'|'on'> {
+  const geral = await mode();
+  if (geral === 'off') return 'off';
+  const proprio = await getSetting('oficial_mode_' + uc, '');
+  if (proprio === 'off' || proprio === 'test' || proprio === 'on') return proprio;
+  return geral;
+}
 
 function umblerFetch(path: string, init?: any) {
   const token = process.env.UMBLER_TALK_TOKEN;
@@ -108,7 +117,8 @@ export async function enqueueOfficialDispatch(item: {
   customerId?: string; customerPhone: string; templateLabel: string; params: string[];
   useCase: string; campaign?: string; postbackTexts?: {index:number;text:string}[]; category?: string;
 }): Promise<string> {
-  if (await mode() === 'off') return 'desligado';
+  const m = await modeFor(item.useCase);
+  if (m === 'off') return 'desligado';
   if (!(await useCaseEnabled(item.useCase))) return 'desligado';
   const phone = normalizeBrPhone(item.customerPhone); if (!phone) return 'invalido';
   if ((item.category || 'UTILITY') === 'MARKETING') {
@@ -119,7 +129,6 @@ export async function enqueueOfficialDispatch(item: {
     WHERE customer_phone = ${phone} AND use_case = ${item.useCase}
       AND created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
   if (dup.rows?.length) return 'duplicado';
-  const m = await mode();
   await db.execute(sql`INSERT INTO official_dispatches
     (customer_id, customer_phone, template_label, category, use_case, params, campaign, estimated_cost, status, mode)
     VALUES (${item.customerId || null}, ${phone}, ${item.templateLabel}, ${item.category || 'UTILITY'},
@@ -130,19 +139,29 @@ export async function enqueueOfficialDispatch(item: {
 
 let _sentMin = 0, _minMark = 0;
 export async function processDispatchQueueTick() {
-  const m = await mode(); if (m === 'off') return;
-  if (m === 'on' && !withinBusinessHours()) return;
+  if (await mode() === 'off') return;   // trava mestra
   const nm = Math.floor(Date.now()/60000); if (nm !== _minMark) { _minMark = nm; _sentMin = 0; }
   if (_sentMin >= ratePerMin()) return;
   const st: any = await db.execute(sql`SELECT count(*)::int n FROM official_dispatches
     WHERE status IN ('enviada','entregue','lida','resposta') AND sent_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
   if ((st.rows?.[0]?.n || 0) >= dailyCap()) return;
-  const q: any = await db.execute(sql`SELECT * FROM official_dispatches WHERE status='fila' ORDER BY created_at LIMIT 1`);
-  const d = q.rows?.[0]; if (!d) return;
+  // Pega ate 20 da fila e envia a primeira elegivel — assim uma linha "on" fora do
+  // expediente nao trava as linhas "test" que estao atras dela.
+  const q: any = await db.execute(sql`SELECT * FROM official_dispatches WHERE status='fila' ORDER BY created_at LIMIT 20`);
+  const emHorario = withinBusinessHours();
+  const d = (q.rows || []).find((r: any) => String(r.mode || 'on') !== 'on' || emHorario);
+  if (!d) return;
+  const m: string = String(d.mode || 'on');
   const t: any = await db.execute(sql`SELECT umbler_id FROM whatsapp_templates WHERE label = ${d.template_label} LIMIT 1`);
   const umblerId = t.rows?.[0]?.umbler_id;
   if (!umblerId) { await mark(d.id, 'falha', 'template nao encontrado'); return; }
-  const target = m === 'test' ? (testPhones()[0] || d.customer_phone) : d.customer_phone;
+  let target = d.customer_phone;
+  if (m === 'test') {
+    // NUNCA cair para o cliente real quando o modo e teste.
+    const tp = testPhones()[0];
+    if (!tp) { await mark(d.id, 'falha', 'modo test sem INTEGRA_OFICIAL_TEST_PHONES configurada'); return; }
+    target = tp;
+  }
   const exists = await officialCheckWhatsapp(target);
   if (exists === false) { await mark(d.id, 'falha', 'numero sem whatsapp'); return; }
   const r = await sendOfficialTemplate(target, umblerId, (d.params as string[]) || []);
@@ -190,6 +209,33 @@ export function registerOfficialDispatch(app: any) {
     const r = await sendOfficialTemplate('5562995782812', 'alrAa2wGrlHC-83p', ['Flavio (teste)', 'Celso', 'Hoje'],
       { postbackTexts: [ {index:0,text:'Sim, confirmar'}, {index:1,text:'Não'} ] });
     res.json(r);
+  });
+  // Diagnostico: mostra se o modo teste tem para onde enviar, tetos e modo efetivo por caso de uso.
+  app.get('/api/admin/oficial/diag', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const mascara = (p: string) => p.length < 6 ? p : p.slice(0, 4) + '*'.repeat(p.length - 8) + p.slice(-4);
+    const casos = ['rota_do_dia','pipeline','cobranca','repescagem','sdr'];
+    const porCaso: any = {};
+    for (const uc of casos) {
+      porCaso[uc] = {
+        ligado: await getSetting('oficial_' + uc, 'off'),
+        modoProprio: (await getSetting('oficial_mode_' + uc, '')) || 'herda',
+        modoEfetivo: await modeFor(uc),
+      };
+    }
+    res.json({
+      modoGeral: await mode(),
+      porCaso,
+      testPhones: testPhones().map(mascara),
+      testPhonesOk: testPhones().length > 0,
+      dailyCap: dailyCap(),
+      ratePerMin: ratePerMin(),
+      tokenUmbler: !!process.env.UMBLER_TALK_TOKEN,
+      canalOficial: OFICIAL_CHANNEL_ID,
+      organizationId: orgId(),
+      dentroDoExpediente: withinBusinessHours(),
+      agoraBR: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+    });
   });
   app.get('/api/admin/rota-do-dia/disparar', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
