@@ -192,6 +192,10 @@ const RAIO_ACEITO_KM = 0.3;
  */
 const DESLOCAMENTO_MINIMO_KM = 0.05;
 
+/** Vale a pena reescrever? Sem coordenada gravada (null) sempre vale. */
+const mudouOBastante = (km: number | null | undefined) =>
+  km === null || km === undefined || km > DESLOCAMENTO_MINIMO_KM;
+
 /**
  * Numero de verdade, ou null.
  *
@@ -533,7 +537,7 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
       // outra cidade e o pior tipo de erro: parece certo e coloca o cliente a
       // centenas de quilometros.
       linha.cidadeConfereA = cidadeConfere(a, c.city);
-      if ((desloc === null || desloc > DESLOCAMENTO_MINIMO_KM) && linha.cidadeConfereA === true) {
+      if (mudouOBastante(desloc) && linha.cidadeConfereA === true) {
         linha.coordenada = { lat: a.lat, lon: a.lon, origem: "endereco_atual", precisao: a.precisao };
       }
       return linha;
@@ -550,7 +554,9 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
         linha.gravadoDivergeKm = distanciaEntre(c.latitude, c.longitude, b.lat, b.lon);
         linha.cidadeConfereB = cidadeConfere(b, c.city);
         // Mesma regra da etapa A: limpar o endereco nao autoriza mudar de cidade.
-        if (linha.cidadeConfereB === true) {
+        // E o mesmo limiar: reescrever o que ja esta gravado so faz sentido se
+        // o ponto realmente muda.
+        if (linha.cidadeConfereB === true && mudouOBastante(linha.gravadoDivergeKm)) {
           linha.coordenada = { lat: b.lat, lon: b.lon, origem: "limpeza", precisao: b.precisao };
           return linha;
         }
@@ -586,7 +592,12 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
         if (v.aprovado) {
           linha.veredito = "resolvido_pelo_places";
           linha.gravadoDivergeKm = distanciaEntre(c.latitude, c.longitude, p.lat, p.lon);
-          linha.coordenada = { lat: p.lat, lon: p.lon, origem: "places", precisao: "places_validado" };
+          // Sem este limiar, todo cliente ja corrigido pelo Places reaparecia
+          // como "gravavel" a cada varredura, propondo reescrever o valor
+          // identico — inflando o relatorio e pagando chamada a toa.
+          if (mudouOBastante(linha.gravadoDivergeKm)) {
+            linha.coordenada = { lat: p.lat, lon: p.lon, origem: "places", precisao: "places_validado" };
+          }
           return linha;
         }
       } else {
