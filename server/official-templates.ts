@@ -189,14 +189,20 @@ export async function linhaDebitos(documento: string): Promise<{
 // nao sabe do que se trata e responde a saudacao padrao ("Posso ajudar?"), reabrindo
 // uma conversa que ja tinha acabado.
 //
-// So vale quando: (a) houve um disparo para este telefone nas ultimas horas, (b) o caso
-// de uso esta na lista (default: pipeline — a rota do dia tem fluxo proprio, onde
-// "Sim, confirmar" CONFIRMA a visita e nao encerra nada), e (c) o texto e exatamente o
-// primeiro botao daquele template.
+// NAO e "o primeiro botao encerra": no pedido_confirmado_debito o primeiro botao e
+// "Me envie a(s) 2ª via(s)", que precisa da IA e nao de um agradecimento. O que encerra
+// e o botao de ACEITE — por isso a regra compara com uma lista de frases de aceite.
 //
-// Chaves: ia_encerra_botao (on|off) · ia_encerra_casos · ia_encerra_horas · ia_encerra_texto
+// So vale quando: (a) houve disparo para este telefone nas ultimas horas, (b) o caso de
+// uso esta na lista (default: pipeline — a rota do dia tem fluxo proprio, onde
+// "Sim, confirmar" CONFIRMA a visita), (c) o texto bate com algum BOTAO daquele template
+// e (d) esse botao esta na lista de aceite. Fora disso, a IA atende normalmente.
+//
+// Chaves: ia_encerra_botao (on|off) · ia_encerra_casos · ia_encerra_horas ·
+//         ia_encerra_texto · ia_encerra_frases
 // ---------------------------------------------------------------------------
 const ENCERRA_TEXTO_PADRAO = 'Nós que agradecemos! Qualquer coisa, é só chamar por aqui. 🧡';
+const ENCERRA_FRASES_PADRAO = 'Ok, obrigado.|Ok, estarei esperando|Sim, estou ciente|Entendi, obrigado|Obrigado';
 
 function normalizarResposta(s: string): string {
   return String(s || '')
@@ -240,9 +246,14 @@ export async function botaoDeEncerramento(phone: string, texto: string): Promise
     if (!casos.includes(String(ultimo.use_case || ''))) return null;
 
     const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ${ultimo.template_label} LIMIT 1`);
-    const botoes = tpl.rows?.[0]?.botoes;
-    const primeiro = Array.isArray(botoes) ? String(botoes[0] || '') : '';
-    if (!primeiro || normalizarResposta(primeiro) !== t) return null;
+    const botoes: string[] = Array.isArray(tpl.rows?.[0]?.botoes) ? tpl.rows[0].botoes : [];
+    // Tem que ser um botao DAQUELE template — assim um "obrigado" digitado no meio de uma
+    // conversa de verdade nunca encerra nada.
+    if (!botoes.some(b => normalizarResposta(b) === t)) return null;
+
+    const aceites = (await getSetting('ia_encerra_frases', ENCERRA_FRASES_PADRAO))
+      .split('|').map(normalizarResposta).filter(Boolean);
+    if (!aceites.includes(t)) return null;
 
     return (await getSetting('ia_encerra_texto', ENCERRA_TEXTO_PADRAO)).slice(0, 400);
   } catch (e: any) {
