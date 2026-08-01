@@ -151,6 +151,30 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
   } catch { return true; } // em qualquer erro, mantém o comportamento atual (não trava o atendimento)
 }
 
+// Cliente tocou no primeiro botao do template de aviso: agradece e ENCERRA a conversa.
+// Devolve true quando tratou a mensagem (a IA nao deve mais responder nada).
+async function encerrarPeloBotao(conversationId: string, phone: string, texto: string): Promise<boolean> {
+  try {
+    const { botaoDeEncerramento } = await import('./official-templates');
+    const resposta = await botaoDeEncerramento(phone, texto);
+    if (!resposta) return false;
+
+    await replyVia(conversationId, phone, resposta);
+    try {
+      await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+        VALUES (${conversationId}, 'agent:sistema', 'agent', ${resposta}, 'text', true)`);
+    } catch {}
+    await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${conversationId}`);
+    try { const { liberarIA } = await import('./ia-fila'); await liberarIA(conversationId); } catch {}
+    try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${conversationId}`); } catch {}
+    console.log(`[ENCERRA-BOTAO] conversa ${conversationId} encerrada — cliente respondeu o botao de confirmacao`);
+    return true;
+  } catch (e: any) {
+    console.error('[ENCERRA-BOTAO]', e?.message || e);
+    return false;   // qualquer erro: segue o fluxo normal da IA
+  }
+}
+
 // Gatilho REATIVO do WhatsApp (chamado pelo webhook ao vivo /api/chat/webhook/messages).
 // A IA reativa oficial passa a ser a NOVA (Agentes de IA / Claude, mesmo motor do Instagram).
 // O porteiro shouldRespondNow aplica a regra de takeover: se ligada e a IA ainda não assumiu,
@@ -160,6 +184,9 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
   try {
     if (!incomingText || !incomingText.trim()) return;
     if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
+    // Botao 1 do template de aviso ("Ok, obrigado.") = assunto encerrado. Agradece e finaliza,
+    // em vez de mandar a saudacao padrao e reabrir uma conversa que ja tinha acabado.
+    if (await encerrarPeloBotao(conversationId, phone, incomingText)) return;
     if (!(await shouldRespondNow(conversationId))) return;
     const { maybeRunAgent } = await import('./agent-runtime');
     await maybeRunAgent({

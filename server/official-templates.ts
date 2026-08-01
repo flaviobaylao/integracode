@@ -27,6 +27,7 @@ async function ensureTabela(): Promise<void> {
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS corpo text`);
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS observacao text`);
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS updated_at timestamptz`);
+  await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS botoes jsonb`);
 
   // A tabela nasceu antes deste cadastro e tem colunas legadas NOT NULL sem default
   // (ex.: meta_template_id) que este fluxo nao tem como preencher — a API do Umbler nao
@@ -65,8 +66,9 @@ export async function listarTemplates(): Promise<any[]> {
 }
 
 // Sem ON CONFLICT: a tabela pode nao ter indice unico em label.
-export async function salvarTemplate(t: { label: string; umblerId?: string; categoria?: string; corpo?: string; observacao?: string }): Promise<'criado'|'atualizado'> {
+export async function salvarTemplate(t: { label: string; umblerId?: string; categoria?: string; corpo?: string; observacao?: string; botoes?: string[] }): Promise<'criado'|'atualizado'> {
   await ensureTabela();
+  const bt = t.botoes && t.botoes.length ? JSON.stringify(t.botoes) : null;
   const ex: any = await db.execute(sql`SELECT 1 FROM whatsapp_templates WHERE label = ${t.label} LIMIT 1`);
   if (ex.rows?.length) {
     await db.execute(sql`UPDATE whatsapp_templates SET
@@ -74,11 +76,12 @@ export async function salvarTemplate(t: { label: string; umblerId?: string; cate
       categoria = coalesce(${t.categoria || null}, categoria),
       corpo     = coalesce(${t.corpo || null}, corpo),
       observacao= coalesce(${t.observacao || null}, observacao),
+      botoes    = coalesce(${bt}::jsonb, botoes),
       updated_at = now() WHERE label = ${t.label}`);
     return 'atualizado';
   }
-  await db.execute(sql`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo, observacao, updated_at)
-    VALUES (${t.label}, ${t.umblerId || null}, ${t.categoria || 'UTILITY'}, ${t.corpo || null}, ${t.observacao || null}, now())`);
+  await db.execute(sql`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo, observacao, botoes, updated_at)
+    VALUES (${t.label}, ${t.umblerId || null}, ${t.categoria || 'UTILITY'}, ${t.corpo || null}, ${t.observacao || null}, ${bt}::jsonb, now())`);
   return 'criado';
 }
 
@@ -111,6 +114,7 @@ export async function templatesDoUmbler(): Promise<{ itens: any[]; bruto?: any; 
       status: t.status ?? t.Status ?? null,
       corpo: corpoDe(t),
       canal: t.channel?.id ?? null,
+      botoes: Array.isArray(t.buttons) ? t.buttons.map((b: any) => String(b?.text ?? '')).filter(Boolean) : [],
     }));
     // O primeiro item cru fica junto: se algum campo mudar de nome, da para ver aqui.
     return { itens, bruto: brutos[0] || null };
@@ -125,7 +129,7 @@ async function importarDoUmbler(): Promise<any> {
   for (const t of itens) {
     if (!t.label || !t.id) { resumo.ignorados.push({ label: t.label, motivo: 'sem id ou label' }); continue; }
     if (String(t.status || '').toUpperCase() !== 'APPROVED') { resumo.ignorados.push({ label: t.label, motivo: 'status ' + t.status }); continue; }
-    const r = await salvarTemplate({ label: t.label, umblerId: t.id, categoria: t.categoria || 'UTILITY', corpo: t.corpo || undefined });
+    const r = await salvarTemplate({ label: t.label, umblerId: t.id, categoria: t.categoria || 'UTILITY', corpo: t.corpo || undefined, botoes: t.botoes });
     (r === 'criado' ? resumo.criados : resumo.atualizados).push(t.label);
   }
   return resumo;
@@ -175,6 +179,76 @@ export async function linhaDebitos(documento: string): Promise<{
   // Blindagem: a variavel nao pode ter quebra de linha, tab, nem 4+ espacos seguidos.
   const linha = mostra.join(' · ').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
   return { linha, total: brl(totalNum), totalNum, titulos, bloqueia: totalNum > PISO_BLOQUEIO };
+}
+
+// ---------------------------------------------------------------------------
+// ENCERRAMENTO PELO BOTAO 1
+// O template de aviso ("recebemos seu pedido") tem botoes de resposta rapida. Quando o
+// cliente toca no PRIMEIRO ("Ok, obrigado."), ele nao esta abrindo atendimento — esta
+// dando o assunto por encerrado. Sem esta regra, a IA recebe um "Ok, obrigado." solto,
+// nao sabe do que se trata e responde a saudacao padrao ("Posso ajudar?"), reabrindo
+// uma conversa que ja tinha acabado.
+//
+// So vale quando: (a) houve um disparo para este telefone nas ultimas horas, (b) o caso
+// de uso esta na lista (default: pipeline — a rota do dia tem fluxo proprio, onde
+// "Sim, confirmar" CONFIRMA a visita e nao encerra nada), e (c) o texto e exatamente o
+// primeiro botao daquele template.
+//
+// Chaves: ia_encerra_botao (on|off) · ia_encerra_casos · ia_encerra_horas · ia_encerra_texto
+// ---------------------------------------------------------------------------
+const ENCERRA_TEXTO_PADRAO = 'Nós que agradecemos! Qualquer coisa, é só chamar por aqui. 🧡';
+
+function normalizarResposta(s: string): string {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // tira acento
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')                       // tira pontuacao e emoji
+    .replace(/\s+/g, ' ').trim();
+}
+
+async function getSetting(key: string, def: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
+    const v = r.rows?.[0]?.value;
+    return v == null ? def : String(v).replace(/^"|"$/g, '');
+  } catch { return def; }
+}
+
+export async function botaoDeEncerramento(phone: string, texto: string): Promise<string | null> {
+  try {
+    if ((await getSetting('ia_encerra_botao', 'on')) !== 'on') return null;
+    const t = normalizarResposta(texto);
+    if (!t || t.length > 60) return null;
+
+    let d = String(phone || '').replace(/\D/g, '');
+    if (d && !d.startsWith('55') && (d.length === 10 || d.length === 11)) d = '55' + d;
+    if (!d) return null;
+    // Compara pelos 8 finais: a base tem numero com e sem o 9o digito.
+    const fim = d.slice(-8);
+
+    const horas = Math.max(1, parseInt(await getSetting('ia_encerra_horas', '48'), 10) || 48);
+    const disp: any = await db.execute(sql`
+      SELECT template_label, use_case FROM official_dispatches
+      WHERE right(customer_phone, 8) = ${fim}
+        AND status IN ('enviada','entregue','lida','resposta')
+        AND sent_at > now() - make_interval(hours => ${horas})
+      ORDER BY sent_at DESC LIMIT 1`);
+    const ultimo = disp.rows?.[0];
+    if (!ultimo) return null;
+
+    const casos = (await getSetting('ia_encerra_casos', 'pipeline')).split(',').map(s => s.trim()).filter(Boolean);
+    if (!casos.includes(String(ultimo.use_case || ''))) return null;
+
+    const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ${ultimo.template_label} LIMIT 1`);
+    const botoes = tpl.rows?.[0]?.botoes;
+    const primeiro = Array.isArray(botoes) ? String(botoes[0] || '') : '';
+    if (!primeiro || normalizarResposta(primeiro) !== t) return null;
+
+    return (await getSetting('ia_encerra_texto', ENCERRA_TEXTO_PADRAO)).slice(0, 400);
+  } catch (e: any) {
+    console.error('[ENCERRA-BOTAO]', e?.message || e);
+    return null;   // qualquer erro: segue o fluxo normal da IA
+  }
 }
 
 // Quantas variaveis o corpo do template usa (maior indice de {{n}}).
@@ -279,6 +353,19 @@ export function registerOfficialTemplates(app: any) {
 
       const { sendOfficialTemplate } = await import('./official-dispatch');
       const r = await sendOfficialTemplate(to, row.umbler_id, params);
+
+      // Registra na fila como disparo de teste. Sem isso, a resposta do cliente ao
+      // botao nao encontra o disparo de origem e a regra de encerramento nao vale
+      // para o teste — o comportamento testado nao seria o de producao.
+      if (r.success) {
+        const caso = String(req.query.use_case || 'pipeline');
+        try {
+          await db.execute(sql`INSERT INTO official_dispatches
+            (customer_phone, template_label, category, use_case, params, campaign, estimated_cost, status, mode, sent_at)
+            VALUES (${to}, ${label}, 'UTILITY', ${caso}::dispatch_use_case, ${JSON.stringify(params)}::jsonb,
+              'teste-manual', 0.04, 'enviada'::dispatch_status, 'test', now())`);
+        } catch (e: any) { console.warn('[TEMPLATES] teste nao registrado na fila:', e?.message); }
+      }
       res.json({ ...r, to: to.slice(0, 4) + '****' + to.slice(-4), label, params });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
