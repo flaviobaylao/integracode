@@ -290,6 +290,27 @@ const util = (hit: any) =>
   !!hit && !hit.aproximado && hit.precisao !== "centro_geometrico";
 
 /**
+ * O resultado caiu na cidade do cadastro?
+ *
+ * Precisao alta NAO garante lugar certo. Medido em producao: "RUA 41, 20"
+ * resolveu em `interpolado` a 150 km de Goiania, e "Rua Teste, 123" resolveu em
+ * Sao Luis/MA — nomes de via genericos existem em centenas de cidades, e o
+ * Google devolve a melhor correspondencia global, nao a local. Sem esta
+ * checagem, gravar por precisao mudaria clientes de cidade.
+ *
+ * Devolve null quando o cadastro nao tem cidade: nao da para confirmar nem
+ * negar, e quem chama decide (aqui, nao gravamos sem confirmacao).
+ */
+function cidadeConfere(hit: any, cidadeCadastro: any): boolean | null {
+  const cidade = String(cidadeCadastro || "").trim();
+  if (!cidade) return null;
+  const norm = (s: any) => String(s || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/[^A-Z0-9]+/g, " ");
+  return norm(hit?.display_name).includes(norm(cidade).trim());
+}
+
+/**
  * Text Search da PLACES API (NEW) — places.googleapis.com/v1/places:searchText.
  *
  * Por que a API nova e nao a antiga: a chave do projeto esta restrita a
@@ -495,7 +516,11 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
       // corrigidos porque o funil parava aqui.
       const desloc = distanciaEntre(c.latitude, c.longitude, a.lat, a.lon);
       linha.gravadoDivergeKm = desloc;
-      if (desloc === null || desloc > DESLOCAMENTO_MINIMO_KM) {
+      // So reescreve se o resultado esta na cidade do cadastro. Precisao alta em
+      // outra cidade e o pior tipo de erro: parece certo e coloca o cliente a
+      // centenas de quilometros.
+      linha.cidadeConfereA = cidadeConfere(a, c.city);
+      if ((desloc === null || desloc > DESLOCAMENTO_MINIMO_KM) && linha.cidadeConfereA === true) {
         linha.coordenada = { lat: a.lat, lon: a.lon, origem: "endereco_atual", precisao: a.precisao };
       }
       return linha;
@@ -510,7 +535,13 @@ async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
       if (util(b) && b) {
         linha.veredito = "resolvido_pela_limpeza";
         linha.gravadoDivergeKm = distanciaEntre(c.latitude, c.longitude, b.lat, b.lon);
-        linha.coordenada = { lat: b.lat, lon: b.lon, origem: "limpeza", precisao: b.precisao };
+        linha.cidadeConfereB = cidadeConfere(b, c.city);
+        // Mesma regra da etapa A: limpar o endereco nao autoriza mudar de cidade.
+        if (linha.cidadeConfereB === true) {
+          linha.coordenada = { lat: b.lat, lon: b.lon, origem: "limpeza", precisao: b.precisao };
+          return linha;
+        }
+        linha.veredito = "resolvido_fora_da_cidade";
         return linha;
       }
     }
@@ -575,6 +606,8 @@ function resumir(linhas: any[]) {
       recuperadosPelaLimpeza: ganhoLimpeza,
       recuperadosPeloPlaces: ganhoPlaces,
       semSolucaoAutomatica: semSolucao,
+      // Resolveu com precisao, mas em outra cidade — descartado de proposito.
+      resolvidoForaDaCidade: por("resolvido_fora_da_cidade"),
       erros,
     },
     places: {
