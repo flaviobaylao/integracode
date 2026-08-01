@@ -7590,6 +7590,13 @@ export class DatabaseStorage implements IStorage {
 
       const today = nowBrazil();
       today.setHours(0, 0, 0, 0);
+      // 🛡️ BLINDAGEM (31/jul/2026): a regeneração NUNCA remove visitas de HOJE nem do passado —
+      // só reescreve o FUTURO (>= amanhã). Antes apagava tudo `>= hoje`, o que fazia a Rota do
+      // Dia (sobretudo telemarketing/virtual) encolher no meio do dia quando este job rodava.
+      // A geração das próximas visitas já tem checagem anti-duplicata por dia, então hoje é
+      // preservado sem duplicar. Mesma regra já aplicada em runTelemarketingRegen.
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
 
       for (const activeCustomer of activeCustomersList) {
         try {
@@ -7649,18 +7656,18 @@ export class DatabaseStorage implements IStorage {
             .where(
               and(
                 eq(visitAgenda.customerId, activeCustomer.customerId),
-                gte(visitAgenda.scheduledDate, today)
+                gte(visitAgenda.scheduledDate, tomorrow) // 🛡️ preserva HOJE e o passado
               )
             );
 
           if (visitsToDelete.length > 0) {
-            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: Deletando ${visitsToDelete.length} visita(s) futuras para regeneração...`);
+            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: Deletando ${visitsToDelete.length} visita(s) futuras (>= amanhã) para regeneração...`);
             await db
               .delete(visitAgenda)
               .where(
                 and(
                   eq(visitAgenda.customerId, activeCustomer.customerId),
-                  gte(visitAgenda.scheduledDate, today)
+                  gte(visitAgenda.scheduledDate, tomorrow) // 🛡️ nunca remove a visita de HOJE
                 )
               );
             corrected += visitsToDelete.length;
