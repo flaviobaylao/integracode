@@ -40,6 +40,7 @@ const TOOL_DEFS: any[] = [
   { name: 'transferir_humano', description: 'Transfere a conversa para um atendente humano quando o cliente pede falar com pessoa, reclama, ou o caso foge do seu escopo. Após chamar, avise o cliente que um atendente vai continuar.', input_schema: { type: 'object', properties: { motivo: { type: 'string', description: 'motivo da transferência' } }, required: [] } },
   { name: 'buscar_boleto', description: 'Busca a 2ª via de boleto/cobrança em aberto do cliente. Retorna link de pagamento, valor e vencimento. Use o documento se o cliente informar; senão usa o cliente da conversa.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ (somente se o cliente informar)' } }, required: [] } },
   { name: 'consultar_debitos', description: 'Consulta os débitos/títulos em aberto (vencidos) do cliente. Retorna total e dias de atraso.', input_schema: { type: 'object', properties: { documento: { type: 'string' } }, required: [] } },
+  { name: 'segunda_via', description: 'Envia a 2ª via de TODOS os títulos vencidos em aberto do cliente: um PIX copia-e-cola por título, com número, vencimento e valor, mais o total. Use SEMPRE que o cliente pedir 2ª via, boleto, chave PIX, "como pago" ou responder pedindo a via de um aviso de pedido. Você JÁ sabe quem é o cliente pela conversa — NÃO peça CPF/CNPJ.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ, apenas se o cliente informar espontaneamente' } }, required: [] } },
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
 ];
 
@@ -156,7 +157,22 @@ async function resolveCustomerId(ctx: any, documento?: string): Promise<string |
       if (r.rows?.[0]?.id) return r.rows[0].id;
     } catch {}
   }
-  return ctx?.customerId || null;
+  if (ctx?.customerId) return ctx.customerId;
+  // Ultimo recurso: o cliente chegou respondendo um DISPARO nosso (aviso de pedido,
+  // cobranca, rota). O disparo sabe para quem foi — nao ha por que pedir o CPF/CNPJ
+  // de quem acabou de receber uma mensagem nominal da empresa.
+  try {
+    const d = onlyDigits(ctx?.phone);
+    if (d.length >= 8) {
+      const fim = d.slice(-8);
+      const r: any = await db.execute(sql`SELECT customer_id FROM official_dispatches
+        WHERE right(customer_phone, 8) = ${fim} AND customer_id IS NOT NULL
+          AND sent_at > now() - interval '30 days'
+        ORDER BY sent_at DESC LIMIT 1`);
+      if (r.rows?.[0]?.customer_id) return String(r.rows[0].customer_id);
+    }
+  } catch {}
+  return null;
 }
 
 // Pausa da IA numa conversa (setada por transferir_humano). Expira em 'ia_pausa_horas'
@@ -244,6 +260,7 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
       return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
     }
+    if (name === 'segunda_via') return await segundaVia(input || {}, ctx);
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
     if (name === 'gerar_link_pagamento') return await gerarLinkPagamento(input || {}, ctx);
@@ -482,6 +499,106 @@ async function gerarPix(_input: any, ctx: any): Promise<string> {
   } catch (e: any) {
     console.error('[IG-PIX]', e?.message || e);
     return 'Não consegui gerar o PIX agora (erro interno). Peça desculpas ao cliente e transfira para um atendente humano.';
+  }
+}
+
+// 2a VIA DE TODOS OS TITULOS EM ABERTO
+// O cliente que responde "me envie a 2a via" a um aviso de pedido nao deveria ter que
+// informar CPF/CNPJ — o disparo sabe quem ele e. E ele quase nunca quer UM boleto: quer
+// pagar o que esta em aberto. Entao esta ferramenta lista TODOS os titulos vencidos e
+// manda um PIX copia-e-cola para cada um, reaproveitando cobranca ativa quando existe.
+//
+// Os codigos sao enviados PELO CODIGO, nunca pelo texto do modelo: copia-e-cola tem ~150
+// caracteres e um digito trocado quebra o pagamento.
+async function segundaVia(input: any, ctx: any): Promise<string> {
+  try {
+    const cid = await resolveCustomerId(ctx, input?.documento);
+    if (!cid) return 'Cliente nao identificado nesta conversa. Peca o CPF/CNPJ ao cliente e chame a ferramenta de novo.';
+
+    const c: any = await db.execute(sql`SELECT name, fantasy_name, cnpj, cpf FROM customers WHERE id = ${cid} LIMIT 1`);
+    const cli = c.rows?.[0];
+    const doc = onlyDigits(cli?.cnpj || cli?.cpf || '');
+    const nome = String(cli?.fantasy_name || cli?.name || '').slice(0, 60);
+
+    // Mesma regra do bloqueio e da tela de Contas a Receber: em aberto e vencido no fuso BR.
+    const t: any = await db.execute(sql`
+      SELECT id, title_number, due_date, (amount - COALESCE(amount_paid,0))::float AS saldo
+      FROM receivables
+      WHERE deleted_at IS NULL
+        AND (amount - COALESCE(amount_paid,0)) > 0
+        AND COALESCE(import_origin,'') <> 'omie_historico'
+        AND status IN ('a_vencer','vencida')
+        AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (customer_id = ${cid} OR regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g') = ${doc || '___'})
+      ORDER BY due_date
+      LIMIT 8`);
+    const titulos = t.rows || [];
+    if (!titulos.length) return 'Nenhum titulo vencido em aberto para este cliente. Diga isso ao cliente de forma simpatica; se ele insistir, transfira para um atendente.';
+
+    const acc: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL AND COALESCE(is_active, true) = true ORDER BY created_at LIMIT 1`);
+    const accountId = acc.rows?.[0]?.id;
+    if (!accountId) return 'A cobranca PIX nao esta configurada no sistema agora. Peca desculpas e transfira para um atendente.';
+
+    const { createImmediateCharge } = await import('./bb-pix-service');
+    const linhas: Array<{ titulo: string; venc: string; valor: number; copia: string }> = [];
+    let total = 0, falhas = 0;
+
+    for (const tit of titulos) {
+      const valor = Math.round(Number(tit.saldo || 0) * 100) / 100;
+      if (!(valor > 0)) continue;
+      const rotulo = String(tit.title_number || '').trim() || 'titulo';
+      const venc = tit.due_date ? new Date(tit.due_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-';
+      let copia = '';
+      try {
+        // Reaproveita cobranca ATIVA do mesmo titulo (nao cria PIX novo a cada pedido de 2a via).
+        const ex: any = await db.execute(sql`SELECT pix_copia_e_cola, status, expires_at, amount
+          FROM pix_charges WHERE receivable_id = ${tit.id} AND status = 'ATIVA'
+          ORDER BY created_at DESC LIMIT 1`);
+        const e = ex.rows?.[0];
+        const vencido = e?.expires_at ? new Date(e.expires_at).getTime() < Date.now() : false;
+        if (e && !vencido && Math.abs(Number(e.amount) - valor) < 0.01) copia = String(e.pix_copia_e_cola || '');
+      } catch {}
+      if (!copia) {
+        try {
+          const ch: any = await createImmediateCharge(accountId, {
+            amount: valor,
+            debtorName: nome || undefined,
+            debtorDocument: doc || undefined,
+            description: ('Honest - 2a via ' + rotulo).slice(0, 100),
+            expirationSeconds: 86400,      // 24h: 2a via nao pode expirar em 1h
+            receivableId: tit.id,
+            customerId: cid,
+            createdBy: 'ia:' + String(ctx?.channel || 'whatsapp'),
+          });
+          copia = String(ch?.pixCopiaECola || '');
+        } catch (e: any) { falhas++; console.error('[IA-2AVIA] pix', rotulo, e?.message || e); continue; }
+      }
+      if (!copia) { falhas++; continue; }
+      linhas.push({ titulo: rotulo, venc, valor, copia });
+      total += valor;
+    }
+
+    if (!linhas.length) return 'Nao consegui gerar as cobrancas agora. Peca desculpas ao cliente e transfira para um atendente.';
+
+    // Envia pelo codigo: cabecalho, depois um par (descricao + copia-e-cola) por titulo.
+    if (ctx.sendText) {
+      const plural = linhas.length > 1;
+      await ctx.sendText(ctx.phone, plural
+        ? `Segue a 2ª via de ${linhas.length} títulos em aberto, total ${brl(total)}. Vou mandar um PIX para cada um:`
+        : `Segue a 2ª via do título em aberto, ${brl(total)}. É só pagar com o PIX abaixo:`);
+      for (const l of linhas) {
+        await ctx.sendText(ctx.phone, `${l.titulo} · venc. ${l.venc} · ${brl(l.valor)}`);
+        await ctx.sendText(ctx.phone, l.copia);
+      }
+    }
+    console.log(`[IA-2AVIA] cliente=${cid} titulos=${linhas.length} total=${total.toFixed(2)} falhas=${falhas}`);
+    return `OK: JA FORAM ENVIADOS ao cliente ${linhas.length} codigo(s) PIX copia-e-cola, total ${brl(total)}`
+      + (falhas ? `; ${falhas} titulo(s) falharam` : '')
+      + '. NAO reescreva os codigos. Apenas confirme de forma curta que a baixa e automatica assim que o pagamento cair'
+      + (falhas ? ' e avise que um atendente vai retornar sobre os titulos restantes.' : '.');
+  } catch (e: any) {
+    console.error('[IA-2AVIA]', e?.message || e);
+    return 'Nao consegui emitir a 2a via agora (erro interno). Peca desculpas ao cliente e transfira para um atendente humano.';
   }
 }
 
