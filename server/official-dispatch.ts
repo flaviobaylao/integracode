@@ -7,6 +7,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { registerPipelineDispatch } from './pipeline-dispatch';
 
 const UMBLER_TALK_BASE = 'https://app-utalk.umbler.com/api';
 const OFICIAL_CHANNEL_ID = process.env.UMBLER_OFFICIAL_CHANNEL_ID || 'ajqNf-Vjp4yjcaJf';
@@ -140,10 +141,19 @@ export async function enqueueOfficialDispatch(item: {
     const o: any = await db.execute(sql`SELECT 1 FROM chat_customers WHERE phone = ${'+'+phone} AND whatsapp_opt_out = true LIMIT 1`);
     if (o.rows?.length) return 'optout';
   }
+  // Antirrepeticao: com `campaign`, a chave e o EVENTO (ex.: card:<id>:debito) — assim o
+  // mesmo cliente pode receber "pedido confirmado" e "saiu para entrega" no mesmo dia.
+  // Sem campaign, vale a regra antiga: um por telefone, por caso de uso, por dia.
+  if (item.campaign) {
+    const dupC: any = await db.execute(sql`SELECT 1 FROM official_dispatches
+      WHERE customer_phone = ${phone} AND campaign = ${item.campaign} LIMIT 1`);
+    if (dupC.rows?.length) return 'duplicado';
+  } else {
   const dup: any = await db.execute(sql`SELECT 1 FROM official_dispatches
     WHERE customer_phone = ${phone} AND use_case = ${item.useCase}
-      AND created_at::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
+      AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
   if (dup.rows?.length) return 'duplicado';
+  }
   await db.execute(sql`INSERT INTO official_dispatches
     (customer_id, customer_phone, template_label, category, use_case, params, campaign, estimated_cost, status, mode)
     VALUES (${item.customerId || null}, ${phone}, ${item.templateLabel}, ${item.category || 'UTILITY'},
@@ -280,6 +290,10 @@ export function registerOfficialDispatch(app: any) {
       _firedOn = key; await dispatchRotaDoDia().catch(e => console.error('[ROTA-DO-DIA] erro', e));
     }
   }, 60000);
+
+  // Fase 3: gatilho dos avisos de pedido. Registrado aqui para nao mexer no index.ts.
+  try { registerPipelineDispatch(app); }
+  catch (e: any) { console.error('[PIPELINE-DISPATCH] nao registrado:', e?.message || e); }
 
   console.log('[OFICIAL-DISPATCH] registrado (endpoints + worker + agendamento 8h30)');
 }
