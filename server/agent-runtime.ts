@@ -188,6 +188,32 @@ export async function iaPausada(conversationId: string): Promise<boolean> {
   return (Date.now() - t) < horas * 3600 * 1000;
 }
 
+// O cliente esta respondendo a um disparo nosso? Duas condicoes: houve disparo para este
+// telefone na janela (ia_disparo_horas, padrao 48h) e NENHUM humano escreveu nesta conversa
+// nos ultimos ia_disparo_humano_min (padrao 30) minutos.
+async function respostaADisparo(conversationId: string, phone: string): Promise<boolean> {
+  try {
+    if ((await getSetting('ia_disparo_reabre', 'on')) !== 'on') return false;
+    const d = onlyDigits(phone);
+    if (d.length < 8) return false;
+    const horas = Math.max(1, parseInt(await getSetting('ia_disparo_horas', '48'), 10) || 48);
+    const disp: any = await db.execute(sql`SELECT 1 FROM official_dispatches
+      WHERE right(customer_phone, 8) = ${d.slice(-8)}
+        AND status IN ('enviada','entregue','lida','resposta')
+        AND sent_at > now() - make_interval(hours => ${horas}) LIMIT 1`);
+    if (!disp.rows?.length) return false;
+
+    const mins = Math.max(1, parseInt(await getSetting('ia_disparo_humano_min', '30'), 10) || 30);
+    const hum: any = await db.execute(sql`SELECT 1 FROM chat_messages
+      WHERE conversation_id = ${conversationId}
+        AND sender_type <> 'customer'
+        AND COALESCE(sender_id,'') NOT LIKE 'agent:%'
+        AND COALESCE(sender_id,'') <> 'system'
+        AND created_at > now() - make_interval(mins => ${mins}) LIMIT 1`);
+    return !hum.rows?.length;
+  } catch { return false; }
+}
+
 // Limpa a pausa de uma conversa (ou de todas as legadas '1').
 export async function limparPausa(conversationId?: string): Promise<number> {
   try {
@@ -832,8 +858,16 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
       }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
-    // se a conversa foi transferida p/ humano, não responder mais (expira em ia_pausa_horas)
-    if (await iaPausada(opts.conversationId)) return;
+    // se a conversa foi transferida p/ humano, não responder mais (expira em ia_pausa_horas).
+    // EXCECAO: o cliente esta respondendo a um DISPARO nosso. Quem recebe "recebemos seu
+    // pedido" e toca no botao esta falando com a maquina, nao continuando o assunto que foi
+    // para o atendente semanas atras — e uma conversa pausada deixava esse toque sem
+    // NENHUMA resposta. A excecao so vale se nenhum humano falou aqui nos ultimos minutos,
+    // para nao atropelar atendente que esta no meio do atendimento.
+    if (await iaPausada(opts.conversationId)) {
+      if (!(await respostaADisparo(opts.conversationId, phone))) return;
+      console.log(`[AGENT] pausa ignorada em ${opts.conversationId}: resposta a disparo recente`);
+    }
     const defId = await getSetting(isIG ? 'agents_ig_default' : 'agents_default', isIG ? 'instagram' : 'sdr');
     const routing = await getSetting('agents_routing', 'keyword');
     // contexto do cliente (p/ ferramentas)
