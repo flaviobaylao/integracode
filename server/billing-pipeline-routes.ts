@@ -269,7 +269,7 @@ export async function evaluateOrderBlock(
         } else {
           return {
             reason: 'overdue_debt',
-            details: `Cliente possui debito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberacao automatica quando o debito for regularizado.`,
+            details: `Cliente possui débito vencido de R$ ${parseFloat(String(overdueDebt.totalAmount || '0')).toFixed(2)} com ${overdueDebt.maxDaysOverdue || 0} dias de atraso. Liberação automática quando o débito for regularizado.`,
           };
         }
       }
@@ -378,7 +378,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
             const motivo = blk.reason === 'overdue_debt'
               ? 'Débito vencido do cliente'
               : 'Operação requer liberação manual (amostra / troca / bonificação)';
-            const blockNotice = `🚫 PEDIDO BLOQUEADO — ${motivo}. O Pedido não será faturado até liberação.`;
+            // Para débito, anexa o valor e os dias de atraso (1ª frase do detalhe). Para os
+            // demais motivos o detalhe só repete o que o aviso ja diz — fica de fora.
+            const detalhe = blk.reason === 'overdue_debt'
+              ? String(blk.details || '').split('. ')[0].trim().replace(/\.$/, '')
+              : '';
+            const blockNotice = `🚫 PEDIDO BLOQUEADO — ${motivo}. O Pedido não será faturado até liberação.`
+              + (detalhe ? ` ${detalhe}.` : '');
             void fireAutomation('pedido.criado', {
               customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
               order: {

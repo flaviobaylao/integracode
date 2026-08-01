@@ -178,7 +178,7 @@ export function registerCommunicationAutomationsRoutes(app: Express) {
         seller: { name: "Vendedor Teste" },
         delivery: { orderNumber: "INT-TESTE01" },
         driver: { name: "Motorista Teste" },
-        blockNotice: "🚫 PEDIDO BLOQUEADO — Débito vencido do cliente. O Pedido não será faturado até liberação.",
+        blockNotice: "🚫 PEDIDO BLOQUEADO — Débito vencido do cliente. O Pedido não será faturado até liberação. Cliente possui débito vencido de R$ 480,00 com 12 dias de atraso.",
       };
       let msg = renderTemplate(a.message_template, ctx);
       msg = "🧪 [TESTE] " + msg;
