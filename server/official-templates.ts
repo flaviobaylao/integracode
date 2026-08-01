@@ -370,10 +370,14 @@ export function registerOfficialTemplates(app: any) {
       // para o teste — o comportamento testado nao seria o de producao.
       if (r.success) {
         const caso = String(req.query.use_case || 'pipeline');
+        // customer_id opcional: com ele, o teste reproduz o vinculo que a producao tem —
+        // e so assim da para testar consultar_pedido / segunda_via, que identificam o
+        // cliente pelo disparo quando o telefone (de teste) nao esta no cadastro.
+        const cliente = String(req.query.customer_id || '').trim() || null;
         try {
           await db.execute(sql`INSERT INTO official_dispatches
-            (customer_phone, template_label, category, use_case, params, campaign, estimated_cost, status, mode, sent_at)
-            VALUES (${to}, ${label}, 'UTILITY', ${caso}::dispatch_use_case, ${JSON.stringify(params)}::jsonb,
+            (customer_id, customer_phone, template_label, category, use_case, params, campaign, estimated_cost, status, mode, sent_at)
+            VALUES (${cliente}, ${to}, ${label}, 'UTILITY', ${caso}::dispatch_use_case, ${JSON.stringify(params)}::jsonb,
               'teste-manual', 0.04, 'enviada'::dispatch_status, 'test', now())`);
         } catch (e: any) { console.warn('[TEMPLATES] teste nao registrado na fila:', e?.message); }
       }
