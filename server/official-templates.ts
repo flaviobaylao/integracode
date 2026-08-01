@@ -59,7 +59,7 @@ export async function colunasDaTabela(): Promise<any[]> {
 
 export async function listarTemplates(): Promise<any[]> {
   await ensureTabela();
-  const r: any = await db.execute(sql`SELECT label, umbler_id, categoria, corpo, observacao,
+  const r: any = await db.execute(sql`SELECT label, umbler_id, categoria, corpo, observacao, botoes,
     to_char(updated_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS atualizado
     FROM whatsapp_templates ORDER BY label`);
   return r.rows || [];

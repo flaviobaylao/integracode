@@ -158,22 +158,43 @@ async function resolveCustomerId(ctx: any, documento?: string): Promise<string |
       if (r.rows?.[0]?.id) return r.rows[0].id;
     } catch {}
   }
-  if (ctx?.customerId) return ctx.customerId;
-  // Ultimo recurso: o cliente chegou respondendo um DISPARO nosso (aviso de pedido,
-  // cobranca, rota). O disparo sabe para quem foi — nao ha por que pedir o CPF/CNPJ
-  // de quem acabou de receber uma mensagem nominal da empresa.
+  // ATENCAO: ctx.customerId vem de chat_conversations.customer_id, que aponta para
+  // chat_customers — NAO para customers (o cadastro do ERP, onde estao pedidos, titulos
+  // e boletos). Sao tabelas diferentes, com ids diferentes. Usar aquele id direto fazia
+  // toda consulta de pedido/boleto voltar vazia. Por isso: so vale se existir no ERP.
+  if (ctx?.customerId && await existeNoErp(ctx.customerId)) return ctx.customerId;
+
+  const d = onlyDigits(ctx?.phone);
+  // 1) O cliente chegou respondendo um DISPARO nosso (aviso de pedido, cobranca, rota).
+  //    O disparo sabe exatamente para quem foi.
   try {
-    const d = onlyDigits(ctx?.phone);
     if (d.length >= 8) {
-      const fim = d.slice(-8);
       const r: any = await db.execute(sql`SELECT customer_id FROM official_dispatches
-        WHERE right(customer_phone, 8) = ${fim} AND customer_id IS NOT NULL
+        WHERE right(customer_phone, 8) = ${d.slice(-8)} AND customer_id IS NOT NULL
           AND sent_at > now() - interval '30 days'
         ORDER BY sent_at DESC LIMIT 1`);
-      if (r.rows?.[0]?.customer_id) return String(r.rows[0].customer_id);
+      const id = r.rows?.[0]?.customer_id;
+      if (id && await existeNoErp(String(id))) return String(id);
+    }
+  } catch {}
+  // 2) Telefone do cadastro (DDD + 8 finais, para casar com e sem o 9o digito).
+  try {
+    if (d.length >= 8) {
+      const r: any = await db.execute(sql`SELECT id FROM customers
+        WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) = ${d.slice(-8)}
+          AND COALESCE(is_active, true) = true
+        ORDER BY updated_at DESC NULLS LAST LIMIT 1`);
+      if (r.rows?.[0]?.id) return String(r.rows[0].id);
     }
   } catch {}
   return null;
+}
+
+async function existeNoErp(id: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`SELECT 1 FROM customers WHERE id = ${id} LIMIT 1`);
+    return !!r.rows?.length;
+  } catch { return false; }
 }
 
 // Pausa da IA numa conversa (setada por transferir_humano). Expira em 'ia_pausa_horas'
