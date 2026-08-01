@@ -722,7 +722,8 @@ export default function BillingPipeline() {
   const closeSchedule = () => { setScheduleTarget(null); setScheduleDate(''); };
   const confirmSchedule = () => {
     if (!scheduleTarget) return;
-    moveStageMutation.mutate({ id: scheduleTarget.item.id, stage: scheduleTarget.stage, scheduledBillingDate: scheduleDate || undefined });
+    if (!scheduleDate) return; // "Faturar em" e obrigatoria para agendar
+    moveStageMutation.mutate({ id: scheduleTarget.item.id, stage: scheduleTarget.stage, scheduledBillingDate: scheduleDate });
     closeSchedule();
   };
 
@@ -1534,7 +1535,7 @@ export default function BillingPipeline() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeSchedule}>Cancelar</Button>
-            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
+            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending || !scheduleDate} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
               {moveStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Clock className="h-4 w-4 mr-1" />}
               Agendar
             </Button>
@@ -1770,12 +1771,17 @@ function KanbanCard({
               Não pago
             </Badge>
           )}
-          {item.scheduledBillingDate && (
+          {item.scheduledBillingDate ? (
             <Badge variant="outline" className="text-[10px] border-cyan-300 text-cyan-800 bg-cyan-50 font-semibold" title="Data programada para faturamento (Faturar em)">
               <Calendar className="h-2.5 w-2.5 mr-0.5" />
               Faturar em {String(item.scheduledBillingDate).slice(0, 10).split('-').reverse().join('/')}
             </Badge>
-          )}
+          ) : (item.stage === 'agendado' && (
+            <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-800 bg-amber-50 font-semibold" title="Pedido agendado sem data de faturamento — defina em Editar">
+              <Calendar className="h-2.5 w-2.5 mr-0.5" />
+              Faturar em: definir
+            </Badge>
+          ))}
           {(() => {
             const cat = operationCategory(item);
             if (!cat) return null;
