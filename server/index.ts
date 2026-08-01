@@ -441,6 +441,9 @@ run();
       const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
       const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
       const today = new Date(); today.setHours(0, 0, 0, 0);
+      // BLINDAGEM (31/jul/2026): mesmo o seed replaceFuture nunca remove a visita de HOJE nem do
+      // passado; substitui apenas do dia seguinte em diante, preservando a Rota do Dia vigente.
+      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
       const parseWk = (w: any): string[] => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => String(d)); };
       const result: any = { apply, count, totalClientes: cust.length, comAncora: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
       // por cliente: guarda ancoraThreshold p/ delete seletivo (preserva visitas ate a ancora)
@@ -502,7 +505,7 @@ run();
           if (replaceFuture) {
             for (const c of cust) {
               const th = delThreshold[c.id]; if (!th) continue;
-              try { const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${today.toISOString()} AND scheduled_date > ${th}`); removed += (del.rowCount || 0); } catch (e) { errs++; }
+              try { const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${tomorrow.toISOString()} AND scheduled_date > ${th}`); removed += (del.rowCount || 0); } catch (e) { errs++; }
             }
           }
           for (let i = 0; i < insertRows.length; i += 400) {
