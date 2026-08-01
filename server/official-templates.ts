@@ -27,7 +27,33 @@ async function ensureTabela(): Promise<void> {
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS corpo text`);
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS observacao text`);
   await db.execute(sql`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS updated_at timestamptz`);
+
+  // A tabela nasceu antes deste cadastro e tem colunas legadas NOT NULL sem default
+  // (ex.: meta_template_id) que este fluxo nao tem como preencher — a API do Umbler nao
+  // devolve id da Meta. Sem soltar o NOT NULL, todo template NOVO falha no INSERT.
+  // Nao mexe em id/label/umbler_id, que sao os que o disparo usa de fato.
+  try {
+    const cols: any = await db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'whatsapp_templates' AND is_nullable = 'NO' AND column_default IS NULL
+        AND column_name NOT IN ('id','label','umbler_id')`);
+    for (const c of (cols.rows || [])) {
+      const nome = String(c.column_name || '');
+      if (!/^[a-z_][a-z0-9_]*$/i.test(nome)) continue;
+      await db.execute(sql.raw(`ALTER TABLE whatsapp_templates ALTER COLUMN "${nome}" DROP NOT NULL`));
+      console.log('[OFICIAL-TEMPLATES] NOT NULL removido de', nome);
+    }
+  } catch (e: any) { console.error('[OFICIAL-TEMPLATES] ajuste de colunas legadas:', e?.message); }
+
   _pronta = true;
+}
+
+// Como a tabela e legada, vale enxergar o formato dela pela propria tela.
+export async function colunasDaTabela(): Promise<any[]> {
+  const r: any = await db.execute(sql`
+    SELECT column_name, data_type, is_nullable, column_default
+    FROM information_schema.columns WHERE table_name = 'whatsapp_templates' ORDER BY ordinal_position`);
+  return r.rows || [];
 }
 
 export async function listarTemplates(): Promise<any[]> {
@@ -163,8 +189,10 @@ export function registerOfficialTemplates(app: any) {
 
   app.get('/api/admin/oficial/templates', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
-    try { res.json({ itens: await listarTemplates() }); }
-    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+    try {
+      const itens = await listarTemplates();
+      res.json({ itens, colunas: req.query.colunas ? await colunasDaTabela() : undefined });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   app.get('/api/admin/oficial/templates/set', async (req: any, res: any) => {
