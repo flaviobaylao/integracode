@@ -42,6 +42,15 @@ function formatCurrency(value: string | number | null | undefined) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
 }
 
+// CNPJ/CPF formatado — exibido como SUBTÍTULO abaixo do nome do cliente nas listas financeiras.
+// Aceita o documento com ou sem máscara; se não tiver 11/14 dígitos, devolve como veio.
+function formatDocumento(doc: any): string {
+  const d = String(doc || '').replace(/\D/g, '');
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  return String(doc || '').trim();
+}
+
 // Ordenação das listas financeiras (Contas a Receber / a Pagar).
 type SortField = 'name' | 'amount' | 'dueDate' | 'status';
 interface SortConfig { field: SortField; dir: 'asc' | 'desc' }
@@ -439,8 +448,10 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     if (!multiMatch(sellerMulti, resolveSeller(r.sellerName))) return false;
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
-      // Busca por CLIENTE ou NF (numero da nota / titulo). Aceita "104371" ou "NF-104371".
-      const hay = `${r.customerName || ''} ${r.titleNumber || ''} ${r.invoiceNumber || ''}`.toLowerCase();
+      // Busca por CLIENTE, NF (numero da nota / titulo) ou CNPJ/CPF. Aceita "104371", "NF-104371",
+      // e o documento com ou sem mascara (o "hay" leva as duas formas).
+      const _doc = String(r.customerDocument || '');
+      const hay = `${r.customerName || ''} ${r.titleNumber || ''} ${r.invoiceNumber || ''} ${_doc} ${_doc.replace(/\D/g, '')} ${formatDocumento(_doc)}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     if (valueMin !== '' && Number(r.amount || 0) < parseFloat(String(valueMin).replace(',', '.'))) return false;
@@ -692,7 +703,12 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
               ) : filtered.slice(0, 300).map((r: any) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.titleNumber || '-'}</TableCell>
-                  <TableCell>{r.customerName || '-'}</TableCell>
+                  <TableCell>
+                    <div className="leading-tight">
+                      <div>{r.customerName || '-'}</div>
+                      {formatDocumento(r.customerDocument) ? (<div className="text-xs text-muted-foreground" title="CNPJ/CPF do cliente">{formatDocumento(r.customerDocument)}</div>) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>{r.sellerName || '-'}</TableCell>
                   <TableCell className="max-w-[160px] truncate">{r.category || '-'}</TableCell>
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
@@ -931,7 +947,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div><Label className="text-xs text-muted-foreground">Título</Label><p className="font-medium">{selectedItem.titleNumber || history?.receivable?.titleNumber || selectedItem.title || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Cliente</Label><p>{selectedItem.customerName || '-'}</p></div>
-                <div><Label className="text-xs text-muted-foreground">CNPJ/CPF</Label><p>{history?.receivable?.customerDocument || selectedItem.customerDocument || '-'}</p></div>
+                <div><Label className="text-xs text-muted-foreground">CNPJ/CPF</Label><p>{formatDocumento(history?.receivable?.customerDocument || selectedItem.customerDocument) || '-'}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor</Label><p className="font-bold text-green-700">{formatCurrency(selectedItem.amount)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor Pago</Label><p>{formatCurrency(selectedItem.amountPaid)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Status</Label><div>{getReceivableStatusBadge(selectedItem.status, selectedItem.dueDate)}</div></div>
