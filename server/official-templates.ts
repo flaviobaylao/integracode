@@ -49,6 +49,24 @@ async function ensureTabela(): Promise<void> {
   _pronta = true;
 }
 
+// ---------------------------------------------------------------------------
+// LIGA/DESLIGA POR TEMPLATE (whatsapp_templates.is_active) + CHAVE GERAL
+// A trava por caso de uso e grossa: 'pipeline' carrega cinco templates. Aqui da para
+// silenciar UM aviso (ex.: parar so o de pedido bloqueado) sem derrubar os outros.
+// A checagem vale no enfileiramento E no envio — inclusive no envio de teste.
+// ---------------------------------------------------------------------------
+export async function templateLiberado(label: string): Promise<{ ok: boolean; motivo?: string }> {
+  try {
+    if ((await getSetting('oficial_templates_on', 'on')) !== 'on') return { ok: false, motivo: 'templates desligados no geral' };
+    await ensureTabela();
+    const r: any = await db.execute(sql`SELECT is_active FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
+    const row = r.rows?.[0];
+    if (!row) return { ok: true };                       // nao cadastrado: quem barra e o envio
+    if (row.is_active === false) return { ok: false, motivo: 'template desligado' };
+    return { ok: true };
+  } catch { return { ok: true }; }                        // erro nao pode travar disparo legitimo
+}
+
 // Como a tabela e legada, vale enxergar o formato dela pela propria tela.
 export async function colunasDaTabela(): Promise<any[]> {
   const r: any = await db.execute(sql`
@@ -60,6 +78,7 @@ export async function colunasDaTabela(): Promise<any[]> {
 export async function listarTemplates(): Promise<any[]> {
   await ensureTabela();
   const r: any = await db.execute(sql`SELECT label, umbler_id, categoria, corpo, observacao, botoes,
+    COALESCE(is_active, true) AS ativo,
     to_char(updated_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS atualizado
     FROM whatsapp_templates ORDER BY label`);
   return r.rows || [];
@@ -281,7 +300,11 @@ export function registerOfficialTemplates(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     try {
       const itens = await listarTemplates();
-      res.json({ itens, colunas: req.query.colunas ? await colunasDaTabela() : undefined });
+      res.json({
+        itens,
+        geral: await getSetting('oficial_templates_on', 'on'),
+        colunas: req.query.colunas ? await colunasDaTabela() : undefined,
+      });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
@@ -324,6 +347,33 @@ export function registerOfficialTemplates(app: any) {
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Liga/desliga UM template.
+  app.get('/api/admin/oficial/templates/ativo', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const label = String(req.query.label || '').trim();
+    const value = String(req.query.value || '');
+    if (!label) return res.status(400).json({ error: 'informe ?label=' });
+    if (!['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
+    try {
+      await ensureTabela();
+      await db.execute(sql`UPDATE whatsapp_templates SET is_active = ${value === 'on'}, updated_at = now() WHERE label = ${label}`);
+      res.json({ ok: true, label, ativo: value === 'on' });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Liga/desliga TODOS de uma vez (trava mestra dos templates).
+  app.get('/api/admin/oficial/templates/geral', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const value = String(req.query.value || '');
+    if (!['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
+    try {
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by)
+        VALUES ('oficial_templates_on', ${value}, 'painel-templates')
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      res.json({ ok: true, geral: value });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Previa da linha de debitos com dados reais — so leitura, nao envia nada.
   app.get('/api/admin/oficial/templates/previa-debito', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
@@ -358,6 +408,11 @@ export function registerOfficialTemplates(app: any) {
       const t: any = await db.execute(sql`SELECT umbler_id, corpo FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
       const row = t.rows?.[0];
       if (!row?.umbler_id) return res.status(400).json({ error: 'template sem umbler_id cadastrado' });
+      // A trava vale tambem no teste: senao o botao de desligar da uma falsa sensacao.
+      const lib = await templateLiberado(label);
+      if (!lib.ok && String(req.query.forcar || '') !== '1') {
+        return res.status(400).json({ error: lib.motivo, dica: 'use &forcar=1 para testar mesmo desligado' });
+      }
 
       // Confere a contagem ANTES de gastar: parametro a menos/a mais volta erro 132000 do Meta.
       const esperado = qtdVariaveis(row.corpo || '');
@@ -412,7 +467,9 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
     color:var(--txt);padding:9px 11px;font:14px system-ui;font-family:inherit}
   textarea{min-height:96px;resize:vertical}
   button{border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer;background:var(--on);color:#fff}
-  button.sec{background:#334155} button.del{background:var(--red)}
+  button.sec{background:#334155} button.del{background:var(--red)} button.on{background:var(--on)}
+  .badge{display:inline-block;padding:3px 12px;border-radius:20px;font-weight:700;font-size:13px}
+  .b-on{background:var(--on);color:#fff} .b-off{background:#6b7280;color:#fff}
   table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
   th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
   th{color:var(--mut);font-weight:600}
@@ -450,8 +507,20 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </div>
 
 <div class="card">
+  <div class="row" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div><b>Disparo de templates</b><br><span class="sub" style="margin:0">Trava mestra: em <b>off</b>, nenhum template sai — nem em teste.</span></div>
+    <div>Atual: <span id="geralBadge" class="badge b-off">—</span>
+      <span style="margin-left:10px">
+        <button class="on" onclick="setGeral('on')">on</button>
+        <button class="del" onclick="setGeral('off')">off</button>
+      </span></div>
+  </div>
+</div>
+
+<div class="card">
   <div style="font-weight:700;margin-bottom:6px">Cadastrados</div>
-  <table><thead><tr><th>Label</th><th>ID Umbler</th><th>Cat.</th><th>Corpo</th><th>Atualizado</th><th></th></tr></thead>
+  <p class="sub" style="margin:0 0 6px">O interruptor de cada linha desliga <b>só aquele aviso</b>, sem mexer nos outros do mesmo caso de uso.</p>
+  <table><thead><tr><th>Ativo</th><th>Label</th><th>ID Umbler</th><th>Cat.</th><th>Corpo</th><th>Atualizado</th><th></th></tr></thead>
   <tbody id="rows"></tbody></table>
 </div>
 
@@ -505,13 +574,21 @@ async function load(){
   const mapa = {}; itens.forEach(i=>mapa[i.label]=i);
   const linhas = ESPERADOS.map(l => mapa[l] || {label:l, faltando:true})
     .concat(itens.filter(i=>ESPERADOS.indexOf(i.label)<0));
-  document.getElementById('rows').innerHTML = linhas.map(i =>
-    '<tr><td><b>'+esc(i.label)+'</b></td>'+
-    '<td>'+(i.umbler_id ? '<code>'+esc(i.umbler_id)+'</code>' : '<span class="falta">falta cadastrar</span>')+'</td>'+
+  const gb = document.getElementById('geralBadge');
+  gb.textContent = d.geral || 'on'; gb.className = 'badge ' + ((d.geral||'on')==='on' ? 'b-on' : 'b-off');
+  document.getElementById('rows').innerHTML = linhas.map(i => {
+    const cad = !!i.umbler_id;
+    const on = i.ativo !== false;
+    const sw = !cad ? '<span class="sub">—</span>'
+      : '<button class="'+(on?'on':'sec')+'" style="min-width:52px" onclick="setAtivo(\\''+i.label+'\\',\\''+(on?'off':'on')+'\\')">'+(on?'on':'off')+'</button>';
+    return '<tr'+(cad && !on ? ' style="opacity:.5"' : '')+'><td>'+sw+'</td>'+
+    '<td><b>'+esc(i.label)+'</b></td>'+
+    '<td>'+(cad ? '<code>'+esc(i.umbler_id)+'</code>' : '<span class="falta">falta cadastrar</span>')+'</td>'+
     '<td>'+esc(i.categoria||'')+'</td>'+
     '<td style="max-width:340px;color:#8b98b0">'+esc((i.corpo||'').slice(0,160))+'</td>'+
     '<td>'+esc(i.atualizado||'')+'</td>'+
-    '<td><button class="sec" onclick="editar(\\''+i.label+'\\')">editar</button></td></tr>').join('');
+    '<td><button class="sec" onclick="editar(\\''+i.label+'\\')">editar</button></td></tr>';
+  }).join('');
   window._itens = mapa;
 }
 function editar(l){
@@ -536,6 +613,15 @@ async function salvar(){
   document.getElementById('msg').innerHTML = d.ok
     ? '<span class="ok">salvo ('+d.resultado+')</span>'
     : '<span class="falta">'+esc(d.error||'erro')+'</span>';
+  load();
+}
+async function setAtivo(label, v){
+  await fetch('/api/admin/oficial/templates/ativo'+q('&label='+encodeURIComponent(label)+'&value='+v));
+  load();
+}
+async function setGeral(v){
+  if(v==='off' && !confirm('Isso desliga TODOS os templates, inclusive a rota do dia. Confirma?')) return;
+  await fetch('/api/admin/oficial/templates/geral'+q('&value='+v));
   load();
 }
 async function enviarTeste(){

@@ -120,6 +120,11 @@ export async function enqueueOfficialDispatch(item: {
   const m = await modeFor(item.useCase);
   if (m === 'off') return 'desligado';
   if (!(await useCaseEnabled(item.useCase))) return 'desligado';
+  // Liga/desliga por template: mais fino que o caso de uso, que carrega varios templates.
+  try {
+    const { templateLiberado } = await import('./official-templates');
+    if (!(await templateLiberado(item.templateLabel)).ok) return 'desligado';
+  } catch {}
   const phone = normalizeBrPhone(item.customerPhone); if (!phone) return 'invalido';
   if ((item.category || 'UTILITY') === 'MARKETING') {
     const o: any = await db.execute(sql`SELECT 1 FROM chat_customers WHERE phone = ${'+'+phone} AND whatsapp_opt_out = true LIMIT 1`);
@@ -155,6 +160,12 @@ export async function processDispatchQueueTick() {
   const t: any = await db.execute(sql`SELECT umbler_id FROM whatsapp_templates WHERE label = ${d.template_label} LIMIT 1`);
   const umblerId = t.rows?.[0]?.umbler_id;
   if (!umblerId) { await mark(d.id, 'falha', 'template nao encontrado'); return; }
+  // Segunda checagem: o template pode ter sido desligado DEPOIS de entrar na fila.
+  try {
+    const { templateLiberado } = await import('./official-templates');
+    const lib = await templateLiberado(String(d.template_label));
+    if (!lib.ok) { await mark(d.id, 'falha', lib.motivo || 'template desligado'); return; }
+  } catch {}
   let target = d.customer_phone;
   if (m === 'test') {
     // NUNCA cair para o cliente real quando o modo e teste.
