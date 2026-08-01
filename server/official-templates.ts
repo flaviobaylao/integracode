@@ -233,22 +233,27 @@ export async function botaoDeEncerramento(phone: string, texto: string): Promise
     const fim = d.slice(-8);
 
     const horas = Math.max(1, parseInt(await getSetting('ia_encerra_horas', '48'), 10) || 48);
+    // Olha os ultimos disparos, nao so o ultimo: o cliente pode receber dois avisos e
+    // responder o botao do primeiro. Com LIMIT 1 esse toque viraria conversa nova.
     const disp: any = await db.execute(sql`
       SELECT template_label, use_case FROM official_dispatches
       WHERE right(customer_phone, 8) = ${fim}
         AND status IN ('enviada','entregue','lida','resposta')
         AND sent_at > now() - make_interval(hours => ${horas})
-      ORDER BY sent_at DESC LIMIT 1`);
-    const ultimo = disp.rows?.[0];
-    if (!ultimo) return null;
+      ORDER BY sent_at DESC LIMIT 5`);
+    const recentes = disp.rows || [];
+    if (!recentes.length) return null;
 
     const casos = (await getSetting('ia_encerra_casos', 'pipeline')).split(',').map(s => s.trim()).filter(Boolean);
-    if (!casos.includes(String(ultimo.use_case || ''))) return null;
+    const labels = recentes
+      .filter((d: any) => casos.includes(String(d.use_case || '')))
+      .map((d: any) => String(d.template_label || ''));
+    if (!labels.length) return null;
 
-    const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ${ultimo.template_label} LIMIT 1`);
-    const botoes: string[] = Array.isArray(tpl.rows?.[0]?.botoes) ? tpl.rows[0].botoes : [];
-    // Tem que ser um botao DAQUELE template — assim um "obrigado" digitado no meio de uma
-    // conversa de verdade nunca encerra nada.
+    const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ANY(${labels})`);
+    const botoes: string[] = (tpl.rows || []).flatMap((r: any) => Array.isArray(r.botoes) ? r.botoes : []);
+    // Tem que ser um botao de um daqueles templates — assim um "obrigado" digitado no meio
+    // de uma conversa de verdade nunca encerra nada.
     if (!botoes.some(b => normalizarResposta(b) === t)) return null;
 
     const aceites = (await getSetting('ia_encerra_frases', ENCERRA_FRASES_PADRAO))
