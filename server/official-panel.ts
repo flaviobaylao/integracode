@@ -7,6 +7,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { registerOfficialTemplates } from './official-templates';
 
 async function getSetting(key: string, def: string): Promise<string> {
   try { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
@@ -21,6 +22,11 @@ const USE_CASES = ['rota_do_dia','pipeline','cobranca','repescagem','sdr'];
 
 export function registerOfficialPanel(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
+
+  // Cadastro de templates (label -> umbler_id) vive num modulo proprio,
+  // registrado aqui para nao precisar mexer no index.ts.
+  try { registerOfficialTemplates(app); }
+  catch (e: any) { console.error('[OFICIAL-TEMPLATES] nao registrado:', e?.message || e); }
 
   // Estado atual (JSON)
   app.get('/api/admin/oficial/estado', async (req: any, res: any) => {
@@ -104,7 +110,8 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
   .foot{color:var(--mut);font-size:12px;margin-top:8px}
 </style></head><body>
 <h1>Disparos 1841 · Painel de controle</h1>
-<p class="sub">Honest Sucos · WhatsApp API oficial (HONESTAPI) · atualiza sozinho a cada 10s</p>
+<p class="sub">Honest Sucos · WhatsApp API oficial (HONESTAPI) · atualiza sozinho a cada 10s ·
+  <a id="lnkTpl" href="#" style="color:#7ee0a6">cadastro de templates</a></p>
 
 <div class="card">
   <div class="row"><div><b>Modo geral</b><br><span class="sub" style="margin:0">off = desligado · test = só números de teste · on = clientes reais</span></div>
@@ -139,6 +146,7 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 <script>
 const K = new URLSearchParams(location.search).get('k') || '';
 const q = s => '?k='+encodeURIComponent(K)+s;
+document.getElementById('lnkTpl').href = '/api/admin/oficial/templates/painel'+q('');
 const UC_LABEL = {rota_do_dia:'Rota do dia',pipeline:'Pipeline (pedido/entrega)',cobranca:'Cobrança',repescagem:'Repescagem (mkt)',sdr:'SDR (mkt)'};
 async function load(){
   try{
