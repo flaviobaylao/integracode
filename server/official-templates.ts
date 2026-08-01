@@ -105,6 +105,53 @@ async function importarDoUmbler(): Promise<any> {
   return resumo;
 }
 
+// ---------------------------------------------------------------------------
+// Linha de debitos em aberto para a variavel do template de pedido bloqueado.
+// Regra IDENTICA a que decide o bloqueio (storage.getOverdueDebtByDocument):
+// titulo em aberto, vencido no fuso de Brasilia, fora os historicos do Omie.
+// Variavel de template NAO aceita quebra de linha — por isso, uma linha so.
+// ---------------------------------------------------------------------------
+const TETO_TITULOS = 4;
+const PISO_BLOQUEIO = 50;
+
+export async function linhaDebitos(documento: string): Promise<{
+  linha: string; total: string; totalNum: number; titulos: any[]; bloqueia: boolean;
+}> {
+  const doc = String(documento || '').replace(/\D/g, '');
+  const vazio = { linha: '', total: 'R$ 0,00', totalNum: 0, titulos: [] as any[], bloqueia: false };
+  if (!doc) return vazio;
+  const r: any = await db.execute(sql`
+    SELECT title_number,
+           to_char(due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','DD/MM') AS venc,
+           (amount - COALESCE(amount_paid, 0))::float AS saldo
+    FROM receivables
+    WHERE deleted_at IS NULL
+      AND (amount - COALESCE(amount_paid, 0)) > 0
+      AND COALESCE(import_origin, '') <> 'omie_historico'
+      AND status IN ('a_vencer', 'vencida')
+      AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${doc}
+    ORDER BY due_date`);
+  const titulos = r.rows || [];
+  if (!titulos.length) return vazio;
+  const brl = (n: number) => 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const totalNum = titulos.reduce((s: number, t: any) => s + Number(t.saldo || 0), 0);
+  const mostra = titulos.slice(0, TETO_TITULOS)
+    .map((t: any) => `NF ${t.title_number || 's/n'} venc. ${t.venc} ${brl(t.saldo)}`);
+  const sobra = titulos.length - mostra.length;
+  if (sobra > 0) mostra.push(`e mais ${sobra} título${sobra > 1 ? 's' : ''}`);
+  // Blindagem: a variavel nao pode ter quebra de linha, tab, nem 4+ espacos seguidos.
+  const linha = mostra.join(' · ').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  return { linha, total: brl(totalNum), totalNum, titulos, bloqueia: totalNum > PISO_BLOQUEIO };
+}
+
+// Quantas variaveis o corpo do template usa (maior indice de {{n}}).
+function qtdVariaveis(corpo: string): number {
+  let max = 0;
+  for (const m of String(corpo || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)) max = Math.max(max, parseInt(m[1], 10) || 0);
+  return max;
+}
+
 export function registerOfficialTemplates(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
 
@@ -151,6 +198,55 @@ export function registerOfficialTemplates(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     try { res.json(await importarDoUmbler()); }
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Previa da linha de debitos com dados reais — so leitura, nao envia nada.
+  app.get('/api/admin/oficial/templates/previa-debito', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const doc = String(req.query.doc || '').replace(/\D/g, '');
+    if (!doc) return res.status(400).json({ error: 'informe ?doc=<cpf ou cnpj>' });
+    try {
+      const d = await linhaDebitos(doc);
+      res.json({
+        documento: doc, ...d,
+        aviso: d.titulos.length && !d.bloqueia ? 'abaixo do piso de R$ ' + PISO_BLOQUEIO + ' — nao bloqueia o pedido' : null,
+        tamanhoDaVariavel: d.linha.length,
+      });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Envio de teste de UM template, so para numero da allowlist de teste.
+  app.get('/api/admin/oficial/templates/enviar-teste', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const label = String(req.query.label || '').trim();
+    const params = String(req.query.params || '').split('|').map(s => s.trim()).filter(s => s !== '');
+    if (!label) return res.status(400).json({ error: 'informe ?label=' });
+
+    // Destino: SEMPRE da allowlist de teste. Sem allowlist, nao envia.
+    const permitidos = (process.env.INTEGRA_OFICIAL_TEST_PHONES || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean);
+    if (!permitidos.length) return res.status(400).json({ error: 'INTEGRA_OFICIAL_TEST_PHONES vazia — teste bloqueado' });
+    const pedido = String(req.query.to || '').replace(/\D/g, '');
+    const to = pedido || permitidos[0];
+    if (!permitidos.includes(to)) return res.status(400).json({ error: 'numero fora da allowlist de teste', permitidos: permitidos.map(p => p.slice(0, 4) + '****' + p.slice(-4)) });
+
+    try {
+      await ensureTabela();
+      const t: any = await db.execute(sql`SELECT umbler_id, corpo FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
+      const row = t.rows?.[0];
+      if (!row?.umbler_id) return res.status(400).json({ error: 'template sem umbler_id cadastrado' });
+
+      // Confere a contagem ANTES de gastar: parametro a menos/a mais volta erro 132000 do Meta.
+      const esperado = qtdVariaveis(row.corpo || '');
+      if (esperado && params.length !== esperado) {
+        return res.status(400).json({ error: `este template usa ${esperado} variavel(is) e voce mandou ${params.length}`, corpo: row.corpo });
+      }
+      const ruim = params.find(p => /[\r\n\t]/.test(p) || / {4,}/.test(p));
+      if (ruim) return res.status(400).json({ error: 'parametro com quebra de linha, tab ou 4+ espacos — o Meta recusa', parametro: ruim });
+
+      const { sendOfficialTemplate } = await import('./official-dispatch');
+      const r = await sendOfficialTemplate(to, row.umbler_id, params);
+      res.json({ ...r, to: to.slice(0, 4) + '****' + to.slice(-4), label, params });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   app.get('/api/admin/oficial/templates/painel', (req: any, res: any) => {
@@ -219,6 +315,35 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </div>
 
 <div class="card">
+  <div style="font-weight:700;margin-bottom:6px">Enviar teste</div>
+  <p class="sub" style="margin:0 0 8px">Manda <b>um</b> template para o numero de teste, com os valores que voce digitar.
+  Confere a quantidade de variaveis antes de gastar o envio. So aceita numero da allowlist de teste.</p>
+  <div class="grid">
+    <div>
+      <label>Label</label><input id="tLabel" placeholder="pedido_confirmado">
+      <label>Numero (em branco = primeiro da allowlist)</label><input id="tTo" placeholder="5562999883656">
+    </div>
+    <div>
+      <label>Valores, separados por | (na ordem das variaveis)</label>
+      <input id="tParams" placeholder="Padaria Estrela|INT-4a2b9c1d|R$ 1.240,00">
+      <label>&nbsp;</label>
+      <button onclick="enviarTeste()">Enviar teste</button>
+    </div>
+  </div>
+  <pre id="tOut" style="white-space:pre-wrap;font-size:12px;color:#8b98b0;margin-top:10px"></pre>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:6px">Previa da linha de debitos</div>
+  <p class="sub" style="margin:0 0 8px">Monta a variavel do template de pedido bloqueado com os titulos reais do cliente. So leitura — nao envia nada.</p>
+  <div style="display:flex;gap:10px;align-items:center">
+    <input id="dDoc" placeholder="CPF ou CNPJ do cliente" style="max-width:280px">
+    <button class="sec" onclick="previaDebito()">Ver</button>
+  </div>
+  <pre id="dOut" style="white-space:pre-wrap;font-size:12px;color:#8b98b0;margin-top:10px"></pre>
+</div>
+
+<div class="card">
   <div style="font-weight:700;margin-bottom:6px">O que existe na conta do Umbler</div>
   <p class="sub" style="margin:0 0 8px">Lista direto da API do Umbler, com o status de aprovacao de cada um. <b>Importar</b> copia os aprovados para a tabela acima.</p>
   <button class="sec" onclick="verUmbler()">Listar</button>
@@ -271,6 +396,28 @@ async function salvar(){
     ? '<span class="ok">salvo ('+d.resultado+')</span>'
     : '<span class="falta">'+esc(d.error||'erro')+'</span>';
   load();
+}
+async function enviarTeste(){
+  const p = new URLSearchParams();
+  p.set('label', document.getElementById('tLabel').value.trim());
+  p.set('params', document.getElementById('tParams').value);
+  const to = document.getElementById('tTo').value.trim(); if(to) p.set('to', to);
+  if(!confirm('Isso envia uma mensagem de verdade para o numero de teste. Confirma?')) return;
+  document.getElementById('tOut').textContent = 'enviando...';
+  const r = await fetch('/api/admin/oficial/templates/enviar-teste'+q('&'+p.toString()));
+  document.getElementById('tOut').textContent = JSON.stringify(await r.json(), null, 2);
+}
+async function previaDebito(){
+  const doc = document.getElementById('dDoc').value.replace(/\\D/g,'');
+  if(!doc){ document.getElementById('dOut').textContent = 'informe o documento'; return; }
+  document.getElementById('dOut').textContent = 'consultando...';
+  const r = await fetch('/api/admin/oficial/templates/previa-debito'+q('&doc='+doc));
+  const d = await r.json();
+  document.getElementById('dOut').textContent = d.error ? d.error :
+    ('variavel da lista:\\n' + (d.linha || '(sem titulos vencidos)') +
+     '\\n\\ntotal: ' + d.total + '   titulos: ' + (d.titulos||[]).length +
+     '   caracteres: ' + d.tamanhoDaVariavel +
+     '\\nbloqueia o pedido: ' + (d.bloqueia ? 'sim' : 'nao') + (d.aviso ? '  (' + d.aviso + ')' : ''));
 }
 async function verUmbler(){
   document.getElementById('umbler').innerHTML = '<p class="sub">consultando...</p>';
