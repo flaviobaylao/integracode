@@ -483,14 +483,25 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
+  const TMK_WHITELIST = ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'];
+  // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
+  // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
+  // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
+  // nada para quem não tem configuração.
+  const grantsView = (id: string) => {
+    const card = MENU_CARD[id];
+    return !!card && perms.hasConfig && perms.map?.[card]?.ver === true;
+  };
   const roleFilterItems = (items: MenuItem[]) => {
-    return items
-      .filter(item => item.available)
-      // Aplicação das permissões salvas: esconde o item se o usuário configurado
-      // não tem "ver" no card correspondente. Itens sem card mapeado passam livres.
-      .filter(item => { const card = MENU_CARD[item.id]; return !card || perms.can(card, "ver"); })
-      .filter(item => !isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
-      .filter(item => !isTelemarketing || ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'].includes(item.id));
+    return items.filter(item => {
+      const card = MENU_CARD[item.id];
+      const roleOk = item.available
+        && (!isMotorista || ['rota-entrega', 'entregas-do-dia'].includes(item.id))
+        && (!isTelemarketing || TMK_WHITELIST.includes(item.id));
+      // camada restritiva (inalterada): usuário configurado sem "ver" no card não vê
+      const permOk = !card || perms.can(card, "ver");
+      return (roleOk && permOk) || grantsView(item.id);
+    });
   };
 
   const visibleGroups = useMemo(() => {
