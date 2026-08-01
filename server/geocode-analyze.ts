@@ -192,11 +192,24 @@ const RAIO_ACEITO_KM = 0.3;
  */
 const DESLOCAMENTO_MINIMO_KM = 0.05;
 
+/**
+ * Numero de verdade, ou null.
+ *
+ * `Number(null)` e `Number("")` valem ZERO, nao NaN. Sem esta checagem, cliente
+ * sem coordenada era tratado como se estivesse em (0, 0) — no golfo da Guine — e
+ * o relatorio anunciava deslocamentos de 5.530 km que nunca existiram.
+ */
+function numeroOuNulo(v: any): number | null {
+  if (v === null || v === undefined || String(v).trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 /** Distancia entre a coordenada gravada e uma nova; null quando nao ha gravada. */
 function distanciaEntre(latGravada: any, lonGravada: any, latNova: any, lonNova: any): number | null {
-  const a = Number(latGravada), b = Number(lonGravada);
-  const c = Number(latNova), d = Number(lonNova);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c) || !Number.isFinite(d)) return null;
+  const a = numeroOuNulo(latGravada), b = numeroOuNulo(lonGravada);
+  const c = numeroOuNulo(latNova), d = numeroOuNulo(lonNova);
+  if (a === null || b === null || c === null || d === null) return null;
   const km = distanciaKm(a, b, c, d);
   return Number.isFinite(km) ? Math.round(km * 100) / 100 : null;
 }
@@ -734,7 +747,11 @@ export function registerGeocodeAnalyze(app: Express) {
               lat: coord.lat, lon: coord.lon,
               provaDaTrava: linha.C?.motivo
                 || (coord.origem === "limpeza" ? "endereco limpo resolveu o ponto" : "")
-                || (coord.origem === "endereco_atual" ? `endereco resolve em ${coord.precisao}; gravada estava a ${linha.gravadoDivergeKm} km` : ""),
+                || (coord.origem === "endereco_atual"
+                      ? (linha.gravadoDivergeKm === null || linha.gravadoDivergeKm === undefined
+                          ? `endereco resolve em ${coord.precisao}; cliente estava sem coordenada`
+                          : `endereco resolve em ${coord.precisao}; gravada estava a ${linha.gravadoDivergeKm} km`)
+                      : ""),
               nomeEncontrado: linha.C?.nomeEncontrado,
               // Quanto a coordenada vai se mover. Numero grande merece um olhar
               // antes de virar rota.
