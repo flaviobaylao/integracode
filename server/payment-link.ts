@@ -33,6 +33,8 @@ import {
   luhnOk,
   friendlyDecline,
 } from './hotsite-card';
+import { storage } from './storage';
+import { cancelarBoleto } from './bb-boleto-service';
 import {
   cieloLinkEnabled,
   createCieloLink,
@@ -104,6 +106,7 @@ async function ensurePaymentLinkTable(): Promise<void> {
     `nsu varchar`,
     `authorization_code varchar`,
     `is_test boolean NOT NULL DEFAULT false`,
+    `receivable_id varchar`,
   ]) {
     try { await db.execute(sql.raw(`ALTER TABLE payment_links ADD COLUMN IF NOT EXISTS ${c}`)); } catch {}
   }
@@ -112,8 +115,9 @@ async function ensurePaymentLinkTable(): Promise<void> {
 }
 
 export type CreatePaymentLinkArgs = {
-  kind?: 'order' | 'avulso';
+  kind?: 'order' | 'avulso' | 'receivable';
   salesCardId?: string | null;
+  receivableId?: string | null;   // Contas a Receber: titulo ja faturado
   orderNumber?: string | null;
   conversationId?: string | null;
   channel?: string | null;           // instagram | whatsapp | manual
@@ -142,6 +146,22 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<{
       if (!cfg.merchantId || !cfg.merchantKey) return { ok: false, error: 'cielo nao configurada' };
     }
     await ensurePaymentLinkTable();
+
+    // Titulo de Contas a Receber: um titulo tem no maximo UM link pendente.
+    if (args.receivableId) {
+      const jp: any = await db.execute(sql`SELECT 1 FROM payment_links WHERE receivable_id = ${args.receivableId} AND status = 'paid' LIMIT 1`);
+      if (((jp.rows || jp) as any[]).length) return { ok: false, error: 'titulo ja pago por link' };
+      const ex2: any = await db.execute(sql`SELECT token, amount FROM payment_links
+        WHERE receivable_id = ${args.receivableId} AND status = 'pending'
+          AND (expires_at IS NULL OR expires_at > now())
+        ORDER BY created_at DESC LIMIT 1`);
+      const row2 = (ex2.rows || ex2)[0];
+      if (row2 && Math.abs(Number(row2.amount) - amount) < 0.01) {
+        return { ok: true, token: row2.token, url: `${LINK_BASE}/pay/${row2.token}`, amount, reused: true };
+      }
+      try { await db.execute(sql`UPDATE payment_links SET status = 'canceled', updated_at = now()
+        WHERE receivable_id = ${args.receivableId} AND status = 'pending'`); } catch {}
+    }
 
     if (args.salesCardId) {
       if (await orderAlreadyPaid(args.salesCardId)) return { ok: false, error: 'pedido ja pago' };
@@ -195,13 +215,13 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<{
     await db.execute(sql`INSERT INTO payment_links
       (token, kind, sales_card_id, order_number, conversation_id, channel, customer_name,
        customer_document, customer_phone, amount, description, expires_at, created_by,
-       provider, checkout_url, cielo_product_id, merchant_order_id)
-      VALUES (${token}, ${args.kind || (args.salesCardId ? 'order' : 'avulso')}, ${args.salesCardId || null},
+       provider, checkout_url, cielo_product_id, merchant_order_id, receivable_id)
+      VALUES (${token}, ${args.kind || (args.receivableId ? 'receivable' : (args.salesCardId ? 'order' : 'avulso'))}, ${args.salesCardId || null},
               ${args.orderNumber || null}, ${args.conversationId || null}, ${args.channel || null},
               ${args.customerName || null}, ${onlyDigits(args.customerDocument) || null},
               ${onlyDigits(args.customerPhone) || null}, ${amount.toFixed(2)}, ${args.description || null},
               ${expiresAt}::timestamptz, ${args.createdBy || null},
-              ${provider}, ${checkoutUrl}, ${cieloProductId}, ${merchantOrderId})`);
+              ${provider}, ${checkoutUrl}, ${cieloProductId}, ${merchantOrderId}, ${args.receivableId || null})`);
     console.log(`🔗 [PAY-LINK] criado token=${token.slice(0, 8)}… card=${args.salesCardId || '-'} total=${amount.toFixed(2)} canal=${args.channel || '-'}`);
     return { ok: true, token, url: `${LINK_BASE}/pay/${token}`, amount, reused: false };
   } catch (e: any) {
@@ -263,7 +283,115 @@ function googlePayPublicConfig() {
 // Pós-aprovação: registra o pagamento no MESMO lugar que a loja já usa, para o
 // pipeline enxergar "pago na loja" (badge PAGO + baixa automática ao faturar).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// CONTAS A RECEBER — o titulo JA foi faturado, entao pagar o link significa DAR
+// BAIXA no recebivel (nao marcar pedido). Espelha o settleBoletoCharge do BB:
+// atualiza o titulo, grava receivable_payments, credita a conta CARTOES e move
+// o saldo. Depois BAIXA a cobranca antiga (boleto no BB / PIX) para o cliente
+// nao conseguir pagar duas vezes o mesmo titulo.
+// ---------------------------------------------------------------------------
+async function findCardAccount(): Promise<any | null> {
+  try {
+    const r: any = await db.execute(sql`SELECT * FROM financial_accounts
+      WHERE upper(name) = 'CARTOES' OR upper(name) LIKE 'CART%' ORDER BY (upper(name) = 'CARTOES') DESC LIMIT 1`);
+    return (r.rows || r)[0] || null;
+  } catch { return null; }
+}
+
+async function cancelarCobrancaAntiga(receivableId: string): Promise<{ boletos: number; pix: number; erros: string[] }> {
+  const out = { boletos: 0, pix: 0, erros: [] as string[] };
+  try {
+    const bq: any = await db.execute(sql`SELECT * FROM boleto_charges
+      WHERE receivable_id = ${receivableId} AND status NOT IN ('cancelado','cancelada','liquidado','pago','recebido')
+      ORDER BY created_at DESC`);
+    for (const boleto of ((bq.rows || bq) as any[])) {
+      if (/(liquid|pag|receb)/i.test(String(boleto.status || ''))) continue; // ja pago: nao mexer
+      try {
+        const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL LIMIT 1`);
+        const accId = (accq.rows || accq)[0]?.id;
+        if (accId) {
+          const c = await cancelarBoleto(accId, boleto);
+          if (!c.ok && !c.alreadyBaixado) { out.erros.push(`boleto ${boleto.nosso_numero || boleto.id}: ${c.error || 'falha'}`); continue; }
+        }
+        await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+        out.boletos++;
+      } catch (e: any) { out.erros.push(`boleto ${boleto.id}: ${e?.message || e}`); }
+    }
+  } catch { /* tabela pode nao existir */ }
+  try {
+    const pu: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR'
+      WHERE receivable_id = ${receivableId} AND status = 'ATIVA'`);
+    out.pix = (pu?.rowCount ?? 0) as number;
+  } catch { /* idem */ }
+  return out;
+}
+
+async function settleReceivableByLink(link: any, sale: any, opts: { last4?: string; brand?: string }): Promise<void> {
+  const receivableId = String(link.receivable_id || '');
+  if (!receivableId) return;
+  const paid = Number(link.amount) || 0;
+  try {
+    const receivable: any = await storage.getReceivable(receivableId);
+    if (!receivable) { console.error(`❌ [PAY-LINK] recebivel ${receivableId} nao encontrado`); return; }
+
+    const total = parseFloat(receivable.amount || '0');
+    const already = parseFloat(receivable.amountPaid || '0');
+    if (already >= total) { console.log(`ℹ️ [PAY-LINK] recebivel ${receivableId} ja estava quitado`); return; }
+
+    const account = await findCardAccount();
+    const novoPago = already + paid;
+    const status = novoPago >= total ? 'recebida' : 'a_vencer';
+
+    await storage.updateReceivable(receivableId, {
+      amountPaid: novoPago.toFixed(2),
+      status: status as any,
+      paymentMethod: 'cartao_credito' as any,
+      financialAccountId: account?.id || receivable.financialAccountId || null,
+    } as any);
+
+    try {
+      await storage.createReceivablePayment({
+        receivableId,
+        paidAt: new Date(),
+        amount: paid.toFixed(2),
+        paymentMethod: 'cartao_credito' as any,
+        financialAccountId: account?.id || receivable.financialAccountId || null,
+        reference: sale?.paymentId || link.merchant_order_id || null,
+        notes: `Baixa automatica por LINK DE PAGAMENTO (cartao Cielo${opts.brand ? ' ' + opts.brand : ''}${opts.last4 ? ' final ' + opts.last4 : ''}) - pedido Cielo ${link.merchant_order_id || '-'}`,
+        createdBy: 'link-pagamento',
+      } as any);
+    } catch (e: any) { console.warn('⚠️ [PAY-LINK] createReceivablePayment falhou:', e?.message || e); }
+
+    if (account) {
+      try {
+        const cur = parseFloat(account.balance || '0');
+        await storage.updateFinancialAccount(account.id, { balance: (cur + paid).toFixed(2) } as any);
+        await storage.createAccountMovement({
+          financialAccountId: account.id,
+          movementType: 'credito' as any,
+          amount: paid.toFixed(2),
+          description: `Recebimento por link de pagamento (cartao) - titulo ${receivable.titleNumber || receivableId}`,
+          referenceType: 'receivable',
+          referenceId: receivableId,
+          createdBy: 'link-pagamento',
+        } as any);
+      } catch (e: any) { console.warn('⚠️ [PAY-LINK] credito na conta falhou:', e?.message || e); }
+    }
+
+    // Anti-cobranca-dupla: baixa o boleto no BB e remove o PIX que ainda estiverem abertos.
+    const canc = await cancelarCobrancaAntiga(receivableId);
+    console.log(`✅ [PAY-LINK] recebivel ${receivableId} baixado por cartao (R$ ${paid.toFixed(2)}, status ${status}); boletos cancelados=${canc.boletos} pix=${canc.pix}${canc.erros.length ? ' erros=' + canc.erros.join('; ') : ''}`);
+  } catch (e: any) {
+    console.error('❌ [PAY-LINK] settleReceivableByLink:', e?.message || e);
+  }
+}
+
 async function afterApproved(link: any, sale: any, opts: { wallet?: string; last4?: string; brand?: string }): Promise<void> {
+  // Titulo de Contas a Receber: baixa o recebivel e encerra aqui (nao e pedido novo).
+  if (String(link.kind || '') === 'receivable' || link.receivable_id) {
+    await settleReceivableByLink(link, sale, opts);
+    return;
+  }
   const merchantOrderId = link.merchant_order_id;
   try {
     await ensureHotsiteCardTable();
@@ -458,6 +586,43 @@ export function registerPaymentLink(app: Express): void {
     } catch (e: any) {
       console.error('\u274c [PAY-LINK] create:', e?.message || e);
       return res.status(500).json({ message: 'Erro ao criar o link de pagamento.' });
+    }
+  });
+
+  // ------------------------------------------- link para TITULO em aberto
+  // Contas a Receber / Debitos Vencidos: gera o link do SALDO em aberto do titulo.
+  // Ao pagar, o webhook da Cielo baixa o recebivel e cancela boleto/PIX antigos.
+  app.post('/api/financial/receivables/:id/payment-link', authenticateUser, async (req: any, res) => {
+    try {
+      const rec: any = await storage.getReceivable(String(req.params.id));
+      if (!rec) return res.status(404).json({ message: 'Titulo nao encontrado' });
+
+      const total = parseFloat(rec.amount || '0');
+      const pago = parseFloat(rec.amountPaid || '0');
+      const saldo = Math.round((total - pago) * 100) / 100;
+      if (!(saldo > 0)) return res.status(400).json({ message: 'Titulo sem saldo em aberto' });
+      if (['recebida', 'cancelada'].includes(String(rec.status || ''))) {
+        return res.status(409).json({ message: `Titulo ${rec.status} - nao cabe link de pagamento` });
+      }
+
+      const out = await createPaymentLink({
+        kind: 'receivable',
+        receivableId: rec.id,
+        orderNumber: rec.titleNumber || null,
+        channel: req.body?.channel || 'financeiro',
+        customerName: rec.customerName || null,
+        customerDocument: rec.customerDocument || null,
+        customerPhone: req.body?.customerPhone || null,
+        amount: saldo,
+        description: `Titulo ${rec.titleNumber || ''}`.trim(),
+        ttlHours: req.body?.ttlHours,
+        createdBy: (req as any).currentUser?.email || 'financeiro',
+      });
+      if (!out.ok) return res.status(400).json({ message: out.error || 'Falha ao criar o link' });
+      return res.json({ ...out, titleNumber: rec.titleNumber || null, customerName: rec.customerName || null });
+    } catch (e: any) {
+      console.error('❌ [PAY-LINK] receivable link:', e?.message || e);
+      return res.status(500).json({ message: 'Erro ao criar o link do titulo.' });
     }
   });
 
