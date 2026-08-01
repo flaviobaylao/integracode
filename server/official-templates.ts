@@ -56,31 +56,53 @@ export async function salvarTemplate(t: { label: string; umblerId?: string; cate
   return 'criado';
 }
 
-// A doc publica do Talk nao documenta rota de listagem de templates.
-// Em vez de chutar uma so, tenta as candidatas e devolve o que respondeu.
-async function sondarUmbler(): Promise<any[]> {
+// Rota confirmada na conta da Honest: GET /v1/templates/?organizationId=..&channelId=..
+// Devolve label, category, status (APPROVED/PENDING/REJECTED) e o corpo de cada template.
+export async function templatesDoUmbler(): Promise<{ itens: any[]; bruto?: any; erro?: string }> {
   const token = process.env.UMBLER_TALK_TOKEN;
-  if (!token) return [{ erro: 'UMBLER_TALK_TOKEN ausente' }];
-  const org = encodeURIComponent(orgId());
-  const caminhos = [
-    '/v1/templates/?organizationId=' + org,
-    '/v1/templates/?organizationId=' + org + '&channelId=' + encodeURIComponent(canalOficial()),
-    '/v1/template-messages/?organizationId=' + org,
-    '/v1/channels/' + encodeURIComponent(canalOficial()) + '/templates/?organizationId=' + org,
-    '/v1/organizations/' + org + '/templates/',
-  ];
-  const out: any[] = [];
-  for (const p of caminhos) {
-    try {
-      const r = await fetch(UMBLER_TALK_BASE + p, {
-        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(15000),
-      });
-      const txt = await r.text();
-      out.push({ caminho: p, http: r.status, amostra: txt.slice(0, 400) });
-    } catch (e: any) { out.push({ caminho: p, erro: e?.message || String(e) }); }
+  if (!token) return { itens: [], erro: 'UMBLER_TALK_TOKEN ausente' };
+  const url = UMBLER_TALK_BASE + '/v1/templates/?organizationId=' + encodeURIComponent(orgId())
+    + '&channelId=' + encodeURIComponent(canalOficial());
+  try {
+    const r = await fetch(url, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    });
+    const txt = await r.text();
+    if (!r.ok) return { itens: [], erro: 'HTTP ' + r.status + ': ' + txt.slice(0, 200) };
+    const j: any = JSON.parse(txt);
+    const brutos: any[] = j.items || j.Items || (Array.isArray(j) ? j : []);
+    const corpoDe = (t: any) => {
+      const b = t.body ?? t.Body ?? t.content ?? t.Content;
+      if (b == null) return '';
+      if (typeof b === 'string') return b;
+      return String(b.content ?? b.Content ?? b.text ?? b.Text ?? '');
+    };
+    const itens = brutos.map((t: any) => ({
+      id: t.id ?? t.Id ?? t.templateId ?? t.TemplateId ?? null,
+      label: t.label ?? t.Label ?? t.name ?? t.Name ?? '',
+      categoria: t.category ?? t.Category ?? null,
+      status: t.status ?? t.Status ?? null,
+      corpo: corpoDe(t),
+      canal: t.channel?.id ?? null,
+    }));
+    // O primeiro item cru fica junto: se algum campo mudar de nome, da para ver aqui.
+    return { itens, bruto: brutos[0] || null };
+  } catch (e: any) { return { itens: [], erro: e?.message || String(e) }; }
+}
+
+// Traz do Umbler para a tabela local tudo que estiver aprovado.
+async function importarDoUmbler(): Promise<any> {
+  const { itens, erro } = await templatesDoUmbler();
+  if (erro) return { erro };
+  const resumo: any = { criados: [], atualizados: [], ignorados: [] };
+  for (const t of itens) {
+    if (!t.label || !t.id) { resumo.ignorados.push({ label: t.label, motivo: 'sem id ou label' }); continue; }
+    if (String(t.status || '').toUpperCase() !== 'APPROVED') { resumo.ignorados.push({ label: t.label, motivo: 'status ' + t.status }); continue; }
+    const r = await salvarTemplate({ label: t.label, umblerId: t.id, categoria: t.categoria || 'UTILITY', corpo: t.corpo || undefined });
+    (r === 'criado' ? resumo.criados : resumo.atualizados).push(t.label);
   }
-  return out;
+  return resumo;
 }
 
 export function registerOfficialTemplates(app: any) {
@@ -118,10 +140,17 @@ export function registerOfficialTemplates(app: any) {
     catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  // Descobre qual rota do Umbler lista os templates aprovados nesta conta.
+  // Lista o que existe de fato na conta do Umbler (com status de aprovacao).
   app.get('/api/admin/oficial/templates/umbler', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
-    res.json({ tentativas: await sondarUmbler() });
+    res.json(await templatesDoUmbler());
+  });
+
+  // Copia os aprovados do Umbler para a tabela local.
+  app.get('/api/admin/oficial/templates/importar', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try { res.json(await importarDoUmbler()); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   app.get('/api/admin/oficial/templates/painel', (req: any, res: any) => {
@@ -190,10 +219,12 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 </div>
 
 <div class="card">
-  <div style="font-weight:700;margin-bottom:6px">Sonda da API do Umbler</div>
-  <p class="sub" style="margin:0 0 8px">Descobre se existe rota de listagem de templates nesta conta. Util para conferir o ID sem abrir o painel do Umbler.</p>
-  <button class="sec" onclick="sondar()">Sondar</button>
-  <pre id="sonda" style="white-space:pre-wrap;font-size:12px;color:#8b98b0;margin-top:10px"></pre>
+  <div style="font-weight:700;margin-bottom:6px">O que existe na conta do Umbler</div>
+  <p class="sub" style="margin:0 0 8px">Lista direto da API do Umbler, com o status de aprovacao de cada um. <b>Importar</b> copia os aprovados para a tabela acima.</p>
+  <button class="sec" onclick="verUmbler()">Listar</button>
+  <button onclick="importar()">Importar aprovados</button>
+  <span id="msg2" style="margin-left:12px;font-size:13px"></span>
+  <div id="umbler"></div>
 </div>
 
 <script>
@@ -241,13 +272,25 @@ async function salvar(){
     : '<span class="falta">'+esc(d.error||'erro')+'</span>';
   load();
 }
-async function sondar(){
-  document.getElementById('sonda').textContent = 'consultando...';
+async function verUmbler(){
+  document.getElementById('umbler').innerHTML = '<p class="sub">consultando...</p>';
   const r = await fetch('/api/admin/oficial/templates/umbler'+q(''));
   const d = await r.json();
-  document.getElementById('sonda').textContent = (d.tentativas||[]).map(t =>
-    (t.caminho||'') + '  ->  ' + (t.http!=null ? 'HTTP '+t.http : 'ERRO '+(t.erro||'')) + '\\n' + (t.amostra||'')
-  ).join('\\n\\n');
+  if(d.erro){ document.getElementById('umbler').innerHTML = '<p class="falta">'+esc(d.erro)+'</p>'; return; }
+  document.getElementById('umbler').innerHTML =
+    '<table><thead><tr><th>Label</th><th>ID</th><th>Cat.</th><th>Status</th><th>Corpo</th></tr></thead><tbody>'+
+    (d.itens||[]).map(t=>'<tr><td><b>'+esc(t.label)+'</b></td><td><code>'+esc(t.id)+'</code></td>'+
+      '<td>'+esc(t.categoria)+'</td><td class="'+(String(t.status).toUpperCase()==='APPROVED'?'ok':'falta')+'">'+esc(t.status)+'</td>'+
+      '<td style="max-width:420px;color:#8b98b0">'+esc(t.corpo).slice(0,300)+'</td></tr>').join('')+
+    '</tbody></table>';
+}
+async function importar(){
+  document.getElementById('msg2').textContent = 'importando...';
+  const r = await fetch('/api/admin/oficial/templates/importar'+q(''));
+  const d = await r.json();
+  document.getElementById('msg2').innerHTML = d.erro ? '<span class="falta">'+esc(d.erro)+'</span>'
+    : '<span class="ok">criados: '+(d.criados||[]).length+' · atualizados: '+(d.atualizados||[]).length+' · ignorados: '+(d.ignorados||[]).length+'</span>';
+  load(); verUmbler();
 }
 load();
 </script>
