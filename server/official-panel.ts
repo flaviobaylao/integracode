@@ -85,12 +85,20 @@ export function registerOfficialPanel(app: any) {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const key = String(req.query.key || '');
     const value = String(req.query.value || '');
-    const LIMITES = ['oficial_daily_cap', 'oficial_rate_min'];
-    const allowed = ['oficial_dispatch_mode', ...USE_CASES.map(u => 'oficial_' + u), ...USE_CASES.map(u => 'oficial_mode_' + u), ...LIMITES];
+    // Chaves numericas com faixa propria (teto/ritmo da fila e ajustes do gatilho da fase 3).
+    const LIMITES = ['oficial_daily_cap', 'oficial_rate_min', 'pipeline_janela_min', 'pipeline_debito_horas'];
+    if (key === 'pipeline_tick_on') {
+      if (!['on', 'off'].includes(value)) return res.status(400).json({ error: 'value invalido' });
+      await setSetting(key, value);
+      return res.json({ ok: true, key, value });
+    }
+    const allowed = ['oficial_dispatch_mode', 'pipeline_tick_on', ...USE_CASES.map(u => 'oficial_' + u), ...USE_CASES.map(u => 'oficial_mode_' + u), ...LIMITES];
     if (!allowed.includes(key)) return res.status(400).json({ error: 'key invalida' });
     if (LIMITES.includes(key)) {
       const n = parseInt(value, 10);
-      const teto = key === 'oficial_daily_cap' ? 5000 : 60;
+      const teto = key === 'oficial_daily_cap' ? 5000
+        : key === 'pipeline_janela_min' ? 10080
+        : key === 'pipeline_debito_horas' ? 720 : 60;
       if (!(n > 0) || n > teto) return res.status(400).json({ error: `valor entre 1 e ${teto}` });
       await setSetting(key, String(n));
       return res.json({ ok: true, key, value: String(n) });
