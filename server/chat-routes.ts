@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { registerEntregaAvisos } from './entrega-avisos';
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
@@ -750,6 +751,12 @@ async function fetchUmblerTalkMessageFile(messageId: string): Promise<{ url?: st
 }
 
 export function registerChatRoutes(app: Express): void {
+  // Aviso de entrega nao realizada para quem vendeu. Fica AQUI de proposito: rotas
+  // registradas no topo do index.ts sobem ANTES do middleware de sessao, e toda chamada
+  // com authenticateUser volta 401. Este ponto ja roda depois da sessao.
+  try { registerEntregaAvisos(app); }
+  catch (e: any) { console.error('[ENTREGA-AVISOS] nao registrado:', e?.message || e); }
+
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
     storage: multer.memoryStorage(),

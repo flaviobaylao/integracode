@@ -8,7 +8,6 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { registerPipelineDispatch } from './pipeline-dispatch';
-import { registerEntregaAvisos } from './entrega-avisos';
 
 const UMBLER_TALK_BASE = 'https://app-utalk.umbler.com/api';
 const OFICIAL_CHANNEL_ID = process.env.UMBLER_OFFICIAL_CHANNEL_ID || 'ajqNf-Vjp4yjcaJf';
@@ -295,8 +294,6 @@ export function registerOfficialDispatch(app: any) {
   // Fase 3: gatilho dos avisos de pedido. Registrado aqui para nao mexer no index.ts.
   try { registerPipelineDispatch(app); }
   catch (e: any) { console.error('[PIPELINE-DISPATCH] nao registrado:', e?.message || e); }
-  try { registerEntregaAvisos(app); }
-  catch (e: any) { console.error('[ENTREGA-AVISOS] nao registrado:', e?.message || e); }
 
   console.log('[OFICIAL-DISPATCH] registrado (endpoints + worker + agendamento 8h30)');
 }
