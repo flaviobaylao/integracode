@@ -72,6 +72,24 @@ async function templatePronto(label: string): Promise<boolean> {
   } catch { return false; }
 }
 
+// Confere a quantidade de variaveis contra o texto APROVADO antes de enfileirar.
+// O texto pode voltar da aprovacao diferente do que foi proposto (aconteceu com o
+// pedido_saiu_entrega, que perdeu a variavel de horario) — e parametro a mais ou a
+// menos e recusado pela Meta com erro 132000, gastando a tentativa.
+async function paramsBatem(label: string, params: string[]): Promise<{ ok: boolean; motivo?: string }> {
+  try {
+    const r: any = await db.execute(sql`SELECT corpo FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
+    const corpo = String(r.rows?.[0]?.corpo || '');
+    if (!corpo) return { ok: true };                    // sem copia do texto, segue
+    let max = 0;
+    for (const m of corpo.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) max = Math.max(max, parseInt(m[1], 10) || 0);
+    if (max && params.length !== max) {
+      return { ok: false, motivo: `template ${label} usa ${max} variavel(is) e o gatilho mandou ${params.length}` };
+    }
+    return { ok: true };
+  } catch { return { ok: true }; }
+}
+
 // Motivo da falha em linguagem de cliente. O rotulo interno nao serve: "customer_absent"
 // vira "nao havia ninguem no local".
 const MOTIVO_FALHA: Record<string, string> = {
@@ -133,9 +151,12 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
     for (const r of (novos.rows || [])) {
       const campaign = 'card:' + r.sales_card_id + ':confirmado';
       if (await jaAvisado(campaign)) continue;
+      const p1 = [nomeDe(r), limpo(numeroDe(r)), brl(r.sale_value)];
+      const c1 = await paramsBatem('pedido_confirmado', p1);
+      if (!c1.ok) { out.pulados.push(`confirmado ${r.sales_card_id}: ${c1.motivo}`); continue; }
       const res = await enqueueOfficialDispatch({
         customerId: r.cid, customerPhone: r.phone, templateLabel: 'pedido_confirmado',
-        params: [nomeDe(r), limpo(numeroDe(r)), brl(r.sale_value)],
+        params: p1,
         useCase: 'pipeline', campaign, category: 'UTILITY',
       });
       if (res === 'enfileirado') out.confirmado++; else out.pulados.push(`confirmado ${r.sales_card_id}: ${res}`);
@@ -168,9 +189,12 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
         }
         const dbt = await linhaDebitos(String(r.cnpj || r.cpf || ''));
         if (!dbt.linha) { out.pulados.push(`debito ${r.sales_card_id}: sem titulos para listar`); continue; }
+        const p2 = [nomeDe(r), limpo(numeroDe(r)), brl(r.total_amount), limpo(dbt.linha), dbt.total];
+        const c2 = await paramsBatem('pedido_confirmado_debito', p2);
+        if (!c2.ok) { out.pulados.push(`debito ${r.sales_card_id}: ${c2.motivo}`); continue; }
         const res = await enqueueOfficialDispatch({
           customerId: r.cid, customerPhone: r.phone, templateLabel: 'pedido_confirmado_debito',
-          params: [nomeDe(r), limpo(numeroDe(r)), brl(r.total_amount), limpo(dbt.linha), dbt.total],
+          params: p2,
           useCase: 'pipeline', campaign, category: 'UTILITY',
         });
         if (res === 'enfileirado') out.debito++; else out.pulados.push(`debito ${r.sales_card_id}: ${res}`);
@@ -179,9 +203,12 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
         if (await jaAvisado(campaign)) continue;
         const cond = r.boleto_days ? `boleto ${r.boleto_days} dias`
           : (r.payment_method ? String(r.payment_method).replace(/_/g, ' ') : 'a combinar');
+        const p3 = [nomeDe(r), limpo(numeroDe(r)), brl(r.total_amount), limpo(cond)];
+        const c3 = await paramsBatem('pedido_confirmado_analise', p3);
+        if (!c3.ok) { out.pulados.push(`analise ${r.sales_card_id}: ${c3.motivo}`); continue; }
         const res = await enqueueOfficialDispatch({
           customerId: r.cid, customerPhone: r.phone, templateLabel: 'pedido_confirmado_analise',
-          params: [nomeDe(r), limpo(numeroDe(r)), brl(r.total_amount), limpo(cond)],
+          params: p3,
           useCase: 'pipeline', campaign, category: 'UTILITY',
         });
         if (res === 'enfileirado') out.analise++; else out.pulados.push(`analise ${r.sales_card_id}: ${res}`);
@@ -231,9 +258,12 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
     for (const r of (entregas.rows || [])) {
       const campaign = 'card:' + r.sales_card_id + ':entrega';
       if (await jaAvisado(campaign)) continue;
+      const p5 = [nomeDe(r), limpo(r.invoice_number), dataBR(r.delivery_scheduled_date)];
+      const c5 = await paramsBatem('entrega_programada', p5);
+      if (!c5.ok) { out.pulados.push(`entrega ${r.sales_card_id}: ${c5.motivo}`); continue; }
       const res = await enqueueOfficialDispatch({
         customerId: r.cid, customerPhone: r.phone, templateLabel: 'entrega_programada',
-        params: [nomeDe(r), limpo(r.invoice_number), dataBR(r.delivery_scheduled_date)],
+        params: p5,
         useCase: 'pipeline', campaign, category: 'UTILITY',
       });
       if (res === 'enfileirado') out.entrega++; else out.pulados.push(`entrega ${r.sales_card_id}: ${res}`);
@@ -272,13 +302,17 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
       }
       let params: string[];
       if (ev.evento === 'saiu') {
-        params = [nomeDe(r), limpo(numeroDe(r)), 'hoje'];
+        // O texto aprovado ficou com DUAS variaveis (nome e pedido) — sem a janela de
+        // horario que eu tinha proposto. Mandar tres derruba o envio com erro 132000.
+        params = [nomeDe(r), limpo(numeroDe(r))];
       } else if (ev.evento === 'entregue') {
         params = [nomeDe(r), limpo(numeroDe(r))];
       } else {
         const motivo = MOTIVO_FALHA[String(r.motivo || 'other')] || MOTIVO_FALHA.other;
         params = [nomeDe(r), limpo(numeroDe(r)), limpo(motivo)];
       }
+      const cx = await paramsBatem(ev.label, params);
+      if (!cx.ok) { out.pulados.push(`${ev.evento} ${r.sales_card_id}: ${cx.motivo}`); continue; }
       const res = await enqueueOfficialDispatch({
         customerId: r.cid, customerPhone: r.phone, templateLabel: ev.label,
         params, useCase: 'pipeline', campaign, category: 'UTILITY',
