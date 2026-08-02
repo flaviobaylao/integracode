@@ -415,7 +415,7 @@ export default function BillingPipeline() {
     if (!detailItem || !editData) return;
     const restricted = !canEdit && isSellerRole; // vendedor/telemarketing dono
     const data = restricted
-      ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate }
+      ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate, notes: editData.notes }
       : editData;
     updateItemMutation.mutate({ id: detailItem.id, data });
   };
@@ -1414,10 +1414,10 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {(detailItem.notes || (editMode && canEdit)) && (
+              {(detailItem.notes || (editMode && (canEdit || canSellerEditItem(detailItem)))) && (
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
-                  {editMode && canEdit ? (
+                  {editMode && (canEdit || canSellerEditItem(detailItem)) ? (
                     <textarea value={editData?.notes ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, notes: e.target.value }))} rows={2} className="w-full border rounded px-2 py-1 text-sm" />
                   ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>)}
                 </div>
