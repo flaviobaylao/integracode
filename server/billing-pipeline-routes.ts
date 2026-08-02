@@ -1628,9 +1628,9 @@ export function registerBillingPipelineRoutes(app: Express) {
             const _total = Math.round(_qty * _up * 100) / 100;
             _repriced.push({ ..._l, name: _nm, quantity: _qty, unitPrice: _up, totalPrice: _total });
           }
-          req.body = { products: _repriced, paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate };
+          req.body = { products: _repriced, paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate, notes: req.body?.notes };
         } else {
-          req.body = { paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate };
+          req.body = { paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate, notes: req.body?.notes };
         }
       }
       const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
