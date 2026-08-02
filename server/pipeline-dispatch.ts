@@ -61,6 +61,28 @@ async function inicio(): Promise<Date> {
   return agora;
 }
 
+// O template ja existe e esta ligado? Sem isso, cada evento de entrega entraria na fila
+// so para falhar com "template nao encontrado" enquanto os textos nao sao aprovados.
+async function templatePronto(label: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`SELECT umbler_id, COALESCE(is_active, true) AS ativo
+      FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
+    const row = r.rows?.[0];
+    return !!(row && row.umbler_id && row.ativo !== false);
+  } catch { return false; }
+}
+
+// Motivo da falha em linguagem de cliente. O rotulo interno nao serve: "customer_absent"
+// vira "nao havia ninguem no local".
+const MOTIVO_FALHA: Record<string, string> = {
+  customer_absent: 'não havia ninguém no local para receber',
+  address_incorrect: 'divergência no endereço de entrega',
+  customer_refused: 'o pedido não pôde ser recebido',
+  payment_issue: 'pendência no pagamento',
+  product_damaged: 'avaria identificada no produto',
+  other: 'um imprevisto na rota',
+};
+
 async function jaAvisado(campaign: string): Promise<boolean> {
   try {
     const r: any = await db.execute(sql`SELECT 1 FROM official_dispatches WHERE campaign = ${campaign} LIMIT 1`);
@@ -215,6 +237,57 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
         useCase: 'pipeline', campaign, category: 'UTILITY',
       });
       if (res === 'enfileirado') out.entrega++; else out.pulados.push(`entrega ${r.sales_card_id}: ${res}`);
+    }
+
+    // ------------------------------------------- 6, 7 e 8) ciclo da entrega
+    // Fonte: delivery_history — uma linha por transicao, venha do app do motorista, do
+    // painel ou do Omie. Um lugar so cobre todas as origens.
+    const EVENTOS_ENTREGA: Record<string, { label: string; evento: string }> = {
+      in_transit: { label: 'pedido_saiu_entrega', evento: 'saiu' },
+      delivered: { label: 'pedido_entregue', evento: 'entregue' },
+      failed: { label: 'entrega_nao_realizada', evento: 'falhou' },
+    };
+    const movs: any = await db.execute(sql`
+      SELECT dh.sales_card_id, dh.status::text AS status, dh.timestamp, dh.notes,
+             bp.order_number, sc.delivery_failure_reason::text AS motivo,
+             c.id AS cid, c.name, c.fantasy_name, c.phone
+      FROM delivery_history dh
+      JOIN customers c ON c.id = dh.customer_id
+      LEFT JOIN sales_cards sc ON sc.id = dh.sales_card_id
+      LEFT JOIN LATERAL (SELECT order_number, operation_type FROM billing_pipeline b
+                         WHERE b.sales_card_id = dh.sales_card_id ORDER BY created_at DESC LIMIT 1) bp ON true
+      WHERE dh.timestamp > ${corte.toISOString()}::timestamptz
+        AND dh.status::text IN ('in_transit','delivered','failed')
+        AND COALESCE(sc.operation_type::text, bp.operation_type, 'venda') = 'venda'
+        AND COALESCE(c.phone, '') <> ''
+      ORDER BY dh.timestamp LIMIT 200`);
+    for (const r of (movs.rows || [])) {
+      const ev = EVENTOS_ENTREGA[String(r.status)];
+      if (!ev) continue;
+      const campaign = 'card:' + r.sales_card_id + ':' + ev.evento;
+      if (await jaAvisado(campaign)) continue;
+      if (!(await templatePronto(ev.label))) {
+        out.pulados.push(`${ev.evento} ${r.sales_card_id}: template ${ev.label} nao cadastrado/ativo`);
+        continue;
+      }
+      let params: string[];
+      if (ev.evento === 'saiu') {
+        params = [nomeDe(r), limpo(numeroDe(r)), 'hoje'];
+      } else if (ev.evento === 'entregue') {
+        params = [nomeDe(r), limpo(numeroDe(r))];
+      } else {
+        const motivo = MOTIVO_FALHA[String(r.motivo || 'other')] || MOTIVO_FALHA.other;
+        params = [nomeDe(r), limpo(numeroDe(r)), limpo(motivo)];
+      }
+      const res = await enqueueOfficialDispatch({
+        customerId: r.cid, customerPhone: r.phone, templateLabel: ev.label,
+        params, useCase: 'pipeline', campaign, category: 'UTILITY',
+      });
+      if (res === 'enfileirado') out.entrega++;
+      else out.pulados.push(`${ev.evento} ${r.sales_card_id}: ${res}`);
+      // NOTA: entrega que falha nao se resolve com mensagem — o dono da carteira precisa
+      // saber. Isso pede um gatilho interno proprio ('entrega.falhou') nas Notificacoes;
+      // reaproveitar 'pedido.bloqueado' mandaria um texto errado para o vendedor.
     }
 
     const total = out.confirmado + out.debito + out.analise + out.liberado + out.entrega;
