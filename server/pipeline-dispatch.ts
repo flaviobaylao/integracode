@@ -285,9 +285,23 @@ export async function pipelineTick(force = false): Promise<{ ran: boolean; motiv
       });
       if (res === 'enfileirado') out.entrega++;
       else out.pulados.push(`${ev.evento} ${r.sales_card_id}: ${res}`);
-      // NOTA: entrega que falha nao se resolve com mensagem — o dono da carteira precisa
-      // saber. Isso pede um gatilho interno proprio ('entrega.falhou') nas Notificacoes;
-      // reaproveitar 'pedido.bloqueado' mandaria um texto errado para o vendedor.
+
+      // Entrega que falha nao se resolve com template: quem vendeu precisa remarcar.
+      // Telemarketing recebe alerta em tela; vendedor externo, WhatsApp.
+      if (ev.evento === 'falhou') {
+        try {
+          const { avisarFalhaDeEntrega } = await import('./entrega-avisos');
+          const av = await avisarFalhaDeEntrega({
+            salesCardId: String(r.sales_card_id),
+            numeroPedido: numeroDe(r),
+            cliente: nomeDe(r),
+            motivo: MOTIVO_FALHA[String(r.motivo || 'other')] || MOTIVO_FALHA.other,
+          });
+          if (!av.ok && av.motivo && av.motivo !== 'ja avisado') {
+            out.pulados.push(`aviso-vendedor ${r.sales_card_id}: ${av.motivo}`);
+          }
+        } catch (e: any) { out.pulados.push(`aviso-vendedor ${r.sales_card_id}: ${e?.message || e}`); }
+      }
     }
 
     const total = out.confirmado + out.debito + out.analise + out.liberado + out.entrega;
