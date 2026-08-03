@@ -94,8 +94,52 @@ async function selectElegiveis(mins: number, limit: number, minsAtendente: numbe
   return (q.rows || []) as any;
 }
 
+// ---------------------------------------------------------------------------
+// Trava de despedida repetida.
+// O cliente da POLIBELT recebeu "Atendimento finalizado..." tres vezes: a varredura
+// daqui e o job antigo do scheduler.ts (closeInactiveConversations) fechavam a MESMA
+// conversa, cada um mandando o seu texto — e, quando a conversa reabria, o proximo tick
+// mandava de novo. Despedida e uma so: por conversa (enquanto o cliente nao voltar a
+// falar) e por telefone (janela de espera, para nao pegar duas conversas do mesmo numero).
+// ---------------------------------------------------------------------------
+
+// Ja nos despedimos nesta conversa e o cliente nao falou nada depois disso?
+async function jaSeDespediu(convId: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT 1 FROM chat_messages m
+      WHERE m.conversation_id = ${convId}
+        AND m.content LIKE '[IA · finalização]%'
+        AND m.created_at > COALESCE((
+              SELECT max(created_at) FROM chat_messages
+              WHERE conversation_id = ${convId} AND sender_type = 'customer'
+            ), to_timestamp(0))
+      LIMIT 1`);
+    return !!r.rows?.length;
+  } catch { return false; }
+}
+
+// Mesmo numero, outra conversa: espera a janela antes de mandar outra despedida.
+async function despedidaRecenteNoFone(digits: string, minutos: number): Promise<boolean> {
+  if (!digits) return false;
+  const chave = 'ia_despedida_fone:' + digits.slice(-8);
+  const v = await getSetting(chave, '');
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  if (isNaN(t)) return false;
+  return (Date.now() - t) < minutos * 60 * 1000;
+}
+async function marcarDespedidaNoFone(digits: string): Promise<void> {
+  if (!digits) return;
+  try {
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by)
+      VALUES (${'ia_despedida_fone:' + digits.slice(-8)}, ${new Date().toISOString()}, 'ia-finalizar')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+  } catch {}
+}
+
 // Um "tick" da varredura. Respeita os gates. Retorna um resumo do que fez.
-export async function finalizarTick(force = false): Promise<{ ran: boolean; reason?: string; mode?: string; encerradas: number; enviadas: number; puladasTeste: number; detalhes: any[] }> {
+export async function finalizarTick(force = false): Promise<{ ran: boolean; reason?: string; mode?: string; encerradas: number; enviadas: number; puladasTeste: number; puladasRepetida?: number; detalhes: any[] }> {
   const on = (await getSetting('ia_regra_finalizar_on', 'off')) === 'on';
   if (!on && !force) return { ran: false, reason: 'regra_off', encerradas: 0, enviadas: 0, puladasTeste: 0, detalhes: [] };
   const waMode = await getSetting('agents_runtime_mode', 'off');
@@ -108,7 +152,11 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
   const minsAtendente = Math.max(5, parseInt(await getSetting('chat_close_atendente_min', '60'), 10) || 60);
   const rows = await selectElegiveis(mins, 20, minsAtendente);
 
-  let encerradas = 0, enviadas = 0, puladasTeste = 0;
+  // Janela minima entre duas despedidas para o MESMO telefone (padrao: a propria
+  // inatividade, no minimo 60 min).
+  const minsFone = Math.max(30, parseInt(await getSetting('ia_despedida_cooldown_min', String(Math.max(60, mins))), 10) || 60);
+
+  let encerradas = 0, enviadas = 0, puladasTeste = 0, puladasRepetida = 0;
   const detalhes: any[] = [];
   for (const row of rows) {
     const phoneDigits = normalizeBrPhone(row.customer_phone);
@@ -118,12 +166,27 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
       puladasTeste++;
       continue;
     }
+    // Ja se despediu aqui (ou no mesmo numero, ha pouco): FECHA a conversa em silencio.
+    // Fechar sem mandar nada e o certo — senao a conversa fica eternamente elegivel e a
+    // varredura seguinte tentaria mandar a despedida outra vez.
+    const repetida = (await jaSeDespediu(row.id)) || (await despedidaRecenteNoFone(phoneDigits, minsFone));
+    if (repetida) {
+      await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
+      try { const { liberarIA } = await import('./ia-fila'); await liberarIA(String(row.id)); } catch { /* noop */ }
+      try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
+      encerradas++; puladasRepetida++;
+      detalhes.push({ conv: row.id, phone: phoneDigits, via: '-', enviado: false, motivo: 'despedida ja enviada' });
+      console.log(`[IA-FINALIZAR] conv=${row.id} phone=${phoneDigits} encerrada SEM despedida (ja enviada)`);
+      continue;
+    }
+
     const sent = await sendDespedida(row.id, row.customer_phone, despedida);
     if (sent.ok) enviadas++;
     try {
       await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
         VALUES (${row.id}, 'system', 'system', ${'[IA · finalização] ' + despedida}, 'text', true)`);
     } catch {}
+    if (sent.ok) await marcarDespedidaNoFone(phoneDigits);
     await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
     try { const { liberarIA } = await import('./ia-fila'); await liberarIA(String(row.id)); } catch { /* noop */ }
     try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
@@ -131,7 +194,7 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
     detalhes.push({ conv: row.id, phone: phoneDigits, via: sent.via, enviado: sent.ok, erro: sent.error || null });
     console.log(`[IA-FINALIZAR] conv=${row.id} phone=${phoneDigits} via=${sent.via} ok=${sent.ok} mode=${waMode}`);
   }
-  return { ran: true, mode: waMode, encerradas, enviadas, puladasTeste, detalhes };
+  return { ran: true, mode: waMode, encerradas, enviadas, puladasTeste, puladasRepetida, detalhes };
 }
 
 export function registerIaFinalizar(app: any) {
@@ -143,7 +206,9 @@ export function registerIaFinalizar(app: any) {
     const on = (await getSetting('ia_regra_finalizar_on', 'off')) === 'on';
     const waMode = await getSetting('agents_runtime_mode', 'off');
     const mins = Math.max(1, parseInt(await getSetting('ia_finalizar_min', '120'), 10) || 120);
-    const rows = await selectElegiveis(mins, 50);
+    // O 3o argumento faltava aqui: make_interval(mins => NULL) fazia a previa explodir.
+    const minsAtendente = Math.max(5, parseInt(await getSetting('chat_close_atendente_min', '60'), 10) || 60);
+    const rows = await selectElegiveis(mins, 50, minsAtendente);
     const tests = testPhones();
     const amostra = rows.slice(0, 20).map((r: any) => {
       const p = normalizeBrPhone(r.customer_phone);

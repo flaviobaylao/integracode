@@ -192,8 +192,20 @@ cron.schedule('50 7-20 * * 1-5', async () => {
 // Envia mensagem de finalização configurável ao cliente
 cron.schedule('*/5 * * * *', async () => {
   try {
+    // ⚠️ Dono unico da despedida: com a regra "Finalizar conversas inativas" da IA ligada
+    // (ia-finalizar.ts), ela ja fecha a conversa E manda a mensagem — respeitando o prazo
+    // proprio de 60 min da conversa em andamento com atendente. Este job antigo fazia a
+    // mesma coisa com outro texto e o cliente recebia a despedida duas vezes (POLIBELT,
+    // 13:22 e 13:32). Enquanto a regra estiver ligada, ele sai de cena.
+    let regraIaLigada = false;
+    try {
+      const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'ia_regra_finalizar_on' LIMIT 1`);
+      regraIaLigada = String(r.rows?.[0]?.value ?? '').replace(/^"|"$/g, '').trim() === 'on';
+    } catch { /* sem config: mantem o comportamento antigo */ }
+    if (regraIaLigada) return;
+
     const result = await storage.closeInactiveConversations();
-    
+
     if (result.count > 0) {
       // Buscar mensagem de finalização configurada
       const aiSettings = await storage.getChatAiSettings();
