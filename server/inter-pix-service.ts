@@ -2,6 +2,8 @@ import https from 'https';
 import axios, { AxiosInstance } from 'axios';
 import QRCode from 'qrcode';
 import { storage } from './storage';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
 import type { FinancialAccount, PixCharge } from '@shared/schema';
 
 const INTER_BASE_URL = 'https://cdpj.partners.bancointer.com.br';
@@ -349,13 +351,23 @@ async function processPixPayment(
   const paidAmount = parseFloat(payment.valor);
   console.log(`💰 [INTER-PIX] Pagamento recebido: R$ ${paidAmount.toFixed(2)} txid=${charge.txid} e2e=${payment.endToEndId}`);
 
+  // FIX (idempotencia): mesmo defeito do PIX do BB — varios gatilhos concorrentes
+  // (webhook, polling, botao manual) processavam o mesmo pagamento e gravavam
+  // baixa e credito em duplicidade. O endToEndId e a chave unica do PIX no SPB.
+  const e2e = String(payment.endToEndId || '').trim();
+  if (e2e) {
+    try {
+      const jaMov: any = await db.execute(sql`SELECT 1 FROM account_movements WHERE reference = ${e2e} LIMIT 1`);
+      if (jaMov.rows && jaMov.rows.length > 0) { console.warn(`💰 [INTER-PIX] e2e ${e2e} ja processado - ignorado`); return; }
+      const jaPag: any = await db.execute(sql`SELECT 1 FROM receivable_payments WHERE reference = ${e2e} AND deleted_at IS NULL LIMIT 1`);
+      if (jaPag.rows && jaPag.rows.length > 0) { console.warn(`💰 [INTER-PIX] e2e ${e2e} ja baixado - ignorado`); return; }
+    } catch (e: any) { /* tolerante: o indice unico ainda protege */ }
+  }
+
   const currentBalance = parseFloat(account.balance || '0');
   const newBalance = currentBalance + paidAmount;
 
-  await storage.updateFinancialAccount(account.id, {
-    balance: newBalance.toFixed(2),
-  } as any);
-
+  // FIX (ordem): movimento ANTES do saldo — se falhar, o saldo nao sobe sem rastro.
   await storage.createAccountMovement({
     financialAccountId: account.id,
     type: 'credito',
@@ -369,12 +381,27 @@ async function processPixPayment(
     createdBy: 'sistema',
   });
 
+  await storage.updateFinancialAccount(account.id, {
+    balance: newBalance.toFixed(2),
+  } as any);
+
   if (charge.receivableId) {
     const receivable = await storage.getReceivable(charge.receivableId);
     if (receivable) {
-      const totalPaid = parseFloat(receivable.amountPaid || '0') + paidAmount;
+      // FIX (teto): nunca baixar mais do que falta pagar.
+      const emAberto = parseFloat(receivable.amount) - parseFloat(receivable.amountPaid || '0');
+      const baixar = Math.max(0, Math.min(paidAmount, emAberto));
+      const totalPaid = parseFloat(receivable.amountPaid || '0') + baixar;
       const totalAmount = parseFloat(receivable.amount);
-      const newStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
+      // FIX (status): baixa parcial em titulo vencido deixava de aparecer como atraso.
+      const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      const dv: any = (receivable as any).dueDate;
+      const vencR = dv instanceof Date
+        ? new Date(dv.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+        : (dv ? String(dv).slice(0, 10) : '');
+      const newStatus = totalPaid >= totalAmount - 0.005
+        ? 'recebida'
+        : (/^\d{4}-\d{2}-\d{2}$/.test(vencR) && vencR < hojeBR ? 'vencida' : 'a_vencer');
       
       await storage.updateReceivable(charge.receivableId, {
         amountPaid: totalPaid.toFixed(2),
@@ -386,7 +413,7 @@ async function processPixPayment(
       await storage.createReceivablePayment({
         receivableId: charge.receivableId,
         paidAt: new Date(payment.horario),
-        amount: paidAmount.toFixed(2),
+        amount: baixar.toFixed(2),
         paymentMethod: 'pix',
         financialAccountId: account.id,
         reference: payment.endToEndId,

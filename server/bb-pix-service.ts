@@ -412,13 +412,33 @@ async function processPixPayment(
   const paidAmount = parseFloat(payment.valor);
   console.log(`💰 [BB-PIX] Pagamento recebido: R$ ${paidAmount.toFixed(2)} txid=${charge.txid} e2e=${payment.endToEndId}`);
 
+  // FIX (idempotencia): este bloco era disparado por QUATRO gatilhos concorrentes —
+  // webhook do banco, polling PUBLICO do navegador do cliente, varredura do
+  // Instagram e botao manual — sem nenhuma trava. Dois deles no mesmo instante
+  // gravavam a baixa duas vezes E creditavam o saldo duas vezes. O endToEndId e a
+  // chave unica do PIX no SPB: se ja existe movimento ou pagamento com ele, o
+  // dinheiro ja entrou e nao se processa de novo.
+  const e2e = String(payment.endToEndId || '').trim();
+  if (e2e) {
+    try {
+      const jaMov: any = await db.execute(sql`SELECT 1 FROM account_movements WHERE reference = ${e2e} LIMIT 1`);
+      if (jaMov.rows && jaMov.rows.length > 0) {
+        console.warn(`💰 [BB-PIX] e2e ${e2e} ja processado (movimento existente) - ignorado`);
+        return;
+      }
+      const jaPag: any = await db.execute(sql`SELECT 1 FROM receivable_payments WHERE reference = ${e2e} AND deleted_at IS NULL LIMIT 1`);
+      if (jaPag.rows && jaPag.rows.length > 0) {
+        console.warn(`💰 [BB-PIX] e2e ${e2e} ja baixado - ignorado`);
+        return;
+      }
+    } catch (e: any) { /* tolerante: o indice unico ainda protege a baixa */ }
+  }
+
   const currentBalance = parseFloat(account.balance || '0');
   const newBalance = currentBalance + paidAmount;
 
-  await storage.updateFinancialAccount(account.id, {
-    balance: newBalance.toFixed(2),
-  } as any);
-
+  // FIX (ordem): o movimento e gravado ANTES do saldo. Se ele falhar, o saldo nao
+  // sobe sem rastro — era assim que o link de cartao inflava o caixa em silencio.
   await storage.createAccountMovement({
     financialAccountId: account.id,
     type: 'credito',
@@ -432,12 +452,29 @@ async function processPixPayment(
     createdBy: 'sistema',
   });
 
+  await storage.updateFinancialAccount(account.id, {
+    balance: newBalance.toFixed(2),
+  } as any);
+
   if (charge.receivableId) {
-    const receivable = await storage.getReceivable(charge.receivableId);
+  const receivable = await storage.getReceivable(charge.receivableId);
     if (receivable) {
-      const totalPaid = parseFloat(receivable.amountPaid || '0') + paidAmount;
+      // FIX (teto): a baixa nao pode passar do que falta pagar. Sem isto, PIX de
+      // R$ 1.000 num titulo com R$ 400 ja baixados gravava amount_paid = 1.400.
+      const emAberto = parseFloat(receivable.amount) - parseFloat(receivable.amountPaid || '0');
+      const baixar = Math.max(0, Math.min(paidAmount, emAberto));
+      const totalPaid = parseFloat(receivable.amountPaid || '0') + baixar;
       const totalAmount = parseFloat(receivable.amount);
-      const newStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
+      // FIX (status): baixa parcial marcava 'a_vencer' mesmo em titulo vencido,
+      // escondendo o atraso. Tolerancia de meio centavo para arredondamento.
+      const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      const dv: any = (receivable as any).dueDate;
+      const vencR = dv instanceof Date
+        ? new Date(dv.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+        : (dv ? String(dv).slice(0, 10) : '');
+      const newStatus = totalPaid >= totalAmount - 0.005
+        ? 'recebida'
+        : (/^\d{4}-\d{2}-\d{2}$/.test(vencR) && vencR < hojeBR ? 'vencida' : 'a_vencer');
 
       await storage.updateReceivable(charge.receivableId, {
         amountPaid: totalPaid.toFixed(2),
@@ -449,7 +486,7 @@ async function processPixPayment(
       await storage.createReceivablePayment({
         receivableId: charge.receivableId,
         paidAt: new Date(payment.horario),
-        amount: paidAmount.toFixed(2),
+        amount: baixar.toFixed(2),
         paymentMethod: 'pix',
         financialAccountId: account.id,
         reference: payment.endToEndId,
