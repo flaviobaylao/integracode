@@ -118,7 +118,22 @@ async function nextNossoNumero(_numeroConvenio: string): Promise<string> {
   // O 1.0 ainda emite boletos no MESMO convenio; derivar de MAX(boleto_charges) colidiria
   // com numeros ja registrados pelo 1.0 no BB ("Nosso Numero ja incluido"). Base temporal
   // (10 ultimos digitos do epoch em ms) e sempre alta/crescente e nao colide com a faixa do 1.0.
-  return pad((Date.now() % 10000000000).toString(), 10);
+  // FIX: `Date.now() % 10^10` em ms repete a cada 115,7 dias — e a varredura
+  // noturna olha 120 dias, entao a colisao cabe dentro da janela: o webhook de
+  // liquidacao do boleto antigo casaria (por nosso numero) com o titulo novo.
+  // Agora conferimos no banco e avancamos ate achar um livre. O indice unico
+  // ux_boleto_charges_nosso e a rede embaixo: se ainda assim colidir, o INSERT
+  // falha alto em vez de gravar cobranca trocada.
+  let base = Date.now() % 10000000000;
+  for (let i = 0; i < 50; i++) {
+    const cand = pad(String(base), 10);
+    try {
+      const r: any = await db.execute(sql`SELECT 1 FROM boleto_charges WHERE nosso_numero = ${cand} LIMIT 1`);
+      if (!r.rows || r.rows.length === 0) return cand;
+    } catch (e: any) { return cand; /* sem checagem: o indice unico ainda protege */ }
+    base = (base + 1) % 10000000000;
+  }
+  return pad(String(Date.now() % 10000000000), 10);
 }
 
 export interface RegistrarBoletoParams {

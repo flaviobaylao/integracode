@@ -734,6 +734,37 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     .catch((e: any) => console.warn('[financial] ensure cartao payment method:', e?.message || e));
 
   // ============================================================================
+  // TRAVAS NO BANCO contra baixa/cobranca em duplicidade
+  // ----------------------------------------------------------------------------
+  // Ate aqui TODAS as guardas do sistema eram "consulta e depois escreve" em
+  // JavaScript — nao sobrevivem a duplo clique, a webhook reentregue no mesmo
+  // instante nem a duas instancias do app. Um indice UNICO resolve a classe
+  // inteira de uma vez, no nivel do banco, valendo para todos os caminhos.
+  //
+  // Sao criados so os que os dados atuais ja respeitam (conferido: 0 violacoes).
+  // Ficaram de fora, por violacao existente que precisa de decisao humana:
+  //   - account_movements (source_type, source_id, type): 391 creditos de boleto
+  //     duplicados — espelho das baixas duplicadas, ainda inflando o saldo.
+  //   - boleto_charges (receivable_id) ativo: 64 titulos com 2+ boletos vivos.
+  //   - pix_charges (receivable_id) ATIVA: 19 titulos com 2 QR codes vivos.
+  // Falha na criacao e logada em ERRO e NAO derruba o boot.
+  // ============================================================================
+  (async () => {
+    const travas: Array<{ nome: string; sql: string }> = [
+      { nome: 'ux_receivable_payments_ref',
+        sql: `CREATE UNIQUE INDEX IF NOT EXISTS ux_receivable_payments_ref ON receivable_payments (receivable_id, reference) WHERE deleted_at IS NULL AND reference IS NOT NULL AND reference <> ''` },
+      { nome: 'ux_payable_payments_ref',
+        sql: `CREATE UNIQUE INDEX IF NOT EXISTS ux_payable_payments_ref ON payable_payments (payable_id, reference) WHERE reference IS NOT NULL AND reference <> ''` },
+      { nome: 'ux_boleto_charges_nosso',
+        sql: `CREATE UNIQUE INDEX IF NOT EXISTS ux_boleto_charges_nosso ON boleto_charges (numero_convenio, nosso_numero) WHERE nosso_numero IS NOT NULL` },
+    ];
+    for (const t of travas) {
+      try { await db.execute(sql.raw(t.sql)); }
+      catch (e: any) { console.error(`[financial] TRAVA ${t.nome} NAO criada (ha duplicidade nos dados):`, String(e?.message || e).slice(0, 200)); }
+    }
+  })();
+
+  // ============================================================================
   // CHART OF ACCOUNTS
   // ============================================================================
 
