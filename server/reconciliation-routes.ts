@@ -2535,7 +2535,7 @@ export function registerReconciliation(app: Express) {
         ancorasRaw = rowsOf(await db.execute(sql`
           SELECT substring(i.raw_ofx from '"saldoData":"([^"]*)"') AS dt,
                  substring(i.raw_ofx from '"saldoFinal":"([^"]*)"') AS bal,
-                 MIN(s.file_name) AS file_name
+                 MIN(s.file_name) AS file_name, MIN(s.id::text) AS statement_id
           FROM bank_statement_items i
           JOIN bank_statements s ON s.id = i.statement_id
           WHERE ${filtroConta} AND i.raw_ofx IS NOT NULL AND i.raw_ofx LIKE '%saldoFinal%'
@@ -2544,9 +2544,54 @@ export function registerReconciliation(app: Express) {
       } catch { ancorasRaw = []; }
       const ancoras = ancorasRaw
         .filter((a: any) => String(a.bal ?? "").trim() !== "" && String(a.dt ?? "").trim() !== "")
-        .map((a: any) => ({ data: String(a.dt).slice(0, 10), saldoBanco: Number(String(a.bal).replace(/[^0-9.-]/g, "")), arquivo: a.file_name || null }))
+        .map((a: any) => ({ data: String(a.dt).slice(0, 10), saldoBanco: Number(String(a.bal).replace(/[^0-9.-]/g, "")), arquivo: a.file_name || null, statementId: a.statement_id || null }))
         .filter((a: any) => a.data && !isNaN(a.saldoBanco))
         .sort((a: any, b: any) => (a.data! < b.data! ? -1 : a.data! > b.data! ? 1 : 0));
+
+      // ---- FASE 3.4v: o LEDGERBAL do OFX e FOTO DO INSTANTE DA EXPORTACAO --
+      // O BB exporta o extrato de manha e escreve no <LEDGERBAL> o saldo DAQUELE
+      // MOMENTO, com DTASOF = o proprio dia. O arquivo so contem os lancamentos
+      // ate ali; o resto do dia chega nos arquivos seguintes. Comparar esse saldo
+      // com o movimento do DIA INTEIRO acusava divergencia falsa do tamanho do
+      // que caiu depois da foto (ex.: o DAS de R$ 39.361,99 em 28/07, que so
+      // aparece no arquivo exportado em 29/07 as 10:16).
+      // Regra correta: cada ancora e comparada com
+      //     saldoBase + movimento ate o dia ANTERIOR + movimento do dia DAQUELE ARQUIVO.
+      // Assim compara-se exatamente o mesmo conjunto de lancamentos que o banco
+      // tinha na hora de escrever o saldo.
+      const movDiaArq: Record<string, number> = {};
+      const diaTotalQtd: Record<string, number> = {};
+      const diaArqQtd: Record<string, number> = {};
+      try {
+        const r = rowsOf(await db.execute(sql`
+          SELECT stmt, d, SUM(CASE WHEN tp = 'C' THEN v ELSE -v END)::numeric AS mov, COUNT(*)::int AS qtd
+          FROM (
+            SELECT DISTINCT s.id::text AS stmt,
+                   to_char(c.transaction_date::date, 'YYYY-MM-DD') AS d,
+                   c.id AS cid, c.type AS tp, c.amount::numeric AS v
+            FROM bank_statement_items i
+            JOIN bank_statements s ON s.id = i.statement_id
+            JOIN bank_statement_items c ON c.id = COALESCE(i.mirror_of, i.id)
+            WHERE s.financial_account_id = ${accountId}
+              AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
+              AND COALESCE(c.reconciliation_status, 'pending') <> 'saldo'
+          ) t GROUP BY 1, 2`));
+        for (const x of r) {
+          movDiaArq[`${x.stmt}|${x.d}`] = Number(x.mov || 0);
+          diaArqQtd[`${x.stmt}|${x.d}`] = Number(x.qtd || 0);
+        }
+      } catch { /* sem raw/statement: cai na regra antiga */ }
+      for (const r of movDia) diaTotalQtd[String(r.d)] = Number(r.qtd || 0);
+      // saldo calculado "como o banco via" no instante daquela exportacao
+      const calcNaAncora = (a: any): number => {
+        const k = `${a.statementId}|${a.data}`;
+        if (a.statementId && k in movDiaArq) return saldoBase + movAntes(a.data) + movDiaArq[k];
+        return saldoBase + movAte(a.data);          // sem arquivo identificado: regra antiga
+      };
+      const ancoraParcial = (a: any): boolean => {
+        const k = `${a.statementId}|${a.data}`;
+        return !!a.statementId && k in diaArqQtd && (diaArqQtd[k] < (diaTotalQtd[a.data] || 0));
+      };
 
       // ---- saldo base (antes do 1o lancamento importado) ------------------
       let saldoBase = 0;
@@ -2556,8 +2601,12 @@ export function registerReconciliation(app: Express) {
         saldoBase = saldoInicialParam - movAntes(from);
         baseOrigem = "informado";
       } else if (ancoras.length) {
-        const a0 = ancoras[0];
-        saldoBase = a0.saldoBanco - movAte(a0.data as string);
+        const a0: any = ancoras[0];
+        const k0 = `${a0.statementId}|${a0.data}`;
+        const movAteAncora = (a0.statementId && k0 in movDiaArq)
+          ? movAntes(a0.data as string) + movDiaArq[k0]
+          : movAte(a0.data as string);
+        saldoBase = a0.saldoBanco - movAteAncora;
         baseOrigem = "extrato";
       }
       const saldoEm = (dia: string) => saldoBase + movAte(dia);
@@ -2566,13 +2615,18 @@ export function registerReconciliation(app: Express) {
       // A ancora mais antiga e a CALIBRACAO (dela sai o saldo base), entao ela
       // sempre fecha por construcao. As demais sao conferencia de verdade.
       const conferencia = ancoras.map((a: any, idx: number) => {
-        const calc = saldoEm(a.data as string);
+        const calc = calcNaAncora(a);
         return {
           data: a.data, arquivo: a.arquivo,
           saldoBanco: Number(a.saldoBanco.toFixed(2)),
           saldoCalculado: Number(calc.toFixed(2)),
           diferenca: Number((calc - a.saldoBanco).toFixed(2)),
           calibracao: baseOrigem === "extrato" && idx === 0,
+          // true = o arquivo e uma FOTO do meio do dia (o dia tem mais lancamentos
+          // do que os que estavam nele). A comparacao ja considera so o que o banco
+          // tinha naquele instante; o marcador serve para leitura.
+          parcial: ancoraParcial(a),
+          saldoDoDiaFechado: Number(saldoEm(a.data as string).toFixed(2)),
         };
       });
 
@@ -2725,7 +2779,7 @@ export function registerReconciliation(app: Express) {
           saldoFinal: Number(saldoEm(fim).toFixed(2)),
           saldoBanco: ancMes ? Number(ancMes.saldoBanco.toFixed(2)) : null,
           saldoBancoData: ancMes ? ancMes.data : null,
-          diferenca: ancMes ? Number((saldoEm(String(ancMes.data)) - ancMes.saldoBanco).toFixed(2)) : null,
+          diferenca: ancMes ? Number((calcNaAncora(ancMes) - ancMes.saldoBanco).toFixed(2)) : null,
           qtd: m.qtd, conciliados: m.conciliados, pendentes: m.pendentes, ignorados: m.ignorados,
           valorPendente: Number(Number(m.valor_pendente || 0).toFixed(2)),
         };
@@ -2734,7 +2788,7 @@ export function registerReconciliation(app: Express) {
       // ---- fechamento: calculado x banco ----------------------------------
       // Ancora usada no fechamento = a mais recente com data <= fim do periodo.
       const ancoraFim = [...conferencia].filter((a: any) => (a.data as string) <= to).pop() || null;
-      const diferenca = ancoraFim ? Number((saldoEm(ancoraFim.data as string) - ancoraFim.saldoBanco).toFixed(2)) : null;
+      const diferenca = ancoraFim ? Number((ancoraFim as any).diferenca) : null;
 
       res.json({
         conta: {
@@ -2751,7 +2805,7 @@ export function registerReconciliation(app: Express) {
           saldoFinalCalculado: Number(saldoFinalCalculado.toFixed(2)),
           saldoBanco: ancoraFim ? ancoraFim.saldoBanco : null,
           saldoBancoData: ancoraFim ? ancoraFim.data : null,
-          saldoCalculadoNaDataDoBanco: ancoraFim ? Number(saldoEm(ancoraFim.data as string).toFixed(2)) : null,
+          saldoCalculadoNaDataDoBanco: ancoraFim ? Number((ancoraFim as any).saldoCalculado) : null,
           diferenca,
           bate: diferenca == null ? null : Math.abs(diferenca) < 0.01,
           qtdEntradas: linhas.filter((l: any) => l.tipo === "C").length,
@@ -2769,7 +2823,7 @@ export function registerReconciliation(app: Express) {
         avisos: [
           ...(baseOrigem === "zero" ? ["Nenhum saldo do banco foi encontrado nos extratos importados (bloco LEDGERBAL do OFX). O saldo inicial foi considerado ZERO — informe o saldo inicial no filtro para o relatório fechar com o extrato."] : []),
           ...(baseOrigem === "informado" ? ["Saldo inicial informado manualmente no filtro."] : []),
-          ...(ancoraFim && Math.abs(diferenca as number) >= 0.01 ? [`O saldo calculado NÃO bate com o extrato em ${String(ancoraFim.data).split("-").reverse().join("/")}: diferença de R$ ${(diferenca as number).toFixed(2)}. Verifique lançamentos faltando (extrato não importado) ou duplicados.`] : []),
+          ...(ancoraFim && Math.abs(diferenca as number) >= 0.01 ? [`O saldo calculado NÃO bate com o extrato em ${String(ancoraFim.data).split("-").reverse().join("/")}: diferença de R$ ${(diferenca as number).toFixed(2)}. Verifique lançamentos faltando (extrato não importado) ou duplicados.${(ancoraFim as any).parcial ? " (esse arquivo é uma foto do meio do dia; a comparação já considera só o que o banco tinha naquele instante)" : ""}`] : []),
         ],
       });
     } catch (e: any) {
