@@ -59,12 +59,18 @@ export function nfData(a = 'fi'): string {
   return `COALESCE(${a}.emission_date, ${a}.authorization_date, ${a}.created_at)`;
 }
 
-/** FROM deduplicado por (CNPJ emitente, serie, numero), ficando com o registro mais recente. */
+/** Chave de deduplicacao. COALESCE em tudo: sem isso, linhas com issuer_cnpj/series/
+ *  invoice_number nulos cairiam todas na MESMA chave e o DISTINCT ON apagaria notas boas. */
+const DEDUP_KEY = `COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text)`;
+
+/** FROM deduplicado por (CNPJ emitente, serie, numero), ficando com o registro mais recente.
+ *  NAO pre-filtra por status de proposito: se a versao mais recente de uma chave foi
+ *  cancelada, e ela que deve prevalecer (e depois cair no filtro de venda). */
 export function nfVendaFrom(a = 'fi'): string {
   return `(
-    SELECT DISTINCT ON (issuer_cnpj, series, invoice_number) *
+    SELECT DISTINCT ON (${DEDUP_KEY}) *
     FROM fiscal_invoices
-    ORDER BY issuer_cnpj, series, invoice_number, created_at DESC
+    ORDER BY ${DEDUP_KEY}, created_at DESC
   ) ${a}`;
 }
 
