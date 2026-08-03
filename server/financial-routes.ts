@@ -3,6 +3,7 @@ import { storage } from './storage';
 import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
+import { cancelarBoleto } from './bb-boleto-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
@@ -966,6 +967,153 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       } catch (e: any) { /* trilha e observabilidade: nao bloqueia */ }
 
       res.json({ dryRun: false, escopo: tipos, resumo: { ...resumo, linhas: estornadas }, porConta, amostra, revisarManual, saldoNaoTocado: true });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
+  // ============================================================================
+  // COBRANCA VIVA SEM TITULO EM ABERTO — item 3
+  // POST /api/admin/financial/cobrancas-vivas
+  //      { dryRun, categorias, tipos, limit, motivo }   — dryRun:true por padrao
+  //
+  // "Cobranca viva" = o cliente ainda consegue pagar: boleto REGISTRADO ou VENCIDO
+  // (no BB o vencido segue pagavel ate a baixa) e cobranca PIX ATIVA.
+  //
+  // Uma cobranca viva so se justifica contra UM titulo em aberto. Fora disso o
+  // dinheiro entra sem lastro — que e a origem da familia de baixas duplicadas.
+  // Categorias:
+  //   duplicadaNoTitulo — 2+ cobrancas vivas para o MESMO titulo em aberto. Fica a
+  //                       mais recente (a que o cliente recebeu por ultimo); as
+  //                       outras sao candidatas a cancelamento.
+  //   tituloRecebido    — cobranca viva de titulo JA recebido. E a mais perigosa:
+  //                       pagar de novo gera credito sem titulo a baixar.
+  //   tituloCancelado   — cobranca viva de titulo cancelado.
+  //   semTitulo         — cobranca viva sem receivable_id.
+  //
+  // APLICAR (dryRun:false) da BAIXA DE VERDADE no banco:
+  //   * boleto -> cancelarBoleto() (comando de baixa no BB) e status 'cancelado'.
+  //     ⚠️ E IRREVERSIVEL: boleto baixado nao volta, tem que ser reemitido.
+  //   * PIX -> hoje so marca 'REMOVIDA_PELO_USUARIO_RECEBEDOR' NO SISTEMA. A cob
+  //     PIX NAO e removida no BB, entao um QR ja distribuido continua pagavel.
+  //     Isso vem sinalizado em `pixSoNoSistema` para nao passar falsa seguranca.
+  // Nunca toca em cobranca liquidada/paga. dryRun por padrao.
+  // ============================================================================
+  app.post('/api/admin/financial/cobrancas-vivas', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 200, 1), 1000);
+      const motivo = String(req.body?.motivo || 'Cobranca viva sem titulo em aberto (auditoria financeira)').slice(0, 300);
+      const CATS = ['duplicadaNoTitulo', 'tituloRecebido', 'tituloCancelado', 'semTitulo'];
+      const cats: string[] = Array.isArray(req.body?.categorias) && req.body.categorias.length
+        ? req.body.categorias.map((x: any) => String(x)).filter((x: string) => CATS.includes(x)) : CATS;
+      const tipos: string[] = Array.isArray(req.body?.tipos) && req.body.tipos.length
+        ? req.body.tipos.map((x: any) => String(x)).filter((x: string) => x === 'boleto' || x === 'pix')
+        : ['boleto', 'pix'];
+      if (!cats.length || !tipos.length) return res.status(400).json({ error: 'categorias/tipos invalidos' });
+
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      const vivos: any[] = [];
+      if (tipos.includes('boleto')) {
+        for (const r of await linhas(sql`
+          SELECT b.id, b.nosso_numero AS chave, b.receivable_id AS rid, b.status,
+                 b.valor_original::numeric AS valor, b.data_vencimento AS vence,
+                 b.debtor_name AS pagador, b.created_at,
+                 r.title_number AS titulo, r.customer_name AS cliente, r.status::text AS titulo_status
+          FROM boleto_charges b LEFT JOIN receivables r ON r.id = b.receivable_id
+          WHERE b.deleted_at IS NULL AND upper(COALESCE(b.status, '')) IN ('REGISTRADO', 'VENCIDO')`)) {
+          vivos.push({ ...r, tipo: 'boleto' });
+        }
+      }
+      if (tipos.includes('pix')) {
+        for (const r of await linhas(sql`
+          SELECT p.id, p.txid AS chave, p.receivable_id AS rid, p.status::text AS status,
+                 p.amount::numeric AS valor, p.due_date AS vence,
+                 p.debtor_name AS pagador, p.created_at,
+                 r.title_number AS titulo, r.customer_name AS cliente, r.status::text AS titulo_status
+          FROM pix_charges p LEFT JOIN receivables r ON r.id = p.receivable_id
+          WHERE p.deleted_at IS NULL AND p.status::text = 'ATIVA'`)) {
+          vivos.push({ ...r, tipo: 'pix' });
+        }
+      }
+
+      // Duplicada: por titulo EM ABERTO, fica a cobranca mais recente.
+      const porTitulo: Record<string, any[]> = {};
+      for (const c of vivos) if (c.rid) (porTitulo[String(c.rid)] ||= []).push(c);
+      const manter = new Set<string>();
+      for (const lista of Object.values(porTitulo)) {
+        const ordenada = lista.slice().sort((a: any, b: any) => (new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+        if (ordenada.length) manter.add(String(ordenada[0].id));
+      }
+
+      const classificar = (c: any): string | null => {
+        const st = String(c.titulo_status || '');
+        if (!c.rid) return 'semTitulo';
+        if (st === 'recebida') return 'tituloRecebido';
+        if (st === 'cancelada') return 'tituloCancelado';
+        if (st === 'a_vencer' || st === 'vencida') return manter.has(String(c.id)) ? null : 'duplicadaNoTitulo';
+        return null;
+      };
+
+      const alvos = vivos.map((c) => ({ ...c, categoria: classificar(c) }))
+        .filter((c) => c.categoria && cats.includes(c.categoria));
+
+      const resumo: Record<string, { boleto: number; pix: number; valor: number }> = {};
+      for (const c of alvos) {
+        const k = String(c.categoria);
+        resumo[k] ||= { boleto: 0, pix: 0, valor: 0 };
+        if (c.tipo === 'boleto') resumo[k].boleto++; else resumo[k].pix++;
+        resumo[k].valor = n2(resumo[k].valor + Number(c.valor || 0));
+      }
+      const amostra = alvos.slice(0, 80).map((c) => ({
+        tipo: c.tipo, categoria: c.categoria, chave: c.chave, cliente: c.cliente || c.pagador,
+        titulo: c.titulo, tituloStatus: c.titulo_status || 'sem titulo',
+        valor: n2(c.valor), vence: c.vence ? String(c.vence).slice(0, 10) : null,
+      }));
+      const total = { cobrancas: alvos.length, valor: n2(alvos.reduce((s, c) => s + Number(c.valor || 0), 0)) };
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true, tipos, categorias: cats, total, resumo, amostra,
+          vivosNoTotal: { boleto: vivos.filter((c) => c.tipo === 'boleto').length, pix: vivos.filter((c) => c.tipo === 'pix').length },
+          pixSoNoSistema: 'Cancelar PIX aqui apenas marca o status no sistema; a cobranca NAO e removida no BB e um QR ja distribuido continua pagavel.',
+          irreversivel: 'Aplicar da baixa no BB nos boletos — boleto baixado nao volta, so reemitindo.',
+        });
+      }
+
+      const aplicar = alvos.slice(0, limit);
+      const out = { boletosCancelados: 0, pixMarcados: 0, erros: [] as string[] };
+      const accq = await linhas(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL LIMIT 1`);
+      const accId = accq[0]?.id ? String(accq[0].id) : null;
+      for (const c of aplicar) {
+        try {
+          if (c.tipo === 'boleto') {
+            if (/(liquid|pag|receb)/i.test(String(c.status || ''))) { out.erros.push('boleto ' + c.chave + ' liquidado - ignorado'); continue; }
+            const brow = (await linhas(sql`SELECT * FROM boleto_charges WHERE id = ${c.id}`))[0];
+            if (!brow) { out.erros.push('boleto ' + c.chave + ' nao encontrado'); continue; }
+            if (accId) {
+              const r = await cancelarBoleto(accId, brow);
+              if (!r.ok && !r.alreadyBaixado) { out.erros.push('boleto ' + c.chave + ': ' + (r.error || 'falha')); continue; }
+            }
+            await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado', updated_at = now() WHERE id = ${c.id}`);
+            out.boletosCancelados++;
+          } else {
+            const u: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR', updated_at = now() WHERE id = ${c.id} AND status::text = 'ATIVA'`);
+            out.pixMarcados += Number(u?.rowCount ?? 0);
+          }
+        } catch (e: any) { out.erros.push(String(c.tipo) + ' ' + c.chave + ': ' + String(e?.message || e).slice(0, 120)); }
+      }
+      try {
+        await logFinancialAudit({
+          req, action: 'reverse', entity: 'cobrancas', entityId: null, amount: total.valor,
+          note: 'Cancelamento de cobranca viva sem titulo em aberto: ' + out.boletosCancelados + ' boleto(s) baixado(s) no BB e ' +
+            out.pixMarcados + ' PIX marcado(s) no sistema. Categorias: ' + cats.join(',') + '. ' + motivo,
+          after: { categorias: cats, tipos, ...out },
+        });
+      } catch (e: any) { /* trilha nao bloqueia */ }
+      res.json({ dryRun: false, tipos, categorias: cats, processadas: aplicar.length, restantes: Math.max(0, alvos.length - aplicar.length), ...out });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
