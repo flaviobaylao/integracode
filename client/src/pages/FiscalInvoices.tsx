@@ -184,11 +184,58 @@ function formatDateTime(dateString: string) {
   return new Date(dateString).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TIPO DE FATURAMENTO — classifica a NF-e pela natureza da operacao e pelo CFOP.
+// Mesma taxonomia da Regra Oficial de Faturamento (vigente 01/07/2026): so 'venda'
+// entra no faturamento; o resto e operacao acessoria.
+// ─────────────────────────────────────────────────────────────────────────────
+export type TipoFaturamento =
+  | 'venda' | 'amostra' | 'bonificacao' | 'troca'
+  | 'transferencia' | 'remessa' | 'devolucao' | 'outros';
+
+const CFOP_VENDA = new Set(['5101','5102','5103','5104','5105','5106','5401','5402','5403','5405','6101','6102','6103','6104','6105','6106','6107','6108','6401','6402','6403','6404','6405']);
+const CFOP_AMOSTRA = new Set(['5911','6911']);
+const CFOP_BONIFICACAO = new Set(['5910','6910','5936','6936']);
+const CFOP_TRANSFERENCIA = new Set(['5151','5152','6151','6152','5408','5409','6408','6409']);
+const CFOP_DEVOLUCAO = new Set(['1201','1202','2201','2202','5201','5202','5208','5209','6201','6202','6208','6209']);
+const CFOP_REMESSA = new Set(['5901','5902','5905','5908','5915','5920','6901','6902','6905','6915','6554']);
+
+export function tipoFaturamento(inv: any): TipoFaturamento {
+  const nat = String(inv?.natureOfOperation || '').toUpperCase();
+  const cfop = String(inv?.cfop || '').replace(/\D/g, '');
+  if (/TROCA/.test(nat)) return 'troca';
+  if (/DEVOL/.test(nat) || CFOP_DEVOLUCAO.has(cfop)
+      || String(inv?.finNfe || '') === '4'
+      || String(inv?.operationType || '') === 'entrada') return 'devolucao';
+  if (/AMOSTRA/.test(nat) || CFOP_AMOSTRA.has(cfop)) return 'amostra';
+  if (/BONIFICA|DOACAO|DOA\u00c7\u00c3O|BRINDE/.test(nat) || CFOP_BONIFICACAO.has(cfop)) return 'bonificacao';
+  if (/TRANSFER/.test(nat) || CFOP_TRANSFERENCIA.has(cfop)) return 'transferencia';
+  if (/REMESSA/.test(nat) || CFOP_REMESSA.has(cfop)) return 'remessa';
+  if (CFOP_VENDA.has(cfop) || /VENDA/.test(nat)) return 'venda';
+  return 'outros';
+}
+
+export const TIPOS_FATURAMENTO: { value: TipoFaturamento; label: string }[] = [
+  { value: 'venda', label: 'Venda' },
+  { value: 'amostra', label: 'Amostra' },
+  { value: 'bonificacao', label: 'Bonificacao' },
+  { value: 'troca', label: 'Troca' },
+  { value: 'transferencia', label: 'Transferencia' },
+  { value: 'remessa', label: 'Remessa' },
+  { value: 'devolucao', label: 'Devolucao' },
+  { value: 'outros', label: 'Outros' },
+];
+
+const TIPO_LABEL: Record<string, string> = Object.fromEntries(TIPOS_FATURAMENTO.map(t => [t.value, t.label]));
+
 export default function FiscalInvoices() {
   const [activeTab, setActiveTab] = useState('invoices');
   const [statusFilter, setStatusFilter] = useState('all');
   const [envFilter, setEnvFilter] = useState('all');
   const [issuerFilter, setIssuerFilter] = useState('all'); // CNPJ (só dígitos) do emitente/filial, ou 'all'
+  // Tipo de faturamento (multipla escolha). Vazio = todos os tipos.
+  const [tipoFilter, setTipoFilter] = useState<string[]>([]);
+  const toggleTipo = (v: string) => setTipoFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
   const [nfSearch, setNfSearch] = useState('');
   // Busca no SERVIDOR (tabela inteira, não só as 1000 recentes) com debounce.
   const [nfSearchServer, setNfSearchServer] = useState('');
@@ -322,7 +369,11 @@ export default function FiscalInvoices() {
   const invoicesFiltered = (invoices || []).filter((inv: any) =>
     (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch))
     && (issuerFilter === 'all' || onlyDigits(inv.issuerCnpj) === issuerFilter)
+    && (tipoFilter.length === 0 || tipoFilter.includes(tipoFaturamento(inv)))
     && dateInRange(inv.emissionDate, dtStart, dtEnd));
+  const totalFiltrado = useMemo(
+    () => invoicesFiltered.reduce((acc: number, inv: any) => acc + Number(inv.totalInvoice || 0), 0),
+    [invoicesFiltered]);
   const invoicesView = sortRows(invoicesFiltered, (inv: any, key: string) => {
     switch (key) {
       case 'number': return Number(inv.invoiceNumber || 0);
@@ -753,15 +804,62 @@ export default function FiscalInvoices() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Tipo de faturamento</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-[220px] justify-between font-normal" data-testid="filter-tipo-faturamento">
+                    <span className="truncate">
+                      {tipoFilter.length === 0
+                        ? 'Todos os tipos'
+                        : tipoFilter.length <= 2
+                          ? tipoFilter.map(t => TIPO_LABEL[t] || t).join(', ')
+                          : `${tipoFilter.length} tipos selecionados`}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[240px] p-0" align="start">
+                  <Command>
+                    <CommandList>
+                      <CommandGroup>
+                        {TIPOS_FATURAMENTO.map(t => (
+                          <CommandItem
+                            key={t.value}
+                            onSelect={() => toggleTipo(t.value)}
+                            data-testid={`tipo-${t.value}`}
+                            className="cursor-pointer"
+                          >
+                            <Check className={`mr-2 h-4 w-4 ${tipoFilter.includes(t.value) ? 'opacity-100' : 'opacity-0'}`} />
+                            {t.label}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                  <div className="flex justify-between border-t p-2">
+                    <Button variant="ghost" size="sm" onClick={() => setTipoFilter([])}>Limpar</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setTipoFilter(['venda'])}>So venda</Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div>
               <Label className="text-xs">Cliente / Nº</Label>
               <Input placeholder="Buscar cliente ou numero..." value={nfSearch} onChange={(e) => setNfSearch(e.target.value)} className="w-[220px]" data-testid="search-nf" />
             </div>
             <div><Label className="text-xs">Periodo (emissao)</Label><div><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} testId="daterange-nf" /></div></div>
             
-            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
-            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); }}>
+            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Tipo: (TIPO_LABEL[tipoFaturamento(inv)] || ''), Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
+            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); setTipoFilter([]); setDtStart(''); setDtEnd(''); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
+          </div>
+          {/* Resultado do FILTRO. Os 4 cards do topo vem de /api/fiscal-dashboard e ignoram
+              os filtros desta tela — esta linha e a que responde ao que esta selecionado. */}
+          <div className="text-sm text-muted-foreground" data-testid="resumo-filtro-nf">
+            <strong className="text-foreground">{invoicesFiltered.length}</strong> nota(s) no filtro
+            {' · '}total <strong className="text-foreground">{formatCurrency(totalFiltrado)}</strong>
+            {tipoFilter.length > 0 && <> · tipo: {tipoFilter.map(t => TIPO_LABEL[t] || t).join(', ')}</>}
           </div>
 
           <Card>
