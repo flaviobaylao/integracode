@@ -269,8 +269,15 @@ export async function botaoDeEncerramento(phone: string, texto: string): Promise
       .map((d: any) => String(d.template_label || ''));
     if (!labels.length) return null;
 
-    const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ANY(${labels})`);
-    const botoes: string[] = (tpl.rows || []).flatMap((r: any) => Array.isArray(r.botoes) ? r.botoes : []);
+    // Um SELECT por label. `label = ANY(${array})` parece natural, mas o driver manda a
+    // lista como parametro simples e o Postgres devolve "op ANY/ALL requires array on
+    // right side" — erro que ficava engolido pelo catch e derrubava a regra em silencio.
+    const botoes: string[] = [];
+    for (const lb of labels.slice(0, 5)) {
+      const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ${lb} LIMIT 1`);
+      const b = tpl.rows?.[0]?.botoes;
+      if (Array.isArray(b)) botoes.push(...b);
+    }
     // Tem que ser um botao de um daqueles templates — assim um "obrigado" digitado no meio
     // de uma conversa de verdade nunca encerra nada.
     if (!botoes.some(b => normalizarResposta(b) === t)) return null;
@@ -392,10 +399,11 @@ export function registerOfficialTemplates(app: any) {
         ORDER BY sent_at DESC LIMIT 5`);
       const recentes = disp.rows || [];
       const labels = recentes.filter((d: any) => casos.includes(String(d.use_case || ''))).map((d: any) => String(d.template_label));
-      let botoes: string[] = [];
-      if (labels.length) {
-        const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ANY(${labels})`);
-        botoes = (tpl.rows || []).flatMap((r: any) => Array.isArray(r.botoes) ? r.botoes : []);
+      const botoes: string[] = [];
+      for (const lb of labels.slice(0, 5)) {
+        const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ${lb} LIMIT 1`);
+        const bb = tpl.rows?.[0]?.botoes;
+        if (Array.isArray(bb)) botoes.push(...bb);
       }
       const aceites = (await getSetting('ia_encerra_frases', ENCERRA_FRASES_PADRAO)).split('|').map(normalizarResposta).filter(Boolean);
       res.json({
