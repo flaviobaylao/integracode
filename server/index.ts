@@ -2317,10 +2317,16 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, seller_id FROM customers"));
       const rows2 = (t2.rows || t2) as any[];
       const toFix: Array<{ id: string; val: string }> = [];
-      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
+      // PROTECAO: nao sobrescrever clientes com rezoneamento manual (historico do sellerId por edit/bulk)
+      const rezonedIds = new Set<string>();
+      try {
+        const rz: any = await db.execute(sql.raw("SELECT DISTINCT customer_id FROM customer_change_history WHERE field = 'sellerId' AND source IN ('edit','bulk')"));
+        for (const r of (rz.rows || rz) as any[]) rezonedIds.add(String(r.customer_id));
+      } catch (_e) {}
+      for (const c of rows2) { const d = dg(c.cnpj) || dg(c.cpf); if (!d || d.length < 11) continue; if (rezonedIds.has(String(c.id))) continue; const want = docToSeller.get(d); if (want && String(c.seller_id || '') !== String(want)) toFix.push({ id: c.id, val: want }); }
       const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
       const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
-      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      const result: any = { srcSellersPorDoc: docToSeller.size, tgtCustomers: rows2.length, protegidosPorRezoneamento: rezonedIds.size, divergentesPorDoc: toFix.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
       if (apply && toFix.length) {
         let upd = 0;
         for (const d of toFix) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${d.val}, updated_at = now() WHERE id = ${d.id}`); upd += (u.rowCount || 0); } catch (e) {} }
