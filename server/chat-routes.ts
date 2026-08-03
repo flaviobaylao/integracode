@@ -2142,6 +2142,24 @@ export function registerChatRoutes(app: Express): void {
         // Atualizar nome na conversa se mudou na agenda
         await storage.updateChatConversation(conversation.id, { customerName: identifiedName });
       }
+
+      // REABERTURA: mensagem nova em conversa FINALIZADA volta a abrir a conversa.
+      // Sem isso a conversa continuava marcada como "Resolvido" com o cliente falando —
+      // e, pior, a IA (que nao entra em conversa resolvida) e o atendente (barrado pela
+      // trava de envio) ficavam os dois de fora. Parecia "a IA fechou em 1 minuto";
+      // na verdade ela nunca tinha reaberto desde a finalizacao anterior.
+      try {
+        if (String((conversation as any).status || '') === 'resolved') {
+          await storage.updateChatConversation(conversation.id, {
+            status: 'new', assignedAgentId: null, assignedAgentColor: null,
+          } as any);
+          (conversation as any).status = 'new';
+          (conversation as any).assignedAgentId = null;
+          try { const { liberarIA } = await import('./ia-fila'); await liberarIA(conversation.id); } catch {}
+          console.log(`🔄 [WEBHOOK] Conversa ${conversation.id} REABERTA (estava finalizada e o cliente escreveu de novo)`);
+        }
+      } catch (e: any) { console.error('[WEBHOOK] reabertura', e?.message || e);
+      }
 // 1841: etiqueta de canal + janela 24h + opt-out (canal oficial)
    // ESPELHAMENTO DE CANAL: grava em qual numero da Honest a mensagem entrou, para que
    // toda resposta (IA ou atendente) saia pelo MESMO numero. Sem isso o campo ficava
