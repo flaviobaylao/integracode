@@ -1,3 +1,5 @@
+// Redeploy manual: o deploy do commit anterior falhou no Railway (o build passa
+// localmente com `npm run build`). Sem mudanca de comportamento.
 import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
