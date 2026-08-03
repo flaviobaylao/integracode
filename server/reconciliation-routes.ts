@@ -1541,17 +1541,33 @@ export function registerReconciliation(app: Express) {
       }
     }
     {
+      // FASE 3.4x (2): o FITID do BB se repete ate DENTRO do mesmo dia e valor.
+      // Ex.: 28/07 tem DUAS tarifas de R$ 1,89 (ocorrencia 25/07 e 26/07) com o
+      // MESMO FITID 1.703.612.017.019 — sao lancamentos DIFERENTES e um deles era
+      // descartado. Regra: a chave por FITID so vale quando ela e UNICA no lote;
+      // havendo empate, esses lancamentos caem na chave por texto (compKey), que
+      // os separa. Assim o FITID continua casando o mesmo lancamento entre
+      // arquivos e nunca mais engole transacao distinta.
+      const fitCount: Record<string, number> = {};
+      for (const t of o.transactions) {
+        if (!t.fitid) continue;
+        const k = fitKey(t.fitid, t.date, t.amount, t.type);
+        fitCount[k] = (fitCount[k] || 0) + 1;
+      }
+      const fitConfiavel = (t: IngestTxn) =>
+        !!t.fitid && fitCount[fitKey(t.fitid, t.date, t.amount, t.type)] === 1;
+
       const seen = new Set<string>();
       const usados = new Set<string>();   // canonicos ja absorvidos por este lote
       for (const t of o.transactions) {
         const compK = compKey(t.date, t.amount, t.type, t.description);
         // dedup DENTRO do lote: idem, FITID escopado (senao as 54 tarifas de mesmo
         // FITID entrariam como uma unica e as outras 53 eram descartadas em silencio)
-        const dedK = t.fitid ? fitKey(t.fitid, t.date, t.amount, t.type) : compK;
+        const dedK = fitConfiavel(t) ? fitKey(t.fitid as string, t.date, t.amount, t.type) : compK;
         if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO lote
         seen.add(dedK);
         const stK = stampKey(t.date, t.amount, t.type, t.description);
-        let canonical: string | null = (t.fitid && canonByFit[fitKey(t.fitid, t.date, t.amount, t.type)]) || canonByKey[compK]
+        let canonical: string | null = (fitConfiavel(t) && canonByFit[fitKey(t.fitid as string, t.date, t.amount, t.type)]) || canonByKey[compK]
           || (stK ? canonByStamp[stK] : null) || null;
         if (!canonical) {
           // texto contido, dentro do balde conta|data|valor|tipo; cada canonico so
