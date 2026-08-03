@@ -364,17 +364,25 @@ async function settleReceivableByLink(link: any, sale: any, opts: { last4?: stri
 
     if (account) {
       try {
+        // FIX: os nomes dos campos estavam errados (movementType/referenceType/
+        // referenceId em vez de type/sourceType/sourceId) e faltavam type e
+        // balanceAfter, que sao NOT NULL. O insert falhava SEMPRE, o catch abaixo
+        // so logava — e o saldo ja tinha subido na linha anterior. Resultado: todo
+        // pagamento por link inflava o saldo sem deixar rastro no extrato interno.
+        // O movimento agora e gravado PRIMEIRO: se ele falhar, o saldo nao sobe.
         const cur = parseFloat(account.balance || '0');
-        await storage.updateFinancialAccount(account.id, { balance: (cur + paid).toFixed(2) } as any);
+        const nb = cur + paid;
         await storage.createAccountMovement({
           financialAccountId: account.id,
-          movementType: 'credito' as any,
+          type: 'credito' as any,
           amount: paid.toFixed(2),
+          balanceAfter: nb.toFixed(2),
           description: `Recebimento por link de pagamento (cartao) - titulo ${receivable.titleNumber || receivableId}`,
-          referenceType: 'receivable',
-          referenceId: receivableId,
+          sourceType: 'receivable',
+          sourceId: receivableId,
           createdBy: 'link-pagamento',
         } as any);
+        await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
       } catch (e: any) { console.warn('⚠️ [PAY-LINK] credito na conta falhou:', e?.message || e); }
     }
 

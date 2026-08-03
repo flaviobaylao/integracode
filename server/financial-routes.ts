@@ -2190,11 +2190,49 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (payable) {
         const totalPaid = parseFloat(payable.amountPaid || '0') + parseFloat(data.amount);
         const totalAmount = parseFloat(payable.amount);
-        const newStatus = totalPaid >= totalAmount ? 'paga' : 'a_vencer';
+        // FIX: baixa parcial marcava 'a_vencer' mesmo com vencimento no passado,
+        // tirando o titulo da lista de atrasados. Tolerancia de meio centavo para
+        // arredondamento, e 'vencida' quando o vencimento ja passou (fuso de SP).
+        const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+        const dv: any = (payable as any).dueDate;
+        const vencP = dv instanceof Date
+          ? new Date(dv.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+          : (dv ? String(dv).slice(0, 10) : '');
+        const newStatus = totalPaid >= totalAmount - 0.005
+          ? 'paga'
+          : (/^\d{4}-\d{2}-\d{2}$/.test(vencP) && vencP < hojeBR ? 'vencida' : 'a_vencer');
         await storage.updatePayable(req.params.id, {
           amountPaid: totalPaid.toFixed(2),
           status: newStatus as any
         });
+
+        // FIX: pagar fornecedor NAO debitava a conta. Nao existia um unico
+        // movimento de 'debito' no sistema inteiro — o saldo so subia, e o caixa
+        // exibido ficava inflado por tudo que ja foi pago. O movimento e gravado
+        // ANTES do saldo: se falhar, o saldo nao desce sem rastro.
+        const contaId = (data as any).financialAccountId || (payable as any).financialAccountId || null;
+        if (contaId) {
+          try {
+            const conta: any = await storage.getFinancialAccount(contaId);
+            if (conta) {
+              const saldoAtual = parseFloat(conta.balance || '0');
+              const novoSaldo = saldoAtual - parseFloat(data.amount);
+              await storage.createAccountMovement({
+                financialAccountId: contaId,
+                type: 'debito' as any,
+                amount: parseFloat(data.amount).toFixed(2),
+                balanceAfter: novoSaldo.toFixed(2),
+                description: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
+                sourceType: 'payable', sourceId: String(req.params.id),
+                omieInstanceId: (conta as any).omieInstanceId || null,
+                createdBy: user?.email || 'sistema',
+              } as any);
+              await storage.updateFinancialAccount(contaId, { balance: novoSaldo.toFixed(2) } as any);
+            }
+          } catch (e: any) {
+            console.error('[FINANCEIRO] debito da conta no pagamento de pagavel falhou:', e?.message || e);
+          }
+        }
       }
 
       res.status(201).json(payment);

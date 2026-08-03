@@ -182,7 +182,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
                    a.name AS account_name
             FROM receivable_payments p
             LEFT JOIN financial_accounts a ON a.id = p.financial_account_id
-            WHERE p.receivable_id IN (${sql.join(lote.map((id: string) => sql`${id}`), sql`, `)})
+            WHERE p.deleted_at IS NULL
+              AND p.receivable_id IN (${sql.join(lote.map((id: string) => sql`${id}`), sql`, `)})
             ORDER BY p.paid_at ASC
           `);
           payments = payments.concat(pRes?.rows || pRes || []);
