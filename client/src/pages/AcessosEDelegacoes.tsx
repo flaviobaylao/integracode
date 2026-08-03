@@ -191,6 +191,22 @@ export default function AcessosEDelegacoes() {
       toast({ title: "Erro ao salvar", description: "Não foi possível salvar os acessos. Tente novamente.", variant: "destructive" });
     },
   });
+  // "Voltar ao papel padrão": remove TODAS as personalizações salvas (limpa os
+  // overrides) — o usuário retorna exatamente às funções originais do papel, e os
+  // acessos extras que o admin havia concedido são desmarcados automaticamente.
+  const resetRoleMut = useMutation({
+    mutationFn: () => apiRequest("PUT", `/api/user-permissions/${selUser!.id}`, { permissions: {} }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user-permissions", selUser?.id] });
+      if (selUser) {
+        const base: Record<string, Flags> = {};
+        ACCESS_MATRIX.forEach(c => { base[c[1]] = flagsPadrao(c, selUser.role || ""); });
+        setPermMap(base); // reflete na tela: flags voltam ao padrão do papel
+      }
+      toast({ title: "Acessos restaurados ao papel", description: `${selUser?.firstName} voltou aos acessos padrão de ${ROLE_LABEL[selUser?.role||""]}. Personalizações removidas.` });
+    },
+    onError: () => toast({ title: "Erro", description: "Não foi possível restaurar ao papel.", variant: "destructive" }),
+  });
   const toggleFlag = (label: string, cap: CapKey, val: boolean) => {
     setPermMap(prev => {
       const f = { ...(prev[label] || { ver:false,criar:false,editar:false,excluir:false,exportar:false }) };
@@ -293,7 +309,11 @@ export default function AcessosEDelegacoes() {
                 <p className="text-xs text-gray-500">Função base: <b>{ROLE_LABEL[selUser?.role||""]}</b> · flags pré-marcados pela função</p>
               </div>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={resetPadrao}>Restaurar padrão</Button>
+                <Button size="sm" variant="outline" onClick={resetPadrao} title="Reverte as marcações na tela para o padrão do papel (ainda é preciso Salvar)">Restaurar padrão</Button>
+                <Button size="sm" variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" disabled={resetRoleMut.isPending} title="Remove todas as personalizações salvas e volta o usuário às funções originais do papel"
+                  onClick={() => { if (selUser && window.confirm(`Voltar ${selUser.firstName} às funções ORIGINAIS do papel (${ROLE_LABEL[selUser.role||""]}) e remover todos os acessos extras concedidos?`)) resetRoleMut.mutate(); }}>
+                  {resetRoleMut.isPending ? "Voltando…" : "Voltar ao papel padrão"}
+                </Button>
                 <Button size="sm" onClick={() => setConfirmSaveOpen(true)} disabled={savePermsMut.isPending}>Salvar acessos</Button>
               </div>
             </div>
