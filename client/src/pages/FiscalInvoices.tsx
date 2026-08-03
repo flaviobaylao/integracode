@@ -374,6 +374,26 @@ export default function FiscalInvoices() {
   const totalFiltrado = useMemo(
     () => invoicesFiltered.reduce((acc: number, inv: any) => acc + Number(inv.totalInvoice || 0), 0),
     [invoicesFiltered]);
+  // CONTADORES DO TOPO: calculados sobre `invoicesFiltered` — a MESMA lista que alimenta a
+  // tabela e a linha "N nota(s) no filtro". Antes vinham de /api/fiscal-dashboard (global) e
+  // ignoravam Status/Ambiente/Emitente/Tipo/Periodo/busca, entao o card dizia 1000 notas
+  // enquanto a tela mostrava 899. Derivando da mesma fonte, card e listagem nao divergem.
+  const cardStats = (() => {
+    let authorized = 0, draft = 0, valorAutorizado = 0;
+    for (const inv of invoicesFiltered as any[]) {
+      if (inv.status === 'authorized') { authorized++; valorAutorizado += Number(inv.totalInvoice || 0); }
+      else if (inv.status === 'draft') draft++;
+    }
+    return { total: invoicesFiltered.length, authorized, draft, valorAutorizado };
+  })();
+  const filtroAtivo = statusFilter !== 'all' || envFilter !== 'all' || issuerFilter !== 'all'
+    || tipoFilter.length > 0 || !!nfSearch.trim() || !!dtStart || !!dtEnd;
+  // A listagem vem limitada pelo servidor (1000 notas; 500 quando ha busca textual). Se voltou
+  // exatamente o teto, a tela esta olhando uma AMOSTRA das mais recentes — os cards precisam
+  // dizer isso, senao o numero e lido como se fosse o total da base.
+  const limiteServidor = nfSearchServer ? 500 : 1000;
+  const amostraTruncada = (invoices?.length || 0) >= limiteServidor;
+  const nf = (n: number) => n.toLocaleString('pt-BR');
   const invoicesView = sortRows(invoicesFiltered, (inv: any, key: string) => {
     switch (key) {
       case 'number': return Number(inv.invoiceNumber || 0);
@@ -708,15 +728,20 @@ export default function FiscalInvoices() {
         </Button>
       </div>
 
-      {/* Dashboard Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Dashboard Cards — refletem os filtros da aba "Notas Fiscais" (mesma fonte da tabela).
+          A linha menor de cada card mantem o numero GLOBAL da base, vindo de /api/fiscal-dashboard. */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="cards-nf">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total NF-es</CardTitle>
+            <CardTitle className="text-sm font-medium">{filtroAtivo ? 'NF-es no filtro' : 'Total NF-es'}</CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loadingStats ? '...' : (stats?.totalInvoices || 0)}</div>
+            <div className="text-2xl font-bold" data-testid="card-total">{loadingInvoices ? '...' : nf(cardStats.total)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {loadingStats ? ' ' : <>de {nf(stats?.totalInvoices || 0)} na base</>}
+              {amostraTruncada && <> · lista limitada as {nf(limiteServidor)} mais recentes</>}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -725,7 +750,10 @@ export default function FiscalInvoices() {
             <CheckCircle2 className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{loadingStats ? '...' : (stats?.byStatus?.authorized || 0)}</div>
+            <div className="text-2xl font-bold text-green-600" data-testid="card-autorizadas">{loadingInvoices ? '...' : nf(cardStats.authorized)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {loadingStats ? ' ' : <>de {nf(stats?.byStatus?.authorized || 0)} na base</>}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -734,7 +762,10 @@ export default function FiscalInvoices() {
             <Clock className="h-4 w-4 text-yellow-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">{loadingStats ? '...' : (stats?.byStatus?.draft || 0)}</div>
+            <div className="text-2xl font-bold text-yellow-600" data-testid="card-rascunho">{loadingInvoices ? '...' : nf(cardStats.draft)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {loadingStats ? ' ' : <>de {nf(stats?.byStatus?.draft || 0)} na base</>}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -743,10 +774,18 @@ export default function FiscalInvoices() {
             <Award className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{loadingStats ? '...' : formatCurrency(stats?.totalValue || 0)}</div>
+            <div className="text-2xl font-bold text-blue-600" data-testid="card-valor">{loadingInvoices ? '...' : formatCurrency(cardStats.valorAutorizado)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {loadingStats ? ' ' : <>de {formatCurrency(stats?.totalValue || 0)} na base</>}
+            </p>
           </CardContent>
         </Card>
       </div>
+      {filtroAtivo && (
+        <p className="text-xs text-muted-foreground -mt-2" data-testid="cards-nf-aviso">
+          Os cards acima estao considerando os filtros selecionados na aba "Notas Fiscais".
+        </p>
+      )}
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -854,8 +893,8 @@ export default function FiscalInvoices() {
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
           </div>
-          {/* Resultado do FILTRO. Os 4 cards do topo vem de /api/fiscal-dashboard e ignoram
-              os filtros desta tela — esta linha e a que responde ao que esta selecionado. */}
+          {/* Resultado do FILTRO. Desde 03/ago os 4 cards do topo saem DESTA MESMA lista
+              (invoicesFiltered), entao os dois numeros batem sempre. */}
           <div className="text-sm text-muted-foreground" data-testid="resumo-filtro-nf">
             <strong className="text-foreground">{invoicesFiltered.length}</strong> nota(s) no filtro
             {' · '}total <strong className="text-foreground">{formatCurrency(totalFiltrado)}</strong>
