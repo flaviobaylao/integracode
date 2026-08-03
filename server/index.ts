@@ -2844,7 +2844,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Resolve os dados do pagador a partir do recebivel + cliente.
   async function boletoParamsFromReceivable(receivableId: string): Promise<any | null> {
     const rec: any = await db.execute(sql`
-      SELECT r.id, r.amount, r.due_date, r.customer_id, r.customer_name, r.customer_document,
+      SELECT r.id, r.amount, COALESCE(r.amount_paid,0) AS amount_paid, r.status,
+             r.due_date, r.customer_id, r.customer_name, r.customer_document,
              r.fiscal_invoice_id, r.billing_pipeline_id, r.omie_instance_id,
              c.address, c.city, c.neighborhood, c.state, c.zip_code, c.cpf, c.cnpj, c.name AS c_name,
              c.collection_discount
@@ -2852,10 +2853,18 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       WHERE r.id = ${receivableId} AND r.deleted_at IS NULL LIMIT 1`);
     const row = rec.rows?.[0];
     if (!row) return null;
+    // FIX: emitia boleto pelo valor CHEIO do titulo. Titulo de R$ 1.000 com R$ 400 ja
+    // pagos gerava cobranca de R$ 1.000 — o cliente era cobrado de novo pelo que ja
+    // quitou. Agora cobra o SALDO, e recusa emitir para titulo quitado/cancelado.
+    const _saldo = parseFloat(row.amount) - parseFloat(row.amount_paid || '0');
+    if (String(row.status) === 'recebida' || String(row.status) === 'cancelada' || _saldo <= 0.005) {
+      console.warn(`[BOLETO] emissao recusada para ${receivableId}: status=${row.status} saldo=${_saldo.toFixed(2)}`);
+      return null;
+    }
     return {
       omieInstanceId: row.omie_instance_id,
       params: {
-        amount: parseFloat(row.amount),
+        amount: _saldo,
         dueDate: row.due_date ? new Date(row.due_date) : new Date(Date.now() + 30 * 864e5),
         debtorName: row.customer_name || row.c_name || "Cliente",
         debtorDocument: row.customer_document || row.cnpj || row.cpf || "",
@@ -3274,7 +3283,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
 
-  app.post("/api/billing-pipeline/boleto", async (req, res) => {
+  // FIX: esta rota REGISTRA boleto de verdade no BB e estava sem autenticacao.
+  app.post("/api/billing-pipeline/boleto", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const itemId = (req.body || {}).itemId;
       if (!itemId) return res.status(400).json({ error: "itemId obrigatorio" });
@@ -3349,7 +3359,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   });
 
   // ===== IMPRESSAO DE COBRANCAS (boleto/pix ja sincronizados) — endpoint read-only =====
-  app.post("/api/billing-pipeline/charges", async (req, res) => {
+  // FIX: idem — devolve dados de cobranca (linha digitavel/PIX) sem autenticacao.
+  app.post("/api/billing-pipeline/charges", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
       const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
       const valid = ids.filter((x) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));

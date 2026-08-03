@@ -28,8 +28,12 @@ export async function webhookTokenGuard(req: any, res: any, next: any) {
   try {
     const expected = await getWebhookToken();
     if (!expected) {
-      console.warn('[webhook-security] token nao configurado - aceitando webhook SEM validacao (defina webhook_token para ativar)');
-      return next();
+      // FIX: aceitar sem validacao quando o token some deixa qualquer POST anonimo
+      // liquidar boleto e dar baixa. O token esta configurado em producao, entao
+      // falhar FECHADO e seguro: se ele sumir, o webhook para (e o problema fica
+      // visivel) em vez de virar porta aberta em silencio.
+      console.error('[webhook-security] token NAO configurado - webhook RECUSADO. Defina system_settings.webhook_token.');
+      return res.status(503).json({ error: 'webhook nao configurado' });
     }
     const got = String((req.query && req.query.token) || req.headers['x-webhook-token'] || '');
     // FASE 3.2 - rotacao de token sem janela: aceita lista separada por virgula
