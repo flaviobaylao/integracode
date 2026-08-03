@@ -37,6 +37,42 @@ const money = (v: any): string => {
   return isNaN(n) ? "0.00" : n.toFixed(2);
 };
 
+// FASE 3.4t - PREFIXO DE TIPO: a 4a chave de identidade do lancamento.
+// Os dois formatos de export do BB descrevem a MESMA transacao com textos
+// diferentes; alem do carimbo de hora (3.4s), o formato "Extrato41483238163"
+// (BB Gerenciador/API) prefixa o TIPO da operacao no texto e o formato
+// "Extrato conta corrente - MMAAAA" NAO prefixa:
+//    "PAGAMENTO DE BOLETO - FRUTT CENTER DISTRIBUIDORA DE"  x  "FRUTT CENTER DISTRIBUIDORA DE"
+//    "IMPOSTOS - GDF CONTA ARRECADACAO"                     x  "GDF CONTA ARRECADACAO"
+// Pagamento de boleto / imposto / tarifa NAO tem carimbo DD/MM HH:MM no texto,
+// entao a chave do 3.4s nao os alcanca e a copia ficava PENDENTE PARA SEMPRE ao
+// lado da linha ja CONCILIADA. Regra: mesma conta + data + valor + tipo e um
+// texto normalizado e SUFIXO do outro (>= 8 caracteres) = mesma transacao.
+// So sufixo (nao "contem"): a diferenca entre os formatos e sempre um PREFIXO.
+const SUFIXO_MIN = 8;
+const casaPorSufixoDeTipo = (a: string, b: string): boolean => {
+  if (!a || !b || a === b) return false;
+  return (a.length >= SUFIXO_MIN && b.endsWith(a)) || (b.length >= SUFIXO_MIN && a.endsWith(b));
+};
+// Une, no union-find das limpezas, as linhas do MESMO balde conta|data|valor|tipo
+// cujos textos casam por sufixo. Balde pequeno -> O(k^2) por balde e irrelevante.
+const unirPorSufixoDeTipo = (
+  rows: any[],
+  union: (a: string, b: string) => void,
+  ativo: boolean,
+) => {
+  if (!ativo) return;
+  const baldes: Record<string, any[]> = {};
+  for (const r of rows) (baldes[[r.acc || "", r.d, r.amt, r.type].join("|")] ||= []).push(r);
+  for (const b of Object.values(baldes)) {
+    if (b.length < 2) continue;
+    for (let x = 0; x < b.length; x++)
+      for (let y = x + 1; y < b.length; y++)
+        if (casaPorSufixoDeTipo(String(b[x].nd || ""), String(b[y].nd || "")))
+          union(String(b[x].id), String(b[y].id));
+  }
+};
+
 export function registerReconciliation(app: Express) {
   // ---- Filtros (contas + instâncias) --------------------------------------
   // FASE 3.4j - coluna aditiva para linhas "espelho" (lancamento ja importado em
@@ -304,35 +340,55 @@ export function registerReconciliation(app: Express) {
       await ensureMirrorColumn();
       const accountId = (req.query.accountId as string) || null;
       const instanceId = (req.query.instanceId as string) || null;
+      // FASE 3.4p/3.4t: NAO listar como pendente um lancamento cuja MESMA transacao
+      // economica ja esta CONCILIADA em outra linha/extrato da mesma conta. Corrige a
+      // "conciliacao que volta a pendente" causada por extratos sobrepostos que nao
+      // foram vinculados como espelho. As 3 formas de reconhecer a mesma transacao:
+      //   (a) mesmo texto normalizado;
+      //   (b) mesmo CARIMBO DD/MM HH:MM escrito pelo banco no texto (3.4s);
+      //   (c) um texto e SUFIXO do outro — o formato do BB Gerenciador prefixa o TIPO
+      //       ("PAGAMENTO DE BOLETO - X" x "X"), o que nao tem carimbo (3.4t).
+      // Montado com CTE (campos normalizados UMA vez) + anti-join, e nao com
+      // subconsulta correlacionada com regex: com ~12k lancamentos a correlacionada
+      // fica O(n^2) e estoura o tempo da requisicao.
       const r = await db.execute(sql`
-        SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
-               i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
-               i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes, s.file_name, fa.name AS account_name
-        FROM bank_statement_items i
-        JOIN bank_statements s ON s.id = i.statement_id
-        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
-        WHERE (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
-          AND i.mirror_of IS NULL
-          -- FASE 3.4p: NAO listar como pendente um lancamento cuja MESMA transacao economica
-          -- (mesma conta | data | valor | tipo | descricao normalizada) ja esta CONCILIADA em
-          -- outra linha/extrato. Corrige a "conciliacao que volta a pendente" causada por
-          -- duplicatas entre extratos sobrepostos que nao foram vinculadas como espelho.
+        WITH base AS (
+          SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
+                 i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
+                 i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
+                 i.match_confidence, i.notes, s.file_name, fa.name AS account_name,
+                 i.mirror_of,
+                 s.financial_account_id AS acc,
+                 i.transaction_date::date AS d,
+                 round(i.amount::numeric, 2) AS amt,
+                 regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
+                 substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') AS ts
+          FROM bank_statement_items i
+          JOIN bank_statements s ON s.id = i.statement_id
+          LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+          WHERE (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+            AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
+        ),
+        conc AS (SELECT acc, d, amt, type, nd, ts FROM base WHERE reconciliation_status = 'reconciled')
+        SELECT b.id, b.transaction_date, b.amount, b.type, b.description, b.document,
+               b.balance_after, b.origin_name, b.origin_document, b.reconciliation_status,
+               b.matched_receivable_id, b.matched_payable_id, b.matched_at, b.matched_by,
+               b.match_confidence, b.notes, b.file_name, b.account_name
+        FROM base b
+        WHERE (b.reconciliation_status IS NULL OR b.reconciliation_status = 'pending')
+          AND b.mirror_of IS NULL
           AND NOT EXISTS (
-            SELECT 1 FROM bank_statement_items j
-            JOIN bank_statements sj ON sj.id = j.statement_id
-            WHERE sj.financial_account_id = s.financial_account_id
-              AND j.id <> i.id
-              AND j.reconciliation_status = 'reconciled'
-              AND j.transaction_date::date = i.transaction_date::date
-              AND round(j.amount::numeric, 2) = round(i.amount::numeric, 2)
-              AND j.type = i.type
-              AND regexp_replace(lower(COALESCE(j.description, '')), '[^a-z0-9]', '', 'g')
-                = regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g')
+            SELECT 1 FROM conc c
+            WHERE c.acc IS NOT DISTINCT FROM b.acc
+              AND c.d = b.d AND c.amt = b.amt AND c.type = b.type
+              AND (
+                   c.nd = b.nd
+                   OR (b.ts IS NOT NULL AND c.ts = b.ts)
+                   OR (length(b.nd) >= ${sql.raw(String(SUFIXO_MIN))} AND c.nd LIKE '%' || b.nd)
+                   OR (length(c.nd) >= ${sql.raw(String(SUFIXO_MIN))} AND b.nd LIKE '%' || c.nd)
+                  )
           )
-          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
-          AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})
-        ORDER BY i.transaction_date, i.id
+        ORDER BY b.transaction_date, b.id
         LIMIT 1000`);
       const items = rowsOf(r);
       const suggestions = await buildSuggestions(items);
@@ -1413,9 +1469,18 @@ export function registerReconciliation(app: Express) {
       const m = String(desc || "").match(/[0-9]{1,2}\/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}/);
       return m ? `${dateStr}|${amount.toFixed(2)}|${type}|${m[0]}` : null;
     };
+    // FASE 3.4t - 4a CHAVE: PREFIXO DE TIPO. Boleto/imposto/tarifa NAO trazem carimbo
+    // de hora no texto, entao a chave 3.4s nao os alcanca: "PAGAMENTO DE BOLETO - FRUTT
+    // CENTER DISTRIBUIDORA DE" (formato Gerenciador/API) x "FRUTT CENTER DISTRIBUIDORA
+    // DE" (formato conta corrente MMAAAA) nasciam como DOIS canonicos e um deles ficava
+    // pendente para sempre depois que o outro era conciliado. Mesma conta + data + valor
+    // + tipo e um texto SUFIXO do outro = mesma transacao -> entra como ESPELHO.
+    const baldeKey = (dateStr: string, amount: number, type: string) =>
+      `${dateStr}|${amount.toFixed(2)}|${type}`;
     const canonByFit: Record<string, string> = {};
     const canonByKey: Record<string, string> = {};
     const canonByStamp: Record<string, string> = {};
+    const canonByBalde: Record<string, Array<{ nd: string; canonical: string; mirror: boolean }>> = {};
     {
       const er = await db.execute(sql`
         SELECT COALESCE(i.mirror_of, i.id) AS canonical, i.mirror_of AS mirror_of,
@@ -1430,6 +1495,8 @@ export function registerReconciliation(app: Express) {
         const kk = `${x.d}|${x.amt}|${x.type}|${x.nd}`;
         if (!x.mirror_of) canonByKey[kk] = String(x.canonical);
         else if (!canonByKey[kk]) canonByKey[kk] = String(x.canonical);
+        const bk = `${x.d}|${x.amt}|${x.type}`;
+        (canonByBalde[bk] ||= []).push({ nd: String(x.nd || ""), canonical: String(x.canonical), mirror: !!x.mirror_of });
         const st = (x as any).stamp;
         if (st) {
           const sk = `${x.d}|${x.amt}|${x.type}|${String(st)}`;
@@ -1448,8 +1515,20 @@ export function registerReconciliation(app: Express) {
         if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO lote
         seen.add(dedK);
         const stK = stampKey(t.date, t.amount, t.type, t.description);
+        // 4a chave (3.4t): dentro do balde conta|data|valor|tipo, um texto SUFIXO do
+        // outro. Prefere a linha canonica (nao-espelho) do balde.
+        let sufC: string | null = null;
+        {
+          const ndT = String(t.description || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const balde = canonByBalde[baldeKey(t.date, t.amount, t.type)] || [];
+          for (const c of balde) {
+            if (!casaPorSufixoDeTipo(ndT, c.nd)) continue;
+            if (!c.mirror) { sufC = c.canonical; break; }
+            if (!sufC) sufC = c.canonical;
+          }
+        }
         const canonical = (t.fitid && canonByFit[t.fitid]) || canonByKey[compK]
-          || (stK ? canonByStamp[stK] : null) || null;
+          || (stK ? canonByStamp[stK] : null) || sufC || null;
         if (canonical) toMirror.push({ t, canonical });
         else toInsert.push(t);
       }
@@ -2021,6 +2100,14 @@ export function registerReconciliation(app: Express) {
               -- por texto nao os colapsava e sobrava uma linha pendente para sempre.
               -- Mesma conta + data + valor + tipo + minuto exato = mesma transacao.
               OR (p.ts IS NOT NULL AND c.ts = p.ts)
+              -- (c) FASE 3.4t - PREFIXO DE TIPO: um texto e SUFIXO do outro. O formato
+              -- "Extrato41483238163" (BB Gerenciador) prefixa o tipo da operacao
+              -- ("PAGAMENTO DE BOLETO - X", "IMPOSTOS - X") e o formato "Extrato conta
+              -- corrente - MMAAAA" nao prefixa ("X"). Boleto/imposto/tarifa NAO tem
+              -- carimbo de hora, entao a regra (b) nao os alcanca e a copia ficava
+              -- pendente para sempre ao lado da linha ja conciliada.
+              OR (length(p.nd) >= ${sql.raw(String(SUFIXO_MIN))} AND c.nd LIKE '%' || p.nd)
+              OR (length(c.nd) >= ${sql.raw(String(SUFIXO_MIN))} AND p.nd LIKE '%' || c.nd)
              )
         ORDER BY p.id, c.matched_at ASC NULLS LAST, c.id ASC`;
       if (dryRun) {
@@ -2070,6 +2157,8 @@ export function registerReconciliation(app: Express) {
       const accountId = (req.body?.accountId as string) || null;
       // porHorario=false volta ao comportamento antigo (so chave por descricao)
       const porHorario = req.body?.porHorario !== false;
+      // porSufixo=false volta ao comportamento anterior (sem a chave 3.4t de prefixo de tipo)
+      const porSufixo = req.body?.porSufixo !== false;
       await ensureMirrorColumn();
       const rows = rowsOf(await db.execute(sql`
         SELECT i.id, s.financial_account_id AS acc,
@@ -2097,6 +2186,7 @@ export function registerReconciliation(app: Express) {
         if (porHorario && r.stamp) keys.push(["h", r.acc || "", r.d, r.amt, r.type, String(r.stamp)].join("|"));
         for (const k of keys) { if (firstByKey[k]) union(firstByKey[k], id); else firstByKey[k] = id; }
       }
+      unirPorSufixoDeTipo(rows, union, porSufixo);
       const groups: Record<string, any[]> = {};
       for (const r of rows) (groups[find(String(r.id))] ||= []).push(r);
 
@@ -2170,6 +2260,8 @@ export function registerReconciliation(app: Express) {
       const accountId = (req.body?.accountId as string) || null;
       const colapsar = req.body?.colapsar !== false;
       const porHorario = req.body?.porHorario !== false;
+      // porSufixo=false volta ao comportamento anterior (sem a chave 3.4t de prefixo de tipo)
+      const porSufixo = req.body?.porSufixo !== false;
       await ensureMirrorColumn();
       const rows = rowsOf(await db.execute(sql`
         SELECT i.id, s.financial_account_id AS acc, fa.name AS conta,
@@ -2208,6 +2300,7 @@ export function registerReconciliation(app: Express) {
         if (porHorario && r.stamp) keys.push(["h", r.acc || "", r.d, r.amt, r.type, String(r.stamp)].join("|"));
         for (const k of keys) { if (firstByKey[k]) union(firstByKey[k], id); else firstByKey[k] = id; }
       }
+      unirPorSufixoDeTipo(rows, union, porSufixo);
       const groups: Record<string, any[]> = {};
       for (const r of rows) (groups[find(String(r.id))] ||= []).push(r);
 
@@ -2331,333 +2424,6 @@ export function registerReconciliation(app: Express) {
         LIMIT ${limit}`);
       res.json({ items: rowsOf(r) });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
-  });
-
-
-  // =========================================================================
-  // RELATORIO FINANCEIRO DE CONCILIACAO BANCARIA
-  // GET /api/reconciliation/report?accountId=&from=&to=&saldoInicial=
-  //
-  // Responde a pergunta do negocio: "o saldo da conta bate com o extrato?".
-  //   saldo inicial + entradas - saidas = saldo final calculado
-  //   saldo final calculado x saldo informado pelo BANCO (LEDGERBAL do OFX)
-  //
-  // COMO SE SABE O SALDO DO BANCO: o import do OFX guarda o bloco <LEDGERBAL>
-  // (BALAMT + DTASOF) dentro de raw_ofx (raw.extrato.saldoFinal/saldoData).
-  // Cada arquivo importado vira uma ANCORA (data -> saldo do banco naquele dia).
-  // O saldo base da conta (antes do 1o lancamento importado) e deduzido da
-  // ancora mais antiga: base = saldoBanco(ancora) - movimento acumulado ate ela.
-  // Com a base, o saldo calculado em QUALQUER data e base + movimento acumulado,
-  // e a conferencia contra TODAS as ancoras mostra onde (e quando) divergiu.
-  // Se nao houver nenhuma ancora, aceita ?saldoInicial= (saldo do dia anterior
-  // ao inicio do periodo, digitado pelo operador).
-  //
-  // Regras:
-  //  - linhas ESPELHO (mirror_of) nao entram: o dinheiro se moveu uma vez so.
-  //  - lancamento IGNORADO entra no saldo (o dinheiro saiu/entrou do mesmo
-  //    jeito); ignorado significa apenas "nao ha titulo a conciliar".
-  //  - so leitura. Nenhuma escrita.
-  // =========================================================================
-  app.get("/api/reconciliation/report", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
-    try {
-      await ensureMirrorColumn();
-      await ensureRawColumn();
-      const accountId = (req.query.accountId as string) || null;
-      const instanceId = (req.query.instanceId as string) || null;
-      if (!accountId) return res.status(400).json({ error: "informe a conta bancaria (accountId)" });
-
-      const hoje = new Date();
-      const iso = (d: Date) => d.toISOString().slice(0, 10);
-      const to = (req.query.to as string) || iso(hoje);
-      const from = (req.query.from as string) || iso(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
-      if (from > to) return res.status(400).json({ error: "periodo invalido (data inicial maior que a final)" });
-      const saldoInicialParam = req.query.saldoInicial != null && String(req.query.saldoInicial).trim() !== ""
-        ? Number(String(req.query.saldoInicial).replace(",", ".")) : null;
-
-      // ---- conta ----------------------------------------------------------
-      const contas = rowsOf(await db.execute(sql`
-        SELECT id, name, bank_name, bank_code, agency, account_number, omie_instance_id, balance
-        FROM financial_accounts
-        WHERE id = ${accountId}`));
-      const conta = contas[0] || null;
-      if (!conta) return res.status(404).json({ error: "conta financeira nao encontrada" });
-
-      const filtroConta = sql`s.financial_account_id = ${accountId}
-                          AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})`;
-
-      // ---- movimento acumulado por dia (conta inteira) --------------------
-      const movDia = rowsOf(await db.execute(sql`
-        SELECT to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
-               SUM(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE -i.amount::numeric END)::numeric AS mov,
-               SUM(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE 0 END)::numeric AS cred,
-               SUM(CASE WHEN i.type = 'D' THEN i.amount::numeric ELSE 0 END)::numeric AS deb,
-               COUNT(*)::int AS qtd
-        FROM bank_statement_items i
-        JOIN bank_statements s ON s.id = i.statement_id
-        WHERE i.mirror_of IS NULL AND ${filtroConta}
-        GROUP BY 1 ORDER BY 1`));
-      // acumulado ate o fim de cada dia
-      const acum: Array<{ d: string; ate: number }> = [];
-      { let a = 0; for (const r of movDia) { a += Number(r.mov || 0); acum.push({ d: String(r.d), ate: a }); } }
-      const movAte = (dia: string): number => {          // movimento acumulado ate o FIM de `dia`
-        let v = 0;
-        for (const x of acum) { if (x.d <= dia) v = x.ate; else break; }
-        return v;
-      };
-      const movAntes = (dia: string): number => {        // movimento acumulado ate o dia ANTERIOR
-        let v = 0;
-        for (const x of acum) { if (x.d < dia) v = x.ate; else break; }
-        return v;
-      };
-
-      // ---- ancoras: saldo informado pelo BANCO (LEDGERBAL do OFX) ---------
-      // Extraido por regex do raw_ofx (o JSON e truncado em 20k -> cast p/ json
-      // pode falhar; regex nao). Uma ancora por (data, saldo).
-      let ancorasRaw: any[] = [];
-      try {
-        ancorasRaw = rowsOf(await db.execute(sql`
-          SELECT substring(i.raw_ofx from '"saldoData":"([^"]*)"') AS dt,
-                 substring(i.raw_ofx from '"saldoFinal":"([^"]*)"') AS bal,
-                 MIN(s.file_name) AS file_name
-          FROM bank_statement_items i
-          JOIN bank_statements s ON s.id = i.statement_id
-          WHERE ${filtroConta} AND i.raw_ofx IS NOT NULL AND i.raw_ofx LIKE '%saldoFinal%'
-          GROUP BY 1, 2
-          ORDER BY 1`));
-      } catch { ancorasRaw = []; }
-      const ancoras = ancorasRaw
-        .filter((a: any) => String(a.bal ?? "").trim() !== "" && String(a.dt ?? "").trim() !== "")
-        .map((a: any) => ({ data: String(a.dt).slice(0, 10), saldoBanco: Number(String(a.bal).replace(/[^0-9.-]/g, "")), arquivo: a.file_name || null }))
-        .filter((a: any) => a.data && !isNaN(a.saldoBanco))
-        .sort((a: any, b: any) => (a.data! < b.data! ? -1 : a.data! > b.data! ? 1 : 0));
-
-      // ---- saldo base (antes do 1o lancamento importado) ------------------
-      let saldoBase = 0;
-      let baseOrigem: "extrato" | "informado" | "zero" = "zero";
-      if (saldoInicialParam != null && !isNaN(saldoInicialParam)) {
-        // saldo digitado pelo operador = saldo do dia ANTERIOR ao inicio do periodo
-        saldoBase = saldoInicialParam - movAntes(from);
-        baseOrigem = "informado";
-      } else if (ancoras.length) {
-        const a0 = ancoras[0];
-        saldoBase = a0.saldoBanco - movAte(a0.data as string);
-        baseOrigem = "extrato";
-      }
-      const saldoEm = (dia: string) => saldoBase + movAte(dia);
-
-      // conferencia: saldo calculado x saldo do banco em cada ancora
-      // A ancora mais antiga e a CALIBRACAO (dela sai o saldo base), entao ela
-      // sempre fecha por construcao. As demais sao conferencia de verdade.
-      const conferencia = ancoras.map((a: any, idx: number) => {
-        const calc = saldoEm(a.data as string);
-        return {
-          data: a.data, arquivo: a.arquivo,
-          saldoBanco: Number(a.saldoBanco.toFixed(2)),
-          saldoCalculado: Number(calc.toFixed(2)),
-          diferenca: Number((calc - a.saldoBanco).toFixed(2)),
-          calibracao: baseOrigem === "extrato" && idx === 0,
-        };
-      });
-
-      // ---- lancamentos do periodo -----------------------------------------
-      const itens = rowsOf(await db.execute(sql`
-        SELECT i.id, to_char(i.transaction_date::date, 'YYYY-MM-DD') AS data, i.amount, i.type,
-               i.description, i.document, i.origin_name, i.origin_document,
-               COALESCE(i.reconciliation_status, 'pending') AS status,
-               i.matched_at, i.matched_by, i.notes,
-               s.file_name, s.id AS statement_id, fa.name AS account_name
-        FROM bank_statement_items i
-        JOIN bank_statements s ON s.id = i.statement_id
-        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
-        WHERE i.mirror_of IS NULL AND ${filtroConta}
-          AND i.transaction_date::date >= ${from}::date
-          AND i.transaction_date::date <= ${to}::date
-        ORDER BY i.transaction_date::date, i.type, i.id
-        LIMIT 20000`));
-
-      // titulos conciliados de cada lancamento (o que foi RECEBIDO / PAGO)
-      const ids = itens.map((i: any) => i.id);
-      const titulosPorItem: Record<string, any[]> = {};
-      if (ids.length) {
-        const mR = await db.execute(sql`
-          SELECT m.bank_statement_item_id AS item_id, m.amount, m.match_kind,
-                 m.title_amount_settled, m.interest, m.discount,
-                 r.id AS r_id, r.title_number AS r_title, r.customer_name AS r_name, r.customer_document AS r_doc,
-                 r.due_date AS r_due, r.amount AS r_amount,
-                 (rc.code || ' ' || rc.name) AS r_cat,
-                 p.id AS p_id, p.title_number AS p_title, p.supplier_name AS p_name, p.supplier_document AS p_doc,
-                 p.due_date AS p_due, p.amount AS p_amount,
-                 (pc.code || ' ' || pc.name) AS p_cat
-          FROM bank_statement_item_matches m
-          LEFT JOIN receivables r ON r.id = m.receivable_id
-          LEFT JOIN chart_of_accounts rc ON rc.id = r.chart_account_id
-          LEFT JOIN payables p ON p.id = m.payable_id
-          LEFT JOIN chart_of_accounts pc ON pc.id = p.chart_account_id
-          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
-        for (const m of rowsOf(mR)) {
-          const receber = !!m.r_id;
-          (titulosPorItem[m.item_id] ||= []).push({
-            especie: receber ? "receber" : "pagar",
-            id: receber ? m.r_id : m.p_id,
-            titulo: receber ? m.r_title : m.p_title,
-            nome: receber ? m.r_name : m.p_name,
-            documento: receber ? m.r_doc : m.p_doc,
-            vencimento: receber ? m.r_due : m.p_due,
-            valorTitulo: receber ? m.r_amount : m.p_amount,
-            categoria: (receber ? m.r_cat : m.p_cat) || null,
-            valor: m.amount,
-            baixado: m.title_amount_settled,
-            juros: m.interest,
-            desconto: m.discount,
-            origem: m.match_kind,
-          });
-        }
-      }
-
-      // ---- monta as linhas com SALDO ACUMULADO ----------------------------
-      const n = (v: any) => { const x = parseFloat(String(v ?? "0").replace(/[^0-9.-]/g, "")); return isNaN(x) ? 0 : x; };
-      let saldo = saldoBase + movAntes(from);           // saldo de abertura do periodo
-      const saldoInicial = saldo;
-      const linhas = itens.map((i: any) => {
-        const valor = n(i.amount);
-        const entrada = i.type === "C" ? valor : 0;
-        const saida = i.type === "D" ? valor : 0;
-        saldo += entrada - saida;
-        const det = derivarDetalhe(i.description, i.origin_name);
-        const titulos = titulosPorItem[i.id] || [];
-        return {
-          id: i.id, data: i.data, tipo: i.type, entrada, saida, valor,
-          saldo: Number(saldo.toFixed(2)),
-          contraparte: det.contraparte || i.origin_name || i.description || "",
-          historico: det.tipo || "",
-          documento: det.doc || i.origin_document || "",
-          hora: det.hora || "", diaBanco: det.dia || "",
-          descricao: i.description, docBanco: i.document,
-          status: i.status, conciliadoEm: i.matched_at, conciliadoPor: i.matched_by,
-          observacao: i.notes, arquivo: i.file_name, conta: i.account_name,
-          titulos,
-          categoria: titulos.map((t: any) => t.categoria).filter(Boolean)[0] || null,
-        };
-      });
-      const saldoFinalCalculado = saldo;
-
-      // ---- totais ---------------------------------------------------------
-      const soma = (f: (l: any) => number) => Number(linhas.reduce((a: number, l: any) => a + f(l), 0).toFixed(2));
-      const entradas = soma((l) => l.entrada);
-      const saidas = soma((l) => l.saida);
-      const porStatus = (st: string) => {
-        const ls = linhas.filter((l: any) => (st === "pending" ? (l.status === "pending" || !l.status) : l.status === st));
-        return {
-          qtd: ls.length,
-          entradas: Number(ls.reduce((a: number, l: any) => a + l.entrada, 0).toFixed(2)),
-          saidas: Number(ls.reduce((a: number, l: any) => a + l.saida, 0).toFixed(2)),
-        };
-      };
-      // recebido / pago = o que a conciliacao baixou em titulos no periodo
-      const somaTit = (especie: string, campo: string) => Number(linhas.reduce((a: number, l: any) =>
-        a + (l.titulos || []).filter((t: any) => t.especie === especie).reduce((b: number, t: any) => b + n((t as any)[campo]), 0), 0).toFixed(2));
-      const contaTit = (especie: string) => linhas.reduce((a: number, l: any) => a + (l.titulos || []).filter((t: any) => t.especie === especie).length, 0);
-
-      // por categoria (plano de contas), separando entrada e saida
-      const catMap: Record<string, { categoria: string; entradas: number; saidas: number; qtd: number }> = {};
-      for (const l of linhas) {
-        const ts = l.titulos || [];
-        if (!ts.length) {
-          const k = l.status === "ignored" ? "— Ignorado (sem título)" : "— Sem título conciliado";
-          (catMap[k] ||= { categoria: k, entradas: 0, saidas: 0, qtd: 0 });
-          catMap[k].entradas += l.entrada; catMap[k].saidas += l.saida; catMap[k].qtd++;
-          continue;
-        }
-        for (const t of ts) {
-          const k = t.categoria || "— Sem categoria";
-          (catMap[k] ||= { categoria: k, entradas: 0, saidas: 0, qtd: 0 });
-          if (l.tipo === "C") catMap[k].entradas += n(t.valor); else catMap[k].saidas += n(t.valor);
-          catMap[k].qtd++;
-        }
-      }
-      const porCategoria = Object.values(catMap)
-        .map((c) => ({ ...c, entradas: Number(c.entradas.toFixed(2)), saidas: Number(c.saidas.toFixed(2)) }))
-        .sort((a, b) => (b.entradas + b.saidas) - (a.entradas + a.saidas));
-
-      // ---- HISTORICO MENSAL (conta inteira, independente do periodo) ------
-      // Base fixa do relatorio: todo mes que tem lancamento na conta, com
-      // entradas, saidas, saldo no fim do mes e a situacao da conciliacao.
-      const mesesR = rowsOf(await db.execute(sql`
-        SELECT to_char(i.transaction_date::date, 'YYYY-MM') AS mes,
-               MAX(to_char(i.transaction_date::date, 'YYYY-MM-DD')) AS ultimo_dia,
-               SUM(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE 0 END)::numeric AS entradas,
-               SUM(CASE WHEN i.type = 'D' THEN i.amount::numeric ELSE 0 END)::numeric AS saidas,
-               COUNT(*)::int AS qtd,
-               COUNT(*) FILTER (WHERE COALESCE(i.reconciliation_status, 'pending') = 'reconciled')::int AS conciliados,
-               COUNT(*) FILTER (WHERE COALESCE(i.reconciliation_status, 'pending') = 'pending')::int AS pendentes,
-               COUNT(*) FILTER (WHERE COALESCE(i.reconciliation_status, 'pending') = 'ignored')::int AS ignorados,
-               SUM(CASE WHEN COALESCE(i.reconciliation_status, 'pending') = 'pending' THEN i.amount::numeric ELSE 0 END)::numeric AS valor_pendente
-        FROM bank_statement_items i
-        JOIN bank_statements s ON s.id = i.statement_id
-        WHERE i.mirror_of IS NULL AND ${filtroConta}
-        GROUP BY 1 ORDER BY 1`));
-      const porMes = mesesR.map((m: any) => {
-        const fim = String(m.ultimo_dia);
-        // ancora (saldo do banco) mais recente DENTRO do mes, se houver
-        const ancMes = ancoras.filter((a: any) => String(a.data).slice(0, 7) === String(m.mes)).slice(-1)[0] || null;
-        return {
-          mes: m.mes,
-          entradas: Number(Number(m.entradas || 0).toFixed(2)),
-          saidas: Number(Number(m.saidas || 0).toFixed(2)),
-          resultado: Number((Number(m.entradas || 0) - Number(m.saidas || 0)).toFixed(2)),
-          saldoFinal: Number(saldoEm(fim).toFixed(2)),
-          saldoBanco: ancMes ? Number(ancMes.saldoBanco.toFixed(2)) : null,
-          saldoBancoData: ancMes ? ancMes.data : null,
-          diferenca: ancMes ? Number((saldoEm(String(ancMes.data)) - ancMes.saldoBanco).toFixed(2)) : null,
-          qtd: m.qtd, conciliados: m.conciliados, pendentes: m.pendentes, ignorados: m.ignorados,
-          valorPendente: Number(Number(m.valor_pendente || 0).toFixed(2)),
-        };
-      });
-
-      // ---- fechamento: calculado x banco ----------------------------------
-      // Ancora usada no fechamento = a mais recente com data <= fim do periodo.
-      const ancoraFim = [...conferencia].filter((a: any) => (a.data as string) <= to).pop() || null;
-      const diferenca = ancoraFim ? Number((saldoEm(ancoraFim.data as string) - ancoraFim.saldoBanco).toFixed(2)) : null;
-
-      res.json({
-        conta: {
-          id: conta.id, nome: conta.name, banco: conta.bank_name, agencia: conta.agency,
-          numero: conta.account_number, instancia: conta.omie_instance_id,
-          saldoCadastro: conta.balance == null ? null : Number(conta.balance),
-        },
-        periodo: { de: from, ate: to },
-        base: { saldoBase: Number(saldoBase.toFixed(2)), origem: baseOrigem },
-        resumo: {
-          saldoInicial: Number(saldoInicial.toFixed(2)),
-          entradas, saidas,
-          resultado: Number((entradas - saidas).toFixed(2)),
-          saldoFinalCalculado: Number(saldoFinalCalculado.toFixed(2)),
-          saldoBanco: ancoraFim ? ancoraFim.saldoBanco : null,
-          saldoBancoData: ancoraFim ? ancoraFim.data : null,
-          saldoCalculadoNaDataDoBanco: ancoraFim ? Number(saldoEm(ancoraFim.data as string).toFixed(2)) : null,
-          diferenca,
-          bate: diferenca == null ? null : Math.abs(diferenca) < 0.01,
-          qtdEntradas: linhas.filter((l: any) => l.tipo === "C").length,
-          qtdSaidas: linhas.filter((l: any) => l.tipo === "D").length,
-        },
-        status: { conciliados: porStatus("reconciled"), pendentes: porStatus("pending"), ignorados: porStatus("ignored") },
-        titulos: {
-          recebido: { qtd: contaTit("receber"), valor: somaTit("receber", "valor"), baixado: somaTit("receber", "baixado"), juros: somaTit("receber", "juros"), desconto: somaTit("receber", "desconto") },
-          pago: { qtd: contaTit("pagar"), valor: somaTit("pagar", "valor"), baixado: somaTit("pagar", "baixado"), juros: somaTit("pagar", "juros"), desconto: somaTit("pagar", "desconto") },
-        },
-        porCategoria,
-        porMes,
-        conferencia,
-        itens: linhas,
-        avisos: [
-          ...(baseOrigem === "zero" ? ["Nenhum saldo do banco foi encontrado nos extratos importados (bloco LEDGERBAL do OFX). O saldo inicial foi considerado ZERO — informe o saldo inicial no filtro para o relatório fechar com o extrato."] : []),
-          ...(baseOrigem === "informado" ? ["Saldo inicial informado manualmente no filtro."] : []),
-          ...(ancoraFim && Math.abs(diferenca as number) >= 0.01 ? [`O saldo calculado NÃO bate com o extrato em ${String(ancoraFim.data).split("-").reverse().join("/")}: diferença de R$ ${(diferenca as number).toFixed(2)}. Verifique lançamentos faltando (extrato não importado) ou duplicados.`] : []),
-        ],
-      });
-    } catch (e: any) {
-      res.status(500).json({ error: String(e?.message || e) });
-    }
   });
 
 }
