@@ -586,6 +586,19 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     }
   });
 
+  // Colunas de estorno de movimento de conta. Aditivas e idempotentes (padrao dos
+  // demais ensure*): a linha NUNCA e apagada, so marcada, para o ajuste ser
+  // reversivel e auditavel. Nao vao no schema drizzle de proposito — coluna no
+  // schema sem coluna no banco quebra todo SELECT da tabela.
+  let __estornoColsReady = false;
+  async function ensureEstornoColumns() {
+    if (__estornoColsReady) return;
+    try { await db.execute(sql`ALTER TABLE account_movements ADD COLUMN IF NOT EXISTS reversed_at timestamp`); } catch {}
+    try { await db.execute(sql`ALTER TABLE account_movements ADD COLUMN IF NOT EXISTS reversed_by varchar`); } catch {}
+    try { await db.execute(sql`ALTER TABLE account_movements ADD COLUMN IF NOT EXISTS reversed_reason text`); } catch {}
+    __estornoColsReady = true;
+  }
+
   // ============================================================================
   // RECONCILIACAO DO SALDO CONTRA O EXTRATO OFICIAL DO BANCO — SOMENTE LEITURA
   // GET /api/admin/financial/saldo-oficial[?accountId=]
@@ -623,6 +636,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // ============================================================================
   app.get('/api/admin/financial/saldo-oficial', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
+      await ensureEstornoColumns();
       const accountId = (req.query?.accountId as string) || null;
       const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
       const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
@@ -640,7 +654,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
                COALESCE(sum(CASE WHEN type = 'credito' THEN amount::numeric ELSE -amount::numeric END), 0) AS soma,
                min(created_at)::date AS de, max(created_at)::date AS ate
         FROM account_movements
-        WHERE (${accountId}::text IS NULL OR financial_account_id = ${accountId})
+        WHERE reversed_at IS NULL
+          AND (${accountId}::text IS NULL OR financial_account_id = ${accountId})
         GROUP BY 1`);
 
       // Duplicata no razao: a MESMA origem (um boleto, um PIX) creditada mais de uma
@@ -654,7 +669,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           SELECT financial_account_id, source_type, source_id, count(*) AS n,
                  (count(*) - 1) * max(amount::numeric) AS excedente
           FROM account_movements
-          WHERE source_id IS NOT NULL
+          WHERE source_id IS NOT NULL AND reversed_at IS NULL
             AND (${accountId}::text IS NULL OR financial_account_id = ${accountId})
           GROUP BY 1, 2, 3 HAVING count(*) > 1
         ) t GROUP BY 1`);
@@ -670,7 +685,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
                  balance_after::numeric AS ba,
                  lag(balance_after::numeric) OVER (PARTITION BY financial_account_id ORDER BY created_at, id) AS ba_ant
           FROM account_movements
-          WHERE (${accountId}::text IS NULL OR financial_account_id = ${accountId})
+          WHERE reversed_at IS NULL
+            AND (${accountId}::text IS NULL OR financial_account_id = ${accountId})
         ) x GROUP BY acc`);
 
       const ancoras = await linhas(sql`
@@ -786,6 +802,146 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         criterioDaAncora: 'arquivo com OFICIAL no nome > extrato mensal do internet banking > Gerenciador (foto do instante, confiavel=false)',
         contas: saida,
       });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
+  // ============================================================================
+  // ESTORNO DOS CREDITOS DE COBRANCA SEM LASTRO — item 2
+  // POST /api/admin/financial/estornar-creditos-duplicados
+  //      { dryRun, sourceTypes, motivo, by }   — dryRun:true por padrao
+  //
+  // REGRA: cada credito na conta e o espelho de UMA baixa. Para cada cobranca
+  // (chave = source_type + reference, que e o NOSSO NUMERO do boleto / o e2e do
+  // PIX — a mesma chave do indice ux_receivable_payments_ref), o numero de
+  // creditos que DEVE existir e o numero de baixas ATIVAS (receivable_payments
+  // com deleted_at IS NULL) daquela reference. O que passar disso e credito sem
+  // lastro e e estornado.
+  //
+  // A regra cobre DOIS defeitos diferentes, e o segundo e invisivel para qualquer
+  // contagem de "duplicata":
+  //   (a) credito DUPLICADO — a mesma cobranca creditada 2, 3 ou 13 vezes;
+  //   (b) credito ORFAO — a baixa foi estornada e o credito ficou. E um credito
+  //       UNICO: nao aparece em "source_id com mais de uma linha". So aparece
+  //       quando se compara com a baixa.
+  //
+  // QUEM FICA: entre os creditos da mesma cobranca ficam os que casam em VALOR
+  // com uma baixa ativa (1 para 1, mais antigo primeiro) e, se ainda faltar
+  // credito para alguma baixa, completa-se com o mais antigo restante. Assim
+  // pagamento parcial legitimo (duas baixas de valores diferentes no mesmo
+  // boleto) e preservado por construcao, em vez de virar "duplicata".
+  //
+  // NAO apaga linha: marca reversed_at/reversed_by/reversed_reason — reversivel,
+  // com trilha em financial_audit_log, no mesmo padrao do estorno de pagamento.
+  //
+  // NAO mexe em financial_accounts.balance. Corrigir so o credito trocaria um
+  // numero errado por outro enquanto account_movements nao tiver DEBITO nenhum:
+  // o saldo correto sai do extrato oficial (GET /api/admin/financial/saldo-oficial).
+  // ============================================================================
+  app.post('/api/admin/financial/estornar-creditos-duplicados', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      await ensureEstornoColumns();
+      const dryRun = req.body?.dryRun !== false;
+      const motivo = String(req.body?.motivo || 'Credito sem baixa ativa correspondente (duplicado ou orfao de baixa estornada)').slice(0, 300);
+      const ator = actorOf(req);
+      const por = String(req.body?.by || ator.email || ator.id || 'auditoria-financeira').slice(0, 120);
+      const pedidos: string[] = Array.isArray(req.body?.sourceTypes) && req.body.sourceTypes.length
+        ? req.body.sourceTypes.map((x: any) => String(x))
+        : ['boleto_charge', 'pix_charge'];
+      const tipos = pedidos.filter((t) => t === 'boleto_charge' || t === 'pix_charge');
+      if (!tipos.length) return res.status(400).json({ error: 'sourceTypes aceita apenas boleto_charge e/ou pix_charge' });
+
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      const creditos = await linhas(sql`
+        SELECT id, financial_account_id AS acc, source_type, reference,
+               amount::numeric AS valor, created_at
+        FROM account_movements
+        WHERE type = 'credito' AND reversed_at IS NULL
+          AND source_type IN (${sql.join(tipos.map((t) => sql`${t}`), sql`, `)})
+          AND reference IS NOT NULL AND reference <> ''
+        ORDER BY reference, created_at, id`);
+
+      // Baixas ativas por reference. Sem filtro por lista de reference: a lista
+      // passa de mil itens e viraria um IN gigante — e o custo aqui e o mesmo.
+      const pagamentos = await linhas(sql`
+        SELECT reference, amount::numeric AS valor
+        FROM receivable_payments
+        WHERE deleted_at IS NULL AND reference IS NOT NULL AND reference <> ''`);
+
+      const baixasPorRef: Record<string, number[]> = {};
+      for (const p of pagamentos) (baixasPorRef[String(p.reference)] ||= []).push(n2(p.valor));
+
+      const grupos: Record<string, any[]> = {};
+      for (const c of creditos) (grupos[String(c.source_type) + '|' + String(c.reference)] ||= []).push(c);
+
+      const aEstornar: any[] = [];
+      const amostra: any[] = [];
+      let gruposDuplicado = 0, gruposOrfao = 0;
+      for (const chave of Object.keys(grupos)) {
+        const lista = grupos[chave];
+        const sep = chave.indexOf('|');
+        const tipo = chave.slice(0, sep), ref = chave.slice(sep + 1);
+        const baixas = (baixasPorRef[ref] || []);
+        if (lista.length <= baixas.length) continue;
+
+        const restantes = baixas.slice();
+        const ficam = new Set<string>();
+        for (const c of lista) {
+          const i = restantes.findIndex((v) => Math.abs(v - n2(c.valor)) < 0.005);
+          if (i >= 0) { restantes.splice(i, 1); ficam.add(String(c.id)); }
+        }
+        for (const c of lista) {
+          if (!restantes.length) break;
+          if (!ficam.has(String(c.id))) { restantes.shift(); ficam.add(String(c.id)); }
+        }
+        const sobra = lista.filter((c: any) => !ficam.has(String(c.id)));
+        if (!sobra.length) continue;
+        if (baixas.length === 0) gruposOrfao++; else gruposDuplicado++;
+        for (const c of sobra) aEstornar.push(c);
+        if (amostra.length < 60) amostra.push({
+          sourceType: tipo, reference: ref, creditos: lista.length, baixasAtivas: baixas.length,
+          estornar: sobra.length, valor: n2(sobra.reduce((s: number, x: any) => s + Number(x.valor), 0)),
+          caso: baixas.length === 0 ? 'orfao (baixa estornada)' : 'duplicado',
+        });
+      }
+
+      const valorTotal = n2(aEstornar.reduce((s, x) => s + Number(x.valor), 0));
+      const porConta: Record<string, { linhas: number; valor: number }> = {};
+      for (const c of aEstornar) {
+        const k = String(c.acc);
+        porConta[k] ||= { linhas: 0, valor: 0 };
+        porConta[k].linhas++; porConta[k].valor = n2(porConta[k].valor + Number(c.valor));
+      }
+      const resumo = {
+        gruposDuplicado, gruposOrfao,
+        linhas: aEstornar.length, valor: valorTotal,
+        creditosAnalisados: creditos.length,
+      };
+
+      if (dryRun) return res.json({ dryRun: true, escopo: tipos, resumo, porConta, amostra, saldoNaoTocado: true });
+
+      let estornadas = 0;
+      for (let i = 0; i < aEstornar.length; i += 300) {
+        const lote = aEstornar.slice(i, i + 300).map((c: any) => String(c.id));
+        const u: any = await db.execute(sql`
+          UPDATE account_movements
+          SET reversed_at = now(), reversed_by = ${por}, reversed_reason = ${motivo}
+          WHERE reversed_at IS NULL AND id IN (${sql.join(lote.map((x) => sql`${x}`), sql`, `)})`);
+        estornadas += Number(u?.rowCount ?? 0);
+      }
+      try {
+        await logFinancialAudit({
+          req, action: 'reverse', entity: 'account_movements', entityId: null,
+          amount: valorTotal, note: 'Estorno de credito sem baixa ativa: ' + estornadas + ' linha(s), ' +
+            gruposDuplicado + ' cobranca(s) com credito duplicado e ' + gruposOrfao + ' com credito orfao. ' + motivo,
+          after: { escopo: tipos, linhas: estornadas, valor: valorTotal, porConta },
+        });
+      } catch (e: any) { /* trilha e observabilidade: nao bloqueia */ }
+
+      res.json({ dryRun: false, escopo: tipos, resumo: { ...resumo, linhas: estornadas }, porConta, amostra, saldoNaoTocado: true });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
@@ -1253,7 +1409,15 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (req.query.limit) filters.limit = parseInt(req.query.limit as string);
       if (req.query.offset) filters.offset = parseInt(req.query.offset as string);
       const movements = await storage.getAccountMovements(req.params.id, filters);
-      res.json(movements);
+      // Movimento ESTORNADO (credito sem baixa, revertido) sai do extrato da conta.
+      // O filtro e feito aqui porque reversed_at nao esta no schema drizzle.
+      let visiveis: any[] = movements as any[];
+      try {
+        const r: any = await db.execute(sql`SELECT id FROM account_movements WHERE reversed_at IS NOT NULL AND financial_account_id = ${req.params.id}`);
+        const fora = new Set(((r.rows || r) as any[]).map((x: any) => String(x.id)));
+        if (fora.size) visiveis = visiveis.filter((m: any) => !fora.has(String(m.id)));
+      } catch { /* coluna ainda nao criada: nada foi estornado */ }
+      res.json(visiveis);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
