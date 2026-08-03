@@ -2203,7 +2203,8 @@ export function registerReconciliation(app: Express) {
           && (r.st == null || r.st === "pending") && r.tem_baixa !== true)
         .map((r: any) => String(r.id));
 
-      const idsSaldo = rows.filter((r: any) => ND_LINHA_SALDO.has(String(r.nd || "")) && r.tem_baixa !== true)
+      const idsSaldo = rows.filter((r: any) => ND_LINHA_SALDO.has(String(r.nd || ""))
+                                            && r.st !== "saldo" && r.tem_baixa !== true)
                            .map((r: any) => String(r.id));
       rows = rows.filter((r: any) => !ND_LINHA_SALDO.has(String(r.nd || "")));
 
