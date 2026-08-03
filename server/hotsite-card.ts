@@ -11,8 +11,37 @@ import type { Express } from 'express';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { computeServerTotal } from './hotsite-pix';
+import { authenticateUser } from './authMiddleware';
 
 const INTERNAL_BASE = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+
+// ============================================================================
+// CHAVE GERAL DO CARTAO NA LOJA (03/ago/2026)
+// Motivo: a Cielo esta recusando 100% das transacoes com "002 Credenciais
+// Invalidas" — o cliente escolhe cartao, nao consegue pagar e o pedido NEM
+// CHEGA a existir (o pedido so e criado depois da Cielo aprovar). Enquanto a
+// credencial nao for destravada, o cartao sai do checkout.
+// Liga/desliga SEM deploy: POST /api/admin/hotsite/cartao {ativo:true|false}
+// (system_settings 'hotsite_cartao_ativo'). Env HOTSITE_CARTAO_ATIVO=off tem
+// precedencia. Default: ligado (se nada estiver configurado, nada muda).
+// ============================================================================
+let _cartaoCache: { valor: boolean; at: number } | null = null;
+export async function cartaoLojaAtivo(): Promise<boolean> {
+  const env = String(process.env.HOTSITE_CARTAO_ATIVO || '').trim().toLowerCase();
+  if (env === 'off' || env === 'false' || env === '0') return false;
+  if (env === 'on' || env === 'true' || env === '1') return true;
+  if (_cartaoCache && (Date.now() - _cartaoCache.at) < 30000) return _cartaoCache.valor;
+  let valor = true;
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'hotsite_cartao_ativo' LIMIT 1`);
+    const v = String(((r.rows || r || [])[0] || {}).value ?? '').trim().toLowerCase();
+    if (v) valor = !(v === 'off' || v === 'false' || v === '0');
+  } catch { /* sem a tabela/linha, mantem ligado */ }
+  _cartaoCache = { valor, at: Date.now() };
+  return valor;
+}
+export function limparCacheCartaoLoja() { _cartaoCache = null; }
+const MSG_CARTAO_OFF = 'Pagamento com cartao temporariamente indisponivel. Finalize por PIX.';
 
 export function cieloConfig() {
   // .trim() blinda contra espaço/quebra-de-linha coladas por engano nas variáveis do Railway,
@@ -336,6 +365,7 @@ export function registerHotsiteCard(app: Express): void {
   app.post('/api/public/orders/card/pay', async (req, res) => {
     try {
       await ensureTable();
+      if (!(await cartaoLojaAtivo())) return res.status(503).json({ message: MSG_CARTAO_OFF });
       const cfg = cieloConfig();
       if (!cfg.merchantId || !cfg.merchantKey) {
         return res.status(503).json({ message: 'Pagamento com cartão indisponível no momento.' });
@@ -452,6 +482,7 @@ export function registerHotsiteCard(app: Express): void {
 
   // Google Pay: token da carteira -> Cielo -> SO se aprovado cria o pedido
   app.post('/api/public/orders/card/pay-googlepay', async (req, res) => {
+    if (!(await cartaoLojaAtivo())) return res.status(503).json({ message: MSG_CARTAO_OFF });
     try {
       await ensureTable();
       const cfg = cieloConfig();
@@ -515,19 +546,47 @@ export function registerHotsiteCard(app: Express): void {
     }
   });
 
+  // ADMIN — liga/desliga o cartao na loja SEM deploy.
+  // GET  /api/admin/hotsite/cartao          -> { ativo, fonte }
+  // POST /api/admin/hotsite/cartao {ativo}  -> grava em system_settings
+  app.get('/api/admin/hotsite/cartao', authenticateUser, async (req: any, res) => {
+    const u = req.currentUser || req.user;
+    if (!u || !['admin', 'coordinator', 'administrative'].includes(String(u.role))) return res.status(403).json({ message: 'Access denied' });
+    const envRaw = String(process.env.HOTSITE_CARTAO_ATIVO || '').trim();
+    res.json({ ok: true, ativo: await cartaoLojaAtivo(), fonte: envRaw ? 'env HOTSITE_CARTAO_ATIVO' : 'system_settings.hotsite_cartao_ativo' });
+  });
+
+  app.post('/api/admin/hotsite/cartao', authenticateUser, async (req: any, res) => {
+    const u = req.currentUser || req.user;
+    if (!u || !['admin', 'coordinator', 'administrative'].includes(String(u.role))) return res.status(403).json({ message: 'Access denied' });
+    try {
+      const ativo = req.body?.ativo === true || String(req.body?.ativo).toLowerCase() === 'on' || String(req.body?.ativo) === 'true';
+      const valor = ativo ? 'on' : 'off';
+      const email = String(u.email || 'admin');
+      await db.execute(sql`
+        INSERT INTO system_settings (key, value, updated_by, updated_at)
+        VALUES ('hotsite_cartao_ativo', ${valor}, ${email}, now())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      limparCacheCartaoLoja();
+      res.json({ ok: true, ativo: await cartaoLojaAtivo(), por: email });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Config pública do checkout (máximo de parcelas)
   app.get('/api/public/orders/card/config', async (_req, res) => {
     const cfg = cieloConfig();
+    const ativo = await cartaoLojaAtivo();
     // Google Pay: usa a MESMA conta Cielo por tras (gateway 'cielo'). So habilita quando
     // a Cielo esta configurada E o Merchant ID do Google Pay (Business Console) foi definido.
     // Ambiente controlado por GOOGLE_PAY_ENV (TEST|PRODUCTION; default TEST ate liberar).
     const gpMerchantId = String(process.env.GOOGLE_PAY_MERCHANT_ID || '').trim();
     const gpEnv = String(process.env.GOOGLE_PAY_ENV || 'TEST').toUpperCase() === 'PRODUCTION' ? 'PRODUCTION' : 'TEST';
     res.json({
-      enabled: !!(cfg.merchantId && cfg.merchantKey),
+      enabled: !!(cfg.merchantId && cfg.merchantKey) && ativo,
+      disabledReason: ativo ? null : MSG_CARTAO_OFF,
       maxInstallments: cfg.maxInstallments,
       googlePay: {
-        enabled: !!(cfg.merchantId && cfg.merchantKey && gpMerchantId),
+        enabled: !!(cfg.merchantId && cfg.merchantKey && gpMerchantId) && ativo,
         environment: gpEnv,
         merchantId: gpMerchantId,
         merchantName: 'Honest Sucos',
