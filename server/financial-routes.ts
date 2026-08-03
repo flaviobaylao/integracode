@@ -586,6 +586,211 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     }
   });
 
+  // ============================================================================
+  // RECONCILIACAO DO SALDO CONTRA O EXTRATO OFICIAL DO BANCO — SOMENTE LEITURA
+  // GET /api/admin/financial/saldo-oficial[?accountId=]
+  //
+  // Responde "o saldo que o sistema mostra bate com o banco?" e, quando nao bate,
+  // DE ONDE vem a diferenca. Tres saldos independentes por conta:
+  //
+  //   (1) GRAVADO  financial_accounts.balance — o numero que a tela mostra.
+  //   (2) RAZAO    soma assinada de account_movements — o razao interno.
+  //   (3) OFICIAL  ancora LEDGERBAL do extrato do banco + movimento do Livro
+  //                (bank_statement_items) depois da ancora.
+  //
+  // So (3) e fonte de verdade: e o banco falando. (1) e (2) sao o sistema falando.
+  //
+  // QUAL ANCORA E "O EXTRATO OFICIAL": o BB exporta em dois formatos e eles NAO se
+  // equivalem como fonte de saldo.
+  //   * "Extrato conta corrente - MMAAAA.ofx" (internet banking): o DTASOF e o
+  //     FECHAMENTO do periodo. E o extrato oficial.
+  //   * "Extrato41483238163 - <timestamp>.ofx" (Gerenciador/API): o LEDGERBAL e
+  //     FOTO DO INSTANTE DA EXPORTACAO. Exportado as 10h de D, ele carrega o saldo
+  //     do fim de D-1 mas escreve DTASOF = D. Tratar isso como fechamento do dia da
+  //     conferencia falsa — foi exatamente o que ocorreu em 03/08/2026: o extrato
+  //     oficial marcava 5.059,87 e o do Gerenciador, no MESMO dia, -499,56.
+  // Prioridade da ancora: nome do arquivo com "OFICIAL" > extrato mensal do
+  // internet banking > Gerenciador. As do Gerenciador vao na resposta com
+  // confiavel=false e NAO sao usadas como referencia quando existe uma melhor.
+  //
+  // A ancora de referencia e a MAIS RECENTE de maior prioridade. Dela sai o saldo
+  // base da conta (base = saldoBanco - movimento do Livro ate a ancora); com a base,
+  // o saldo calculado em qualquer data e base + movimento acumulado, e a conferencia
+  // contra as demais ancoras mostra em que data o Livro descolou do banco. A ancora
+  // de referencia fecha por construcao (calibracao) e vem marcada como tal.
+  //
+  // Nenhuma escrita. Nao concilia, nao da baixa, nao corrige saldo.
+  // ============================================================================
+  app.get('/api/admin/financial/saldo-oficial', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const accountId = (req.query?.accountId as string) || null;
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      const contas = await linhas(sql`
+        SELECT id, name, COALESCE(balance::numeric, 0) AS saldo_gravado
+        FROM financial_accounts
+        WHERE (${accountId}::text IS NULL OR id = ${accountId})
+        ORDER BY name`);
+
+      const razao = await linhas(sql`
+        SELECT financial_account_id AS acc, count(*) AS n,
+               count(*) FILTER (WHERE type = 'credito') AS creditos,
+               count(*) FILTER (WHERE type = 'debito') AS debitos,
+               COALESCE(sum(CASE WHEN type = 'credito' THEN amount::numeric ELSE -amount::numeric END), 0) AS soma,
+               min(created_at)::date AS de, max(created_at)::date AS ate
+        FROM account_movements
+        WHERE (${accountId}::text IS NULL OR financial_account_id = ${accountId})
+        GROUP BY 1`);
+
+      // Duplicata no razao: a MESMA origem (um boleto, um PIX) creditada mais de uma
+      // vez. E o espelho contabil da baixa duplicada — cada baixa a mais gerou um
+      // credito a mais, e o credito nao foi desfeito quando a baixa foi estornada.
+      const dupRazao = await linhas(sql`
+        SELECT financial_account_id AS acc, count(*) AS grupos,
+               COALESCE(sum(n - 1), 0) AS linhas_excedentes,
+               COALESCE(sum(excedente), 0) AS valor_excedente
+        FROM (
+          SELECT financial_account_id, source_type, source_id, count(*) AS n,
+                 (count(*) - 1) * max(amount::numeric) AS excedente
+          FROM account_movements
+          WHERE source_id IS NOT NULL
+            AND (${accountId}::text IS NULL OR financial_account_id = ${accountId})
+          GROUP BY 1, 2, 3 HAVING count(*) > 1
+        ) t GROUP BY 1`);
+
+      // balance_after deveria ser uma cadeia: cada linha = a anterior +/- o valor.
+      // Elo quebrado = duas escritas concorrentes leram o mesmo saldo (o modulo nao
+      // usa transacao). Com elo quebrado, balance_after nao serve para reconstruir saldo.
+      const elos = await linhas(sql`
+        SELECT acc, count(*) FILTER (WHERE ba_ant IS NOT NULL AND round(ba - ba_ant, 2) <> round(amt, 2)) AS quebrados
+        FROM (
+          SELECT financial_account_id AS acc,
+                 CASE WHEN type = 'credito' THEN amount::numeric ELSE -amount::numeric END AS amt,
+                 balance_after::numeric AS ba,
+                 lag(balance_after::numeric) OVER (PARTITION BY financial_account_id ORDER BY created_at, id) AS ba_ant
+          FROM account_movements
+          WHERE (${accountId}::text IS NULL OR financial_account_id = ${accountId})
+        ) x GROUP BY acc`);
+
+      const ancoras = await linhas(sql`
+        SELECT s.financial_account_id AS acc, s.file_name AS arquivo,
+               substring(i.raw_ofx from '"saldoData":"([^"]*)"') AS dt,
+               substring(i.raw_ofx from '"saldoFinal":"([^"]*)"') AS bal
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.raw_ofx LIKE '%saldoFinal%'
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        GROUP BY 1, 2, 3, 4`);
+
+      // Movimento diario do Livro. Linha ESPELHO (mesma transacao vinda de dois
+      // arquivos) e linha informativa de SALDO ficam de fora: nao movimentaram dinheiro.
+      const dias = await linhas(sql`
+        SELECT s.financial_account_id AS acc, i.transaction_date::date::text AS d,
+               COALESCE(sum(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE -i.amount::numeric END), 0) AS mov
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.mirror_of IS NULL AND COALESCE(i.reconciliation_status, 'pending') <> 'saldo'
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        GROUP BY 1, 2`);
+
+      const porConta = (arr: any[]) => { const m: Record<string, any[]> = {}; for (const r of arr) (m[String(r.acc)] ||= []).push(r); return m; };
+      const razaoPor = porConta(razao), dupPor = porConta(dupRazao), elosPor = porConta(elos);
+      const ancPor = porConta(ancoras), diasPor = porConta(dias);
+
+      const fonteDe = (arquivo: string) => /oficial/i.test(arquivo || '') ? 'oficial'
+        : (/^\s*extrato\s+conta\s+corrente/i.test(arquivo || '') ? 'mensal' : 'gerenciador');
+      const pesoDe = (f: string) => (f === 'oficial' ? 3 : f === 'mensal' ? 2 : 1);
+
+      const saida = contas.map((c: any) => {
+        const id = String(c.id);
+        const rz = (razaoPor[id] || [])[0] || null;
+        const dp = (dupPor[id] || [])[0] || null;
+        const el = (elosPor[id] || [])[0] || null;
+        const ds = (diasPor[id] || []).map((r: any) => ({ d: String(r.d), mov: Number(r.mov) })).sort((a, b) => (a.d < b.d ? -1 : 1));
+
+        // uma ancora por data: fica a de maior prioridade de fonte
+        const porData: Record<string, any> = {};
+        for (const a of (ancPor[id] || [])) {
+          if (!a.dt || a.bal === null || a.bal === undefined) continue;
+          const f = fonteDe(String(a.arquivo || ''));
+          const cand = { data: String(a.dt), saldoBanco: n2(a.bal), arquivo: String(a.arquivo || ''), fonte: f, confiavel: f !== 'gerenciador' };
+          const atual = porData[cand.data];
+          if (!atual || pesoDe(cand.fonte) > pesoDe(atual.fonte)) porData[cand.data] = cand;
+        }
+        const listaAnc = Object.values(porData).sort((a: any, b: any) => (a.data < b.data ? -1 : 1));
+
+        // referencia = melhor fonte; entre as de mesma fonte, a mais recente
+        let ref: any = null;
+        for (const a of listaAnc) if (!ref || pesoDe(a.fonte) > pesoDe(ref.fonte) || (pesoDe(a.fonte) === pesoDe(ref.fonte) && a.data > ref.data)) ref = a;
+
+        const somaAte = (D: string) => ds.reduce((s, r) => (r.d <= D ? s + r.mov : s), 0);
+        const movTotal = ds.reduce((s, r) => s + r.mov, 0);
+        const saldoBase = ref ? n2(ref.saldoBanco - somaAte(ref.data)) : null;
+        const movApos = ref ? n2(movTotal - somaAte(ref.data)) : null;
+        const saldoOficial = ref ? n2(ref.saldoBanco + (movApos as number)) : null;
+
+        const conferencia = listaAnc.map((a: any) => {
+          const calc = saldoBase === null ? null : n2(saldoBase + somaAte(a.data));
+          return {
+            data: a.data, arquivo: a.arquivo, fonte: a.fonte, confiavel: a.confiavel,
+            saldoBanco: a.saldoBanco, saldoCalculado: calc,
+            diferenca: calc === null ? null : n2(calc - a.saldoBanco),
+            referencia: !!ref && a.data === ref.data && a.arquivo === ref.arquivo,
+          };
+        });
+
+        const gravado = n2(c.saldo_gravado);
+        const somaRazao = rz ? n2(rz.soma) : 0;
+        const alertas: string[] = [];
+        if (rz && Number(rz.debitos) === 0 && Number(rz.n) > 0) {
+          alertas.push('account_movements nao tem NENHUM debito (' + rz.creditos + ' creditos, 0 debitos): pagamento a fornecedor nunca debitou a conta. O razao interno nao consegue produzir saldo.');
+        }
+        if (dp && Number(dp.linhas_excedentes) > 0) {
+          alertas.push('Razao com credito duplicado: ' + dp.grupos + ' origens creditadas mais de uma vez, ' + dp.linhas_excedentes + ' linhas excedentes, R$ ' + n2(dp.valor_excedente) + ' a mais.');
+        }
+        if (el && Number(el.quebrados) > 0) {
+          alertas.push('Cadeia de balance_after com ' + el.quebrados + ' elo(s) quebrado(s): houve escrita concorrente sem transacao. balance_after nao serve de saldo.');
+        }
+        if (!ref) alertas.push('Sem ancora de saldo: nenhum extrato desta conta trouxe LEDGERBAL (extratos importados antes do raw_ofx nao tem). Sem isso nao ha como conferir contra o banco.');
+        else if (ref.fonte === 'gerenciador') alertas.push('A unica ancora disponivel vem do Gerenciador (foto do instante da exportacao). Importe o extrato mensal do internet banking para uma conferencia confiavel.');
+        if (ref && Math.abs(gravado - (saldoOficial as number)) > 0.01) {
+          alertas.push('Saldo GRAVADO diverge do banco em R$ ' + n2(gravado - (saldoOficial as number)) + '.');
+        }
+        const descolou = conferencia.filter((x: any) => !x.referencia && x.diferenca !== null && Math.abs(x.diferenca) > 0.01);
+        if (descolou.length) alertas.push('O Livro descola do banco em ' + descolou.length + ' das ' + conferencia.length + ' ancoras. Primeira data com diferenca: ' + descolou[0].data + ' (R$ ' + descolou[0].diferenca + ').');
+
+        return {
+          conta: { id, nome: c.name },
+          saldoGravado: gravado,
+          razaoInterno: {
+            movimentos: rz ? Number(rz.n) : 0, creditos: rz ? Number(rz.creditos) : 0, debitos: rz ? Number(rz.debitos) : 0,
+            soma: somaRazao, de: rz ? rz.de : null, ate: rz ? rz.ate : null,
+            elosQuebrados: el ? Number(el.quebrados) : 0,
+            duplicados: { grupos: dp ? Number(dp.grupos) : 0, linhas: dp ? Number(dp.linhas_excedentes) : 0, valor: dp ? n2(dp.valor_excedente) : 0 },
+          },
+          extratoOficial: ref ? { data: ref.data, saldoBanco: ref.saldoBanco, arquivo: ref.arquivo, fonte: ref.fonte } : null,
+          livro: { dias: ds.length, de: ds.length ? ds[0].d : null, ate: ds.length ? ds[ds.length - 1].d : null, movimento: n2(movTotal), movimentoAposAncora: movApos, saldoBase },
+          saldoOficial,
+          divergencias: {
+            gravadoVsOficial: saldoOficial === null ? null : n2(gravado - saldoOficial),
+            razaoVsOficial: saldoOficial === null ? null : n2(somaRazao - saldoOficial),
+            razaoVsGravado: n2(somaRazao - gravado),
+          },
+          conferenciaPorAncora: conferencia,
+          alertas,
+        };
+      });
+
+      res.json({
+        geradoEm: new Date().toISOString(),
+        somenteLeitura: true,
+        criterioDaAncora: 'arquivo com OFICIAL no nome > extrato mensal do internet banking > Gerenciador (foto do instante, confiavel=false)',
+        contas: saida,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.post('/api/admin/financial/repair-boleto-liquidado-sem-baixa', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
