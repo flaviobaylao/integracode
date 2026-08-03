@@ -40,6 +40,7 @@ import { registerInstagram } from "./instagram-routes";
 import { registerLeadCapture } from "./lead-capture";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
+import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole } from './authMiddleware';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
@@ -193,6 +194,7 @@ run();
   // "IA linha de frente" (b257db4) — sem isto, POST/GET /api/change-requests caíam no
   // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
   registerChangeRequestsRoutes(app);
+  try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
 
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
   (async () => {
