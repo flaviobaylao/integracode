@@ -2426,4 +2426,295 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+
+  // =========================================================================
+  // RELATORIO FINANCEIRO DE CONCILIACAO BANCARIA
+  // GET /api/reconciliation/report?accountId=&from=&to=&saldoInicial=
+  //
+  // Responde a pergunta do negocio: "o saldo da conta bate com o extrato?".
+  //   saldo inicial + entradas - saidas = saldo final calculado
+  //   saldo final calculado x saldo informado pelo BANCO (LEDGERBAL do OFX)
+  //
+  // COMO SE SABE O SALDO DO BANCO: o import do OFX guarda o bloco <LEDGERBAL>
+  // (BALAMT + DTASOF) dentro de raw_ofx (raw.extrato.saldoFinal/saldoData).
+  // Cada arquivo importado vira uma ANCORA (data -> saldo do banco naquele dia).
+  // O saldo base da conta (antes do 1o lancamento importado) e deduzido da
+  // ancora mais antiga: base = saldoBanco(ancora) - movimento acumulado ate ela.
+  // Com a base, o saldo calculado em QUALQUER data e base + movimento acumulado,
+  // e a conferencia contra TODAS as ancoras mostra onde (e quando) divergiu.
+  // Se nao houver nenhuma ancora, aceita ?saldoInicial= (saldo do dia anterior
+  // ao inicio do periodo, digitado pelo operador).
+  //
+  // Regras:
+  //  - linhas ESPELHO (mirror_of) nao entram: o dinheiro se moveu uma vez so.
+  //  - lancamento IGNORADO entra no saldo (o dinheiro saiu/entrou do mesmo
+  //    jeito); ignorado significa apenas "nao ha titulo a conciliar".
+  //  - so leitura. Nenhuma escrita.
+  // =========================================================================
+  app.get("/api/reconciliation/report", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      await ensureRawColumn();
+      const accountId = (req.query.accountId as string) || null;
+      const instanceId = (req.query.instanceId as string) || null;
+      if (!accountId) return res.status(400).json({ error: "informe a conta bancaria (accountId)" });
+
+      const hoje = new Date();
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const to = (req.query.to as string) || iso(hoje);
+      const from = (req.query.from as string) || iso(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+      if (from > to) return res.status(400).json({ error: "periodo invalido (data inicial maior que a final)" });
+      const saldoInicialParam = req.query.saldoInicial != null && String(req.query.saldoInicial).trim() !== ""
+        ? Number(String(req.query.saldoInicial).replace(",", ".")) : null;
+
+      // ---- conta ----------------------------------------------------------
+      const contas = rowsOf(await db.execute(sql`
+        SELECT id, name, bank_name, bank_code, agency, account_number, omie_instance_id, balance
+        FROM financial_accounts
+        WHERE id = ${accountId}`));
+      const conta = contas[0] || null;
+      if (!conta) return res.status(404).json({ error: "conta financeira nao encontrada" });
+
+      const filtroConta = sql`s.financial_account_id = ${accountId}
+                          AND (${instanceId}::text IS NULL OR s.omie_instance_id = ${instanceId})`;
+
+      // ---- movimento acumulado por dia (conta inteira) --------------------
+      const movDia = rowsOf(await db.execute(sql`
+        SELECT to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+               SUM(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE -i.amount::numeric END)::numeric AS mov,
+               SUM(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE 0 END)::numeric AS cred,
+               SUM(CASE WHEN i.type = 'D' THEN i.amount::numeric ELSE 0 END)::numeric AS deb,
+               COUNT(*)::int AS qtd
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.mirror_of IS NULL AND ${filtroConta}
+        GROUP BY 1 ORDER BY 1`));
+      // acumulado ate o fim de cada dia
+      const acum: Array<{ d: string; ate: number }> = [];
+      { let a = 0; for (const r of movDia) { a += Number(r.mov || 0); acum.push({ d: String(r.d), ate: a }); } }
+      const movAte = (dia: string): number => {          // movimento acumulado ate o FIM de `dia`
+        let v = 0;
+        for (const x of acum) { if (x.d <= dia) v = x.ate; else break; }
+        return v;
+      };
+      const movAntes = (dia: string): number => {        // movimento acumulado ate o dia ANTERIOR
+        let v = 0;
+        for (const x of acum) { if (x.d < dia) v = x.ate; else break; }
+        return v;
+      };
+
+      // ---- ancoras: saldo informado pelo BANCO (LEDGERBAL do OFX) ---------
+      // Extraido por regex do raw_ofx (o JSON e truncado em 20k -> cast p/ json
+      // pode falhar; regex nao). Uma ancora por (data, saldo).
+      let ancorasRaw: any[] = [];
+      try {
+        ancorasRaw = rowsOf(await db.execute(sql`
+          SELECT substring(i.raw_ofx from '"saldoData":"([^"]*)"') AS dt,
+                 substring(i.raw_ofx from '"saldoFinal":"([^"]*)"') AS bal,
+                 MIN(s.file_name) AS file_name
+          FROM bank_statement_items i
+          JOIN bank_statements s ON s.id = i.statement_id
+          WHERE ${filtroConta} AND i.raw_ofx IS NOT NULL AND i.raw_ofx LIKE '%saldoFinal%'
+          GROUP BY 1, 2
+          ORDER BY 1`));
+      } catch { ancorasRaw = []; }
+      const ancoras = ancorasRaw
+        .filter((a: any) => String(a.bal ?? "").trim() !== "" && String(a.dt ?? "").trim() !== "")
+        .map((a: any) => ({ data: String(a.dt).slice(0, 10), saldoBanco: Number(String(a.bal).replace(/[^0-9.-]/g, "")), arquivo: a.file_name || null }))
+        .filter((a: any) => a.data && !isNaN(a.saldoBanco))
+        .sort((a: any, b: any) => (a.data! < b.data! ? -1 : a.data! > b.data! ? 1 : 0));
+
+      // ---- saldo base (antes do 1o lancamento importado) ------------------
+      let saldoBase = 0;
+      let baseOrigem: "extrato" | "informado" | "zero" = "zero";
+      if (saldoInicialParam != null && !isNaN(saldoInicialParam)) {
+        // saldo digitado pelo operador = saldo do dia ANTERIOR ao inicio do periodo
+        saldoBase = saldoInicialParam - movAntes(from);
+        baseOrigem = "informado";
+      } else if (ancoras.length) {
+        const a0 = ancoras[0];
+        saldoBase = a0.saldoBanco - movAte(a0.data as string);
+        baseOrigem = "extrato";
+      }
+      const saldoEm = (dia: string) => saldoBase + movAte(dia);
+
+      // conferencia: saldo calculado x saldo do banco em cada ancora
+      // A ancora mais antiga e a CALIBRACAO (dela sai o saldo base), entao ela
+      // sempre fecha por construcao. As demais sao conferencia de verdade.
+      const conferencia = ancoras.map((a: any, idx: number) => {
+        const calc = saldoEm(a.data as string);
+        return {
+          data: a.data, arquivo: a.arquivo,
+          saldoBanco: Number(a.saldoBanco.toFixed(2)),
+          saldoCalculado: Number(calc.toFixed(2)),
+          diferenca: Number((calc - a.saldoBanco).toFixed(2)),
+          calibracao: baseOrigem === "extrato" && idx === 0,
+        };
+      });
+
+      // ---- lancamentos do periodo -----------------------------------------
+      const itens = rowsOf(await db.execute(sql`
+        SELECT i.id, to_char(i.transaction_date::date, 'YYYY-MM-DD') AS data, i.amount, i.type,
+               i.description, i.document, i.origin_name, i.origin_document,
+               COALESCE(i.reconciliation_status, 'pending') AS status,
+               i.matched_at, i.matched_by, i.notes,
+               s.file_name, s.id AS statement_id, fa.name AS account_name
+        FROM bank_statement_items i
+        JOIN bank_statements s ON s.id = i.statement_id
+        LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
+        WHERE i.mirror_of IS NULL AND ${filtroConta}
+          AND i.transaction_date::date >= ${from}::date
+          AND i.transaction_date::date <= ${to}::date
+        ORDER BY i.transaction_date::date, i.type, i.id
+        LIMIT 20000`));
+
+      // titulos conciliados de cada lancamento (o que foi RECEBIDO / PAGO)
+      const ids = itens.map((i: any) => i.id);
+      const titulosPorItem: Record<string, any[]> = {};
+      if (ids.length) {
+        const mR = await db.execute(sql`
+          SELECT m.bank_statement_item_id AS item_id, m.amount, m.match_kind,
+                 m.title_amount_settled, m.interest, m.discount,
+                 r.id AS r_id, r.title_number AS r_title, r.customer_name AS r_name, r.customer_document AS r_doc,
+                 r.due_date AS r_due, r.amount AS r_amount,
+                 (rc.code || ' ' || rc.name) AS r_cat,
+                 p.id AS p_id, p.title_number AS p_title, p.supplier_name AS p_name, p.supplier_document AS p_doc,
+                 p.due_date AS p_due, p.amount AS p_amount,
+                 (pc.code || ' ' || pc.name) AS p_cat
+          FROM bank_statement_item_matches m
+          LEFT JOIN receivables r ON r.id = m.receivable_id
+          LEFT JOIN chart_of_accounts rc ON rc.id = r.chart_account_id
+          LEFT JOIN payables p ON p.id = m.payable_id
+          LEFT JOIN chart_of_accounts pc ON pc.id = p.chart_account_id
+          WHERE m.bank_statement_item_id IN (${inList(ids)})`);
+        for (const m of rowsOf(mR)) {
+          const receber = !!m.r_id;
+          (titulosPorItem[m.item_id] ||= []).push({
+            especie: receber ? "receber" : "pagar",
+            id: receber ? m.r_id : m.p_id,
+            titulo: receber ? m.r_title : m.p_title,
+            nome: receber ? m.r_name : m.p_name,
+            documento: receber ? m.r_doc : m.p_doc,
+            vencimento: receber ? m.r_due : m.p_due,
+            valorTitulo: receber ? m.r_amount : m.p_amount,
+            categoria: (receber ? m.r_cat : m.p_cat) || null,
+            valor: m.amount,
+            baixado: m.title_amount_settled,
+            juros: m.interest,
+            desconto: m.discount,
+            origem: m.match_kind,
+          });
+        }
+      }
+
+      // ---- monta as linhas com SALDO ACUMULADO ----------------------------
+      const n = (v: any) => { const x = parseFloat(String(v ?? "0").replace(/[^0-9.-]/g, "")); return isNaN(x) ? 0 : x; };
+      let saldo = saldoBase + movAntes(from);           // saldo de abertura do periodo
+      const saldoInicial = saldo;
+      const linhas = itens.map((i: any) => {
+        const valor = n(i.amount);
+        const entrada = i.type === "C" ? valor : 0;
+        const saida = i.type === "D" ? valor : 0;
+        saldo += entrada - saida;
+        const det = derivarDetalhe(i.description, i.origin_name);
+        const titulos = titulosPorItem[i.id] || [];
+        return {
+          id: i.id, data: i.data, tipo: i.type, entrada, saida, valor,
+          saldo: Number(saldo.toFixed(2)),
+          contraparte: det.contraparte || i.origin_name || i.description || "",
+          historico: det.tipo || "",
+          documento: det.doc || i.origin_document || "",
+          hora: det.hora || "", diaBanco: det.dia || "",
+          descricao: i.description, docBanco: i.document,
+          status: i.status, conciliadoEm: i.matched_at, conciliadoPor: i.matched_by,
+          observacao: i.notes, arquivo: i.file_name, conta: i.account_name,
+          titulos,
+          categoria: titulos.map((t: any) => t.categoria).filter(Boolean)[0] || null,
+        };
+      });
+      const saldoFinalCalculado = saldo;
+
+      // ---- totais ---------------------------------------------------------
+      const soma = (f: (l: any) => number) => Number(linhas.reduce((a: number, l: any) => a + f(l), 0).toFixed(2));
+      const entradas = soma((l) => l.entrada);
+      const saidas = soma((l) => l.saida);
+      const porStatus = (st: string) => {
+        const ls = linhas.filter((l: any) => (st === "pending" ? (l.status === "pending" || !l.status) : l.status === st));
+        return {
+          qtd: ls.length,
+          entradas: Number(ls.reduce((a: number, l: any) => a + l.entrada, 0).toFixed(2)),
+          saidas: Number(ls.reduce((a: number, l: any) => a + l.saida, 0).toFixed(2)),
+        };
+      };
+      // recebido / pago = o que a conciliacao baixou em titulos no periodo
+      const somaTit = (especie: string, campo: string) => Number(linhas.reduce((a: number, l: any) =>
+        a + (l.titulos || []).filter((t: any) => t.especie === especie).reduce((b: number, t: any) => b + n((t as any)[campo]), 0), 0).toFixed(2));
+      const contaTit = (especie: string) => linhas.reduce((a: number, l: any) => a + (l.titulos || []).filter((t: any) => t.especie === especie).length, 0);
+
+      // por categoria (plano de contas), separando entrada e saida
+      const catMap: Record<string, { categoria: string; entradas: number; saidas: number; qtd: number }> = {};
+      for (const l of linhas) {
+        const ts = l.titulos || [];
+        if (!ts.length) {
+          const k = l.status === "ignored" ? "— Ignorado (sem título)" : "— Sem título conciliado";
+          (catMap[k] ||= { categoria: k, entradas: 0, saidas: 0, qtd: 0 });
+          catMap[k].entradas += l.entrada; catMap[k].saidas += l.saida; catMap[k].qtd++;
+          continue;
+        }
+        for (const t of ts) {
+          const k = t.categoria || "— Sem categoria";
+          (catMap[k] ||= { categoria: k, entradas: 0, saidas: 0, qtd: 0 });
+          if (l.tipo === "C") catMap[k].entradas += n(t.valor); else catMap[k].saidas += n(t.valor);
+          catMap[k].qtd++;
+        }
+      }
+      const porCategoria = Object.values(catMap)
+        .map((c) => ({ ...c, entradas: Number(c.entradas.toFixed(2)), saidas: Number(c.saidas.toFixed(2)) }))
+        .sort((a, b) => (b.entradas + b.saidas) - (a.entradas + a.saidas));
+
+      // ---- fechamento: calculado x banco ----------------------------------
+      // Ancora usada no fechamento = a mais recente com data <= fim do periodo.
+      const ancoraFim = [...conferencia].filter((a: any) => (a.data as string) <= to).pop() || null;
+      const diferenca = ancoraFim ? Number((saldoEm(ancoraFim.data as string) - ancoraFim.saldoBanco).toFixed(2)) : null;
+
+      res.json({
+        conta: {
+          id: conta.id, nome: conta.name, banco: conta.bank_name, agencia: conta.agency,
+          numero: conta.account_number, instancia: conta.omie_instance_id,
+          saldoCadastro: conta.balance == null ? null : Number(conta.balance),
+        },
+        periodo: { de: from, ate: to },
+        base: { saldoBase: Number(saldoBase.toFixed(2)), origem: baseOrigem },
+        resumo: {
+          saldoInicial: Number(saldoInicial.toFixed(2)),
+          entradas, saidas,
+          resultado: Number((entradas - saidas).toFixed(2)),
+          saldoFinalCalculado: Number(saldoFinalCalculado.toFixed(2)),
+          saldoBanco: ancoraFim ? ancoraFim.saldoBanco : null,
+          saldoBancoData: ancoraFim ? ancoraFim.data : null,
+          saldoCalculadoNaDataDoBanco: ancoraFim ? Number(saldoEm(ancoraFim.data as string).toFixed(2)) : null,
+          diferenca,
+          bate: diferenca == null ? null : Math.abs(diferenca) < 0.01,
+          qtdEntradas: linhas.filter((l: any) => l.tipo === "C").length,
+          qtdSaidas: linhas.filter((l: any) => l.tipo === "D").length,
+        },
+        status: { conciliados: porStatus("reconciled"), pendentes: porStatus("pending"), ignorados: porStatus("ignored") },
+        titulos: {
+          recebido: { qtd: contaTit("receber"), valor: somaTit("receber", "valor"), baixado: somaTit("receber", "baixado"), juros: somaTit("receber", "juros"), desconto: somaTit("receber", "desconto") },
+          pago: { qtd: contaTit("pagar"), valor: somaTit("pagar", "valor"), baixado: somaTit("pagar", "baixado"), juros: somaTit("pagar", "juros"), desconto: somaTit("pagar", "desconto") },
+        },
+        porCategoria,
+        conferencia,
+        itens: linhas,
+        avisos: [
+          ...(baseOrigem === "zero" ? ["Nenhum saldo do banco foi encontrado nos extratos importados (bloco LEDGERBAL do OFX). O saldo inicial foi considerado ZERO — informe o saldo inicial no filtro para o relatório fechar com o extrato."] : []),
+          ...(baseOrigem === "informado" ? ["Saldo inicial informado manualmente no filtro."] : []),
+          ...(ancoraFim && Math.abs(diferenca as number) >= 0.01 ? [`O saldo calculado NÃO bate com o extrato em ${String(ancoraFim.data).split("-").reverse().join("/")}: diferença de R$ ${(diferenca as number).toFixed(2)}. Verifique lançamentos faltando (extrato não importado) ou duplicados.`] : []),
+        ],
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
 }
