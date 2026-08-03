@@ -184,6 +184,20 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
   try {
     if (!incomingText || !incomingText.trim()) return;
     if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
+    // "Previsao de Pagamento" / "Sera pago hoje": o cliente esta INFORMANDO quando paga.
+    try {
+      const { respostaDeCobranca } = await import('./promessa-pagamento');
+      const rc = await respostaDeCobranca(phone, incomingText);
+      if (rc) {
+        await replyVia(conversationId, phone, rc);
+        try {
+          await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+            VALUES (${conversationId}, 'agent:cobranca', 'agent', ${rc}, 'text', true)`);
+        } catch {}
+        return;
+      }
+    } catch (e: any) { console.error('[PROMESSA-PGTO]', e?.message || e); }
+
     // Botao 1 do template de aviso ("Ok, obrigado.") = assunto encerrado. Agradece e finaliza,
     // em vez de mandar a saudacao padrao e reabrir uma conversa que ja tinha acabado.
     // Resposta ao aviso de VISITA (rota do dia): "Sim, confirmar" / "Nao" / 1-2-3.
