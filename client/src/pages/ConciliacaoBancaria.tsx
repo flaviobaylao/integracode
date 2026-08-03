@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import RelatorioConciliacao from "@/pages/RelatorioConciliacao";
 
 // ---------------------------------------------------------------------------
 // Conciliação Bancária — paridade com o 1.0: extratos + lançamentos (paginação/
@@ -373,6 +374,10 @@ export default function ConciliacaoBancaria() {
     else if (account) openLedger(); // livro da conta é a visão padrão ao escolher a conta
   }, [instance, account]);
 
+  // ABA DE TOPO: "Conciliar" (a tela de sempre) x "Relatórios" (modulo fixo de
+  // relatorios de conciliacao). Read-only, nao interfere na conciliacao.
+  const [abaTopo, setAbaTopo] = useState<"conciliar" | "relatorios">("conciliar");
+
   const accountOptions = useMemo(
     () => accounts.filter((a) => !instance || a.omie_instance_id === instance),
     [accounts, instance]
@@ -732,6 +737,20 @@ export default function ConciliacaoBancaria() {
         {me ? <span className="text-xs text-gray-400">operador: {me}</span> : null}
       </div>
 
+      {/* ABAS: Conciliar | Relatórios ------------------------------------- */}
+      <div className="flex gap-1 flex-wrap border-b mb-4 no-print">
+        {[{ id: "conciliar", label: "⇄ Conciliar" }, { id: "relatorios", label: "📊 Relatórios de Conciliação" }].map((t) => (
+          <button key={t.id} onClick={() => setAbaTopo(t.id as any)}
+            className={`px-4 py-2 text-sm rounded-t-md border border-b-0 -mb-px ${
+              abaTopo === t.id ? "bg-white font-semibold text-green-700 border-gray-300" : "bg-gray-50 text-gray-600 border-transparent hover:bg-gray-100"}`}
+            data-testid={`tab-topo-${t.id}`}>{t.label}</button>
+        ))}
+      </div>
+
+      {abaTopo === "relatorios" ? (
+        <RelatorioConciliacao contaInicial={account} embutido />
+      ) : (
+      <>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <select value={instance} onChange={(e) => { setInstance(e.target.value); setAccount(""); }} className="border rounded px-3 py-2 text-sm">
           <option value="">Todas as instâncias</option>
@@ -952,6 +971,8 @@ export default function ConciliacaoBancaria() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* MODAL Importar via API de Extratos do BB */}
       {bbOpen && (
