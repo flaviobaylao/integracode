@@ -1354,24 +1354,27 @@ export function registerNfeRoutes(app: Express) {
 
   app.get('/api/fiscal-dashboard', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
-      const invoices = await storage.getFiscalInvoices();
+      // Agregacao em SQL sobre a tabela inteira (getFiscalInvoiceStats). Antes isso era
+      // feito contando o array de getFiscalInvoices(), que tem teto de 1000 linhas — o card
+      // "Total NF-es" ficava travado em 1000 e o "Valor Total Autorizado" so somava as 1000
+      // mais recentes. Estes numeros sao o GLOBAL da base; o recorte por filtro da tela e
+      // calculado no proprio frontend, sobre a mesma lista que alimenta a tabela.
+      const agg = await storage.getFiscalInvoiceStats();
       const scenarios = await storage.getFiscalScenarios();
       const certificates = await storage.getDigitalCertificates();
 
       const stats = {
-        totalInvoices: invoices.length,
+        totalInvoices: agg.total,
         byStatus: {
-          draft: invoices.filter(i => i.status === 'draft').length,
-          authorized: invoices.filter(i => i.status === 'authorized').length,
-          cancelled: invoices.filter(i => i.status === 'cancelled').length,
-          rejected: invoices.filter(i => i.status === 'rejected').length,
+          draft: agg.draft,
+          authorized: agg.authorized,
+          cancelled: agg.cancelled,
+          rejected: agg.rejected,
         },
-        totalValue: invoices
-          .filter(i => i.status === 'authorized')
-          .reduce((sum, i) => sum + parseFloat(i.totalInvoice?.toString() || '0'), 0),
+        totalValue: agg.totalValueAuthorized,
         totalScenarios: scenarios.length,
         activeCertificates: certificates.filter(c => c.isActive).length,
-        environment: invoices.length > 0 ? invoices[0].environment : 'homologacao',
+        environment: agg.environment,
       };
 
       res.json(stats);

@@ -570,6 +570,7 @@ export interface IStorage {
 
   // Fiscal Invoices
   getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]>;
+  getFiscalInvoiceStats(): Promise<{ total: number; draft: number; authorized: number; cancelled: number; rejected: number; totalValueAuthorized: number; environment: string }>;
   getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
   getNextInvoiceNumber(series?: string, issuerCnpj?: string): Promise<number>;
   createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice>;
@@ -8289,6 +8290,34 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
   // FISCAL INVOICES
   // ============================================================================
+
+  // CONTADORES REAIS da tela Faturamento NF-e. NAO reaproveita getFiscalInvoices():
+  // aquele metodo tem teto de 1000 linhas (visao rapida da listagem), entao contar o array
+  // devolvia sempre "1000" como se fosse o total da tabela (~60k notas) e o "Valor Total
+  // Autorizado" era so a soma das 1000 mais recentes. Aqui a agregacao e feita em SQL sobre
+  // a tabela INTEIRA, sem limite e sem trafegar linha nenhuma.
+  async getFiscalInvoiceStats(): Promise<{ total: number; draft: number; authorized: number; cancelled: number; rejected: number; totalValueAuthorized: number; environment: string }> {
+    const rows: any = await db.select({
+      total: sql<number>`count(*)::int`,
+      draft: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'draft')::int`,
+      authorized: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'authorized')::int`,
+      cancelled: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'cancelled')::int`,
+      rejected: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'rejected')::int`,
+      totalValueAuthorized: sql<number>`coalesce(sum(case when ${fiscalInvoices.status} = 'authorized' then ${fiscalInvoices.totalInvoice} else 0 end), 0)::float8`,
+    }).from(fiscalInvoices);
+    const r = rows?.[0] || {};
+    const [last]: any = await db.select({ environment: fiscalInvoices.environment })
+      .from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)).limit(1);
+    return {
+      total: Number(r.total || 0),
+      draft: Number(r.draft || 0),
+      authorized: Number(r.authorized || 0),
+      cancelled: Number(r.cancelled || 0),
+      rejected: Number(r.rejected || 0),
+      totalValueAuthorized: Number(r.totalValueAuthorized || 0),
+      environment: last?.environment || 'homologacao',
+    };
+  }
 
   async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string }): Promise<FiscalInvoice[]> {
     const conditions = [];
