@@ -209,6 +209,51 @@ export async function iaPausada(conversationId: string): Promise<boolean> {
   return (Date.now() - t) < horas * 3600 * 1000;
 }
 
+// CONTEXTO DO AVISO QUE ORIGINOU A CONVERSA
+// Quem responde "quero ver os produtos deste pedido" esta falando do pedido que NOS
+// acabamos de confirmar por mensagem. Sem esse contexto no prompt, a IA nao sabe do que
+// "este pedido" trata e pede o numero — para um cliente que acabou de recebe-lo.
+async function contextoDoAviso(phone: string): Promise<string> {
+  try {
+    const d = onlyDigits(phone);
+    if (d.length < 8) return '';
+    const r: any = await db.execute(sql`
+      SELECT template_label, params,
+             to_char(sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando
+      FROM official_dispatches
+      WHERE right(customer_phone, 8) = ${d.slice(-8)}
+        AND status IN ('enviada','entregue','lida','resposta')
+        AND sent_at > now() - interval '48 hours'
+      ORDER BY sent_at DESC LIMIT 3`);
+    const linhas = (r.rows || []).map((x: any) => {
+      const ps: any[] = Array.isArray(x.params) ? x.params : [];
+      const rotulo: Record<string, string> = {
+        pedido_confirmado: 'confirmamos o PEDIDO ' + (ps[1] || '') + ' no valor de ' + (ps[2] || ''),
+        pedido_confirmado_debito: 'confirmamos o PEDIDO ' + (ps[1] || '') + ' (' + (ps[2] || '') + ') e avisamos que esta RETIDO por titulos em aberto: ' + (ps[3] || ''),
+        pedido_confirmado_analise: 'confirmamos o PEDIDO ' + (ps[1] || '') + ' (' + (ps[2] || '') + '), em aprovacao interna da condicao ' + (ps[3] || ''),
+        pedido_liberado: 'avisamos que o pedido foi LIBERADO',
+        entrega_programada: 'avisamos a ENTREGA programada da NF ' + (ps[1] || '') + ' para ' + (ps[2] || ''),
+        pedido_saiu_entrega: 'avisamos que o pedido ' + (ps[1] || '') + ' SAIU PARA ENTREGA',
+        pedido_entregue: 'avisamos que o pedido ' + (ps[1] || '') + ' foi ENTREGUE',
+        entrega_nao_realizada: 'avisamos que a entrega do pedido ' + (ps[1] || '') + ' NAO foi concluida: ' + (ps[2] || ''),
+        cobranca_vencimento: 'avisamos o VENCIMENTO do titulo ' + (ps[1] || '') + ' (' + (ps[2] || '') + ') em ' + (ps[3] || ''),
+        cobranca_vencida: 'cobramos o titulo ' + (ps[1] || '') + ' (' + (ps[2] || '') + ') vencido em ' + (ps[3] || ''),
+        visita_rota_dia: 'avisamos a VISITA do vendedor ' + (ps[1] || '') + ' para ' + (ps[2] || ''),
+      };
+      const txt = rotulo[String(x.template_label)] || ('enviamos o aviso ' + x.template_label);
+      return '- ' + x.quando + ': ' + txt;
+    });
+    if (!linhas.length) return '';
+    return [
+      '# O QUE NOS JA AVISAMOS ESTE CLIENTE (ultimas 48h)',
+      ...linhas,
+      'Quando o cliente disser "este pedido", "meu pedido", "essa entrega" ou "essa cobranca",',
+      'ele esta falando DISSO — nao peca o numero do pedido, ja o temos. Use consultar_pedido',
+      'para os detalhes (produtos, valor, situacao) e segunda_via para 2a via de titulos.',
+    ].join('\n');
+  } catch { return ''; }
+}
+
 // O cliente esta respondendo a um disparo nosso? Duas condicoes: houve disparo para este
 // telefone na janela (ia_disparo_horas, padrao 48h) e NENHUM humano escreveu nesta conversa
 // nos ultimos ia_disparo_humano_min (padrao 30) minutos.
@@ -812,7 +857,9 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
       'Regra: ate 11:59 e "bom dia"; das 12:00 as 17:59 e "boa tarde"; a partir das 18:00 e "boa noite".',
       'Se o cliente saudar com o periodo errado, responda com o periodo CERTO, sem corrigi-lo.',
     ].join('\n');
+    const _aviso = ctx?.phone ? await contextoDoAviso(String(ctx.phone)) : '';
     const systemPrompt = _tempo + '\n\n'
+      + (_aviso ? _aviso + '\n\n' : '')
       + (base ? base + '\n\n' : '')
       + (kb ? '# BASE DE CONHECIMENTO (fatos da Honest — responda so com o que esta aqui; se faltar, ofereca falar com uma pessoa)\n' + kb + '\n\n' : '')
       + (agent.system_prompt || '');

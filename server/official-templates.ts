@@ -374,6 +374,45 @@ export function registerOfficialTemplates(app: any) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Por que o encerramento pelo botao nao disparou? Mostra cada porta da regra.
+  app.get('/api/admin/oficial/templates/encerra-diag', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try {
+      const phone = String(req.query.phone || '').replace(/\D/g, '');
+      const texto = String(req.query.texto || 'Ok, obrigado.');
+      const t = normalizarResposta(texto);
+      const horas = Math.max(1, parseInt(await getSetting('ia_encerra_horas', '48'), 10) || 48);
+      const casos = (await getSetting('ia_encerra_casos', 'pipeline')).split(',').map(x => x.trim()).filter(Boolean);
+      const disp: any = await db.execute(sql`
+        SELECT template_label, use_case, to_char(sent_at, 'DD/MM HH24:MI') AS quando
+        FROM official_dispatches
+        WHERE right(customer_phone, 8) = ${phone.slice(-8)}
+          AND status IN ('enviada','entregue','lida','resposta')
+          AND sent_at > now() - make_interval(hours => ${horas})
+        ORDER BY sent_at DESC LIMIT 5`);
+      const recentes = disp.rows || [];
+      const labels = recentes.filter((d: any) => casos.includes(String(d.use_case || ''))).map((d: any) => String(d.template_label));
+      let botoes: string[] = [];
+      if (labels.length) {
+        const tpl: any = await db.execute(sql`SELECT botoes FROM whatsapp_templates WHERE label = ANY(${labels})`);
+        botoes = (tpl.rows || []).flatMap((r: any) => Array.isArray(r.botoes) ? r.botoes : []);
+      }
+      const aceites = (await getSetting('ia_encerra_frases', ENCERRA_FRASES_PADRAO)).split('|').map(normalizarResposta).filter(Boolean);
+      res.json({
+        ligado: await getSetting('ia_encerra_botao', 'on'),
+        textoNormalizado: t,
+        janelaHoras: horas, casosAceitos: casos,
+        disparosRecentes: recentes,
+        labelsElegiveis: labels,
+        botoesDesses: botoes,
+        baiteBotao: botoes.some(b => normalizarResposta(b) === t),
+        estaNaListaDeAceite: aceites.includes(t),
+        listaDeAceite: aceites,
+        resultado: await botaoDeEncerramento(phone, texto),
+      });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Previa da linha de debitos com dados reais — so leitura, nao envia nada.
   app.get('/api/admin/oficial/templates/previa-debito', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
