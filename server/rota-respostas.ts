@@ -58,6 +58,41 @@ async function registrar(customerId: string, decisao: string, detalhe: string, t
     DO UPDATE SET decisao = EXCLUDED.decisao, detalhe = EXCLUDED.detalhe, atualizado_at = now()`);
 }
 
+// Proxima visita agendada do cliente (visit_agenda pendente; fallback no next_visit_date
+// do card permanente). O cliente que dispensa a visita de hoje precisa saber quando o
+// vendedor volta — senao a recusa vira "some por um mes".
+async function proximaVisita(customerId: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT to_char(scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS quando
+      FROM visit_agenda
+      WHERE customer_id = ${customerId}
+        AND visit_status = 'pending'
+        AND (scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY scheduled_date LIMIT 1`);
+    if (r.rows?.[0]?.quando) return String(r.rows[0].quando);
+    const c: any = await db.execute(sql`
+      SELECT to_char(next_visit_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS quando
+      FROM sales_cards
+      WHERE customer_id = ${customerId} AND next_visit_date IS NOT NULL
+        AND (next_visit_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY next_visit_date LIMIT 1`);
+    return String(c.rows?.[0]?.quando || '');
+  } catch { return ''; }
+}
+
+const SITE = 'https://loja.bebahonest.com.br/shop/';
+const INSTA = 'https://www.instagram.com/bebahonest/';
+
+// Fecho comum das tres opcoes: quando o vendedor volta e por onde pedir antes disso.
+async function fechoDaRecusa(customerId: string, vendedor: string): Promise<string> {
+  const quando = await proximaVisita(customerId);
+  const visita = quando
+    ? `Sua próxima visita está agendada para *${quando}*.`
+    : `${vendedor} passa aí na próxima visita da rota.`;
+  return `\n\n${visita}\n\nSe precisar de produto antes disso, é só chamar ${vendedor} por aqui, ou pedir direto:\n🛒 ${SITE}\n📸 ${INSTA}`;
+}
+
 const PERGUNTA_MOTIVO = 'Sem problema! Para eu avisar o vendedor, qual é o motivo?\n\n'
   + '1️⃣ Tenho estoque suficiente ainda\n'
   + '2️⃣ Não estarei disponível hoje\n'
@@ -115,15 +150,15 @@ export async function respostaDaRota(phone: string, texto: string): Promise<stri
     const eh = (n: string, palavras: string[]) => t === n || palavras.some(p => t.includes(p));
     if (eh('1', ['estoque'])) {
       await registrar(rota.customer_id, 'estoque', 'ainda tem estoque', d);
-      return `Entendido${nome ? ', ' + nome : ''}! Vou avisar ${vendedor} que você ainda está abastecido. Na próxima passagem a gente se fala. 🧡`;
+      return `Entendido${nome ? ', ' + nome : ''}! Vou avisar ${vendedor} que você ainda está abastecido.` + (await fechoDaRecusa(rota.customer_id, vendedor));
     }
     if (eh('2', ['nao estarei', 'indisponivel', 'nao vou estar', 'fechado'])) {
       await registrar(rota.customer_id, 'indisponivel', 'nao estara disponivel hoje', d);
-      return `Sem problema${nome ? ', ' + nome : ''}! Avisei ${vendedor} que hoje não dá. Ele te procura no próximo dia de rota. 🧡`;
+      return `Sem problema${nome ? ', ' + nome : ''}! Avisei ${vendedor} que hoje não dá.` + (await fechoDaRecusa(rota.customer_id, vendedor));
     }
     if (eh('3', ['remarcar', 'outro dia', 'remarca'])) {
       await registrar(rota.customer_id, 'remarcar', 'pediu para remarcar', d);
-      return `Combinado${nome ? ', ' + nome : ''}! ${vendedor} vai falar com você para marcar o melhor dia. 🧡`;
+      return `Combinado${nome ? ', ' + nome : ''}! ${vendedor} vai falar com você para marcar o melhor dia.` + (await fechoDaRecusa(rota.customer_id, vendedor));
     }
     return null;
   } catch (e: any) {
