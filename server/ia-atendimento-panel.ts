@@ -259,7 +259,7 @@ async function setMode(key,v){ if(v==='on' && !confirm('Ligar em ON faz a IA res
 async function setTgl(key,v){
   try{
     const r = await (await fetch('/api/admin/ia-atendimento/set'+q('&key='+key+'&value='+v))).json();
-    if(r && r.ajustou){ alert('Atenção: "'+key+'" e "'+r.ajustou+'" não podem ficar ligados juntos.\n\n"'+r.ajustou+'" foi DESLIGADO automaticamente.'); }
+    if(r && r.ajustou){ alert('Atenção: "'+key+'" e "'+r.ajustou+'" não podem ficar ligados juntos.\\n\\n"'+r.ajustou+'" foi DESLIGADO automaticamente.'); }
     if(r && r.aviso){ alert('Atenção: '+r.aviso); }
   }catch(e){}
   load();
