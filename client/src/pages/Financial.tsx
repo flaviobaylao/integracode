@@ -20,6 +20,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OverdueDebtsManagement from '@/components/OverdueDebtsManagement';
 import BlockedOrdersManagement from '@/components/BlockedOrdersManagement';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/lib/permissions';
 import {
   DollarSign, Plus, Eye, Trash2, Edit, Download, FileText, Loader2,
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
@@ -3411,6 +3412,11 @@ const TAB_CONFIG: Record<string, { label: string; icon: any }> = {
 export default function Financial() {
   const { user } = useAuth();
   const isFullAccess = user?.role && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  // Concessões salvas (Acessos por Usuário): permitem ver/agir por card mesmo fora
+  // do papel. Aditivo — só afeta usuário CONFIGURADO com a flag explícita.
+  const { map: permMap, hasConfig: permCfg } = usePermissions();
+  const permView = (card: string) => !!permCfg && (permMap as any)?.[card]?.ver === true;
+  const permAct  = (card: string) => !!permCfg && (((permMap as any)?.[card]?.criar === true) || ((permMap as any)?.[card]?.editar === true));
   const canViewReceivables = isFullAccess || (!!user?.role && ['vendedor', 'telemarketing'].includes(user.role));
   // Boleto bancário no Contas a Receber: liberado para todos os vendedores
   // (externos e telemarketing), mesmo em modo leitura. Demais ações seguem admin.
@@ -3432,15 +3438,15 @@ export default function Financial() {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'receivables': return canViewReceivables ? <ReceivablesTab readOnly={!isFullAccess} canBoleto={canEmitBoleto} /> : null;
-      case 'payables': return isFullAccess ? <PayablesTab /> : null;
+      case 'receivables': return (canViewReceivables || permView('Contas a Receber')) ? <ReceivablesTab readOnly={!isFullAccess && !permAct('Contas a Receber')} canBoleto={canEmitBoleto} /> : null;
+      case 'payables': return (isFullAccess || permView('Contas a Pagar')) ? <PayablesTab /> : null;
       case 'overdue': return <OverdueDebtsManagement />;
       case 'blocked': return <BlockedOrdersManagement user={user as any} />;
-      case 'chart': return isFullAccess ? <ChartOfAccountsTab /> : null;
-      case 'accounts': return isFullAccess ? <FinancialAccountsTab /> : null;
-      case 'dre': return isFullAccess ? <DRETab /> : null;
-      case 'xml': return isFullAccess ? <XMLsTab /> : null;
-      case 'sped': return isFullAccess ? <SPEDTab /> : null;
+      case 'chart': return (isFullAccess || permView('Plano de Contas / DRE')) ? <ChartOfAccountsTab /> : null;
+      case 'accounts': return (isFullAccess || permView('Contas Financeiras')) ? <FinancialAccountsTab /> : null;
+      case 'dre': return (isFullAccess || permView('Plano de Contas / DRE')) ? <DRETab /> : null;
+      case 'xml': return (isFullAccess || permView('XMLs / SPED Fiscal')) ? <XMLsTab /> : null;
+      case 'sped': return (isFullAccess || permView('XMLs / SPED Fiscal')) ? <SPEDTab /> : null;
       default: return null;
     }
   };
