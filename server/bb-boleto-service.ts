@@ -538,6 +538,26 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
       // ex.: titulo de 1.000 com 300 ja baixado recebia +1.000 e ficava 1.300.
       if (pay > outstanding) pay = outstanding;
       if (pay < 0) pay = 0;
+      // FIX: o Sistema 1.0 grava baixa no MESMO banco, com nota propria
+      // ("Pagamento boleto BB automatico - nossoNumero:..."), e nao conhece este
+      // codigo. Quando os dois baixavam o mesmo boleto, o titulo recebia duas linhas
+      // de pagamento e o amount_paid DOBRAVA. A checagem e por nosso numero (nao por
+      // quem escreveu): se ja existe pagamento deste boleto neste titulo, seja de
+      // quem for, nao lancamos de novo.
+      const nnGuard = String(charge.nosso_numero || '').trim();
+      if (nnGuard) {
+        try {
+          const jaPago: any = await db.execute(sql`
+            SELECT 1 FROM receivable_payments
+            WHERE receivable_id = ${t.receivableId}
+              AND (reference = ${nnGuard} OR notes LIKE ${'%' + nnGuard + '%'})
+            LIMIT 1`);
+          if (jaPago.rows && jaPago.rows.length > 0) {
+            console.warn(`[BB-BOLETO] boleto ${charge.nosso_numero} ja tem pagamento no titulo ${t.receivableId} (possivelmente do Sistema 1.0) - baixa ignorada para nao duplicar`);
+            continue;
+          }
+        } catch (e: any) { /* tolerante: falha na checagem nao bloqueia a baixa */ }
+      }
       const totalPaid = parseFloat(receivable.amountPaid || '0') + pay;
       // FIX: baixa parcial marcava 'a_vencer' mesmo em titulo com vencimento no passado,
       // escondendo atraso na lista. Tolerancia de meio centavo evita que arredondamento

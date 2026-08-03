@@ -216,15 +216,23 @@ export function registerFinancialRoutes(app: Express) {
       // A) PAGAMENTO DUPLICADO: mesmo titulo, mesmo valor, mesma data e mesma
       // referencia aparecendo mais de uma vez. E o achado mais grave: infla o
       // amount_paid e "quita" titulo que nao foi pago.
+      // CORRIGIDO: agrupar por DATA escondia a maior parte do problema — a varredura
+      // noturna lancava a mesma baixa em dias diferentes, e o Sistema 1.0 gravava com
+      // paid_at diferente do nosso. A chave certa e (titulo + nosso numero): um boleto
+      // paga UMA vez, entao duas linhas com o mesmo nosso numero no mesmo titulo sao
+      // duplicata, nao importa a data nem quem escreveu.
+      const chaveNosso = "COALESCE(NULLIF(rp.reference,''), substring(rp.notes from '[0-9]{10,20}'))";
       const duplicados = await many(
-        "SELECT rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, rp.amount::float AS valor, " +
-        "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS pago_em, " +
-        "COALESCE(rp.reference,'') AS referencia, COUNT(*)::int AS vezes, " +
-        "(COUNT(*)-1) * rp.amount::float AS excesso, array_agg(rp.id::text) AS pagamento_ids " +
+        "SELECT rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, " +
+        "r.amount::float AS valor_titulo, COALESCE(r.amount_paid,0)::float AS baixado, " +
+        chaveNosso + " AS nosso_numero, COUNT(*)::int AS vezes, SUM(rp.amount::numeric)::float AS soma_lancada, " +
+        "(SUM(rp.amount::numeric) - MAX(rp.amount::numeric))::float AS excesso, " +
+        "array_agg(rp.id::text) AS pagamento_ids, array_agg(rp.amount::text) AS valores, " +
+        "array_agg(to_char(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD')) AS datas, " +
+        "array_agg(COALESCE(rp.created_by,'')) AS criado_por, array_agg(COALESCE(rp.notes,'')) AS notas " +
         "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
-        "WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' " +
-        "GROUP BY rp.receivable_id, r.title_number, r.customer_name, rp.amount, " +
-        "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date, COALESCE(rp.reference,'') " +
+        "WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND " + chaveNosso + " IS NOT NULL " +
+        "GROUP BY rp.receivable_id, r.title_number, r.customer_name, r.amount, r.amount_paid, " + chaveNosso + " " +
         "HAVING COUNT(*) > 1 ORDER BY excesso DESC LIMIT " + limit);
 
       // B) amount_paid DIVERGE da soma dos pagamentos (para mais ou para menos)
