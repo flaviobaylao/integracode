@@ -146,14 +146,28 @@ export function registerFinancialRoutes(app: Express) {
   app.post('/api/admin/financial/repair-baixas', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
-      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
-      const payPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM payables r JOIN (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p ON p.payable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
-      const wouldFix = { receivables: rcvPrev.rows?.[0]?.n ?? 0, payables: payPrev.rows?.[0]?.n ?? 0 };
-      if (dryRun) return res.json({ dryRun: true, wouldFix });
+      // ESCOPO (aditivo; padrao 'ambos' = comportamento antigo). Rodar recebiveis e
+      // pagaveis de uma vez obriga a auditar os dois dominios juntos; 'apenas' limita
+      // o lado e 'ids' limita a titulos ja conferidos um a um.
+      const apenas = String(req.body?.apenas || 'ambos').toLowerCase();
+      const fazRcv = apenas === 'ambos' || apenas === 'receivables';
+      const fazPay = apenas === 'ambos' || apenas === 'payables';
+      const pediuIds = Array.isArray(req.body?.ids);
+      const idsFiltro: string[] = pediuIds
+        ? req.body.ids.map((x: any) => String(x).trim()).filter((x: string) => /^[0-9a-fA-F-]{8,40}$/.test(x))
+        : [];
+      if (pediuIds && idsFiltro.length === 0) {
+        return res.status(400).json({ error: 'ids informado mas nenhum id valido', recebidos: req.body.ids });
+      }
+      const filtroId = idsFiltro.length ? " AND r.id IN (" + idsFiltro.map((x) => "'" + x + "'").join(',') + ")" : '';
+      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
+      const payPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM payables r JOIN (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p ON p.payable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
+      const wouldFix = { receivables: fazRcv ? (rcvPrev.rows?.[0]?.n ?? 0) : 0, payables: fazPay ? (payPrev.rows?.[0]?.n ?? 0) : 0 };
+      if (dryRun) return res.json({ dryRun: true, apenas, ids: idsFiltro.length || null, wouldFix });
 
-      const rcv: any = await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))"));
-      const pay: any = await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))"));
-      res.json({ dryRun: false, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
+      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
+      const pay: any = !fazPay ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
+      res.json({ dryRun: false, apenas, ids: idsFiltro.length || null, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || String(e) });
     }
@@ -249,7 +263,7 @@ export function registerFinancialRoutes(app: Express) {
 
       const bbb: any = await import('./bb-boleto-service');
       const itens: any[] = [];
-      let reparados = 0, jaBaixados = 0, naoLiquidadoNoBB = 0, erros = 0;
+      let reparados = 0, jaBaixados = 0, naoLiquidadoNoBB = 0, erros = 0, semDiferenca = 0;
 
       for (const a of alvos) {
         const emAbertoBoleto = a.titulos.reduce((t: number, x: any) => t + (x.amount - x.amount_paid), 0);
@@ -262,7 +276,17 @@ export function registerFinancialRoutes(app: Express) {
           const c: any = await bbb.consultarBoletoChargeBB(a.boleto_id);
           if (!c?.ok) { erros++; itens.push({ ...base, resultado: 'erro_consulta_bb', erro: c?.error || null }); continue; }
           if (!c.liquidado) { naoLiquidadoNoBB++; itens.push({ ...base, resultado: 'nao_liquidado_no_bb', estadoBB: c.estado }); continue; }
-          const prev = { ...base, estadoBB: c.estado, valorPagoBB: c.valorPago, dataCreditoBB: c.dataCredito };
+          // GUARD: so e "baixa que faltou" se o BB pagou MAIS do que ja esta baixado.
+          // Titulo aberto porque o cliente pagou menos que o emitido (desconto) tem
+          // valorPagoBB == jaBaixado: o residuo e decisao contabil, nao falha de baixa.
+          const jaBaixadoTotal = a.titulos.reduce((t: number, x: any) => t + Number(x.amount_paid || 0), 0);
+          const deltaBB = Number(c.valorPago || 0) - jaBaixadoTotal;
+          if (!(deltaBB > 0.005)) {
+            semDiferenca++;
+            itens.push({ ...base, resultado: 'sem_diferenca_vs_bb', estadoBB: c.estado, valorPagoBB: c.valorPago, jaBaixado: Number(jaBaixadoTotal.toFixed(2)) });
+            continue;
+          }
+          const prev = { ...base, estadoBB: c.estado, valorPagoBB: c.valorPago, dataCreditoBB: c.dataCredito, aBaixar: Number(deltaBB.toFixed(2)) };
           // rawBB so no dry-run: permite conferir no retorno do proprio banco de onde
           // saiu o valor e a data antes de gravar qualquer coisa.
           if (dryRun) { itens.push({ ...prev, resultado: 'seria_reparado', rawBB: c.raw }); continue; }
@@ -297,7 +321,7 @@ export function registerFinancialRoutes(app: Express) {
       const emAberto = alvos.reduce((t, a) => t + a.titulos.reduce((u: number, x: any) => u + (x.amount - x.amount_paid), 0), 0);
       res.json({
         dryRun, candidatos: alvos.length, valorEmAberto: emAberto.toFixed(2),
-        reparados, jaBaixados, naoLiquidadoNoBB, erros,
+        reparados, jaBaixados, naoLiquidadoNoBB, semDiferenca, erros,
         naoProcessadosPorLimite: truncado, itens,
       });
     } catch (e: any) {
