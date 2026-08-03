@@ -200,7 +200,17 @@ export function registerPaymentVerificationRoutes(app: Express) {
       const prevPaid = Number(receivable.amountPaid || 0);
       const amt = Number(receivable.amount || 0);
       const newPaid = prevPaid + amount;
-      const status = (amt > 0 && newPaid >= amt - 0.005) ? "recebida" : "parcial";
+      // FIX: "parcial" NAO existe no enum receivable_status (a_vencer|recebida|
+      // vencida|cancelada). O update estourava, virava 500 e o pagamento nem era
+      // gravado — toda linha da planilha do BB com desconto/abatimento falhava.
+      const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      const dvP: any = (receivable as any).dueDate;
+      const vencP = dvP instanceof Date
+        ? new Date(dvP.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+        : (dvP ? String(dvP).slice(0, 10) : '');
+      const status = (amt > 0 && newPaid >= amt - 0.005)
+        ? "recebida"
+        : (/^\d{4}-\d{2}-\d{2}$/.test(vencP) && vencP < hojeBR ? "vencida" : "a_vencer");
       await storage.updateReceivable(receivableId, {
         amountPaid: newPaid.toFixed(2),
         status,
