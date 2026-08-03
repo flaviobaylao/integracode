@@ -397,7 +397,10 @@ export const salesCardStatusEnum = pgEnum('sales_card_status', ['pending', 'in_p
 export const paymentMethodEnum = pgEnum('payment_method', [
   'a_vista',    // Caixinha (2425423833) 
   'boleto',     // Boleto (2427900197)
-  'pix'         // PIX (novo)
+  'pix',        // PIX (novo)
+  'card'        // Cartao (Cielo) — 03/ago/2026. O endpoint publico da loja ja aceitava
+                // 'card' e o fluxo hotsite-card.ts sempre envia esse valor apos a Cielo
+                // aprovar; sem ele o insert estourava e o cliente era cobrado sem pedido.
 ]);
 
 // Operation type enum
