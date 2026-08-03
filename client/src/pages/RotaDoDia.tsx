@@ -225,6 +225,18 @@ export default function RotaDoDia() {
   });
 
   // Repescagem2 (Fase 3): camada de repescagem sobreposta na rota do dia.
+  // Decisao do cliente sobre a visita de hoje (resposta ao aviso do WhatsApp).
+  const { data: rotaDecisoes } = useQuery<any>({
+    queryKey: ['/api/rota-do-dia/decisoes', selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/rota-do-dia/decisoes?date=${selectedDate}`, { credentials: 'include' });
+      return r.ok ? r.json() : { itens: {} };
+    },
+    refetchInterval: 60000,
+  });
+  const decisaoDoCliente = (customerId?: string) =>
+    (customerId && rotaDecisoes?.itens) ? rotaDecisoes.itens[String(customerId)] : null;
+
   const { data: repescagemOverlay = [] } = useQuery<any[]>({
     queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate],
     queryFn: async () => {
@@ -1837,6 +1849,22 @@ export default function RotaDoDia() {
                                 {visit.customerName}
                               </p>
                               <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
+                              {(() => {
+                                const dec = decisaoDoCliente(visit.customerId);
+                                if (!dec) return null;
+                                const cor = dec.decisao === 'confirmado'
+                                  ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400'
+                                  : dec.decisao === 'remarcar'
+                                    ? 'border-sky-500 text-sky-700 dark:text-sky-400'
+                                    : 'border-rose-500 text-rose-700 dark:text-rose-400';
+                                return (
+                                  <Badge variant="outline" className={`text-xs ${cor}`}
+                                    title={`Resposta do cliente ao aviso de visita${dec.hora ? ' as ' + dec.hora : ''}`}
+                                    data-testid={`badge-rota-decisao-${visit.customerId}`}>
+                                    {dec.decisao === 'confirmado' ? '✅ ' : dec.decisao === 'remarcar' ? '📅 ' : '⚠️ '}{dec.rotulo}
+                                  </Badge>
+                                );
+                              })()}
                               <OmieInstanceBadge instanceId={(visit as any).omieInstanceId} />
                               {isLead && (
                                 <Badge variant="outline" className="text-xs border-amber-500 text-amber-700 dark:text-amber-400">
