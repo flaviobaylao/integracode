@@ -856,7 +856,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
 
       const creditos = await linhas(sql`
-        SELECT id, financial_account_id AS acc, source_type, reference,
+        SELECT id, financial_account_id AS acc, source_type, source_id, reference,
                amount::numeric AS valor, created_at
         FROM account_movements
         WHERE type = 'credito' AND reversed_at IS NULL
@@ -871,6 +871,20 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         FROM receivable_payments
         WHERE deleted_at IS NULL AND reference IS NOT NULL AND reference <> ''`);
 
+      // TRAVA CONTRA FALSO POSITIVO: baixa lancada SEM reference (conciliacao manual,
+      // baixa a mao) nao casa por nosso numero e faria o credito parecer orfao. Se o
+      // TITULO da cobranca tem baixa ativa, o credito nao e estornado — vai para
+      // revisarManual, com o operador decidindo.
+      const tituloComBaixa = new Set<string>();
+      for (const tabela of ['boleto_charges', 'pix_charges']) {
+        try {
+          const r: any = await db.execute(sql.raw(
+            'SELECT c.id AS sid FROM ' + tabela + ' c WHERE c.receivable_id IS NOT NULL AND EXISTS ' +
+            '(SELECT 1 FROM receivable_payments p WHERE p.receivable_id = c.receivable_id AND p.deleted_at IS NULL)'));
+          for (const x of ((r.rows || r) as any[])) tituloComBaixa.add(String(x.sid));
+        } catch (e: any) { /* tabela ausente: trava so nao se aplica a ela */ }
+      }
+
       const baixasPorRef: Record<string, number[]> = {};
       for (const p of pagamentos) (baixasPorRef[String(p.reference)] ||= []).push(n2(p.valor));
 
@@ -880,6 +894,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const aEstornar: any[] = [];
       const amostra: any[] = [];
       let gruposDuplicado = 0, gruposOrfao = 0;
+      const revisarManual: any[] = [];
       for (const chave of Object.keys(grupos)) {
         const lista = grupos[chave];
         const sep = chave.indexOf('|');
@@ -899,6 +914,14 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         }
         const sobra = lista.filter((c: any) => !ficam.has(String(c.id)));
         if (!sobra.length) continue;
+        if (baixas.length === 0 && lista.some((c: any) => tituloComBaixa.has(String(c.source_id)))) {
+          if (revisarManual.length < 60) revisarManual.push({
+            sourceType: tipo, reference: ref, creditos: lista.length,
+            valor: n2(lista.reduce((s2: number, x: any) => s2 + Number(x.valor), 0)),
+            motivo: 'titulo tem baixa ativa que nao casa por reference — conferir a mao',
+          });
+          continue;
+        }
         if (baixas.length === 0) gruposOrfao++; else gruposDuplicado++;
         for (const c of sobra) aEstornar.push(c);
         if (amostra.length < 60) amostra.push({
@@ -919,9 +942,10 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         gruposDuplicado, gruposOrfao,
         linhas: aEstornar.length, valor: valorTotal,
         creditosAnalisados: creditos.length,
+        naoEstornadosPorTerBaixaNoTitulo: revisarManual.length,
       };
 
-      if (dryRun) return res.json({ dryRun: true, escopo: tipos, resumo, porConta, amostra, saldoNaoTocado: true });
+      if (dryRun) return res.json({ dryRun: true, escopo: tipos, resumo, porConta, amostra, revisarManual, saldoNaoTocado: true });
 
       let estornadas = 0;
       for (let i = 0; i < aEstornar.length; i += 300) {
@@ -941,7 +965,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         });
       } catch (e: any) { /* trilha e observabilidade: nao bloqueia */ }
 
-      res.json({ dryRun: false, escopo: tipos, resumo: { ...resumo, linhas: estornadas }, porConta, amostra, saldoNaoTocado: true });
+      res.json({ dryRun: false, escopo: tipos, resumo: { ...resumo, linhas: estornadas }, porConta, amostra, revisarManual, saldoNaoTocado: true });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
