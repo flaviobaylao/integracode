@@ -159,6 +159,150 @@ export function registerFinancialRoutes(app: Express) {
     }
   });
 
+  // ============================================================================
+  // REPARO: boleto LIQUIDADO no BB e titulo SEM baixa (aparece como "vencida")
+  // ----------------------------------------------------------------------------
+  // Causa: settleBoletoCharge marcava o boleto como 'liquidado' ANTES de baixar o
+  // titulo e engolia o erro do laco. Falhando ali, sobrava boleto liquidado + titulo
+  // vencido, e toda nova tentativa desistia no short-circuit por status. A varredura
+  // noturna (sweepOpenBoletos) tambem nao pegava esses casos: ela so olha boletos
+  // que NAO estao liquidados. Resultado: dinheiro no banco, titulo vencido na tela.
+  //
+  // Este endpoint acha exatamente esses casos e completa a baixa que faltou, usando
+  // o VALOR PAGO e a DATA DE CREDITO reais consultados no BB titulo a titulo — nunca
+  // o valor de emissao, que pode diferir do que o cliente pagou (desconto/juros).
+  //
+  // Body { "dryRun": true } (PADRAO) so consulta o BB e mostra o que faria.
+  //      { "dryRun": false } aplica. Opcionais: limit, days, boletoIds: [...]
+  // Idempotente: rodar de novo em titulo ja baixado nao duplica pagamento.
+  // ============================================================================
+  app.post('/api/admin/financial/repair-boleto-liquidado-sem-baixa', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 50, 1), 200);
+      const days = Math.min(Math.max(Number(req.body?.days) || 365, 1), 3650);
+      const pediuIds = Array.isArray(req.body?.boletoIds);
+      const only: string[] = pediuIds
+        ? req.body.boletoIds.map((x: any) => String(x).trim()).filter((x: string) => /^[0-9a-fA-F-]{8,40}$/.test(x))
+        : [];
+      // Se o operador MANDOU boletoIds e nenhum sobreviveu a validacao (id truncado no
+      // copy/paste, aspas coladas, typo), abortar. Cair para lista vazia faria o filtro
+      // sumir do WHERE e o reparo dirigido viraria reparo de TODOS os candidatos.
+      if (pediuIds && only.length === 0) {
+        return res.status(400).json({ error: 'boletoIds informado mas nenhum id valido (esperado UUID do boleto_charges)', recebidos: req.body.boletoIds });
+      }
+
+      const sel = `bc.id AS boleto_id, bc.nosso_numero, bc.valor_original, bc.status AS boleto_status, bc.created_at,
+        r.id AS receivable_id, r.title_number, r.customer_name, r.amount, COALESCE(r.amount_paid, '0') AS amount_paid,
+        r.status AS receivable_status, r.due_date`;
+      // COALESCE em amount_paid: a coluna aceita NULL e NULL < x e NULL (linha sumia do
+      // filtro) — justamente os titulos que nunca receberam baixa, o alvo do reparo.
+      // boletoIds entra no WHERE (nao pode ser filtrado depois do LIMIT, senao pedir um
+      // boleto especifico fora dos N mais recentes devolvia "0 candidatos" em silencio).
+      const filtroIds = only.length ? ` AND bc.id IN (${only.map((x) => `'${x}'`).join(',')})` : '';
+      // NOT EXISTS espelha o criterio de pendencia de settleBoletoCharge: titulo aberto
+      // porque o boleto pagou MENOS que o emitido (desconto) ja tem pagamento deste
+      // boleto e nao sera reparado. Sem isto o dry-run prometia reparar casos que o
+      // settle depois recusaria, inflando "candidatos" e "valorEmAberto" — justo os
+      // numeros que o operador usa para conferir antes de aplicar.
+      const where = `lower(coalesce(bc.status,'')) IN ('liquidado','pago','recebido')
+        AND r.deleted_at IS NULL AND r.status NOT IN ('recebida','cancelada')
+        AND COALESCE(r.amount_paid, '0')::numeric < r.amount::numeric - 0.005
+        AND NOT EXISTS (
+          SELECT 1 FROM receivable_payments rp WHERE rp.receivable_id = r.id AND (
+            (COALESCE(bc.nosso_numero,'') <> '' AND (rp.reference = bc.nosso_numero OR rp.notes LIKE '%nosso ' || bc.nosso_numero || '%'))
+            OR COALESCE(bc.nosso_numero,'') = ''))
+        AND bc.created_at > now() - make_interval(days => ${days})${filtroIds}`;
+
+      // Um boleto pode ter varios titulos pendentes (boleto unificado): agrupamos por
+      // boleto e guardamos TODOS os titulos, para o relatorio e a auditoria nao
+      // mostrarem so o primeiro.
+      const cand = new Map<string, any>();
+      const add = (rows: any[]) => {
+        for (const r of (rows || [])) {
+          const k = String(r.boleto_id);
+          if (!cand.has(k)) cand.set(k, { ...r, titulos: [] });
+          const g = cand.get(k);
+          if (!g.titulos.some((t: any) => String(t.receivable_id) === String(r.receivable_id))) {
+            g.titulos.push({ receivable_id: r.receivable_id, title_number: r.title_number, customer_name: r.customer_name,
+                             amount: Number(r.amount || 0), amount_paid: Number(r.amount_paid || 0), status: r.receivable_status, due_date: r.due_date });
+          }
+        }
+      };
+
+      // boleto simples (receivable_id direto)
+      const q1: any = await db.execute(sql.raw(
+        `SELECT ${sel} FROM boleto_charges bc JOIN receivables r ON r.id = bc.receivable_id WHERE ${where} ORDER BY bc.created_at DESC LIMIT ${limit}`));
+      add(q1.rows);
+      // boleto unificado (via tabela de juncao; pode nao existir em ambiente antigo)
+      try {
+        const q2: any = await db.execute(sql.raw(
+          `SELECT ${sel} FROM boleto_charges bc JOIN boleto_charge_receivables bcr ON bcr.boleto_charge_id = bc.id JOIN receivables r ON r.id = bcr.receivable_id WHERE ${where} ORDER BY bc.created_at DESC LIMIT ${limit}`));
+        add(q2.rows);
+      } catch (e: any) { /* tabela ausente: so o caminho simples */ }
+
+      // Ordena o conjunto MERGEADO antes de cortar. Cortar cada consulta em separado
+      // fazia os boletos unificados nunca entrarem quando havia muitos simples.
+      const todos = Array.from(cand.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const alvos = todos.slice(0, limit);
+      const truncado = todos.length > alvos.length ? todos.length - alvos.length : 0;
+
+      const bbb: any = await import('./bb-boleto-service');
+      const itens: any[] = [];
+      let reparados = 0, jaBaixados = 0, naoLiquidadoNoBB = 0, erros = 0;
+
+      for (const a of alvos) {
+        const emAbertoBoleto = a.titulos.reduce((t: number, x: any) => t + (x.amount - x.amount_paid), 0);
+        const base = {
+          boletoId: a.boleto_id, nossoNumero: a.nosso_numero,
+          titulos: a.titulos.map((x: any) => ({ titulo: x.title_number, cliente: x.customer_name, valor: x.amount, jaBaixado: x.amount_paid, status: x.status, vencimento: x.due_date })),
+          valorEmAberto: Number(emAbertoBoleto.toFixed(2)),
+        };
+        try {
+          const c: any = await bbb.consultarBoletoChargeBB(a.boleto_id);
+          if (!c?.ok) { erros++; itens.push({ ...base, resultado: 'erro_consulta_bb', erro: c?.error || null }); continue; }
+          if (!c.liquidado) { naoLiquidadoNoBB++; itens.push({ ...base, resultado: 'nao_liquidado_no_bb', estadoBB: c.estado }); continue; }
+          const prev = { ...base, estadoBB: c.estado, valorPagoBB: c.valorPago, dataCreditoBB: c.dataCredito };
+          if (dryRun) { itens.push({ ...prev, resultado: 'seria_reparado' }); continue; }
+
+          const r: any = await bbb.checkAndSettleBoleto(a.boleto_id, 'reparo-liquidado-sem-baixa');
+          if (r?.alreadyPaid) { jaBaixados++; itens.push({ ...prev, resultado: 'ja_estava_baixado' }); continue; }
+          // ok:true com settledCount 0 = nada foi gravado (o laco de baixa engole erro).
+          // Sem esta checagem o endpoint diria "reparado" e gravaria auditoria de um
+          // pagamento inexistente, com o titulo continuando vencido na tela.
+          if (!r?.ok || !(Number(r?.settledCount || 0) > 0)) {
+            erros++; itens.push({ ...prev, resultado: 'falhou', erro: r?.error || r?.message || 'nenhum titulo baixado' }); continue;
+          }
+          reparados++;
+          itens.push({ ...prev, resultado: 'reparado', titulosBaixados: Number(r.settledCount), statusFinal: r?.receivableStatus || null });
+          // Auditoria por TITULO (boleto unificado baixa varios de uma vez).
+          for (const x of a.titulos) {
+            // amount = o que foi baixado NESTE titulo (saldo dele), nunca o valor cheio
+            // do boleto: em boleto unificado, repetir o total em cada linha multiplicaria
+            // o reparo em qualquer soma por periodo do log de auditoria.
+            const baixadoNoTitulo = Math.max(0, Math.min(Number(x.amount || 0) - Number(x.amount_paid || 0), Number(c.valorPago || 0)));
+            await logFinancialAudit({
+              req, action: 'pay', entity: 'receivable', entityId: String(x.receivable_id),
+              before: { status: x.status, amountPaid: Number(x.amount_paid || 0) },
+              after: { status: a.titulos.length === 1 ? (r?.receivableStatus || null) : null, amountPaid: Number(x.amount_paid || 0) + baixadoNoTitulo },
+              amount: Number(baixadoNoTitulo.toFixed(2)),
+              note: `Reparo: boleto ${a.nosso_numero} liquidado no BB (${c.estado}, credito ${c.dataCredito || 's/data'}, total pago R$ ${Number(c.valorPago || 0).toFixed(2)}) sem baixa no titulo`,
+            });
+          }
+        } catch (e: any) { erros++; itens.push({ ...base, resultado: 'erro', erro: e?.message || String(e) }); }
+      }
+
+      const emAberto = alvos.reduce((t, a) => t + a.titulos.reduce((u: number, x: any) => u + (x.amount - x.amount_paid), 0), 0);
+      res.json({
+        dryRun, candidatos: alvos.length, valorEmAberto: emAberto.toFixed(2),
+        reparados, jaBaixados, naoLiquidadoNoBB, erros,
+        naoProcessadosPorLimite: truncado, itens,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
   // Garante o valor 'cartao' no enum de forma de pagamento (opcao unica "Cartao"
   // usada na baixa e na criacao de titulos, tanto a receber quanto a pagar). Sem
   // isso o front envia paymentMethod='cartao' e o Postgres rejeita (o enum so tinha

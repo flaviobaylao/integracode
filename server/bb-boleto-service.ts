@@ -444,23 +444,23 @@ export interface SettleResult {
   receivableId?: string | null;
   receivableStatus?: string;
   amount?: number;
+  // Quantos titulos foram efetivamente baixados NESTA chamada. ok:true com
+  // settledCount:0 significa "nada a fazer" — o chamador que precisa afirmar que
+  // houve baixa (ex.: o reparo) tem de olhar este campo, nao so o ok.
+  settledCount?: number;
   message: string;
 }
 
 // Marca o boleto como liquidado e da baixa no recebivel vinculado (conciliacao).
 // Atualiza tambem saldo da conta + movimento. Idempotente.
 export async function settleBoletoCharge(charge: any, paidAmount: number, paidAtISO: string | null, source: string): Promise<SettleResult> {
-  const already = String(charge.status || '').toLowerCase();
-  if (already === 'liquidado' || already === 'pago' || already === 'recebido') {
-    return { ok: true, alreadyPaid: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || null, message: 'Boleto ja estava liquidado' };
-  }
   const amount = paidAmount && paidAmount > 0 ? paidAmount : parseFloat(charge.valor_original || '0');
   const paidAt = paidAtISO ? new Date(paidAtISO) : new Date();
 
-  try { await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado' WHERE id = ${charge.id}`); } catch (e: any) { /* tolerante */ }
-
   // Titulos vinculados: boleto UNIFICADO (varios titulos via boleto_charge_receivables)
   // ou boleto simples (um unico receivable_id). Damos baixa em TODOS os titulos do boleto.
+  // Resolvido ANTES do short-circuit por status: precisamos saber se os titulos estao
+  // mesmo quitados para poder desistir com seguranca (ver FIX abaixo).
   let targets: Array<{ receivableId: string; alloc: number | null }> = [];
   try {
     const jr: any = await db.execute(sql`SELECT receivable_id, amount FROM boleto_charge_receivables WHERE boleto_charge_id = ${charge.id}`);
@@ -472,6 +472,45 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
     targets = [{ receivableId: charge.receivable_id, alloc: null }];
   }
 
+  // FIX: o short-circuit por status do boleto era CEGO. O boleto e marcado 'liquidado'
+  // logo abaixo, ANTES da baixa dos titulos, e as falhas do laco sao engolidas (catch
+  // com warn). Se a baixa do titulo falhava, sobrava boleto 'liquidado' + titulo em
+  // aberto/'vencida' — e toda nova tentativa (webhook, varredura, conciliacao, planilha)
+  // voltava aqui, via status='liquidado' e desistia. O titulo ficava vencido para sempre
+  // com o dinheiro ja creditado no banco. Agora so desistimos se os titulos vinculados
+  // estiverem REALMENTE quitados; caso contrario completamos a baixa que faltou.
+  const already = String(charge.status || '').toLowerCase();
+  let isRepair = false;
+  if (already === 'liquidado' || already === 'pago' || already === 'recebido') {
+    let pendentes = 0;
+    for (const t of targets) {
+      try {
+        const rr: any = await storage.getReceivable(t.receivableId);
+        if (!rr || String(rr.status) === 'cancelada') continue;
+        if (parseFloat(rr.amountPaid || '0') >= parseFloat(rr.amount || '0') - 0.005) continue; // quitado
+        // "Nao quitado" NAO basta para reprocessar: pagamento menor que o emitido
+        // (desconto/abatimento) e baixa parcial manual deixam o titulo legitimamente
+        // aberto com o boleto liquidado. Se ESTE boleto ja lancou pagamento no titulo,
+        // ele ja fez o que tinha de fazer — reprocessar duplicaria a baixa (webhook
+        // reenviado, conciliacao bancaria, reenvio de planilha). So e pendencia real
+        // quando nao existe NENHUM pagamento deste boleto no titulo.
+        const nn = String(charge.nosso_numero || '').trim();
+        const pr: any = nn
+          ? await db.execute(sql`SELECT 1 FROM receivable_payments WHERE receivable_id = ${t.receivableId} AND (reference = ${nn} OR notes LIKE ${'%nosso ' + nn + '%'}) LIMIT 1`)
+          : await db.execute(sql`SELECT 1 FROM receivable_payments WHERE receivable_id = ${t.receivableId} LIMIT 1`);
+        if (pr.rows && pr.rows.length > 0) continue;
+        pendentes++;
+      } catch (e: any) { /* tolerante: na duvida NAO inventa pendencia (nao reprocessa) */ }
+    }
+    if (pendentes === 0) {
+      return { ok: true, alreadyPaid: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || null, message: 'Boleto ja estava liquidado' };
+    }
+    isRepair = true;
+    console.warn(`[BB-BOLETO] REPARO: boleto ${charge.id} (nosso ${charge.nosso_numero}) esta liquidado com ${pendentes} titulo(s) em aberto - completando a baixa que faltou (${source})`);
+  }
+
+  try { await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado' WHERE id = ${charge.id}`); } catch (e: any) { /* tolerante */ }
+
   const account = await findFinancialAccountForConvenio(charge.numero_convenio);
   const done: Array<{ receivableId: string; status?: string }> = [];
   let remaining = amount;
@@ -481,14 +520,35 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
       const receivable: any = await storage.getReceivable(t.receivableId);
       if (!receivable) continue;
       const outstanding = parseFloat(receivable.amount) - parseFloat(receivable.amountPaid || '0');
+      // FIX: em boleto unificado sendo reparado, os titulos que JA foram baixados na
+      // tentativa anterior sao pulados — sem isso o reparo lancaria pagamento em
+      // duplicidade neles. Idempotente: reparo roda quantas vezes for preciso.
+      if (String(receivable.status) === 'cancelada' || outstanding <= 0.005) continue;
       // Valor a baixar neste titulo: a alocacao gravada na juncao (saldo do titulo no
       // momento da geracao) e, no boleto simples, o valor pago inteiro. Limita ao que
       // resta do valor pago (rateio) para nunca baixar mais do que entrou.
       let pay = t.alloc != null ? t.alloc : (targets.length === 1 ? amount : outstanding);
       if (pay > remaining) pay = remaining;
+      // FIX: limita ao saldo do titulo. Sem isto, boleto simples com baixa parcial
+      // anterior (ou valor pago maior que o saldo) gravava amount_paid > amount —
+      // ex.: titulo de 1.000 com 300 ja baixado recebia +1.000 e ficava 1.300.
+      if (pay > outstanding) pay = outstanding;
       if (pay < 0) pay = 0;
       const totalPaid = parseFloat(receivable.amountPaid || '0') + pay;
-      const receivableStatus = totalPaid >= parseFloat(receivable.amount) ? 'recebida' : 'a_vencer';
+      // FIX: baixa parcial marcava 'a_vencer' mesmo em titulo com vencimento no passado,
+      // escondendo atraso na lista. Tolerancia de meio centavo evita que arredondamento
+      // de ponto flutuante deixe um titulo pago inteiro fora de 'recebida'.
+      // due_date e timestamp -> o driver devolve Date (nao string). Normalizamos os dois
+      // formatos para 'YYYY-MM-DD' antes de comparar; sem isso a comparacao era lexica
+      // sobre "Mon Aug 03 2026" e nunca marcava vencida.
+      const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      const dv: any = receivable.dueDate;
+      const venc = dv instanceof Date
+        ? new Date(dv.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+        : (dv ? String(dv).slice(0, 10) : '');
+      const receivableStatus = totalPaid >= parseFloat(receivable.amount) - 0.005
+        ? 'recebida'
+        : (/^\d{4}-\d{2}-\d{2}$/.test(venc) && venc < hojeBR ? 'vencida' : 'a_vencer');
       await storage.updateReceivable(t.receivableId, {
         amountPaid: totalPaid.toFixed(2),
         status: receivableStatus as any,
@@ -513,13 +573,29 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
   }
 
   // Credita a conta UMA vez pelo total recebido (nao por titulo), so se algum titulo foi baixado.
-  if (account && done.length > 0) {
+  // FIX: no REPARO a conta PODE ja ter sido creditada na tentativa original — o credito
+  // roda depois do laco, entao um boleto unificado com 1 titulo baixado + 1 com erro ja
+  // creditou o valor CHEIO. Creditar de novo inflaria o saldo. Em vez de adivinhar pelo
+  // valor, checamos se existe movimento desta cobranca: se existe, o dinheiro ja entrou
+  // no saldo e nao mexemos nele; so completamos a baixa dos titulos.
+  let creditAmount = amount;
+  if (isRepair) {
     try {
-      const cur = parseFloat(account.balance || '0'); const nb = cur + amount;
+      const mv: any = await db.execute(sql`SELECT COALESCE(SUM(amount::numeric), 0) AS total FROM account_movements WHERE source_type = 'boleto_charge' AND source_id = ${charge.id} AND type = 'credito'`);
+      const jaCreditado = parseFloat(String(mv.rows?.[0]?.total ?? '0')) || 0;
+      creditAmount = Math.max(0, amount - jaCreditado);
+      if (jaCreditado > 0) {
+        console.warn(`[BB-BOLETO] REPARO: boleto ${charge.id} ja tinha R$ ${jaCreditado.toFixed(2)} creditado na conta - creditando so a diferenca R$ ${creditAmount.toFixed(2)}`);
+      }
+    } catch (e: any) { creditAmount = 0; /* na duvida NAO credita: saldo inflado e pior que faltar movimento */ }
+  }
+  if (account && done.length > 0 && creditAmount > 0.005) {
+    try {
+      const cur = parseFloat(account.balance || '0'); const nb = cur + creditAmount;
       await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
       await storage.createAccountMovement({
-        financialAccountId: account.id, type: 'credito', amount: amount.toFixed(2), balanceAfter: nb.toFixed(2),
-        description: `Boleto recebido BB - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}${targets.length > 1 ? ` (${targets.length} titulos)` : ''}`,
+        financialAccountId: account.id, type: 'credito', amount: creditAmount.toFixed(2), balanceAfter: nb.toFixed(2),
+        description: `Boleto recebido BB${isRepair ? ' [reparo]' : ''} - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}${targets.length > 1 ? ` (${targets.length} titulos)` : ''}`,
         sourceType: 'boleto_charge', sourceId: charge.id, reference: charge.nosso_numero || null,
         omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema',
       } as any);
@@ -528,7 +604,14 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
 
   const receivableStatus = done[0]?.status;
   console.log(`✅ [BB-BOLETO] Baixa (${source}): boleto ${charge.id} R$ ${amount.toFixed(2)} titulos=[${targets.map(t => t.receivableId).join(',') || '-'}] baixados=${done.length}`);
-  return { ok: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || targets[0]?.receivableId || null, receivableStatus, amount, message: `Boleto liquidado e ${done.length} titulo(s) baixado(s)` };
+  // FIX: as falhas do laco sao engolidas (catch com warn) — era possivel sair daqui com
+  // ok:true sem ter baixado nada, exatamente o defeito que gerou os titulos orfaos. No
+  // REPARO isso vira erro explicito, para o operador nao ver "reparado" com o titulo
+  // ainda vencido (e para nao gravar auditoria de um pagamento que nao existe).
+  if (isRepair && done.length === 0) {
+    return { ok: false, boletoChargeId: charge.id, receivableId: charge.receivable_id || targets[0]?.receivableId || null, amount, settledCount: 0, message: 'Reparo nao conseguiu baixar nenhum titulo (ver logs do servidor)' };
+  }
+  return { ok: true, boletoChargeId: charge.id, receivableId: charge.receivable_id || targets[0]?.receivableId || null, receivableStatus, amount, settledCount: done.length, message: `Boleto liquidado e ${done.length} titulo(s) baixado(s)` };
 }
 
 // Acha o boleto_charges a partir do payload do webhook BB (tolerante a nomes de campo).
@@ -565,8 +648,10 @@ export async function processBoletoWebhook(payload: any): Promise<any> {
   return { processed: results.length, results };
 }
 
-// Consulta o boleto no BB e da baixa se estiver liquidado (fallback/teste/cron).
-export async function checkAndSettleBoleto(boletoChargeId: string): Promise<any> {
+// Consulta o boleto no BB e devolve o que o banco diz — SEM escrever nada. Extraido de
+// checkAndSettleBoleto para o reparo poder rodar em dry-run (mostrar valor e data reais
+// do banco antes de gravar) e para o operador conferir a origem do numero usado.
+export async function consultarBoletoChargeBB(boletoChargeId: string): Promise<any> {
   const r: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE id = ${boletoChargeId} LIMIT 1`);
   const charge = r.rows?.[0];
   if (!charge) return { ok: false, error: 'boleto_charge nao encontrado' };
@@ -575,14 +660,21 @@ export async function checkAndSettleBoleto(boletoChargeId: string): Promise<any>
   const numeroTituloCliente = '000' + pad(digits(charge.numero_convenio || account.bbConvenio), 7) + pad(digits(charge.nosso_numero), 10);
   let bb: any;
   try { bb = await consultarBoleto(account.id, numeroTituloCliente); }
-  catch (e: any) { return { ok: false, error: `consulta BB: ${e?.response?.data ? JSON.stringify(e.response.data) : e?.message}`, numeroTituloCliente }; }
+  catch (e: any) { return { ok: false, charge, error: `consulta BB: ${e?.response?.data ? JSON.stringify(e.response.data) : e?.message}`, numeroTituloCliente }; }
   const estado = String(pick(bb, ['estadoTituloCobranca', 'codigoEstadoTituloCobranca', 'situacao']) || '').toUpperCase();
   const valorPago = parseFloat(String(pick(bb, ['valorPagoSacado', 'valorRecebido', 'valorPago']) || '0').toString().replace(',', '.'));
   const liquidado = /LIQUID|BAIX|PAG/.test(estado) || valorPago > 0;
-  if (!liquidado) return { ok: true, paid: false, estado, numeroTituloCliente, raw: bb };
   const dt = pick(bb, ['dataCredito', 'dataRecebimento', 'dataMovimentoLiquidacao']);
-  const res = await settleBoletoCharge(charge, valorPago || parseFloat(charge.valor_original || '0'), dt ? toISO(dt) : null, 'consulta');
-  return { ok: true, paid: true, estado, ...res };
+  return { ok: true, charge, account, numeroTituloCliente, estado, valorPago, dataCredito: dt || null, paidAtISO: dt ? toISO(dt) : null, liquidado, raw: bb };
+}
+
+// Consulta o boleto no BB e da baixa se estiver liquidado (fallback/teste/cron/reparo).
+export async function checkAndSettleBoleto(boletoChargeId: string, source = 'consulta'): Promise<any> {
+  const c: any = await consultarBoletoChargeBB(boletoChargeId);
+  if (!c.ok) return { ok: false, error: c.error, numeroTituloCliente: c.numeroTituloCliente };
+  if (!c.liquidado) return { ok: true, paid: false, estado: c.estado, numeroTituloCliente: c.numeroTituloCliente, raw: c.raw };
+  const res = await settleBoletoCharge(c.charge, c.valorPago || parseFloat(c.charge.valor_original || '0'), c.paidAtISO, source);
+  return { ok: true, paid: true, estado: c.estado, valorPago: c.valorPago, dataCredito: c.dataCredito, ...res };
 }
 
 
