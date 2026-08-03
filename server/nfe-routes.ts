@@ -488,12 +488,14 @@ export function registerNfeRoutes(app: Express) {
 
   app.get('/api/fiscal-invoices', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
-      const { status, customerId, environment, search } = req.query;
+      const { status, customerId, environment, search, startDate, endDate } = req.query;
       const invoices = await storage.getFiscalInvoices({
         status: status as string,
         customerId: customerId as string,
         environment: environment as string,
         search: search as string,
+        startDate: startDate as string,
+        endDate: endDate as string,
       });
       res.json(invoices);
     } catch (error: any) {

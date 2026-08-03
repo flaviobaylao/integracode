@@ -569,7 +569,7 @@ export interface IStorage {
   deleteDigitalCertificate(id: string): Promise<void>;
 
   // Fiscal Invoices
-  getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]>;
+  getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string; startDate?: string; endDate?: string }): Promise<FiscalInvoice[]>;
   getFiscalInvoiceStats(): Promise<{ total: number; draft: number; authorized: number; cancelled: number; rejected: number; totalValueAuthorized: number; environment: string }>;
   getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
   getNextInvoiceNumber(series?: string, issuerCnpj?: string): Promise<number>;
@@ -8319,8 +8319,20 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string }): Promise<FiscalInvoice[]> {
+  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string; startDate?: string; endDate?: string }): Promise<FiscalInvoice[]> {
     const conditions = [];
+    // PERIODO NO SERVIDOR (03/08): sem isto a tela recebia so as 1.000 notas mais recentes por
+    // data de CRIACAO e filtrava o periodo no navegador — conferir um mes fechado trazia meio
+    // mes. Ex.: julho/2026 mostrava 423 das 845 notas de venda (R$ 118.772,18 de R$ 239.149,67),
+    // porque as 1.000 mais recentes comecavam em 16/07. A data usada e a mesma da Regra Oficial:
+    // COALESCE(emissao, autorizacao, criacao), sem conversao de fuso.
+    const _dtCol = sql`COALESCE(${fiscalInvoices.emissionDate}, ${fiscalInvoices.authorizationDate}, ${fiscalInvoices.createdAt})::date`;
+    const _per = String(filters?.startDate || '').trim();
+    const _perFim = String(filters?.endDate || '').trim();
+    const _isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const temPeriodo = _isDate(_per) || _isDate(_perFim);
+    if (_isDate(_per)) conditions.push(sql`${_dtCol} >= ${_per}::date`);
+    if (_isDate(_perFim)) conditions.push(sql`${_dtCol} <= ${_perFim}::date`);
     if (filters?.status) conditions.push(eq(fiscalInvoices.status, filters.status));
     if (filters?.customerId) conditions.push(eq(fiscalInvoices.customerId, filters.customerId));
     if (filters?.environment) conditions.push(eq(fiscalInvoices.environment, filters.environment));
@@ -8346,7 +8358,9 @@ export class DatabaseStorage implements IStorage {
     const { xmlEnvio, xmlRetorno, xmlAutorizacao, ...listCols } = getTableColumns(fiscalInvoices);
     // Com busca ativa o resultado ja e restrito pelo filtro -> teto de 500; sem busca,
     // mantem as 1000 mais recentes (visao padrao rapida).
-    const lim = q ? 500 : 1000;
+    // Com periodo definido o recorte ja e pequeno (um mes ~ 1.100 notas) e o teto sobe para
+    // 5.000, garantindo o MES INTEIRO. Sem periodo, mantem as 1.000 mais recentes.
+    const lim = temPeriodo ? 5000 : (q ? 500 : 1000);
 
     if (conditions.length > 0) {
       return db.select(listCols).from(fiscalInvoices)
