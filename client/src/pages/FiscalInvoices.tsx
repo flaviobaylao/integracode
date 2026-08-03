@@ -340,12 +340,16 @@ export default function FiscalInvoices() {
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (envFilter !== 'all') params.set('environment', envFilter);
     if (nfSearchServer) params.set('search', nfSearchServer);
+    // Periodo vai para o SERVIDOR. Antes o De/Ate era aplicado so no navegador, sobre as 1.000
+    // notas mais recentes por data de criacao — um mes fechado vinha pela metade.
+    if (dtStart) params.set('startDate', dtStart);
+    if (dtEnd) params.set('endDate', dtEnd);
     const qs = params.toString();
     return `/api/fiscal-invoices${qs ? `?${qs}` : ''}`;
   };
 
   const { data: invoices, isLoading: loadingInvoices } = useQuery<FiscalInvoice[]>({
-    queryKey: ['/api/fiscal-invoices', statusFilter, envFilter, nfSearchServer],
+    queryKey: ['/api/fiscal-invoices', statusFilter, envFilter, nfSearchServer, dtStart, dtEnd],
     queryFn: () => fetch(buildInvoiceUrl(), { credentials: 'include' }).then(r => r.json()),
   });
   // Emitente (CNPJ/filial): cada CNPJ tem numeração PRÓPRIA na SEFAZ, então o mesmo número
@@ -370,7 +374,9 @@ export default function FiscalInvoices() {
     (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch))
     && (issuerFilter === 'all' || onlyDigits(inv.issuerCnpj) === issuerFilter)
     && (tipoFilter.length === 0 || tipoFilter.includes(tipoFaturamento(inv)))
-    && dateInRange(inv.emissionDate, dtStart, dtEnd));
+    // Mesma data da Regra Oficial do servidor: emissao -> autorizacao -> criacao. Usar so
+    // emissionDate aqui derrubaria notas que o servidor ja tinha incluido pelo COALESCE.
+    && dateInRange(inv.emissionDate || inv.authorizationDate || inv.createdAt, dtStart, dtEnd));
   const totalFiltrado = useMemo(
     () => invoicesFiltered.reduce((acc: number, inv: any) => acc + Number(inv.totalInvoice || 0), 0),
     [invoicesFiltered]);
