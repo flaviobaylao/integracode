@@ -1758,6 +1758,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // CARTEIRA: vendedor/telemarketing so editam clientes da PROPRIA carteira (sellerId == seu id).
+      if (_isCadastroEditor && !id.startsWith('billing-')) {
+        const _own = await storage.getCustomer(id);
+        if (_own && String((_own as any).sellerId || '') !== String(user.id)) {
+          return res.status(403).json({ message: "Você só pode editar clientes da sua própria carteira (este cliente é de outro vendedor)." });
+        }
+      }
       // Se o ID comeca com "billing-", e um card do PIPELINE cujo cliente nao resolveu (id sintetico
       // 'billing-'||billing_pipeline.id). ANTES atualizava a tabela 'billings' (legado, sem lat/long) -> 500.
       // Correto: resolver o CLIENTE REAL do card (por customer_id, senao por DOCUMENTO) e salvar a coordenada nele,
@@ -2416,6 +2423,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       {
         const existingForGuard = await storage.getCustomer(id);
         if (existingForGuard) guardVisitFieldsAlteration(req, existingForGuard);
+        // CARTEIRA: vendedor/telemarketing so editam clientes da PROPRIA carteira.
+        if (_isCadastroEditor && existingForGuard && String((existingForGuard as any).sellerId || '') !== String(user.id)) {
+          return res.status(403).json({ message: "Você só pode editar clientes da sua própria carteira (este cliente é de outro vendedor)." });
+        }
       }
 
       // DEBUG: Log do payload recebido
