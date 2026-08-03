@@ -298,12 +298,12 @@ export default function Dashboard() {
   }, [data]);
   const today = pipelineDailyMap[bounds.today] || 0;
   const _lwDay = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
-  const lastWeekSameDay = pipelineDailyMap[_lwDay] || 0;
+  const lastWeekSameDay = Number(stats.lastWeekSameDaySales) || 0;
   const pct = lastWeekSameDay > 0 ? Math.round(((today - lastWeekSameDay) / lastWeekSameDay) * 100) : null;
 
   // Faturamento diário: vendas de HOJE vs MESMO DIA da semana passada (billing_pipeline)
   const dailyTodaySales = pipelineDailyMap[bounds.today] || 0;
-  const dailyLastWeek = pipelineDailyMap[_lwDay] || 0;
+  const dailyLastWeek = Number(stats.lastWeekSameDaySales) || 0;
   const dailyPct = dailyLastWeek > 0 ? Math.round(((dailyTodaySales - dailyLastWeek) / dailyLastWeek) * 100) : null;
   const todayISO = bounds.today;
   const lastWeekISO = (() => { const d = new Date(bounds.today + 'T12:00:00'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
