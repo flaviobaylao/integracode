@@ -5,7 +5,7 @@ import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
-import { db } from './db';
+import { db, pool } from './db';
 import { sql } from 'drizzle-orm';
 
 // FASE 2 - Flags para badges nas listas (DRE / Fluxo / Conciliada + origem da baixa).
@@ -221,6 +221,156 @@ export function registerFinancialRoutes(app: Express) {
   // Body { "dryRun": true } (PADRAO) so mostra. { "dryRun": false } aplica.
   //      { "receivableIds": [...] } limita a titulos ja conferidos.
   // ============================================================================
+  // ============================================================================
+  // CONSOLE SQL — SOMENTE LEITURA (admin)
+  // ----------------------------------------------------------------------------
+  // Aba de consulta ao banco para auditoria. A garantia de leitura NAO se apoia so
+  // em filtro de texto (que se contorna): a consulta roda dentro de uma transacao
+  // READ ONLY de verdade, entao o proprio Postgres recusa qualquer escrita. O filtro
+  // textual e a segunda barreira, e o statement_timeout evita derrubar o banco com
+  // consulta pesada. Ao final sempre ROLLBACK.
+  //
+  //   GET  /api/admin/db/console  -> a aba (HTML)
+  //   POST /api/admin/db/query    -> { sql, limit }
+  // ============================================================================
+  function apenasAdmin(req: any, res: any, next: any) {
+    const u = req.currentUser || req.user;
+    if (!u) return res.status(401).json({ message: 'Nao autenticado' });
+    if (u.role !== 'admin') return res.status(403).json({ message: 'Console restrito a admin' });
+    next();
+  }
+
+  const SQL_PROIBIDO = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment|copy|call|do|merge|vacuum|analyze|reindex|cluster|lock|listen|notify|prepare|execute|deallocate|set|setval|nextval|reset|begin|commit|rollback|savepoint|refresh|import|security|pg_read_file|pg_ls_dir|pg_authid|pg_shadow|pg_sleep|lo_import|lo_export|dblink|postgres_fdw|dblink_exec)\b/i;
+  // Colunas de segredo: o READ ONLY impede escrita, nao leitura. Sem isto um
+  // "console de auditoria" entregaria client_secret do BB/Inter, senha de
+  // certificado e hash de senha de usuario em texto puro.
+  const SQL_SEGREDO = /\b(client_secret|app_secret|dev_app_key|senha_boletos|certificate_password|password|senha|access_token|refresh_token|api_key|secret)\b/i;
+  const TABELAS_SENSIVEIS = /\b(financial_accounts|omie_instances|users|digital_certificates)\b/i;
+  // Limite de consultas simultaneas: cada uma segura uma conexao do pool.
+  let consultasEmCurso = 0;
+
+  app.post('/api/admin/db/query', authenticateUser, apenasAdmin, async (req: any, res) => {
+    const t0 = Date.now();
+    try {
+      const bruto = String(req.body?.sql || '').trim();
+      const limite = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 5000);
+      if (!bruto) return res.status(400).json({ error: 'informe a consulta em "sql"' });
+
+      // Uma instrucao so: ';' apenas no fim. Bloqueia "SELECT 1; DROP TABLE x".
+      const semFim = bruto.replace(/;\s*$/, '');
+      if (semFim.includes(';')) return res.status(400).json({ error: 'apenas uma instrucao por consulta (";" so no final)' });
+      // Comentario pode esconder palavra proibida do filtro — recusamos.
+      if (/--|\/\*/.test(semFim)) return res.status(400).json({ error: 'comentarios nao sao aceitos na consulta' });
+      // Dollar-quoting ($$...$$ / $tag$...$tag$) dessincroniza a remocao de literais
+      // abaixo (que so entende aspas simples) e permitia esconder palavra proibida do
+      // filtro. Nenhuma consulta de auditoria precisa disso.
+      if (/\$[A-Za-z0-9_]*\$/.test(semFim)) return res.status(400).json({ error: 'dollar-quoting ($$) nao e aceito' });
+      if (/\bE'/i.test(semFim)) return res.status(400).json({ error: "string com escape (E'...') nao e aceita" });
+      if (!/^\s*(select|with|explain|table)\b/i.test(semFim)) {
+        return res.status(400).json({ error: 'somente SELECT, WITH, TABLE ou EXPLAIN' });
+      }
+      // O filtro de palavras roda SEM os literais de texto. A base e em portugues e
+      // nomes como 'Moreira do Bem' ou 'Casa do Pao' cairiam no \bdo\b, recusando
+      // consulta legitima. O que esta dentro de aspas e dado, nunca comando.
+      const semLiterais = semFim.replace(/'(?:[^']|'')*'/g, "''");
+      if (SQL_PROIBIDO.test(semLiterais)) {
+        return res.status(400).json({ error: 'a consulta contem palavra reservada de escrita/comando — console e somente leitura' });
+      }
+      if (SQL_SEGREDO.test(semLiterais)) {
+        return res.status(400).json({ error: 'a consulta referencia coluna de segredo (senha, token, client_secret) — bloqueado' });
+      }
+      // '*' numa tabela que guarda segredo traria as colunas sensiveis junto.
+      if (/\*/.test(semLiterais) && TABELAS_SENSIVEIS.test(semLiterais)) {
+        return res.status(400).json({ error: 'nesta tabela liste as colunas explicitamente (SELECT * traria colunas de segredo)' });
+      }
+
+      // EXPLAIN nao pode ser embrulhado em subconsulta; roda direto (a transacao
+      // READ ONLY continua valendo).
+      const ehExplain = /^\s*explain\b/i.test(semFim);
+      const envolvida = ehExplain ? semFim : `SELECT * FROM (${semFim}) AS _q LIMIT ${limite}`;
+      // Usa o POOL da aplicacao, nao uma conexao nova por request: abrir Client por
+      // chamada deixava o console derrubar o banco por esgotamento de conexoes.
+      if (consultasEmCurso >= 3) return res.status(429).json({ error: 'console ocupado (3 consultas simultaneas) — tente em instantes' });
+      consultasEmCurso++;
+      const cli: any = await pool.connect();
+      try {
+        // Barreira real: o Postgres recusa escrita nesta transacao, qualquer que seja o texto.
+        await cli.query('BEGIN TRANSACTION READ ONLY');
+        await cli.query("SET LOCAL statement_timeout = '10s'");
+        const r: any = await cli.query(envolvida);
+        await cli.query('ROLLBACK').catch(() => {});
+        const cols = (r.fields || []).map((f: any) => f.name);
+        res.json({ ok: true, colunas: cols, linhas: r.rows || [], total: (r.rows || []).length, limite, ms: Date.now() - t0 });
+      } finally {
+        try { await cli.query('ROLLBACK'); } catch (e: any) { /* ja encerrada */ }
+        cli.release();
+        consultasEmCurso--;
+      }
+    } catch (e: any) {
+      res.status(400).json({ error: String(e?.message || e).slice(0, 400), ms: Date.now() - t0 });
+    }
+  });
+
+  app.get('/api/admin/db/console', authenticateUser, apenasAdmin, async (_req: any, res) => {
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
+<title>Console SQL (leitura) — Integra</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ :root{--bg:#0f172a;--pn:#1e293b;--bd:#334155;--tx:#e2e8f0;--mut:#94a3b8;--ac:#38bdf8;--ok:#4ade80;--er:#f87171}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif}
+ header{padding:12px 18px;border-bottom:1px solid var(--bd);display:flex;gap:12px;align-items:center}
+ h1{font-size:15px;margin:0;font-weight:600} .tag{font-size:11px;color:var(--ok);border:1px solid var(--ok);border-radius:999px;padding:1px 9px}
+ main{padding:18px;max-width:1500px;margin:0 auto}
+ textarea{width:100%;height:150px;background:var(--pn);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:12px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:vertical}
+ .row{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap}
+ button{background:var(--ac);color:#08131f;border:0;border-radius:7px;padding:8px 18px;font-weight:600;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default}
+ input[type=number]{width:90px;background:var(--pn);color:var(--tx);border:1px solid var(--bd);border-radius:7px;padding:7px}
+ .msg{font-size:12px;color:var(--mut)} .err{color:var(--er);white-space:pre-wrap}
+ .wrap{overflow:auto;max-height:60vh;border:1px solid var(--bd);border-radius:8px;margin-top:12px}
+ table{border-collapse:collapse;width:100%;font-size:12.5px}
+ th{position:sticky;top:0;background:#172033;text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);white-space:nowrap}
+ td{padding:6px 10px;border-bottom:1px solid #1e293b;vertical-align:top;font-family:ui-monospace,Menlo,Consolas,monospace}
+ tr:nth-child(even) td{background:#131d31}
+ .ex{font-size:12px;color:var(--mut);margin-top:14px} .ex code{color:var(--ac);cursor:pointer;display:block;padding:3px 0}
+</style></head><body>
+<header><h1>Console SQL — Integra</h1><span class="tag">SOMENTE LEITURA</span>
+<span class="msg">transacao READ ONLY · timeout 20s · uma instrucao por vez</span></header>
+<main>
+ <textarea id="q" spellcheck="false">SELECT status, count(*), sum(amount)::numeric(14,2) AS total
+FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</textarea>
+ <div class="row"><button id="go">Executar</button>
+  <label class="msg">limite <input type="number" id="lim" value="500" min="1" max="5000"></label>
+  <span class="msg" id="st"></span></div>
+ <div id="out"></div>
+ <div class="ex"><b>Exemplos (clique para usar):</b>
+  <code>SELECT count(*) FROM boleto_charges WHERE status = 'liquidado'</code>
+  <code>SELECT * FROM receivable_payments WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC</code>
+  <code>SELECT date_trunc('day', created_at) d, count(*) FROM account_movements WHERE created_at > now() - interval '60 days' GROUP BY 1 ORDER BY 1</code>
+ </div>
+</main>
+<script>
+ var q=document.getElementById('q'),go=document.getElementById('go'),st=document.getElementById('st'),out=document.getElementById('out'),lim=document.getElementById('lim');
+ document.querySelectorAll('.ex code').forEach(function(c){c.onclick=function(){q.value=c.textContent;}});
+ function esc(v){ if(v===null||v===undefined) return '<span style="color:#64748b">null</span>';
+   if(typeof v==='object') v=JSON.stringify(v);
+   return String(v).replace(/[&<>]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[m];}); }
+ async function run(){ go.disabled=true; st.textContent='executando...'; out.innerHTML='';
+  try{ var r=await fetch('/api/admin/db/query',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:q.value,limit:Number(lim.value)||500})});
+   var j=await r.json();
+   if(!r.ok||j.error){ st.textContent=''; out.innerHTML='<div class="err">'+esc(j.error||('HTTP '+r.status))+'</div>'; return; }
+   st.textContent=j.total+' linha(s) · '+j.ms+' ms'+(j.total>=j.limite?' · LIMITE ATINGIDO':'');
+   if(!j.total){ out.innerHTML='<div class="msg">sem resultados</div>'; return; }
+   var h='<div class="wrap"><table><thead><tr>'+j.colunas.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'</tr></thead><tbody>';
+   h+=j.linhas.map(function(L){return '<tr>'+j.colunas.map(function(c){return '<td>'+esc(L[c])+'</td>';}).join('')+'</tr>';}).join('');
+   out.innerHTML=h+'</tbody></table></div>';
+  }catch(e){ st.textContent=''; out.innerHTML='<div class="err">'+esc(e)+'</div>'; }
+  finally{ go.disabled=false; } }
+ go.onclick=run;
+ q.addEventListener('keydown',function(e){ if((e.ctrlKey||e.metaKey)&&e.key==='Enter') run(); });
+</script></body></html>`);
+  });
+
   app.post('/api/admin/financial/estornar-pagamentos-duplicados', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
