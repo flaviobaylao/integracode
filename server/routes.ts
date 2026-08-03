@@ -1,7 +1,6 @@
 import express, { type Express } from "express";
 import { fireAutomation, fireOrderAutomation } from './automation-engine';
 import { createServer, type Server } from "http";
-import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
@@ -18,6 +17,7 @@ import { registerOmieNfeImportRoutes } from "./omie-nfe-import";
 import { registerOmieFinanceiroImportRoutes } from "./omie-financeiro-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
+import { registerCustomerStatementRoutes } from "./customer-statement-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { registerOrderJournal } from "./order-journal";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
@@ -725,6 +725,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('✅ Report engine routes registered');
 
   registerPurchaseRoutes(app);
+
+  // Extrato do Cliente (Vendas) - historico de notas faturadas + pagamentos
+  registerCustomerStatementRoutes(app);
 
   // Confirmacao de telefone do comprador via link (WhatsApp) — nao bloqueia o pedido
   registerPhoneVerification(app, { authenticateUser, requireRole });
@@ -3973,44 +3976,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Ft. Atual = faturamento realizado a partir das NOTAS FISCAIS (fiscal_invoices):
       // autorizadas, CFOP de venda (5102/5405/6102), deduplicadas por chave de acesso, e
       // atribuidas ao vendedor pelo card de venda e, na falta, pelo vendedor que registrou o pedido (billing_pipeline).
-      // Estas datas entram em SQL montado como texto (sql.raw), entao sao validadas aqui.
-      // parseInt ja garante numero, mas NaN geraria '2026-NaN-01' e quebraria a rota.
-      const _mSafe = Number.isInteger(targetMonth) && targetMonth >= 1 && targetMonth <= 12 ? targetMonth : getBrazilMonth();
-      const _ySafe = Number.isInteger(targetYear) && targetYear >= 2000 && targetYear <= 2100 ? targetYear : getBrazilYear();
-      const _mm = String(_mSafe).padStart(2, '0');
-      const _startStr = `${_ySafe}-${_mm}-01`;
-      const _ny = _mSafe === 12 ? _ySafe + 1 : _ySafe;
-      const _nm = _mSafe === 12 ? 1 : _mSafe + 1;
+      const _mm = String(targetMonth).padStart(2, '0');
+      const _startStr = `${targetYear}-${_mm}-01`;
+      const _ny = targetMonth === 12 ? targetYear + 1 : targetYear;
+      const _nm = targetMonth === 12 ? 1 : targetMonth + 1;
       const _endStr = `${_ny}-${String(_nm).padStart(2, '0')}-01`;
-      // Faturamento por vendedor da tela Metas. De 01/07/2026 em diante usa a REGRA OFICIAL
-      // (server/faturamento-oficial.ts): mesma fonte do dashboard, para as duas telas nao
-      // divergirem. Meses anteriores mantem o calculo legado — comissao ja fechada nao se
-      // reprocessa. A venda continua sendo de QUEM IMPLANTOU O PEDIDO nos dois caminhos.
-      const _sqlOficial = `
-        SELECT seller_key AS seller_id, omie_instance_id, COALESCE(SUM(total_invoice), 0) AS total
-        FROM (
-          SELECT COALESCE(NULLIF(bp.seller_id, ''), sc.seller_id) AS seller_key, fi.omie_instance_id AS omie_instance_id, fi.total_invoice AS total_invoice
-          FROM ${nfVendaFrom('fi')}
-          LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id
-          LEFT JOIN ${PIPELINE_POR_NF} bp ON bp.num = fi.invoice_number
-          WHERE ${nfVendaWhere('fi')}
-            AND ${nfData('fi')}::date >= '${_startStr}'::date
-            AND ${nfData('fi')}::date <  '${_endStr}'::date
-        ) sub
-        GROUP BY seller_key, omie_instance_id`;
-      const _sqlLegado = `
+      const pipelineRevenueResult: any = await db.execute(sql`
         SELECT seller_key AS seller_id, omie_instance_id, COALESCE(SUM(total_invoice), 0) AS total
         FROM (
           SELECT COALESCE(NULLIF(bp.bp_seller_id, ''), sc.seller_id) AS seller_key, fi.omie_instance_id AS omie_instance_id, fi.total_invoice AS total_invoice
           FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi
           LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id
           LEFT JOIN (SELECT DISTINCT ON (inv_num) inv_num, bp_seller_id FROM (SELECT NULLIF(regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint AS inv_num, seller_id AS bp_seller_id, created_at FROM billing_pipeline WHERE regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g') <> '') t ORDER BY inv_num, created_at DESC) bp ON bp.inv_num = fi.invoice_number
-          WHERE fi.status = 'authorized' AND fi.cfop IN ('5102', '5405', '6102') AND fi.emission_date >= '${_startStr}'::date AND fi.emission_date < '${_endStr}'::date
+          WHERE fi.status = 'authorized' AND fi.cfop IN ('5102', '5405', '6102') AND fi.emission_date >= ${_startStr}::date AND fi.emission_date < ${_endStr}::date
         ) sub
-        GROUP BY seller_key, omie_instance_id`;
-      const pipelineRevenueResult: any = await db.execute(
-        sql.raw(_startStr >= VIGENCIA_REGRA_OFICIAL ? _sqlOficial : _sqlLegado)
-      );
+        GROUP BY seller_key, omie_instance_id
+      `);
       const pipelineRevenueBySeller = new Map<string, number>();
       const pipelineInstanceBySeller = new Map<string, Record<string, number>>();
       for (const _r of (pipelineRevenueResult.rows || [])) {
