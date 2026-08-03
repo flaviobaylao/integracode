@@ -540,11 +540,17 @@ export default function ConciliacaoBancaria() {
       const prev = await post("/api/reconciliation/dedup-canonical", { by: me, dryRun: true, accountId: account || null });
       const n = Number(prev.linhasParaEspelhar || 0);
       const gm = Number(prev.gruposMultiReconciliadas || 0);
-      if (!n && !gm) { alert("Nenhuma duplicata legada encontrada."); return; }
-      if (!n) { alert(`Nenhuma linha a colapsar. ${gm} grupo(s) com mais de uma conciliada precisam de conferência manual (possível baixa dupla).`); return; }
-      if (!window.confirm(`Deduplicar: ${prev.gruposDuplicados} grupo(s) duplicado(s); ${n} linha(s) viram "já importado" (espelho). Não apaga nada e é reversível.` + (gm ? `\n${gm} grupo(s) com >1 conciliada serão PULADOS p/ conferência manual.` : "") + `\nAplicar?`)) return;
+      const ls = Number(prev.linhasDeSaldo || 0);
+      if (!n && !gm && !ls) { alert("Nenhuma duplicata legada encontrada."); return; }
+      if (!n && !ls) { alert(`Nenhuma linha a colapsar. ${gm} grupo(s) com mais de uma conciliada precisam de conferência manual (possível baixa dupla).`); return; }
+      if (!window.confirm(`Deduplicar: ${prev.gruposDuplicados} grupo(s) duplicado(s); ${n} linha(s) viram "já importado" (espelho).`
+        + (ls ? `\n${ls} linha(s) informativa(s) de saldo saem do saldo (não são lançamento).` : "")
+        + ` Não apaga nada e é reversível.`
+        + (gm ? `\n${gm} grupo(s) com >1 conciliada serão PULADOS p/ conferência manual.` : "") + `\nAplicar?`)) return;
       const r = await post("/api/reconciliation/dedup-canonical", { by: me, dryRun: false, accountId: account || null });
-      alert(`Deduplicação: ${Number(r.espelhados || 0)} linha(s) colapsada(s).` + (r.gruposMultiReconciliadas ? ` ${r.gruposMultiReconciliadas} grupo(s) p/ conferência manual.` : ""));
+      alert(`Deduplicação: ${Number(r.espelhados || 0)} linha(s) colapsada(s).`
+        + (r.linhasDeSaldo ? ` ${r.linhasDeSaldo} linha(s) de saldo retirada(s) do cálculo.` : "")
+        + (r.gruposMultiReconciliadas ? ` ${r.gruposMultiReconciliadas} grupo(s) p/ conferência manual.` : ""));
       await refresh();
     } catch (e: any) { alert("Erro (deduplicar): " + e.message); }
     finally { setBusy(""); }
@@ -655,6 +661,7 @@ export default function ConciliacaoBancaria() {
       alert(`OFX importado: ${j.inserted} lançamento(s) novo(s)`
         + (j.espelhados ? `, ${j.espelhados} já existia(m)` : "")
         + (j.enriquecidos ? `, ${j.enriquecidos} lançamento(s) já existentes ganharam os detalhes do arquivo` : "")
+        + (j.linhasDeSaldo ? `.\n${j.linhasDeSaldo} linha(s) informativa(s) de saldo do arquivo foram ignoradas (não são lançamento)` : "")
         + (j.inserted ? `.\nCréditos ${fmtMoney(j.totalCredits)} · Débitos ${fmtMoney(j.totalDebits)}` : "."));
       await loadStatements();
       if (j.statementId) openStatement({ id: j.statementId, file_name: j.fileName, source: "ofx", start_date: j.period?.start, end_date: j.period?.end, items: j.inserted, reconciled: 0, ignored: 0, account_name: j.account, omie_instance_id: j.instance } as any);
