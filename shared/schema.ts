@@ -3442,6 +3442,13 @@ export const receivablePayments = pgTable("receivable_payments", {
   notes: text("notes"),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // ESTORNO (soft-delete). Estavam sendo criadas por ALTER dentro do endpoint de
+  // estorno e NAO existiam aqui — como o deploy roda `drizzle-kit push`, que so
+  // conhece este arquivo, um push destrutivo derrubaria as tres colunas e as
+  // baixas duplicadas ja estornadas voltariam a somar.
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by"),
+  deletedReason: text("deleted_reason"),
 }, (table) => [
   index("idx_receivable_payments_receivable").on(table.receivableId),
   index("idx_receivable_payments_paid_at").on(table.paidAt),
