@@ -1496,6 +1496,16 @@ export function registerReconciliation(app: Express) {
     // outro ("IMPOSTOS - DAS - SIMPLES NACIONAL" x "DAS - SIMPLES NACIONAL").
     const bucketKey = (dateStr: string, amount: number, type: string) => `${dateStr}|${amount.toFixed(2)}|${type}`;
     const norm = (t: string) => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    // FASE 3.4x - FITID DO BB NAO E UNICO. No extrato "conta corrente" o banco
+    // repete o MESMO FITID em lancamentos diferentes: no OFX de julho/2026 o id
+    // 1.703.612.017.019 aparece 54 vezes (todas as tarifas agrupadas) e o id "1"
+    // aparece em varios creditos de cobranca. Usando o FITID sozinho como chave,
+    // 53 tarifas REAIS viravam "espelho" de uma so e SUMIAM do livro — a origem
+    // dos FALTANTES. A chave passa a ser FITID + data + valor + tipo: continua
+    // casando o mesmo lancamento entre arquivos e para de engolir lancamento
+    // distinto que so compartilha o id.
+    const fitKey = (fitid: string, dateStr: string, amount: number, type: string) =>
+      `${fitid}|${dateStr}|${amount.toFixed(2)}|${type}`;
     const canonByFit: Record<string, string> = {};
     const canonByKey: Record<string, string> = {};
     const canonByStamp: Record<string, string> = {};
@@ -1521,7 +1531,10 @@ export function registerReconciliation(app: Express) {
           else if (!canonByStamp[sk]) canonByStamp[sk] = String(x.canonical);
         }
         const fv = (x as any).fit;
-        if (fv) { const f = String(fv); if (!x.mirror_of) canonByFit[f] = String(x.canonical); else if (!canonByFit[f]) canonByFit[f] = String(x.canonical); }
+        if (fv) {
+          const f = `${String(fv)}|${x.d}|${x.amt}|${x.type}`;
+          if (!x.mirror_of) canonByFit[f] = String(x.canonical); else if (!canonByFit[f]) canonByFit[f] = String(x.canonical);
+        }
         if (!x.mirror_of && String(x.nd || "").length >= 8) {
           (canonByBucket[`${x.d}|${x.amt}|${x.type}`] ||= []).push({ nd: String(x.nd), canonical: String(x.canonical) });
         }
@@ -1532,11 +1545,13 @@ export function registerReconciliation(app: Express) {
       const usados = new Set<string>();   // canonicos ja absorvidos por este lote
       for (const t of o.transactions) {
         const compK = compKey(t.date, t.amount, t.type, t.description);
-        const dedK = t.fitid || compK;
+        // dedup DENTRO do lote: idem, FITID escopado (senao as 54 tarifas de mesmo
+        // FITID entrariam como uma unica e as outras 53 eram descartadas em silencio)
+        const dedK = t.fitid ? fitKey(t.fitid, t.date, t.amount, t.type) : compK;
         if (seen.has(dedK)) { skipped++; continue; }   // duplicata dentro do MESMO lote
         seen.add(dedK);
         const stK = stampKey(t.date, t.amount, t.type, t.description);
-        let canonical: string | null = (t.fitid && canonByFit[t.fitid]) || canonByKey[compK]
+        let canonical: string | null = (t.fitid && canonByFit[fitKey(t.fitid, t.date, t.amount, t.type)]) || canonByKey[compK]
           || (stK ? canonByStamp[stK] : null) || null;
         if (!canonical) {
           // texto contido, dentro do balde conta|data|valor|tipo; cada canonico so
