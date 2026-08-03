@@ -9019,7 +9019,12 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getReceivablePayments(receivableId: string): Promise<ReceivablePayment[]> {
-    return db.select().from(receivablePayments).where(eq(receivablePayments.receivableId, receivableId)).orderBy(desc(receivablePayments.createdAt));
+    // Pagamento ESTORNADO (deleted_at preenchido pelo estorno de duplicidade) sai da
+    // listagem e de qualquer soma feita a partir dela. A linha continua na tabela,
+    // com quem estornou e por que — consultavel pelo endpoint de auditoria.
+    return db.select().from(receivablePayments)
+      .where(and(eq(receivablePayments.receivableId, receivableId), sql`deleted_at IS NULL`))
+      .orderBy(desc(receivablePayments.createdAt));
   }
 
   async createReceivablePayment(data: InsertReceivablePayment): Promise<ReceivablePayment> {

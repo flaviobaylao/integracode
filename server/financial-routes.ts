@@ -160,12 +160,12 @@ export function registerFinancialRoutes(app: Express) {
         return res.status(400).json({ error: 'ids informado mas nenhum id valido', recebidos: req.body.ids });
       }
       const filtroId = idsFiltro.length ? " AND r.id IN (" + idsFiltro.map((x) => "'" + x + "'").join(',') + ")" : '';
-      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
+      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
       const payPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM payables r JOIN (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p ON p.payable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
       const wouldFix = { receivables: fazRcv ? (rcvPrev.rows?.[0]?.n ?? 0) : 0, payables: fazPay ? (payPrev.rows?.[0]?.n ?? 0) : 0 };
       if (dryRun) return res.json({ dryRun: true, apenas, ids: idsFiltro.length || null, wouldFix });
 
-      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
+      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
       const pay: any = !fazPay ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
       res.json({ dryRun: false, apenas, ids: idsFiltro.length || null, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
     } catch (e: any) {
@@ -202,6 +202,132 @@ export function registerFinancialRoutes(app: Express) {
   // GET /api/admin/financial/auditoria-baixas?limit=300&status=vencida
   //   status: 'vencida' | 'todas' (padrao 'todas')
   // ============================================================================
+  // ============================================================================
+  // ESTORNO DE PAGAMENTOS DUPLICADOS
+  // ----------------------------------------------------------------------------
+  // O mesmo boleto foi lancado mais de uma vez no titulo (varredura noturna
+  // repetindo a baixa + Sistema 1.0 gravando em paralelo), inflando amount_paid.
+  //
+  // NAO apaga a linha: marca como ESTORNADA (deleted_at/deleted_by/deleted_reason).
+  // Registro financeiro apagado de verdade destroi a trilha de auditoria — e a
+  // trilha e justamente o que precisa sobrar para explicar o ajuste depois. A linha
+  // estornada some de todo calculo (soma, saldo, relatorio) mas continua consultavel,
+  // e o estorno e reversivel.
+  //
+  // CRITERIO DE QUAL MANTER: o lancamento do proprio Integra 2.0 (nota "Baixa
+  // automatica boleto BB", com nosso numero na referencia). Empate: paid_at mais
+  // antigo, depois created_at mais antigo.
+  //
+  // Body { "dryRun": true } (PADRAO) so mostra. { "dryRun": false } aplica.
+  //      { "receivableIds": [...] } limita a titulos ja conferidos.
+  // ============================================================================
+  app.post('/api/admin/financial/estornar-pagamentos-duplicados', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
+      const pediuIds = Array.isArray(req.body?.receivableIds);
+      const ids: string[] = pediuIds
+        ? req.body.receivableIds.map((x: any) => String(x).trim()).filter((x: string) => /^[0-9a-fA-F-]{8,40}$/.test(x))
+        : [];
+      if (pediuIds && ids.length === 0) {
+        return res.status(400).json({ error: 'receivableIds informado mas nenhum id valido', recebidos: req.body.receivableIds });
+      }
+
+      // Colunas de estorno (aditivo e idempotente).
+      await db.execute(sql.raw("ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS deleted_at timestamp"));
+      await db.execute(sql.raw("ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS deleted_by varchar"));
+      await db.execute(sql.raw("ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS deleted_reason text"));
+
+      const ator = actorOf(req);
+      const quem = (ator?.email || ator?.id || 'sistema').slice(0, 120);
+      const filtroId = ids.length ? " AND rp.receivable_id IN (" + ids.map((x) => "'" + x + "'").join(',') + ")" : '';
+      const chave = "COALESCE(NULLIF(rp.reference,''), substring(rp.notes from '[0-9]{10,20}'))";
+      // rn=1 e o que FICA. Ordem: lancamento do 2.0 primeiro, depois com referencia
+      // preenchida, depois data de pagamento mais antiga.
+      const ranked = `
+        SELECT rp.id, rp.receivable_id, rp.amount::numeric AS amount, rp.paid_at, rp.reference, rp.notes,
+               ${chave} AS chave,
+               ROW_NUMBER() OVER (PARTITION BY rp.receivable_id, ${chave} ORDER BY
+                 (CASE WHEN COALESCE(rp.notes,'') LIKE 'Baixa automatica boleto BB%' THEN 0 ELSE 1 END),
+                 (CASE WHEN COALESCE(rp.reference,'') <> '' THEN 0 ELSE 1 END),
+                 rp.paid_at ASC, rp.created_at ASC) AS rn,
+               COUNT(*) OVER (PARTITION BY rp.receivable_id, ${chave}) AS no_grupo
+        FROM receivable_payments rp
+        JOIN receivables r ON r.id = rp.receivable_id
+        WHERE rp.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada'
+          AND ${chave} IS NOT NULL${filtroId}`;
+
+      const alvos: any = await db.execute(sql.raw(
+        `WITH ranked AS (${ranked}) SELECT * FROM ranked WHERE no_grupo > 1 AND rn > 1 ORDER BY amount DESC LIMIT ${limit}`));
+      const linhas: any[] = alvos.rows || [];
+      const porTitulo = new Map<string, any[]>();
+      for (const l of linhas) {
+        const k = String(l.receivable_id);
+        if (!porTitulo.has(k)) porTitulo.set(k, []);
+        porTitulo.get(k)!.push(l);
+      }
+      const totalEstorno = linhas.reduce((t, l) => t + Number(l.amount || 0), 0);
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true, titulosAfetados: porTitulo.size, linhasAEstornar: linhas.length,
+          valorAEstornar: totalEstorno.toFixed(2),
+          criterio: 'mantem o lancamento do Integra 2.0 (nota "Baixa automatica boleto BB" / com nosso numero); empate por paid_at mais antigo',
+          amostra: linhas.slice(0, 25).map((l) => ({ pagamentoId: l.id, receivableId: l.receivable_id, valor: Number(l.amount), nossoNumero: l.chave, pagoEm: l.paid_at, nota: String(l.notes || '').slice(0, 60) })),
+        });
+      }
+
+      const motivo = `Estorno de baixa duplicada do mesmo boleto (auditoria ${new Date().toISOString().slice(0, 10)})`;
+      const idsLinhas = linhas.map((l) => String(l.id));
+      let estornadas = 0;
+      if (idsLinhas.length) {
+        const upd: any = await db.execute(sql.raw(
+          "UPDATE receivable_payments SET deleted_at = now(), deleted_by = '" + quem.replace(/'/g, "''") +
+          "', deleted_reason = '" + motivo.replace(/'/g, "''") + "' WHERE deleted_at IS NULL AND id IN (" +
+          idsLinhas.map((x) => "'" + x + "'").join(',') + ")"));
+        estornadas = upd.rowCount ?? idsLinhas.length;
+      }
+
+      // Recalcula amount_paid e status a partir das linhas que SOBRARAM.
+      const recalc: any[] = [];
+      for (const [recId, ls] of porTitulo.entries()) {
+        try {
+          const antes: any = await db.execute(sql`SELECT title_number, amount::numeric AS amount, COALESCE(amount_paid,0)::numeric AS pago, status FROM receivables WHERE id = ${recId}`);
+          const a = (antes.rows || [])[0]; if (!a) continue;
+          const som: any = await db.execute(sql`SELECT COALESCE(SUM(amount::numeric),0) AS total FROM receivable_payments WHERE receivable_id = ${recId} AND deleted_at IS NULL`);
+          const novo = Number((som.rows || [])[0]?.total || 0);
+          const val = Number(a.amount || 0);
+          await db.execute(sql.raw(
+            "UPDATE receivables SET amount_paid = " + novo.toFixed(2) +
+            ", status = (CASE WHEN " + novo.toFixed(2) + " >= amount::numeric - 0.005 THEN 'recebida' " +
+            "WHEN (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' " +
+            "ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'estorno-duplicidade' WHERE id = '" + recId.replace(/'/g, "''") + "'"));
+          const dep: any = await db.execute(sql`SELECT COALESCE(amount_paid,0)::numeric AS pago, status FROM receivables WHERE id = ${recId}`);
+          const d = (dep.rows || [])[0] || {};
+          recalc.push({ receivableId: recId, titulo: a.title_number, valor: val, antes: Number(a.pago), depois: Number(d.pago || 0), statusAntes: a.status, statusDepois: d.status, linhasEstornadas: ls.length });
+          await logFinancialAudit({
+            req, action: 'reverse', entity: 'receivable', entityId: String(recId),
+            before: { amountPaid: Number(a.pago), status: a.status },
+            after: { amountPaid: Number(d.pago || 0), status: d.status },
+            amount: Number(a.pago) - Number(d.pago || 0),
+            note: `${motivo} — ${ls.length} lancamento(s) estornado(s): ${ls.map((x: any) => x.id).join(', ')}`,
+          });
+        } catch (e: any) {
+          recalc.push({ receivableId: recId, erro: String(e?.message || e).slice(0, 160) });
+        }
+      }
+
+      res.json({
+        dryRun: false, titulosAfetados: porTitulo.size, linhasEstornadas: estornadas,
+        valorEstornado: totalEstorno.toFixed(2), estornadoPor: quem, motivo,
+        observacao: 'As linhas NAO foram apagadas: seguem na tabela com deleted_at/deleted_by/deleted_reason e saem de todo calculo. Para reverter, basta limpar deleted_at.',
+        titulos: recalc,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.get('/api/admin/financial/auditoria-baixas', authenticateUser, isFinancialReadAuthorized, async (req: any, res) => {
     try {
       const limit = Math.min(Math.max(Number(req.query?.limit) || 300, 1), 2000);
@@ -231,14 +357,14 @@ export function registerFinancialRoutes(app: Express) {
         "array_agg(to_char(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD')) AS datas, " +
         "array_agg(COALESCE(rp.created_by,'')) AS criado_por, array_agg(COALESCE(rp.notes,'')) AS notas " +
         "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
-        "WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND " + chaveNosso + " IS NOT NULL " +
+        "WHERE rp.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND " + chaveNosso + " IS NOT NULL " +
         "GROUP BY rp.receivable_id, r.title_number, r.customer_name, r.amount, r.amount_paid, " + chaveNosso + " " +
         "HAVING COUNT(*) > 1 ORDER BY excesso DESC LIMIT " + limit);
 
       // B) amount_paid DIVERGE da soma dos pagamentos (para mais ou para menos)
       const divergencia = await many(
         "SELECT " + cols + ", p.total::float AS soma_pagamentos, (COALESCE(r.amount_paid,0) - p.total)::float AS diferenca, p.qtd " +
-        base.replace('FROM receivables r WHERE', "FROM receivables r JOIN (SELECT receivable_id, SUM(amount::numeric) total, COUNT(*)::int qtd FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE") +
+        base.replace('FROM receivables r WHERE', "FROM receivables r JOIN (SELECT receivable_id, SUM(amount::numeric) total, COUNT(*)::int qtd FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE") +
         " AND COALESCE(r.amount_paid,0)::numeric IS DISTINCT FROM p.total ORDER BY ABS(COALESCE(r.amount_paid,0) - p.total) DESC LIMIT " + limit);
 
       // C) SUPERBAIXA: baixado alem do valor do titulo
@@ -266,7 +392,19 @@ export function registerFinancialRoutes(app: Express) {
         "SELECT rp.id AS pagamento_id, rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, rp.amount::float AS valor, " +
         "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS pago_em, rp.payment_method AS forma, rp.created_by, rp.reference, rp.notes " +
         "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
-        "WHERE rp.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada' ORDER BY rp.paid_at DESC NULLS LAST LIMIT " + limit);
+        "WHERE rp.deleted_at IS NULL AND rp.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada' ORDER BY rp.paid_at DESC NULLS LAST LIMIT " + limit);
+
+      // ESTORNOS JA FEITOS — a linha nao e apagada, entao o historico do ajuste fica
+      // visivel aqui (quem estornou, quando e por que).
+      let estornos: any[] = [];
+      try {
+        estornos = await many(
+          "SELECT rp.id AS pagamento_id, rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, " +
+          "rp.amount::float AS valor, to_char(rp.deleted_at,'YYYY-MM-DD HH24:MI') AS estornado_em, " +
+          "rp.deleted_by AS estornado_por, rp.deleted_reason AS motivo, rp.reference AS nosso_numero " +
+          "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
+          "WHERE rp.deleted_at IS NOT NULL ORDER BY rp.deleted_at DESC LIMIT " + limit);
+      } catch (e: any) { /* coluna ainda nao existe: nenhum estorno feito */ }
 
       const soma = (xs: any[], k: string) => Number(xs.reduce((t, x) => t + Number(x[k] || 0), 0).toFixed(2));
       res.json({
@@ -281,6 +419,7 @@ export function registerFinancialRoutes(app: Express) {
           statusVencimentoErrado: { n: statusVencimento.length },
           residuoEmAberto: { n: residuo.length, saldo: soma(residuo, 'saldo') },
           pagamentoSemLastro: { n: semLastro.length, valor: soma(semLastro, 'valor') },
+          estornosRealizados: { n: estornos.length, valor: soma(estornos, 'valor') },
         },
         pagamentoDuplicado: duplicados,
         amountPaidDivergente: divergencia,
@@ -290,6 +429,7 @@ export function registerFinancialRoutes(app: Express) {
         statusVencimentoErrado: statusVencimento,
         residuoEmAberto: residuo,
         pagamentoSemLastro: semLastro,
+        estornosRealizados: estornos,
       });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
