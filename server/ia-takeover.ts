@@ -186,6 +186,21 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
     if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
     // Botao 1 do template de aviso ("Ok, obrigado.") = assunto encerrado. Agradece e finaliza,
     // em vez de mandar a saudacao padrao e reabrir uma conversa que ja tinha acabado.
+    // Resposta ao aviso de VISITA (rota do dia): "Sim, confirmar" / "Nao" / 1-2-3.
+    // Vira decisao registrada e resposta pronta — a IA nao precisa adivinhar o contexto.
+    try {
+      const { respostaDaRota } = await import('./rota-respostas');
+      const rr = await respostaDaRota(phone, incomingText);
+      if (rr) {
+        await replyVia(conversationId, phone, rr);
+        try {
+          await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+            VALUES (${conversationId}, 'agent:rota', 'agent', ${rr}, 'text', true)`);
+        } catch {}
+        return;
+      }
+    } catch (e: any) { console.error('[ROTA-RESPOSTA]', e?.message || e); }
+
     if (await encerrarPeloBotao(conversationId, phone, incomingText)) return;
     if (!(await shouldRespondNow(conversationId))) return;
     const { maybeRunAgent } = await import('./agent-runtime');

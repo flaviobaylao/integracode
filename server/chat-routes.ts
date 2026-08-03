@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { registerEntregaAvisos } from './entrega-avisos';
+import { registerRotaRespostas } from './rota-respostas';
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { db } from "./db";
@@ -756,6 +757,8 @@ export function registerChatRoutes(app: Express): void {
   // com authenticateUser volta 401. Este ponto ja roda depois da sessao.
   try { registerEntregaAvisos(app); }
   catch (e: any) { console.error('[ENTREGA-AVISOS] nao registrado:', e?.message || e); }
+  try { registerRotaRespostas(app); }
+  catch (e: any) { console.error('[ROTA-RESPOSTAS] nao registrado:', e?.message || e); }
 
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
