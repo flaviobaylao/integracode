@@ -64,12 +64,19 @@ export function nfData(a = 'fi'): string {
 const DEDUP_KEY = `COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text)`;
 
 /** FROM deduplicado por (CNPJ emitente, serie, numero), ficando com o registro mais recente.
- *  NAO pre-filtra por status de proposito: se a versao mais recente de uma chave foi
- *  cancelada, e ela que deve prevalecer (e depois cair no filtro de venda). */
+ *
+ *  O filtro de venda roda DENTRO da subquery, ANTES do DISTINCT ON. A ordem importa:
+ *  no incidente de 08/07/2026 varias NF-e foram registradas em duplicidade e so UMA copia
+ *  de cada foi marcada como devolvida. Deduplicando antes de filtrar, quando a copia
+ *  devolvida era a mais recente o grupo INTEIRO sumia e uma venda real ia junto —
+ *  R$ 1.655,20 em julho (NF 104588, 104608, 104722, SmartStore e Mais Cafe Aeroporto).
+ *  Filtrando primeiro, sobra exatamente uma linha valida por numero de nota, e um numero
+ *  cujas linhas foram TODAS canceladas/devolvidas desaparece por si so. */
 export function nfVendaFrom(a = 'fi'): string {
   return `(
     SELECT DISTINCT ON (${DEDUP_KEY}) *
     FROM fiscal_invoices
+    WHERE ${nfVendaWhere('fiscal_invoices')}
     ORDER BY ${DEDUP_KEY}, created_at DESC
   ) ${a}`;
 }
