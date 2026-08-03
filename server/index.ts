@@ -2333,6 +2333,112 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     finally { await src.end().catch(() => {}); }
   });
 
+  // ============================================================================
+  // AUDITORIA/CORRECAO: rezoneamentos revertidos. READ-ONLY salvo apply:true.
+  //   Um cliente foi "revertido" quando o seller_id ATUAL difere do ULTIMO
+  //   rezoneamento AUDITADO (customer_change_history.field='sellerId'). Como o
+  //   sync por documento (seller-by-doc) grava seller_id sem auditar, essa
+  //   divergencia denuncia a reversao. Filtro: o vendedor PRETENDIDO (destino do
+  //   ultimo rezoneamento) e' Telemarketing.
+  //   body: { apply?, list?, roleFilter? ('telemarketing' default | 'all') }
+  //   apply:true -> corrige (seller_id := pretendido) e registra no historico.
+  // ============================================================================
+  app.post('/api/admin/audit/rezone-reverts', async (req: Request, res: Response) => {
+    const b: any = req.body || {};
+    const apply = b.apply === true;
+    const wantList = b.list === true;
+    const roleFilter = (b.roleFilter === 'all') ? 'all' : 'telemarketing';
+    const out: any = { apply, roleFilter };
+    const pgMod = await import('pg');
+    const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
+    try {
+      // usuarios (nome + role)
+      const uR: any = await db.execute(sql.raw("SELECT id, first_name, last_name, role FROM users"));
+      const uMap = new Map<string, any>();
+      for (const u of (uR.rows || uR) as any[]) uMap.set(String(u.id), { name: [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || String(u.id), role: u.role });
+
+      // ultimo rezoneamento auditado por cliente (qualquer source de app)
+      const lrR: any = await db.execute(sql.raw(`
+        SELECT DISTINCT ON (customer_id) customer_id, new_value, old_value, source, created_at
+        FROM customer_change_history
+        WHERE field = 'sellerId'
+        ORDER BY customer_id, created_at DESC`));
+      const lastRez = (lrR.rows || lrR) as any[];
+      out.clientesComHistoricoSeller = lastRez.length;
+
+      // seller_id atual + doc dos candidatos (em lotes)
+      const ids = lastRez.map((r) => String(r.customer_id));
+      const curMap = new Map<string, any>();
+      const CH = 500;
+      for (let i = 0; i < ids.length; i += CH) {
+        const chunk = ids.slice(i, i + CH);
+        const inList = sql.join(chunk.map((d) => sql`${d}`), sql`, `);
+        const r: any = await db.execute(sql`SELECT id, seller_id, cnpj, cpf, name, fantasy_name FROM customers WHERE id IN (${inList})`);
+        for (const c of (r.rows || r) as any[]) curMap.set(String(c.id), c);
+      }
+
+      // detectar reversoes
+      const reverts: any[] = [];
+      for (const lr of lastRez) {
+        const cid = String(lr.customer_id);
+        const cur = curMap.get(cid);
+        if (!cur) continue;
+        const intended = String(lr.new_value || '');
+        const current = String(cur.seller_id || '');
+        if (!intended || intended === current) continue; // sem divergencia
+        const intUser = uMap.get(intended);
+        const curUser = uMap.get(current);
+        // filtro: destino pretendido e' telemarketing (a menos que roleFilter='all')
+        if (roleFilter === 'telemarketing' && (!intUser || intUser.role !== 'telemarketing')) continue;
+        reverts.push({
+          id: cid,
+          doc: dg(cur.cnpj) || dg(cur.cpf),
+          nome: cur.fantasy_name || cur.name,
+          pretendidoId: intended, pretendido: intUser?.name || intended, pretendidoRole: intUser?.role || '?',
+          atualId: current, atual: curUser?.name || current, atualRole: curUser?.role || '?',
+          rezoneadoEm: lr.created_at, source: lr.source,
+        });
+      }
+      out.totalRevertidos = reverts.length;
+
+      // 1.0: confere se o vendedor ATUAL veio do 1.0 por documento (confirma a causa = seller-by-doc)
+      try {
+        await src.connect();
+        const s1: any = await src.query("SELECT cnpj, cpf, seller_id FROM customers WHERE seller_id IS NOT NULL AND seller_id <> ''");
+        const docToSeller10 = new Map<string, string>();
+        for (const r of s1.rows as any[]) { const d = dg(r.cnpj) || dg(r.cpf); if (d && d.length >= 11 && !docToSeller10.has(d)) docToSeller10.set(d, String(r.seller_id)); }
+        let batemCom10 = 0;
+        for (const rv of reverts) { if (rv.doc && docToSeller10.get(rv.doc) === rv.atualId) { rv.veioDo10 = true; batemCom10++; } else rv.veioDo10 = false; }
+        out.atualBateComVendedorDo10 = batemCom10;
+      } catch (e: any) { out.err10 = (e?.message || String(e)).slice(0, 120); }
+
+      // resumo por carteira pretendida (telemarketing)
+      const porCarteira: Record<string, number> = {};
+      for (const rv of reverts) { porCarteira[rv.pretendido] = (porCarteira[rv.pretendido] || 0) + 1; }
+      out.porCarteiraPretendida = porCarteira;
+
+      if (wantList) out.rows = reverts;
+
+      // CORRECAO
+      if (apply && reverts.length) {
+        let ok = 0, fail = 0;
+        for (const rv of reverts) {
+          try {
+            await db.execute(sql`UPDATE customers SET seller_id = ${rv.pretendidoId}, updated_at = now() WHERE id = ${rv.id}`);
+            await db.execute(sql`INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_user_id, changed_by_name, source, created_at)
+              VALUES (${rv.id}, 'sellerId', 'Vendedor (rezoneamento)', ${rv.atualId}, ${rv.pretendidoId}, 'system', 'Correcao de reversao de rezoneamento', 'bulk', now())`);
+            ok++;
+          } catch (e) { fail++; }
+        }
+        out.corrigidos = ok; out.falhas = fail;
+      }
+
+      return res.json(out);
+    } catch (e: any) { out.err = (e?.message || String(e)).slice(0, 300); return res.status(500).json(out); }
+    finally { await src.end().catch(() => {}); }
+  });
+
   // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
   app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
