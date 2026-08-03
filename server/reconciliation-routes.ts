@@ -1362,6 +1362,30 @@ export function registerReconciliation(app: Express) {
     "saldoatual", "saldofinal", "saldoinicial", "saldoemcc", "saldodisponivel", "saldobloqueado",
   ]);
 
+  // ---- Repasse de COBRANCA do BB: ja conciliado pelo webhook ---------------
+  // FASE 3.4w. Credito que o banco lanca ao repassar a liquidacao dos BOLETOS da
+  // carteira de cobranca. Esse dinheiro JA FOI baixado e conciliado titulo a titulo
+  // pelo WEBHOOK de cobranca — nao existe titulo em aberto para casar com ele, e
+  // ele so entulhava a fila de pendentes. Regra do Flavio (03/ago): entra como
+  // IGNORADO automaticamente. Ignorado NAO sai do saldo (o dinheiro entrou de
+  // verdade); apenas some dos pendentes.
+  // Restrito a CREDITO: no debito, "Cobranca ..." e tarifa e tem titulo proprio.
+  const RE_REPASSE_COBRANCA = /^(cobranca|cobrancas|cobranca simples|credito de cobranca|liquidacao de cobranca|cobranca referente\b.*|cobranca bb\b.*)$/;
+  function ehRepasseCobranca(tipo: string, ...textos: Array<string | null | undefined>) {
+    if (String(tipo || "").toUpperCase() !== "C") return false;
+    return textos.some((t) => {
+      const n = String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/\uFFFD/g, "c")                    // "COBRAN?A": acento quebrado no OFX
+        .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      return !!n && RE_REPASSE_COBRANCA.test(n);
+    });
+  }
+  // mesma regra sobre a descricao ja normalizada pelo banco de dados (sem espacos).
+  // O '?' do acento quebrado some no regexp_replace, entao "cobranca" e "cobrana"
+  // sao as duas formas possiveis.
+  const ND_REPASSE_COBRANCA = /^(cobranc?as?|cobranc?asimples|creditodecobranc?a|liquidacaodecobranc?a|cobranc?areferente[0-9]*|cobranc?abb[0-9]*)$/;
+  const NOTA_REPASSE = "Repasse de cobranca do BB (boletos ja baixados pelo webhook) - ignorado automaticamente";
+
   function parseOfx(text: string) {
     const acct = ofxTag(text, "ACCTID");
     const bankId = ofxTag(text, "BANKID");
@@ -1532,7 +1556,7 @@ export function registerReconciliation(app: Express) {
     const totalC = o.transactions.filter((t) => t.type === "C").reduce((a, t) => a + t.amount, 0);
     const totalD = o.transactions.filter((t) => t.type === "D").reduce((a, t) => a + t.amount, 0);
     if (!toInsert.length && !toMirror.length) {
-      return { statementId: null as string | null, inserted: 0, espelhados: 0, skipped, linhasDeSaldo, totalC, totalD };
+      return { statementId: null as string | null, inserted: 0, espelhados: 0, skipped, linhasDeSaldo, repassesCobranca: 0, totalC, totalD };
     }
 
     const stmt = await insertDynamic("bank_statements", stCols, {
@@ -1576,7 +1600,16 @@ export function registerReconciliation(app: Express) {
       return vm;
     };
     let inserted = 0;
-    for (const t of toInsert) { await insertDynamic("bank_statement_items", itCols, linha(t, { reconciliation_status: "pending" })); inserted++; }
+    let repassesCobranca = 0;
+    for (const t of toInsert) {
+      // FASE 3.4w: repasse de cobranca do BB ja nasce IGNORADO (nao ha titulo a casar).
+      const repasse = ehRepasseCobranca(t.type, t.description, t.name);
+      if (repasse) repassesCobranca++;
+      await insertDynamic("bank_statement_items", itCols, linha(t, repasse
+        ? { reconciliation_status: "ignored", notes: NOTA_REPASSE }
+        : { reconciliation_status: "pending" }));
+      inserted++;
+    }
 
     // FASE 3.4j - linhas ESPELHO: lancamentos ja importados em outro extrato.
     // Status/conciliacao sao resolvidos ao vivo pelo canonico (mirror_of). Nao
@@ -1605,7 +1638,7 @@ export function registerReconciliation(app: Express) {
         }
       } catch { /* enriquecimento e best-effort */ }
     }
-    return { statementId: String(stmtId), inserted, espelhados, enriquecidos, skipped, linhasDeSaldo, totalC, totalD };
+    return { statementId: String(stmtId), inserted, espelhados, enriquecidos, skipped, linhasDeSaldo, repassesCobranca, totalC, totalD };
   }
 
   app.post("/api/reconciliation/import-ofx", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
@@ -2163,6 +2196,13 @@ export function registerReconciliation(app: Express) {
       // LINHAS DE SALDO: nao sao transacao (ver ehLinhaDeSaldo). Saem do agrupamento e
       // sao marcadas com status 'saldo' — deixam de contar no saldo, no livro e no
       // relatorio. Nao apaga nada: e so um UPDATE de status, reversivel.
+      // FASE 3.4w: repasses de COBRANCA do BB (credito de boleto ja baixado pelo
+      // webhook) que ainda estao PENDENTES viram IGNORADO. Nao mexe no saldo.
+      const idsRepasse = rows.filter((r: any) => String(r.type) === "C"
+          && ND_REPASSE_COBRANCA.test(String(r.nd || ""))
+          && (r.st == null || r.st === "pending") && r.tem_baixa !== true)
+        .map((r: any) => String(r.id));
+
       const idsSaldo = rows.filter((r: any) => ND_LINHA_SALDO.has(String(r.nd || "")) && r.tem_baixa !== true)
                            .map((r: any) => String(r.id));
       rows = rows.filter((r: any) => !ND_LINHA_SALDO.has(String(r.nd || "")));
@@ -2228,7 +2268,7 @@ export function registerReconciliation(app: Express) {
         const keep = comBaixa[0] || (reconc.length ? menorId(reconc) : (ignor.length ? menorId(ignor) : menorId(g)));
         for (const x of g) { if (String(x.id) !== String(keep.id)) toMirror.push({ id: String(x.id), canonical: String(keep.id) }); }
       }
-      if (dryRun) return res.json({ dryRun: true, porHorario, porTexto, gruposDuplicados: gruposDup, linhasParaEspelhar: toMirror.length, linhasDeSaldo: idsSaldo.length, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla });
+      if (dryRun) return res.json({ repassesCobranca: idsRepasse.length, dryRun: true, porHorario, porTexto, gruposDuplicados: gruposDup, linhasParaEspelhar: toMirror.length, linhasDeSaldo: idsSaldo.length, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla });
       let espelhados = 0;
       for (let i = 0; i < toMirror.length; i += 300) {
         const lote = toMirror.slice(i, i + 300);
@@ -2255,7 +2295,20 @@ export function registerReconciliation(app: Express) {
             AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
         saldoMarcadas += Number((u as any)?.rowCount ?? 0);
       }
-      res.json({ dryRun: false, porHorario, porTexto, gruposDuplicados: gruposDup, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, espelhados, linhasDeSaldo: saldoMarcadas });
+      // repasses de cobranca pendentes -> ignorado (some da fila, fica no saldo)
+      let repassesIgnorados = 0;
+      for (let i = 0; i < idsRepasse.length; i += 500) {
+        const lote = idsRepasse.slice(i, i + 500);
+        const u: any = await db.execute(sql`
+          UPDATE bank_statement_items t
+          SET reconciliation_status = 'ignored', matched_by = ${by}, matched_at = now(),
+              notes = ${NOTA_REPASSE}
+          WHERE t.id::text IN (${inList(lote)}) AND t.mirror_of IS NULL
+            AND (t.reconciliation_status IS NULL OR t.reconciliation_status = 'pending')
+            AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
+        repassesIgnorados += Number((u as any)?.rowCount ?? 0);
+      }
+      res.json({ repassesCobranca: repassesIgnorados, dryRun: false, porHorario, porTexto, gruposDuplicados: gruposDup, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, espelhados, linhasDeSaldo: saldoMarcadas });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
