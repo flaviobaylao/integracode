@@ -324,7 +324,7 @@ export async function insertBlockedOrderIdempotent(
   return true;
 }
 
-export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null }) {
+export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean }) {
   // BLINDAGEM: nunca estourar por card indefinido (ex.: card removido entre a varredura e o envio).
   // Sem isso, o erro "reading saleValue of undefined" abortava o roteamento e o pedido nao entrava.
   if (!salesCard || !salesCard.id) { return null; }
@@ -338,7 +338,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
   // 'pedido' como duplicatas. Pedido REAL entra no pipeline no MESMO dia da conclusao
   // (completedDate ~ agora), entao passa normalmente. Liberacoes manuais (skipDebtCheck) sao
   // isentas para nao quebrar o release de bloqueados legitimos. Ajustavel: BILLING_HISTORY_MAX_AGE_DAYS.
-  if (!opts?.skipDebtCheck && salesCard.completedDate) {
+  // 03/ago/2026 — ISENCAO DELIBERADA (opts.skipHistoryGuard). A trava existe para barrar a
+  // reimportacao do historico do Omie, mas tambem engolia em silencio pedido REAL que passou
+  // de 48h fora do pipeline — e NENHUMA rede de seguranca conseguia mais recupera-lo.
+  // Agora um admin pode dispensa-la para ids especificos (POST reconcile-pending
+  // {cardIds, skipHistoryGuard:true}). O comportamento automatico dos crons NAO muda:
+  // sem o flag, a trava continua valendo exatamente como antes (zero risco de duplicata).
+  if (!opts?.skipDebtCheck && !opts?.skipHistoryGuard && salesCard.completedDate) {
     const _cd = new Date(salesCard.completedDate).getTime();
     const _maxAgeMs = (parseInt(process.env.BILLING_HISTORY_MAX_AGE_DAYS || '2', 10) || 2) * 86400000;
     if (!isNaN(_cd) && (Date.now() - _cd) > _maxAgeMs) {
@@ -489,6 +495,20 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
   }
 }
 
+// 03/ago/2026 — DIAGNOSTICO HONESTO DO DRY-RUN.
+// Antes, o dry-run das redes de seguranca respondia sempre 'would_route'/'would_recover',
+// inclusive para pedidos que a trava anti-historico iria descartar em silencio. Resultado:
+// o relatorio dizia que ia recuperar 35 pedidos e recuperava zero. Esta funcao devolve o
+// motivo REAL pelo qual o card seria barrado (ou null quando ele passaria).
+function motivoBloqueioHistorico(card: any, skipHistoryGuard?: boolean): string | null {
+  if (skipHistoryGuard) return null;
+  if (!card?.completedDate) return null;
+  const cd = new Date(card.completedDate).getTime();
+  const maxAgeMs = (parseInt(process.env.BILLING_HISTORY_MAX_AGE_DAYS || '2', 10) || 2) * 86400000;
+  if (!isNaN(cd) && (Date.now() - cd) > maxAgeMs) return 'skipped_historical_import';
+  return null;
+}
+
 // ============ Rede de seguranca #2: pedidos presos em 'pending' ============
 // Um pedido pode ficar preso em sales_cards.status='pending' com a venda ja registrada
 // (produtos + valor) quando a FINALIZACAO nao completa (ex.: o app do vendedor perdeu conexao
@@ -499,7 +519,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 //  - sem cardIds: varre automaticamente (parados ha >= minAgeMinutes, com produtos, sem item no pipeline).
 //  - com cardIds: processa exatamente esses ids (recuperacao pontual).
 //  - apply=false: dryRun (so relata o que faria).
-export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; cardIds?: string[]; apply?: boolean }): Promise<{ scanned: number; recovered: number; blockedOrSkipped: number; notEligible: number; details: any[] }> {
+export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; cardIds?: string[]; apply?: boolean; skipHistoryGuard?: boolean }): Promise<{ scanned: number; recovered: number; blockedOrSkipped: number; notEligible: number; details: any[] }> {
   const apply = opts?.apply !== false; // default: aplica
   const minAge = Number(opts?.minAgeMinutes ?? 60);
   const details: any[] = [];
@@ -529,7 +549,7 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
       if (!card) { notEligible++; details.push({ id, result: 'not_found' }); continue; }
       if (!card.saleValue || parseFloat(String(card.saleValue)) === 0) { notEligible++; details.push({ id, result: 'no_value' }); continue; }
       if (['no_sale', 'cancelled', 'canceled', 'transferred'].includes(String(card.status))) { notEligible++; details.push({ id, result: 'status_' + card.status }); continue; }
-      if (!apply) { details.push({ id, val: card.saleValue, status: card.status, result: 'would_recover' }); continue; }
+      if (!apply) { const _blk = motivoBloqueioHistorico(card, opts?.skipHistoryGuard); details.push({ id, val: card.saleValue, status: card.status, source: card.source || null, result: _blk ? 'would_skip_' + _blk : 'would_recover' }); continue; }
       // Preserva a data de registro do pedido (senao o item entraria no pipeline como "hoje").
       const completedDate = card.completedDate || card.createdAt || new Date();
       if (card.status === 'pending') {
@@ -537,7 +557,7 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
       }
       let email = 'reconcile-pending';
       try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
-      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email);
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email, { skipHistoryGuard: opts?.skipHistoryGuard === true });
       if (item) { recovered++; details.push({ id, val: card.saleValue, result: 'recovered', pipelineId: item.id, stage: item.stage }); }
       else { blockedOrSkipped++; details.push({ id, val: card.saleValue, result: 'blocked_or_dup' }); }
     } catch (e: any) {
@@ -557,7 +577,7 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
 //   - e AINDA NAO esta no pipeline NEM em blocked_orders (coluna Bloqueados).
 // Cada um e roteado por autoSendToBillingPipeline, que decide pipeline OU Bloqueados.
 // Assim todo pedido registrado sempre chega a um lugar visivel, nunca some.
-export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pendingAgeMinutes?: number; apply?: boolean }): Promise<{ scanned: number; routed: number; toBlocked: number; failed: number; apply: boolean; details: any[] }> {
+export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pendingAgeMinutes?: number; apply?: boolean; skipHistoryGuard?: boolean }): Promise<{ scanned: number; routed: number; toBlocked: number; failed: number; apply: boolean; details: any[] }> {
   const apply = opts?.apply !== false; // default: aplica
   const days = Number(opts?.days ?? 30);
   const pendingAge = Number(opts?.pendingAgeMinutes ?? 30);
@@ -588,7 +608,7 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       const card: any = await storage.getSalesCard(id);
       if (!card || !card.saleValue || parseFloat(String(card.saleValue)) === 0) { failed++; details.push({ id, result: 'not_eligible' }); continue; }
       if (['no_sale', 'cancelled', 'canceled', 'transferred'].includes(String(card.status))) { failed++; details.push({ id, result: 'status_' + card.status }); continue; }
-      if (!apply) { details.push({ id, val: card.saleValue, status: card.status, result: 'would_route' }); continue; }
+      if (!apply) { const _blk = motivoBloqueioHistorico(card, opts?.skipHistoryGuard); details.push({ id, val: card.saleValue, status: card.status, source: card.source || null, result: _blk ? 'would_skip_' + _blk : 'would_route' }); continue; }
       // Preserva a data de registro (senao entraria no pipeline como "hoje").
       const completedDate = card.completedDate || card.createdAt || new Date();
       if (card.status === 'pending') {
@@ -596,7 +616,7 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       }
       let email = 'sweep-orphans';
       try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
-      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email);
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email, { skipHistoryGuard: opts?.skipHistoryGuard === true });
       if (item) { routed++; details.push({ id, val: card.saleValue, result: 'routed', pipelineId: item.id, stage: item.stage }); }
       else { toBlocked++; details.push({ id, val: card.saleValue, result: 'to_blocked_or_dup' }); }
     } catch (e: any) {
@@ -992,7 +1012,10 @@ export function registerBillingPipelineRoutes(app: Express) {
       const apply = req.query.apply === '1' || req.body?.apply === true;
       const minAgeMinutes = Number(req.query.minAge ?? req.body?.minAge) || 60;
       const cardIds = Array.isArray(req.body?.cardIds) ? req.body.cardIds.map((x: any) => String(x)) : undefined;
-      const r = await reconcilePendingOrders({ apply, minAgeMinutes, cardIds });
+      // Recuperacao DELIBERADA de admin: so com cardIds explicitos a trava anti-historico pode
+      // ser dispensada (evita que uma varredura ampla ressuscite o historico do Omie).
+      const skipHistoryGuard = req.body?.skipHistoryGuard === true && !!cardIds?.length;
+      const r = await reconcilePendingOrders({ apply, minAgeMinutes, cardIds, skipHistoryGuard });
       res.json({ ok: true, apply, ...r });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
@@ -1007,7 +1030,8 @@ export function registerBillingPipelineRoutes(app: Express) {
       const apply = req.query.apply === '1' || req.body?.apply === true;
       const days = Number(req.query.days ?? req.body?.days) || 30;
       const pendingAgeMinutes = Number(req.query.pendingAge ?? req.body?.pendingAge) || 30;
-      const r = await sweepUnbilledOrdersToPipeline({ apply, days, pendingAgeMinutes });
+      const skipHistoryGuard = req.body?.skipHistoryGuard === true;
+      const r = await sweepUnbilledOrdersToPipeline({ apply, days, pendingAgeMinutes, skipHistoryGuard });
       res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
