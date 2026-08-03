@@ -2402,8 +2402,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       }
       out.totalRevertidos = reverts.length;
 
-      // 1.0: confere se o vendedor ATUAL veio do 1.0 por documento (confirma a causa = seller-by-doc)
-      try {
+      // 1.0 (opt-in via check10; consulta pesada e o 1.0/Replit pode estar dormindo -> travava)
+      if (b.check10 === true) try {
         await src.connect();
         const s1: any = await src.query("SELECT cnpj, cpf, seller_id FROM customers WHERE seller_id IS NOT NULL AND seller_id <> ''");
         const docToSeller10 = new Map<string, string>();
