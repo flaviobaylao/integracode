@@ -41,7 +41,14 @@ function onlyDigits(s: any): string { return String(s || '').replace(/\D/g, '');
 
 // Recalcula o total no servidor (mesma regra do POST /api/public/orders):
 // preço por tabela + desconto de indicação. Nunca confia no total do cliente.
-export async function computeServerTotal(body: any): Promise<{ total: number; refPct: number; refDiscount: number } | { error: string }> {
+// RETORNO (03/ago/2026): passou a devolver tambem o `subtotal` (SEM desconto de indicacao).
+// Motivo: o front da loja calcula o total como pura soma dos itens (`calculateTotal()` em
+// hotsite/src/App.tsx nao aplica desconto nenhum), entao comparar o total do cliente contra
+// o total JA DESCONTADO rejeitava com 400 todo cliente que tivesse codigo de indicacao valido
+// ou recompensa acumulada — e sem deixar rastro (nem cobranca, nem linha de pendencia, nem
+// diario). A conferencia agora e feita contra `subtotal`, exatamente como faz o
+// POST /api/public/orders (valida o total sem desconto e so depois aplica o desconto).
+export async function computeServerTotal(body: any): Promise<{ total: number; subtotal: number; refPct: number; refDiscount: number } | { error: string }> {
   const items = Array.isArray(body.items) ? body.items : [];
   if (!items.length) return { error: 'Adicione pelo menos um produto' };
   let subtotal = 0;
@@ -80,7 +87,7 @@ export async function computeServerTotal(body: any): Promise<{ total: number; re
 
   const refDiscount = refPct > 0 ? Math.round(subtotal * (refPct / 100) * 100) / 100 : 0;
   const total = Math.round((subtotal - refDiscount) * 100) / 100;
-  return { total, refPct, refDiscount };
+  return { total, subtotal: Math.round(subtotal * 100) / 100, refPct, refDiscount };
 }
 
 // Finaliza um pedido pendente cujo PIX foi CONFIRMADO: claim atômico + chamada
@@ -109,6 +116,10 @@ async function finalizePaidOrder(row: any): Promise<{ status: string; orderId?: 
     try {
       await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n💰 PIX PAGO na loja (txid ' + (row.txid || row.charge_id) + ') — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`);
     } catch { /* nota é cosmética */ }
+    try {
+      const { journalCheckoutLinked } = await import('./order-journal');
+      void journalCheckoutLinked(String(row.id), { orderNumber: data.orderNumber, salesCardId: data.orderId });
+    } catch { /* diario nunca bloqueia a venda */ }
     console.log(`✅ [LOJA-PIX] Pedido criado após PIX pago: ${data.orderNumber} (pending ${row.id})`);
     // Pedido JÁ PAGO não espera: envia imediatamente ao pipeline de faturamento
     // (reconcilePendingOrders marca completed + autoSendToBillingPipeline com travas/auditoria).
@@ -182,8 +193,10 @@ export function registerHotsitePix(app: Express): void {
       const totals = await computeServerTotal(body);
       if ('error' in totals) return res.status(400).json({ message: totals.error });
       const clientTotal = Number(body.totalAmount) || 0;
-      if (Math.abs(totals.total - clientTotal) > 0.01) {
-        return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.total, clientTotal });
+      // Confere contra o SUBTOTAL (sem desconto), que e o que o front envia. O desconto de
+      // indicacao entra depois, no valor da cobranca. Ver nota em computeServerTotal.
+      if (Math.abs(totals.subtotal - clientTotal) > 0.01) {
+        return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.subtotal, clientTotal });
       }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
@@ -203,6 +216,13 @@ export function registerHotsitePix(app: Express): void {
       const expiresAt = new Date(Date.now() + EXPIRATION_SECONDS * 1000);
       const ins: any = await db.execute(sql`INSERT INTO hotsite_pending_pix (charge_id, txid, amount, payload, status, expires_at) VALUES (${charge.id}, ${charge.txid}, ${totals.total.toFixed(2)}, ${JSON.stringify(body)}, 'awaiting_payment', ${expiresAt}) RETURNING id`);
       const pendingId = ((ins.rows || ins)[0] || {}).id;
+
+      // Diario: o checkout existe A PARTIR DAQUI, nao so depois do pagamento. Sem isto,
+      // carrinho fechado e nao pago nao aparecia em lugar nenhum consultavel.
+      try {
+        const { journalCheckoutStarted } = await import('./order-journal');
+        void journalCheckoutStarted(body, 'pix', String(pendingId));
+      } catch { /* diario nunca bloqueia a venda */ }
 
       console.log(`📱 [LOJA-PIX] Cobrança criada p/ checkout: R$ ${totals.total.toFixed(2)} pending=${pendingId} txid=${charge.txid}`);
       res.status(201).json({

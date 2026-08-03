@@ -731,6 +731,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 📓 Diário imutável do pedido da loja + detector de "pedido sumido" (28/jul/2026)
   registerOrderJournal(app, authenticateUser, requireRole(['admin', 'coordinator', 'administrative']));
 
+  // 💳 Enum payment_method precisa aceitar 'card': o fluxo de cartao da loja envia esse
+  // valor apos a Cielo aprovar. Sem isto o insert estourava e o cliente era cobrado sem
+  // que o pedido fosse criado. Idempotente e nunca bloqueia a subida.
+  void (async () => {
+    try {
+      const { ensurePaymentMethodCard } = await import('./ensure-payment-method-card');
+      await ensurePaymentMethodCard();
+    } catch (e: any) {
+      console.warn('⚠️ [SCHEMA] bootstrap do enum payment_method indisponivel:', e?.message || e);
+    }
+  })();
+
   // Version endpoint
   app.get('/api/version', (req, res) => {
     res.json({

@@ -363,8 +363,10 @@ export function registerHotsiteCard(app: Express): void {
       const totals = await computeServerTotal(order);
       if ('error' in totals) return res.status(400).json({ message: totals.error });
       const clientTotal = Number(order.totalAmount) || 0;
-      if (Math.abs(totals.total - clientTotal) > 0.01) {
-        return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.total });
+      // Confere contra o SUBTOTAL (sem desconto de indicacao) — o front envia a soma pura
+      // dos itens. Sem isto, cliente com indicacao/recompensa era barrado no checkout.
+      if (Math.abs(totals.subtotal - clientTotal) > 0.01) {
+        return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.subtotal });
       }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
@@ -377,6 +379,13 @@ export function registerHotsiteCard(app: Express): void {
       // Registra a tentativa ANTES de cobrar (conciliação; payload SEM dados de cartão)
       const ins: any = await db.execute(sql`INSERT INTO hotsite_card_payments (merchant_order_id, amount, installments, card_last4, card_brand, status, payload) VALUES (${merchantOrderId}, ${totals.total.toFixed(2)}, ${installments}, ${last4}, ${brand}, 'processing', ${JSON.stringify(order)}) RETURNING id`);
       const rowId = ((ins.rows || ins)[0] || {}).id;
+
+      // Diario: mesma razao do PIX — a tentativa de compra passa a ser visivel antes
+      // de a Cielo responder.
+      try {
+        const { journalCheckoutStarted } = await import('./order-journal');
+        void journalCheckoutStarted(order, 'card', String(rowId));
+      } catch { /* diario nunca bloqueia a venda */ }
 
       let sale = await createCardSale({
         merchantOrderId,
@@ -412,6 +421,10 @@ export function registerHotsiteCard(app: Express): void {
         if (!resp.ok || !data?.orderId) throw new Error(data?.message || `HTTP ${resp.status}`);
 
         await db.execute(sql`UPDATE hotsite_card_payments SET order_id = ${data.orderId}, order_number = ${data.orderNumber || null}, updated_at = now() WHERE id = ${rowId}`);
+        try {
+          const { journalCheckoutLinked } = await import('./order-journal');
+          void journalCheckoutLinked(String(rowId), { orderNumber: data.orderNumber, salesCardId: data.orderId });
+        } catch { /* diario nunca bloqueia a venda */ }
         try {
           await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${'\n💳 CARTÃO APROVADO na loja (Cielo PaymentId ' + (sale.paymentId || '?') + ', ' + brand + ' final ' + last4 + ', ' + installments + 'x) — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`);
         } catch { /* nota é cosmética */ }
@@ -454,13 +467,21 @@ export function registerHotsiteCard(app: Express): void {
 
       const totals = await computeServerTotal(order);
       if ('error' in totals) return res.status(400).json({ message: totals.error });
-      if (Math.abs(totals.total - (Number(order.totalAmount) || 0)) > 0.01) return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.total });
+      // Mesma regra do cartao: confere contra o subtotal sem desconto (ver computeServerTotal).
+      if (Math.abs(totals.subtotal - (Number(order.totalAmount) || 0)) > 0.01) return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.subtotal });
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
       const amountCents = Math.round(totals.total * 100);
       const merchantOrderId = 'LOJAGP' + Date.now() + Math.floor(Math.random() * 1000);
       const ins: any = await db.execute(sql`INSERT INTO hotsite_card_payments (merchant_order_id, amount, installments, card_brand, status, payload) VALUES (${merchantOrderId}, ${totals.total.toFixed(2)}, 1, ${'GooglePay'}, 'processing', ${JSON.stringify(order)}) RETURNING id`);
       const rowId = ((ins.rows || ins)[0] || {}).id;
+
+      // Diario: mesma razao do PIX — a tentativa de compra passa a ser visivel antes
+      // de a Cielo responder.
+      try {
+        const { journalCheckoutStarted } = await import('./order-journal');
+        void journalCheckoutStarted(order, 'card', String(rowId));
+      } catch { /* diario nunca bloqueia a venda */ }
 
       let sale = await createGooglePaySale({ merchantOrderId, amountCents, customerName: String(c.name), customerIdentity: c.cpfCnpj || undefined, customerEmail: c.email || null, googlePayToken: String(token) });
       if (sale.networkError) { const q = await queryByMerchantOrderId(merchantOrderId); if (q) sale = q; }
@@ -477,6 +498,10 @@ export function registerHotsiteCard(app: Express): void {
         const data: any = await resp.json();
         if (!resp.ok || !data?.orderId) throw new Error(data?.message || `HTTP ${resp.status}`);
         await db.execute(sql`UPDATE hotsite_card_payments SET order_id=${data.orderId}, order_number=${data.orderNumber||null}, updated_at=now() WHERE id=${rowId}`);
+        try {
+          const { journalCheckoutLinked } = await import('./order-journal');
+          void journalCheckoutLinked(String(rowId), { orderNumber: data.orderNumber, salesCardId: data.orderId });
+        } catch { /* diario nunca bloqueia a venda */ }
         try { await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') || ${' 💳 GOOGLE PAY APROVADO na loja (Cielo PaymentId ' + (sale.paymentId || '?') + ') — pedido criado após confirmação do pagamento.'} WHERE id = ${data.orderId}`); } catch {}
         try { const { reconcilePendingOrders } = await import('./billing-pipeline-routes'); await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [data.orderId] }); } catch (e2: any) { console.warn('⚠️ [LOJA-GPAY] envio imediato ao pipeline falhou:', e2?.message || e2); }
         return res.status(201).json({ success: true, orderId: data.orderId, orderNumber: data.orderNumber, paymentId: sale.paymentId, brand: 'GooglePay' });
