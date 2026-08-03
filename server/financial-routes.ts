@@ -190,6 +190,104 @@ export function registerFinancialRoutes(app: Express) {
   //      { "dryRun": false } aplica. Opcionais: limit, days, boletoIds: [...]
   // Idempotente: rodar de novo em titulo ja baixado nao duplica pagamento.
   // ============================================================================
+  // ============================================================================
+  // AUDITORIA DE BAIXAS (SOMENTE LEITURA — nao grava nada)
+  // ----------------------------------------------------------------------------
+  // Varre os recebiveis e devolve, separadas por tipo, as inconsistencias de baixa.
+  // Serve para conferir titulo a titulo ANTES de rodar qualquer reparo: o
+  // repair-baixas reescreve amount_paid a partir da SOMA dos pagamentos, entao se
+  // houver pagamento DUPLICADO ele consolidaria o erro. Por isso duplicidade e a
+  // primeira coisa checada aqui.
+  //
+  // GET /api/admin/financial/auditoria-baixas?limit=300&status=vencida
+  //   status: 'vencida' | 'todas' (padrao 'todas')
+  // ============================================================================
+  app.get('/api/admin/financial/auditoria-baixas', authenticateUser, isFinancialReadAuthorized, async (req: any, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query?.limit) || 300, 1), 2000);
+      const soVencida = String(req.query?.status || 'todas').toLowerCase() === 'vencida';
+      const filtroStatus = soVencida ? " AND r.status = 'vencida'" : "";
+      const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
+      const hoje = "(now() AT TIME ZONE 'America/Sao_Paulo')::date";
+      const venc = "(r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date";
+      const base = "FROM receivables r WHERE r.deleted_at IS NULL AND r.status <> 'cancelada'" + filtroStatus;
+      const cols = "r.id, r.title_number AS titulo, r.customer_name AS cliente, r.customer_document AS documento, r.amount::float AS valor, COALESCE(r.amount_paid,0)::float AS baixado, r.status, " + venc + " AS vencimento, r.payment_method AS forma, r.updated_by AS alterado_por";
+
+      // A) PAGAMENTO DUPLICADO: mesmo titulo, mesmo valor, mesma data e mesma
+      // referencia aparecendo mais de uma vez. E o achado mais grave: infla o
+      // amount_paid e "quita" titulo que nao foi pago.
+      const duplicados = await many(
+        "SELECT rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, rp.amount::float AS valor, " +
+        "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS pago_em, " +
+        "COALESCE(rp.reference,'') AS referencia, COUNT(*)::int AS vezes, " +
+        "(COUNT(*)-1) * rp.amount::float AS excesso, array_agg(rp.id::text) AS pagamento_ids " +
+        "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
+        "WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' " +
+        "GROUP BY rp.receivable_id, r.title_number, r.customer_name, rp.amount, " +
+        "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date, COALESCE(rp.reference,'') " +
+        "HAVING COUNT(*) > 1 ORDER BY excesso DESC LIMIT " + limit);
+
+      // B) amount_paid DIVERGE da soma dos pagamentos (para mais ou para menos)
+      const divergencia = await many(
+        "SELECT " + cols + ", p.total::float AS soma_pagamentos, (COALESCE(r.amount_paid,0) - p.total)::float AS diferenca, p.qtd " +
+        base.replace('FROM receivables r WHERE', "FROM receivables r JOIN (SELECT receivable_id, SUM(amount::numeric) total, COUNT(*)::int qtd FROM receivable_payments GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE") +
+        " AND COALESCE(r.amount_paid,0)::numeric IS DISTINCT FROM p.total ORDER BY ABS(COALESCE(r.amount_paid,0) - p.total) DESC LIMIT " + limit);
+
+      // C) SUPERBAIXA: baixado alem do valor do titulo
+      const superbaixa = await many("SELECT " + cols + ", (COALESCE(r.amount_paid,0) - r.amount)::float AS excesso " + base +
+        " AND COALESCE(r.amount_paid,0)::numeric > r.amount::numeric + 0.005 ORDER BY excesso DESC LIMIT " + limit);
+
+      // D) QUITADO SEM STATUS: pago integral mas continua em aberto/vencida
+      const quitadoSemStatus = await many("SELECT " + cols + " " + base +
+        " AND r.status <> 'recebida' AND COALESCE(r.amount_paid,0)::numeric >= r.amount::numeric - 0.005 AND r.amount::numeric > 0 ORDER BY r.amount DESC LIMIT " + limit);
+
+      // E) STATUS SEM LASTRO: marcado 'recebida' sem ter baixa integral
+      const recebidaSemBaixa = await many("SELECT " + cols + ", (r.amount - COALESCE(r.amount_paid,0))::float AS falta " +
+        "FROM receivables r WHERE r.deleted_at IS NULL AND r.status = 'recebida' AND COALESCE(r.amount_paid,0)::numeric < r.amount::numeric - 0.005 ORDER BY falta DESC LIMIT " + limit);
+
+      // F) STATUS x VENCIMENTO trocados (a_vencer com data no passado e vice-versa)
+      const statusVencimento = await many("SELECT " + cols + ", CASE WHEN r.status = 'a_vencer' THEN 'deveria ser vencida' ELSE 'deveria ser a_vencer' END AS esperado " + base +
+        " AND r.status IN ('a_vencer','vencida') AND ((r.status = 'a_vencer' AND " + venc + " < " + hoje + ") OR (r.status = 'vencida' AND " + venc + " >= " + hoje + ")) ORDER BY r.due_date LIMIT " + limit);
+
+      // G) RESIDUO: titulo em aberto com baixa parcial (tipicamente desconto do cliente)
+      const residuo = await many("SELECT " + cols + ", (r.amount - COALESCE(r.amount_paid,0))::float AS saldo " + base +
+        " AND r.status IN ('a_vencer','vencida') AND COALESCE(r.amount_paid,0)::numeric > 0 AND COALESCE(r.amount_paid,0)::numeric < r.amount::numeric - 0.005 ORDER BY saldo DESC LIMIT " + limit);
+
+      // H) PAGAMENTO SEM CONTA (sem lastro bancario) em titulo ainda em aberto
+      const semLastro = await many(
+        "SELECT rp.id AS pagamento_id, rp.receivable_id, r.title_number AS titulo, r.customer_name AS cliente, rp.amount::float AS valor, " +
+        "(rp.paid_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS pago_em, rp.payment_method AS forma, rp.created_by, rp.reference, rp.notes " +
+        "FROM receivable_payments rp JOIN receivables r ON r.id = rp.receivable_id " +
+        "WHERE rp.financial_account_id IS NULL AND r.deleted_at IS NULL AND r.status <> 'cancelada' ORDER BY rp.paid_at DESC NULLS LAST LIMIT " + limit);
+
+      const soma = (xs: any[], k: string) => Number(xs.reduce((t, x) => t + Number(x[k] || 0), 0).toFixed(2));
+      res.json({
+        geradoEm: new Date().toISOString(),
+        escopo: soVencida ? 'somente vencidas' : 'todos os titulos ativos',
+        resumo: {
+          pagamentoDuplicado: { n: duplicados.length, excesso: soma(duplicados, 'excesso') },
+          amountPaidDivergente: { n: divergencia.length, diferenca: soma(divergencia, 'diferenca') },
+          superbaixa: { n: superbaixa.length, excesso: soma(superbaixa, 'excesso') },
+          quitadoSemStatus: { n: quitadoSemStatus.length, valor: soma(quitadoSemStatus, 'valor') },
+          recebidaSemBaixa: { n: recebidaSemBaixa.length, falta: soma(recebidaSemBaixa, 'falta') },
+          statusVencimentoErrado: { n: statusVencimento.length },
+          residuoEmAberto: { n: residuo.length, saldo: soma(residuo, 'saldo') },
+          pagamentoSemLastro: { n: semLastro.length, valor: soma(semLastro, 'valor') },
+        },
+        pagamentoDuplicado: duplicados,
+        amountPaidDivergente: divergencia,
+        superbaixa,
+        quitadoSemStatus,
+        recebidaSemBaixa,
+        statusVencimentoErrado: statusVencimento,
+        residuoEmAberto: residuo,
+        pagamentoSemLastro: semLastro,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.post('/api/admin/financial/repair-boleto-liquidado-sem-baixa', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
