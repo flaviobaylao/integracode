@@ -200,6 +200,24 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
 
     // Botao 1 do template de aviso ("Ok, obrigado.") = assunto encerrado. Agradece e finaliza,
     // em vez de mandar a saudacao padrao e reabrir uma conversa que ja tinha acabado.
+    // Do outro lado tem outro robo? Ou o cliente esta repetindo a mesma mensagem?
+    // A IA avisa uma vez que aguarda uma pessoa, marca a conversa e sai — dois robos
+    // conversando um com o outro so gastam janela e mensagem.
+    try {
+      const { respostaDeRobo } = await import('./robo-detector');
+      const rb = await respostaDeRobo(conversationId, incomingText);
+      if (rb !== null) {
+        if (rb) {
+          await replyVia(conversationId, phone, rb);
+          try {
+            await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+              VALUES (${conversationId}, 'agent:robo', 'agent', ${rb}, 'text', false)`);
+          } catch {}
+        }
+        return;
+      }
+    } catch (e: any) { console.error('[ROBO]', e?.message || e); }
+
     // Resposta ao aviso de VISITA (rota do dia): "Sim, confirmar" / "Nao" / 1-2-3.
     // Vira decisao registrada e resposta pronta — a IA nao precisa adivinhar o contexto.
     try {

@@ -67,7 +67,7 @@ async function sendDespedida(convId: string, toPhone: string, text: string): Pro
 }
 
 // Consulta as conversas elegíveis para finalização (WhatsApp, inativas, sem humano).
-async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id: string; customer_phone: string }>> {
+async function selectElegiveis(mins: number, limit: number, minsAtendente: number): Promise<Array<{ id: string; customer_phone: string }>> {
   const q: any = await db.execute(sql`
     SELECT c.id, c.customer_phone
     FROM chat_conversations c
@@ -77,8 +77,15 @@ async function selectElegiveis(mins: number, limit: number): Promise<Array<{ id:
       AND c.customer_phone NOT LIKE '%@g.us%'
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
-      AND coalesce(c.initiated_by::text, 'customer') <> 'user'  -- conversa aberta pelo atendente: so ele finaliza
-      AND NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id)  -- transferida pela IA: quem finaliza e o atendente
+      -- Conversa do ATENDENTE (aberta por ele ou transferida pela IA) tem prazo proprio:
+      -- nao fecha junto com as da IA, mas tambem nao fica aberta para sempre. Passa a
+      -- fechar depois de chat_close_atendente_min (padrao 60) sem ninguem falar nada.
+      AND (
+        (coalesce(c.initiated_by::text, 'customer') <> 'user'
+         AND NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id))
+        OR (c.last_message_time < now() - make_interval(mins => ${minsAtendente})
+            AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${minsAtendente})))
+      )
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < now() - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
@@ -97,7 +104,9 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
   const mins = Math.max(1, parseInt(await getSetting('ia_finalizar_min', '120'), 10) || 120);
   const despedida = (await getSetting('ia_despedida', DEFAULT_DESPEDIDA)).slice(0, 500);
   const tests = testPhones();
-  const rows = await selectElegiveis(mins, 20);
+  // Prazo proprio da conversa em andamento com atendente (padrao 60 min).
+  const minsAtendente = Math.max(5, parseInt(await getSetting('chat_close_atendente_min', '60'), 10) || 60);
+  const rows = await selectElegiveis(mins, 20, minsAtendente);
 
   let encerradas = 0, enviadas = 0, puladasTeste = 0;
   const detalhes: any[] = [];
