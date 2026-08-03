@@ -263,7 +263,9 @@ export function registerFinancialRoutes(app: Express) {
           if (!c?.ok) { erros++; itens.push({ ...base, resultado: 'erro_consulta_bb', erro: c?.error || null }); continue; }
           if (!c.liquidado) { naoLiquidadoNoBB++; itens.push({ ...base, resultado: 'nao_liquidado_no_bb', estadoBB: c.estado }); continue; }
           const prev = { ...base, estadoBB: c.estado, valorPagoBB: c.valorPago, dataCreditoBB: c.dataCredito };
-          if (dryRun) { itens.push({ ...prev, resultado: 'seria_reparado' }); continue; }
+          // rawBB so no dry-run: permite conferir no retorno do proprio banco de onde
+          // saiu o valor e a data antes de gravar qualquer coisa.
+          if (dryRun) { itens.push({ ...prev, resultado: 'seria_reparado', rawBB: c.raw }); continue; }
 
           const r: any = await bbb.checkAndSettleBoleto(a.boleto_id, 'reparo-liquidado-sem-baixa');
           if (r?.alreadyPaid) { jaBaixados++; itens.push({ ...prev, resultado: 'ja_estava_baixado' }); continue; }

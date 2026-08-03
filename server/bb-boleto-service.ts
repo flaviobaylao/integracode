@@ -421,8 +421,12 @@ function pick(obj: any, keys: string[]): any {
 function toISO(d: any): string | null {
   if (!d) return null;
   const s = String(d).trim();
-  const m = s.match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})$/);
+  if (!s || s === '0' || s === '00000000') return null;
+  const m = s.match(/^(\d{2})[.\/-](\d{2})[.\/-](\d{4})$/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  // BB tambem devolve data como ddmmyyyy sem separador em alguns campos.
+  const m2 = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
   return s;
 }
 
@@ -664,7 +668,13 @@ export async function consultarBoletoChargeBB(boletoChargeId: string): Promise<a
   const estado = String(pick(bb, ['estadoTituloCobranca', 'codigoEstadoTituloCobranca', 'situacao']) || '').toUpperCase();
   const valorPago = parseFloat(String(pick(bb, ['valorPagoSacado', 'valorRecebido', 'valorPago']) || '0').toString().replace(',', '.'));
   const liquidado = /LIQUID|BAIX|PAG/.test(estado) || valorPago > 0;
-  const dt = pick(bb, ['dataCredito', 'dataRecebimento', 'dataMovimentoLiquidacao']);
+  // A API BB Cobranca usa nomes diferentes conforme o recurso; 'dataCredito' sozinho
+  // voltava nulo e a baixa caia para a data de hoje, gravando o pagamento no dia
+  // errado (afeta DRE e fluxo de caixa). Lista ampliada, do mais especifico ao generico.
+  const dt = pick(bb, [
+    'dataCreditoLiquidacao', 'dataLiquidacao', 'dataCredito', 'dataRecebimentoTitulo',
+    'dataRecebimento', 'dataMovimentoLiquidacao', 'dataPagamento', 'dataMovimento',
+  ]);
   return { ok: true, charge, account, numeroTituloCliente, estado, valorPago, dataCredito: dt || null, paidAtISO: dt ? toISO(dt) : null, liquidado, raw: bb };
 }
 
