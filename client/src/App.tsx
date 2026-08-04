@@ -44,6 +44,7 @@ import CheckInAudit from "@/pages/CheckInAudit";
 import ClearCache from "@/pages/ClearCache";
 import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
+import Canais from "@/pages/Canais";
 import LeadsManagement from "@/pages/LeadsManagement";
 import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
 import WhatsAppSetup from "@/pages/WhatsAppSetup";
@@ -275,6 +276,7 @@ function Router() {
           <Route path="/rh" component={HRManagement} />
           <Route path="/hotsite-pricing" component={HotsitePricing} />
           <Route path="/hotsite-orders" component={HotsiteOrders} />
+          <Route path="/canais" component={Canais} />
           <Route path="/leads" component={LeadsManagement} />
           <Route path="/vendas-digitais" component={VendasDigitais} />
           <Route path="/whatsapp" component={WhatsAppSetup} />
