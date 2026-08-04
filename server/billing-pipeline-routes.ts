@@ -2390,6 +2390,31 @@ export async function generateBoletoForReceivable(receivable: any, item: any): P
       }
       if (_serv) { console.log('[BB-BOLETO] SERV nao emite boleto (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
     } catch {}
+    // ---- TRAVA ANTI-COBRANCA DUPLA -------------------------------------
+    // Se o titulo JA tem cobranca viva — boleto REGISTRADO/VENCIDO (no BB o
+    // vencido segue pagavel ate a baixa) ou PIX ATIVA — nao gera outra. Sem
+    // isto o pipeline e o garantir-cobranca criavam uma SEGUNDA cobranca para o
+    // mesmo titulo e o cliente conseguia pagar as duas: foi assim que se
+    // acumularam os casos limpos em 03/08, e 5 titulos ja tinham voltado a essa
+    // situacao no dia seguinte.
+    // Emissao MANUAL pela tela nao passa por aqui (e ato deliberado do operador,
+    // e o boleto unificado ja cancela as cobrancas anteriores).
+    try {
+      const viva: any = await db.execute(sql`
+        SELECT 1 FROM boleto_charges
+         WHERE receivable_id = ${receivable.id} AND deleted_at IS NULL
+           AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO')
+        UNION ALL
+        SELECT 1 FROM pix_charges
+         WHERE receivable_id = ${receivable.id} AND deleted_at IS NULL
+           AND status::text = 'ATIVA'
+        LIMIT 1`);
+      if (((viva.rows || viva) as any[]).length) {
+        console.log(`[COBRANCA] titulo ${receivable.id} ja tem cobranca viva - nao gera outra (anti-duplicidade)`);
+        return { ok: false, skipped: true };
+      }
+    } catch (e: any) { /* na duvida NAO bloqueia a emissao: faltar cobranca e pior que checar */ }
+
     let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
     let account = (accounts || []).find((a: any) => a.bbBoletoEnabled && a.bbConvenio);
     if (!account) {
@@ -2448,6 +2473,31 @@ export async function generatePixForReceivable(receivable: any, item: any): Prom
       }
       if (_serv) { console.log('[BB-PIX] SERV nao emite PIX (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
     } catch {}
+    // ---- TRAVA ANTI-COBRANCA DUPLA -------------------------------------
+    // Se o titulo JA tem cobranca viva — boleto REGISTRADO/VENCIDO (no BB o
+    // vencido segue pagavel ate a baixa) ou PIX ATIVA — nao gera outra. Sem
+    // isto o pipeline e o garantir-cobranca criavam uma SEGUNDA cobranca para o
+    // mesmo titulo e o cliente conseguia pagar as duas: foi assim que se
+    // acumularam os casos limpos em 03/08, e 5 titulos ja tinham voltado a essa
+    // situacao no dia seguinte.
+    // Emissao MANUAL pela tela nao passa por aqui (e ato deliberado do operador,
+    // e o boleto unificado ja cancela as cobrancas anteriores).
+    try {
+      const viva: any = await db.execute(sql`
+        SELECT 1 FROM boleto_charges
+         WHERE receivable_id = ${receivable.id} AND deleted_at IS NULL
+           AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO')
+        UNION ALL
+        SELECT 1 FROM pix_charges
+         WHERE receivable_id = ${receivable.id} AND deleted_at IS NULL
+           AND status::text = 'ATIVA'
+        LIMIT 1`);
+      if (((viva.rows || viva) as any[]).length) {
+        console.log(`[COBRANCA] titulo ${receivable.id} ja tem cobranca viva - nao gera outra (anti-duplicidade)`);
+        return { ok: false, skipped: true };
+      }
+    } catch (e: any) { /* na duvida NAO bloqueia a emissao: faltar cobranca e pior que checar */ }
+
     let accounts = await storage.getFinancialAccounts(item.omieInstanceId || undefined);
     let account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
     if (!account) {
