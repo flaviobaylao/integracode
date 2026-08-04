@@ -48,7 +48,7 @@ function onlyDigits(s: any): string { return String(s || '').replace(/\D/g, '');
 // ou recompensa acumulada — e sem deixar rastro (nem cobranca, nem linha de pendencia, nem
 // diario). A conferencia agora e feita contra `subtotal`, exatamente como faz o
 // POST /api/public/orders (valida o total sem desconto e so depois aplica o desconto).
-export async function computeServerTotal(body: any): Promise<{ total: number; subtotal: number; refPct: number; refDiscount: number } | { error: string }> {
+export async function computeServerTotal(body: any): Promise<{ total: number; subtotal: number; refPct: number; refDiscount: number; cupom?: { code: string; discount: number } | null } | { error: string }> {
   const items = Array.isArray(body.items) ? body.items : [];
   if (!items.length) return { error: 'Adicione pelo menos um produto' };
   let subtotal = 0;
@@ -70,10 +70,31 @@ export async function computeServerTotal(body: any): Promise<{ total: number; su
     subtotal += Number(price) * qty;
   }
 
+  const doc = onlyDigits(body?.customer?.cpfCnpj);
+
+  // 🎟️ CUPOM PROMOCIONAL (04/ago/2026) — UM desconto por pedido, nesta ordem:
+  //   cupom > codigo de indicacao > recompensa automatica.
+  // Mesma regra do pedido do vendedor (server/routes.ts). Aqui so VALIDA (leitura pura);
+  // o resgate e gravado uma unica vez, no POST /api/public/orders, com orderRef = numero
+  // do pedido. Assim o valor cobrado no PIX/cartao ja sai com o desconto do cupom.
+  const cupomCode = String(body.couponCode || body.referralCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  let cupom: { code: string; discount: number } | null = null;
+  if (cupomCode) {
+    try {
+      const cv: any = await fetch(
+        `${INTERNAL_BASE}/api/coupons/validate?code=${encodeURIComponent(cupomCode)}&total=${Math.round(subtotal * 100) / 100}&channel=hotsite${doc ? '&document=' + doc : ''}`,
+      ).then(r => r.json());
+      if (cv && cv.valid && Number(cv.discount) > 0) cupom = { code: String(cv.code), discount: Number(cv.discount) };
+    } catch { /* cupom indisponivel nao bloqueia a venda */ }
+  }
+  if (cupom) {
+    const total = Math.round((subtotal - cupom.discount) * 100) / 100;
+    return { total, subtotal: Math.round(subtotal * 100) / 100, refPct: 0, refDiscount: 0, cupom };
+  }
+
   // Desconto de indicação — mesmos endpoints internos usados pelo endpoint de pedido
   let refPct = 0;
   const code = String(body.referralCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const doc = onlyDigits(body?.customer?.cpfCnpj);
   try {
     if (code && doc) {
       const vr: any = await fetch(`${INTERNAL_BASE}/api/referral/validate?code=${encodeURIComponent(code)}&referredDocument=${doc}`).then(r => r.json());
@@ -87,7 +108,7 @@ export async function computeServerTotal(body: any): Promise<{ total: number; su
 
   const refDiscount = refPct > 0 ? Math.round(subtotal * (refPct / 100) * 100) / 100 : 0;
   const total = Math.round((subtotal - refDiscount) * 100) / 100;
-  return { total, subtotal: Math.round(subtotal * 100) / 100, refPct, refDiscount };
+  return { total, subtotal: Math.round(subtotal * 100) / 100, refPct, refDiscount, cupom: null };
 }
 
 // Finaliza um pedido pendente cujo PIX foi CONFIRMADO: claim atômico + chamada

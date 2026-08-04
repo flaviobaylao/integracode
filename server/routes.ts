@@ -24618,12 +24618,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar totalAmount com valor validado pelo servidor
       validatedData.totalAmount = serverTotal;
 
-    // VIGIA 3E: desconto de indicacao aplicado no servidor (fonte de verdade)
-    let _rc = String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    // 🎟️ CUPOM PROMOCIONAL NA LOJA (04/ago/2026) — UM desconto por pedido, nesta ordem:
+    //   cupom > codigo de indicacao > recompensa automatica.  Mesma regra do pedido do
+    //   vendedor (VIGIA CUPOM vendedor, acima). Aqui so VALIDAMOS; o resgate e gravado
+    //   mais abaixo, ja com o numero do pedido como orderRef (idempotente).
+    // O campo aceita cupom OU codigo de indicacao: se o texto for um cupom valido para o
+    // canal 'hotsite', ele ganha e a indicacao nem e consultada.
     let _bd = String(validatedData.customer.cpfCnpj || '').replace(/[^0-9]/g, '');
-    let _refPct = 0, _refMode = '', _refRedemptionId: any = null, _refDiscount = 0;
     const _refBase = 'http://127.0.0.1:' + (process.env.PORT || '8080');
+    const _cupCodigo = String((req.body && (req.body.couponCode || req.body.referralCode)) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let _cupVal: any = null;
+    if (_cupCodigo) {
+      try {
+        const _cv: any = await fetch(_refBase + '/api/coupons/validate?code=' + encodeURIComponent(_cupCodigo) + '&total=' + serverTotal + '&channel=hotsite' + (_bd ? '&document=' + _bd : '')).then(r => r.json());
+        if (_cv && _cv.valid && Number(_cv.discount) > 0) _cupVal = _cv;
+        else if (_cv && _cv.valid === false && _cv.reason && _cv.reason !== 'inexistente' && _cv.reason !== 'sem_codigo') {
+          console.log('🎟️ [CUPOM loja] recusado', _cupCodigo, _cv.reason);
+        }
+      } catch (_ec) { console.warn('🎟️ [CUPOM loja] validacao indisponivel (segue sem cupom):', (_ec as any)?.message); }
+    }
+
+    // VIGIA 3E: desconto de indicacao aplicado no servidor (fonte de verdade)
+    // So entra em cena quando NAO ha cupom valido (um desconto por pedido).
+    let _rc = _cupVal ? '' : String((req.body && req.body.referralCode) || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let _refPct = 0, _refMode = '', _refRedemptionId: any = null, _refDiscount = 0;
     try {
+      if (_cupVal) throw new Error('__cupom_tem_prioridade__');
       if (_rc && _bd) {
         const _vr = await fetch(_refBase + '/api/referral/validate?code=' + encodeURIComponent(_rc) + '&referredDocument=' + _bd).then(r => r.json());
         if (_vr && _vr.valid) { _refPct = Number(_vr.discountPct) || 15; _refMode = 'code'; }
@@ -24636,7 +24656,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         _refDiscount = Math.round(serverTotal * (_refPct / 100) * 100) / 100;
         validatedData.totalAmount = Math.round((serverTotal - _refDiscount) * 100) / 100;
       }
-    } catch (_e) {}
+    } catch (_e) { /* inclui o desvio '__cupom_tem_prioridade__' — indicacao nao se aplica */ }
       
       // Buscar vendedor FLAVIO especificamente para pedidos do hotsite
       const users = await storage.getUsers();
@@ -24751,6 +24771,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Gerar número de pedido único
       const orderNumber = `WEB-${Date.now()}`;
+
+      // 🎟️ CUPOM — resgate + aplicacao. O resgate e idempotente por (codigo, orderRef),
+      // entao a chamada interna do PIX/cartao que recria o pedido nao conta duas vezes.
+      // POR QUE APLICAR MESMO SE O RESGATE FALHAR: no PIX/cartao o dinheiro JA entrou pelo
+      // valor com desconto (computeServerTotal ja abateu o cupom ao gerar a cobranca);
+      // recusar o desconto aqui criaria um pedido MAIOR do que o que foi pago. Falha de
+      // resgate vira aviso alto no log, para conferencia manual do used_count.
+      let _cupAplicado: { code: string; discount: number; total: number } | null = null;
+      if (_cupVal) {
+        let _cupResgatado = false;
+        try {
+          const _rr: any = await fetch(_refBase + '/api/coupons/redeem', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: _cupVal.code, orderRef: orderNumber, customerId,
+              orderTotalBefore: serverTotal, discountApplied: Number(_cupVal.discount),
+            }),
+          }).then(r => r.json());
+          _cupResgatado = !!(_rr && _rr.ok);
+          if (!_cupResgatado) console.error('🎟️ [CUPOM loja] RESGATE NAO REGISTRADO (desconto aplicado assim mesmo):', _rr && _rr.error);
+        } catch (_ecr: any) { console.error('🎟️ [CUPOM loja] falha ao registrar resgate (desconto aplicado assim mesmo):', _ecr?.message); }
+        const _cupD = Number(_cupVal.discount);
+        validatedData.totalAmount = Math.round((serverTotal - _cupD) * 100) / 100;
+        _cupAplicado = { code: String(_cupVal.code), discount: _cupD, total: validatedData.totalAmount };
+        console.log('🎟️ [CUPOM loja]', _cupVal.code, 'desconto R$', _cupD, 'de', serverTotal, '->', validatedData.totalAmount, 'resgate=', _cupResgatado);
+      }
       
       // ✅ CONFIGURAÇÃO DINÂMICA PARA PEDIDOS HOTSITE:
       // - Se cliente já existe: manter vendedor, rota e periodicidade existentes
@@ -24864,6 +24910,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderNumber,
         message: 'Pedido criado com sucesso!',
       referralDiscount: _refPct > 0 ? { pct: _refPct, amount: _refDiscount, total: validatedData.totalAmount, mode: _refMode } : null,
+        couponDiscount: _cupAplicado ? { code: _cupAplicado.code, amount: _cupAplicado.discount, total: _cupAplicado.total } : null,
         customerId,
         totalAmount: validatedData.totalAmount,
         paymentMethod: validatedData.paymentMethod
