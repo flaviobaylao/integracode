@@ -78,6 +78,7 @@ type DetalheNota = {
   cancelada?: boolean;
   parcelas: DetalheParcela[];
   pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
+  produtos?: Array<{ nome: string; quantidade: number; unidade?: string | null; unitPrice?: number; totalPrice?: number }>;
 };
 
 type DetalhePagamento = {
@@ -552,9 +553,28 @@ export default function ExtratoCliente() {
                             </button>
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
-                            {l.documento}
+                            {l.tipo === "NF" ? (
+                              <button
+                                type="button"
+                                onClick={() => setDetalheLinha(l)}
+                                title="Ver produtos faturados"
+                                data-testid={`link-produtos-${l.key}`}
+                                className="font-mono underline decoration-dotted underline-offset-2 hover:decoration-solid text-blue-700 dark:text-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded"
+                              >
+                                {l.documento}
+                              </button>
+                            ) : (
+                              l.documento
+                            )}
                             {l.parcelas && l.parcelas > 1 ? (
                               <span className="ml-1 text-[10px] text-gray-500">({l.parcelas} parc.)</span>
+                            ) : null}
+                            {l.tipo === "NF" ? (
+                              <div className="text-[10px] text-blue-600 dark:text-blue-400">
+                                <button type="button" onClick={() => setDetalheLinha(l)} className="underline decoration-dotted underline-offset-2 hover:decoration-solid focus:outline-none">
+                                  ver produtos
+                                </button>
+                              </div>
                             ) : null}
                             {l.pedido ? <div className="text-[10px] text-gray-400">ped. {l.pedido}</div> : null}
                           </td>
@@ -751,6 +771,36 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
                 <DetInfo label="Saldo" value={<span className={dNota.saldo > 0.009 ? "text-amber-700 dark:text-amber-300" : ""}>{fmtBRL(dNota.saldo)}</span>} />
                 <DetInfo label="Parcelas" value={dNota.parcelasQtd} />
                 <DetInfo label="Origem" value={dNota.origem || "—"} />
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold mb-1">Produtos faturados</div>
+                {dNota.produtos && dNota.produtos.length ? (
+                  <div className="overflow-x-auto rounded border dark:border-gray-700">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                        <tr className="text-left">
+                          <th className="px-2 py-1">Produto</th>
+                          <th className="px-2 py-1 text-right">Qtd.</th>
+                          <th className="px-2 py-1 text-right">Preço unit.</th>
+                          <th className="px-2 py-1 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dNota.produtos.map((p, i) => (
+                          <tr key={i} className="border-t dark:border-gray-700">
+                            <td className="px-2 py-1">{p.nome}{p.unidade ? <span className="ml-1 text-[10px] text-gray-500">({p.unidade})</span> : null}</td>
+                            <td className="px-2 py-1 text-right">{p.quantidade}</td>
+                            <td className="px-2 py-1 text-right">{p.unitPrice != null ? fmtBRL(p.unitPrice) : "—"}</td>
+                            <td className="px-2 py-1 text-right">{p.totalPrice != null ? fmtBRL(p.totalPrice) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500">Produtos desta nota não disponíveis (nota importada sem itens detalhados).</div>
+                )}
               </div>
 
               {dNota.parcelas && dNota.parcelas.length ? (
