@@ -136,6 +136,12 @@ export function registerDashboardHistoryRoutes(app: Express): void {
       if (token !== "vday-6931") return res.json({ error: "forbidden" });
       const mode = (req.query as any).mode;
       if (mode === "backfill") { const k = await backfillDashboardHistory(); return res.json({ ok: true, backfill: k }); }
+      if (mode === "diag") {
+        const serie = await rawq("SELECT to_char(date_trunc('month'," + LEGADO_DATA + "),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
+        const mineJoin = await rawq("SELECT to_char(date_trunc('month'," + LEGADO_DATA + "),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi " + VENDEDOR_JOIN + " WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
+        const mineDayBucket = await rawq("SELECT to_char((" + LEGADO_DATA + "::date),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi " + VENDEDOR_JOIN + " WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
+        return res.json({ serie, mineJoin, mineDayBucket });
+      }
       const r = await captureDashboardSnapshot((req.query as any).date);
       res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
