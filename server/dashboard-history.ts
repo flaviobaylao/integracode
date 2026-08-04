@@ -2,24 +2,38 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import cron from "node-cron";
+import { nfVendaWhere, nfVendaFrom, nfData, VENDEDOR_JOIN, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 
 // ============================================================================
-// HISTORICO DO DASHBOARD (Faturamento Efetivo)
-// Grava 1 snapshot por dia (faturamento fiscal do dia + por vendedor), permitindo
-// consultar qualquer data/mes passado. Tabela criada sob demanda (CREATE TABLE IF NOT EXISTS).
-// Atribuicao por vendedor = mesma logica do Comparativo (card do pipeline -> cartao -> carteira).
+// HISTORICO DO DASHBOARD (Faturamento Efetivo) -- reconcilia com a regra OFICIAL.
+// Fonte unica: server/faturamento-oficial.ts. Split de vigencia:
+//   dia >= VIGENCIA_REGRA_OFICIAL  -> regra nova (dedup por NF + CFOP + SEM AT TIME ZONE)
+//   dia <  VIGENCIA_REGRA_OFICIAL  -> calculo legado (nao reprocessamos o passado)
+// Grava 1 snapshot/dia: faturamento do dia + faturamento por vendedor do dia.
+// Observacao: o AT TIME ZONE do modulo antigo empurrava as notas do fim da tarde
+// do ultimo dia do mes para o mes seguinte (jun/jul nao batiam). Removido.
 // ============================================================================
 
-const FISCAL_WHERE = "fi.status='authorized' AND COALESCE(fi.operation_type,'saida')<>'entrada' AND COALESCE(fi.fin_nfe,'1')<>'4' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (fi.import_origin IS NULL OR TRIM(fi.import_origin)='')";
-
-const SELLER_EXPR = "COALESCE((SELECT COALESCE(NULLIF(TRIM(CONCAT(up.first_name,' ',up.last_name)),''), NULLIF(TRIM(bp.seller_name),'')) FROM billing_pipeline bp LEFT JOIN users up ON (up.omie_vendor_code=bp.seller_id OR up.omie_vendor_code=replace(COALESCE(bp.seller_id,''),'omie-vendor-','') OR up.id=bp.seller_id) WHERE bp.sales_card_id=fi.sales_card_id ORDER BY bp.created_at DESC NULLS LAST LIMIT 1), (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM sales_cards sc JOIN users u ON (u.omie_vendor_code=sc.seller_id OR u.omie_vendor_code=replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id=sc.seller_id) WHERE sc.id=fi.sales_card_id LIMIT 1), (SELECT NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),'') FROM customers c JOIN users u2 ON (u2.omie_vendor_code=c.seller_id OR u2.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u2.id=c.seller_id) WHERE regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')<>'' AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') LIMIT 1), 'Sem vendedor')";
-
-const DATE_EXPR = "(COALESCE(fi.emission_date,fi.authorization_date,fi.created_at) AT TIME ZONE 'America/Sao_Paulo')::date";
+// Filtro legado -- IDENTICO ao usado na serie mensal para o periodo anterior a vigencia.
+const LEGADO_WHERE = "fi.status='authorized' AND COALESCE(fi.operation_type,'saida') <> 'entrada' AND COALESCE(fi.fin_nfe,'1') <> '4' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(fi.nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (fi.import_origin IS NULL OR TRIM(fi.import_origin) = '')";
+const LEGADO_DATA = "COALESCE(fi.emission_date, fi.authorization_date, fi.created_at)";
 
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
 function todayBrt(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+// Query (dia, vendedor, total) para o intervalo [iniSql, fimSql) sob a regra correta.
+// iniSql/fimSql sao expressoes SQL de data (ex.: "'2026-08-03'::date").
+function sqlDiaVendedor(iniSql: string, fimSql: string, oficial: boolean): string {
+  const dataExpr = oficial ? nfData("fi") : LEGADO_DATA;
+  const whereExpr = oficial ? nfVendaWhere("fi") : LEGADO_WHERE;
+  const fromExpr = oficial ? nfVendaFrom("fi") : "fiscal_invoices fi";
+  return "SELECT " + dataExpr + "::date::text AS d, COALESCE(v.nome,'Sem vendedor') AS seller, COALESCE(SUM(fi.total_invoice),0) AS total"
+    + " FROM " + fromExpr + " " + VENDEDOR_JOIN
+    + " WHERE " + whereExpr + " AND " + dataExpr + "::date >= " + iniSql + " AND " + dataExpr + "::date < " + fimSql
+    + " GROUP BY 1,2 HAVING COALESCE(SUM(fi.total_invoice),0) <> 0";
 }
 
 let _ensured = false;
@@ -45,23 +59,39 @@ async function upsertSnapshot(dateStr: string, daySales: number, sellers: any[])
 export async function captureDashboardSnapshot(dateStr?: string): Promise<{ date: string; daySales: number; sellers: number }> {
   await ensureDashboardHistoryTable();
   const d = dateStr || todayBrt();
-  const rows = await rawq("SELECT " + SELLER_EXPR + " AS seller, COALESCE(SUM(fi.total_invoice),0) AS total FROM fiscal_invoices fi WHERE " + FISCAL_WHERE + " AND " + DATE_EXPR + " = '" + d + "'::date GROUP BY 1 HAVING COALESCE(SUM(fi.total_invoice),0) <> 0 ORDER BY total DESC");
-  const sellers = rows.map((r) => ({ seller: r.seller, total: Number(r.total) || 0 }));
+  const oficial = d >= VIGENCIA_REGRA_OFICIAL;
+  const iniSql = "'" + d + "'::date";
+  const fimSql = "('" + d + "'::date + INTERVAL '1 day')";
+  const rows = await rawq(sqlDiaVendedor(iniSql, fimSql, oficial));
+  const sellers = rows.map((r) => ({ seller: r.seller, total: Number(r.total) || 0 }))
+    .sort((a, b) => b.total - a.total);
   const daySales = sellers.reduce((a, s) => a + s.total, 0);
   await upsertSnapshot(d, daySales, sellers);
   return { date: d, daySales, sellers: sellers.length };
 }
 
-// Backfill: reconstroi todos os dias com NF-e desde 2026-03-01, mes a mes (mais leve).
+// Reconstroi todos os dias com NF-e desde 2026-01-01, mes a mes, respeitando a vigencia.
 export async function backfillDashboardHistory(): Promise<number> {
   await ensureDashboardHistoryTable();
-  const months = await rawq("SELECT DISTINCT to_char(date_trunc('month', " + DATE_EXPR + "),'YYYY-MM-DD') AS m FROM fiscal_invoices fi WHERE " + FISCAL_WHERE + " AND " + DATE_EXPR + " >= '2026-03-01'::date ORDER BY 1");
+  // Meses do periodo LEGADO (< vigencia).
+  const mesesLegado = await rawq("SELECT DISTINCT to_char(date_trunc('month', " + LEGADO_DATA + "),'YYYY-MM-DD') AS m FROM fiscal_invoices fi WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date AND " + LEGADO_DATA + "::date >= '2026-01-01'::date ORDER BY 1");
+  // Meses do periodo OFICIAL (>= vigencia).
+  const mesesOficial = await rawq("SELECT DISTINCT to_char(date_trunc('month', " + nfData("fi") + "),'YYYY-MM-DD') AS m FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") + " AND " + nfData("fi") + "::date >= '" + VIGENCIA_REGRA_OFICIAL + "'::date ORDER BY 1");
+
+  const jobs: { m: string; oficial: boolean }[] = [];
+  for (const r of mesesLegado) jobs.push({ m: String(r.m).slice(0, 10), oficial: false });
+  for (const r of mesesOficial) jobs.push({ m: String(r.m).slice(0, 10), oficial: true });
+
   let n = 0;
-  for (const mrow of months) {
-    const m = String(mrow.m).slice(0, 10);
-    const rows = await rawq("SELECT " + DATE_EXPR + " AS d, " + SELLER_EXPR + " AS seller, COALESCE(SUM(fi.total_invoice),0) AS total FROM fiscal_invoices fi WHERE " + FISCAL_WHERE + " AND " + DATE_EXPR + " >= '" + m + "'::date AND " + DATE_EXPR + " < ('" + m + "'::date + INTERVAL '1 month') GROUP BY 1, 2 HAVING COALESCE(SUM(fi.total_invoice),0) <> 0");
+  for (const job of jobs) {
+    const iniSql = "'" + job.m + "'::date";
+    const fimSql = "('" + job.m + "'::date + INTERVAL '1 month')";
+    const rows = await rawq(sqlDiaVendedor(iniSql, fimSql, job.oficial));
     const byDay: Record<string, { seller: string; total: number }[]> = {};
-    for (const r of rows) { const d = String(r.d).slice(0, 10); (byDay[d] = byDay[d] || []).push({ seller: r.seller, total: Number(r.total) || 0 }); }
+    for (const r of rows) {
+      const d = String(r.d).slice(0, 10);
+      (byDay[d] = byDay[d] || []).push({ seller: r.seller, total: Number(r.total) || 0 });
+    }
     for (const d of Object.keys(byDay)) {
       const sellers = byDay[d].sort((a, b) => b.total - a.total);
       const daySales = sellers.reduce((a, s) => a + s.total, 0);
