@@ -218,6 +218,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         origem: string;
         descricao: string;
         titulos: any[];
+        bpId?: string | null;
+        scId?: string | null;
+        fiId?: string | null;
       };
       const notas = new Map<string, NotaAgg>();
       const nfSeen = new Set<string>();
@@ -250,6 +253,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
             origem: "financeiro",
             descricao: r.description || r.category || "",
             titulos: cancelado ? [] : [r],
+            bpId: r.billing_pipeline_id || null,
+            scId: r.sales_card_id || null,
+            fiId: r.fiscal_invoice_id || null,
           });
         } else {
           if (cancelado) cur.valorCancelado += num(r.amount);
@@ -260,6 +266,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
           const venc = toISO(r.due_date);
           if (venc && (!cur.vencimento || venc > cur.vencimento)) cur.vencimento = venc;
           if (!cur.pedido && pedido) cur.pedido = pedido;
+          if (!cur.bpId && r.billing_pipeline_id) cur.bpId = r.billing_pipeline_id;
+          if (!cur.scId && r.sales_card_id) cur.scId = r.sales_card_id;
+          if (!cur.fiId && r.fiscal_invoice_id) cur.fiId = r.fiscal_invoice_id;
         }
         if (nf) nfSeen.add(nf);
       }
@@ -299,6 +308,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           origem: "nfe",
           descricao: f.nature_of_operation || "NF-e emitida",
           titulos: [],
+          fiId: f.id,
         });
         if (nf) nfSeen.add(nf);
       }
@@ -332,9 +342,59 @@ export function registerCustomerStatementRoutes(app: Express): void {
           origem: "pedido",
           descricao: `Pedido ${b.order_number || ""}`.trim(),
           titulos: [],
+          bpId: b.id,
         });
         nfSeen.add(nf);
       }
+
+      // ── Produtos faturados por nota ─────────────────────────────────────────
+      // Resolve a lista de itens de cada nota na ordem: billing_pipeline ->
+      // sales_cards -> fiscal_invoice_items. Busca em lote para evitar N+1.
+      const notasArrAll = Array.from(notas.values());
+      const idsIn = (arr: string[]) => sql.join(arr.map((x) => sql`${x}`), sql`, `);
+      const bpProdMap = new Map<string, any[]>();
+      const scProdMap = new Map<string, any[]>();
+      const fiProdMap = new Map<string, any[]>();
+      const bpIds = Array.from(new Set(notasArrAll.map((n) => n.bpId).filter(Boolean) as string[]));
+      const scIds = Array.from(new Set(notasArrAll.map((n) => n.scId).filter(Boolean) as string[]));
+      const fiIds = Array.from(new Set(notasArrAll.map((n) => n.fiId).filter(Boolean) as string[]));
+      try {
+        for (let i = 0; i < bpIds.length; i += 500) {
+          const lote = bpIds.slice(i, i + 500);
+          const r: any = await db.execute(sql`SELECT id, products FROM billing_pipeline WHERE id IN (${idsIn(lote)})`);
+          for (const row of (r.rows || r) as any[]) bpProdMap.set(String(row.id), Array.isArray(row.products) ? row.products : []);
+        }
+      } catch (_e) {}
+      try {
+        for (let i = 0; i < scIds.length; i += 500) {
+          const lote = scIds.slice(i, i + 500);
+          const r: any = await db.execute(sql`SELECT id, products FROM sales_cards WHERE id IN (${idsIn(lote)})`);
+          for (const row of (r.rows || r) as any[]) scProdMap.set(String(row.id), Array.isArray(row.products) ? row.products : []);
+        }
+      } catch (_e) {}
+      try {
+        for (let i = 0; i < fiIds.length; i += 500) {
+          const lote = fiIds.slice(i, i + 500);
+          const r: any = await db.execute(sql`
+            SELECT invoice_id, product_name, quantity, unit, unit_price, total_price, item_number
+            FROM fiscal_invoice_items WHERE invoice_id IN (${idsIn(lote)})
+            ORDER BY item_number ASC`);
+          for (const row of (r.rows || r) as any[]) {
+            const arr = fiProdMap.get(String(row.invoice_id)) || [];
+            arr.push(row);
+            fiProdMap.set(String(row.invoice_id), arr);
+          }
+        }
+      } catch (_e) {}
+      const produtosDaNota = (n: NotaAgg): any[] => {
+        const bp = n.bpId ? bpProdMap.get(String(n.bpId)) : null;
+        if (bp && bp.length) return bp.map((p: any) => ({ nome: p.name || "—", quantidade: num(p.quantity), unidade: null, unitPrice: num(p.unitPrice), totalPrice: num(p.totalPrice) }));
+        const sc = n.scId ? scProdMap.get(String(n.scId)) : null;
+        if (sc && sc.length) return sc.map((p: any) => ({ nome: p.name || "—", quantidade: num(p.quantity), unidade: null, unitPrice: num(p.unitPrice), totalPrice: num(p.totalPrice) }));
+        const fi = n.fiId ? fiProdMap.get(String(n.fiId)) : null;
+        if (fi && fi.length) return fi.map((p: any) => ({ nome: p.product_name || "—", quantidade: num(p.quantity), unidade: p.unit || null, unitPrice: num(p.unit_price), totalPrice: num(p.total_price) }));
+        return [];
+      };
 
       // ── Constrói as linhas do extrato ──────────────────────────────────────
       const hoje = new Date();
@@ -415,6 +475,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             cancelada,
             parcelas: detParcelas,
             pagamentos: detPagsNota,
+            produtos: produtosDaNota(n),
           },
         });
 
