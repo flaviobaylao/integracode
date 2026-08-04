@@ -951,6 +951,31 @@ export function registerReconciliation(app: Express) {
         return res.json({ ok: true, dryRun: true, item: { id: item.id, amount: item.amount, type: item.type, description: item.description }, method, paidAtISO, accountId, plan, valorExtrato, totalTitulos, diferenca: difExtrato });
       }
 
+      // ---- FASE 3.4z: CONFERIR TODOS OS TITULOS ANTES DE BAIXAR QUALQUER UM ----
+      // A conciliacao composta baixa num laco. Nao ha transacao envolvendo o laco:
+      // se o terceiro titulo estivesse cancelado, inexistente ou ja quitado, os dois
+      // primeiros JA tinham sido baixados e o lancamento ficava sem ser marcado como
+      // conciliado — um estado meio-feito e invisivel. A checagem abaixo faz a falha
+      // previsivel acontecer ANTES da primeira escrita.
+      // Tambem impede baixar MAIS do que o titulo deve: o settle tem teto, mas
+      // silencioso — baixaria menos e a conta nao fecharia com o extrato.
+      {
+        const problemas: string[] = [];
+        for (const t of plan) {
+          const row = t.kind === "receivable"
+            ? rowsOf(await db.execute(sql`SELECT status::text AS status, amount::numeric AS amount, COALESCE(amount_paid, 0)::numeric AS pago, deleted_at, title_number AS num FROM receivables WHERE id = ${t.id}`))[0]
+            : rowsOf(await db.execute(sql`SELECT status::text AS status, amount::numeric AS amount, COALESCE(amount_paid, 0)::numeric AS pago, deleted_at, title_number AS num FROM payables WHERE id = ${t.id}`))[0];
+          const nome = row?.num ? String(row.num) : String(t.id).slice(0, 8);
+          if (!row) { problemas.push(`titulo ${nome} nao encontrado`); continue; }
+          if (row.deleted_at) { problemas.push(`titulo ${nome} esta excluido`); continue; }
+          if (String(row.status) === "cancelada") { problemas.push(`titulo ${nome} esta cancelado`); continue; }
+          const saldo = Number(row.amount || 0) - Number(row.pago || 0);
+          if (saldo <= 0.005) { problemas.push(`titulo ${nome} ja esta quitado`); continue; }
+          if (t.settled > saldo + 0.005) problemas.push(`titulo ${nome}: baixa de R$ ${t.settled.toFixed(2)} maior que o saldo em aberto (R$ ${saldo.toFixed(2)})`);
+        }
+        if (problemas.length) return res.status(422).json({ error: "Conciliacao nao executada — nenhum titulo foi baixado.", problemas });
+      }
+
       // ---- FASE 3.4h: categoria DRE selecionavel na conciliacao ----------
       // Valida e aplica a categoria enviada por titulo ANTES da baixa.
       // Pagar sem categoria (nem existente, nem enviada) -> bloqueia.
@@ -994,6 +1019,8 @@ export function registerReconciliation(app: Express) {
       const results: any[] = [];
       let firstRecv: string | null = null, firstPay: string | null = null;
       let cpInfo: any = null;
+      const jaBaixados: any[] = [];
+      try {
       for (const t of plan) {
         if (t.kind === "receivable") {
           const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by);
@@ -1009,6 +1036,23 @@ export function registerReconciliation(app: Express) {
         await db.execute(sql`
           INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
           VALUES (gen_random_uuid(), ${id}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${t.amount.toFixed(2)}, ${kind}, ${t.settled.toFixed(2)}, ${t.interest.toFixed(2)}, ${t.discount.toFixed(2)}, ${by}, now())`);
+        jaBaixados.push({ id: t.id, kind: t.kind, valor: t.settled });
+      }
+      } catch (erroLaco: any) {
+        // Sem transacao envolvendo o laco: o que ja foi baixado CONTINUA baixado.
+        // Em vez de um 500 generico, o operador recebe exatamente o que foi feito
+        // para poder desfazer pelo botao Desfazer do lancamento.
+        try {
+          await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId,
+            instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null,
+            transactionDate: item.transaction_date || null, description: item.description || "", titles: plan,
+            counterpart: cpInfo || null, by, details: { parcial: true, jaBaixados, erro: String(erroLaco?.message || erroLaco).slice(0, 200) } });
+        } catch (_e) { }
+        return res.status(500).json({
+          error: "A conciliacao falhou no meio: " + String(erroLaco?.message || erroLaco).slice(0, 200),
+          parcial: true, jaBaixados,
+          comoTratar: "Estes titulos JA foram baixados e o lancamento NAO foi marcado como conciliado. Desfaca a baixa destes titulos antes de tentar de novo.",
+        });
       }
       const note = `Conciliado por ${by} em ${new Date().toISOString()}${titles.length > 1 ? " (composta " + titles.length + " titulos)" : ""}`
         + (Math.abs(difExtrato) > 0.01 ? ` [DIFERENCA vs extrato R$ ${difExtrato.toFixed(2)}: ${motivoDif}]` : "");
