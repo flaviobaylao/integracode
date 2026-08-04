@@ -1098,7 +1098,7 @@ export default function BillingPipeline() {
         />
 
         {/* Kanban Board */}
-        <div className="flex gap-3 overflow-auto pb-4 flex-1 min-h-0">
+        <div className="flex gap-3 overflow-x-auto overflow-y-hidden pb-4 flex-1 min-h-0">
           {STAGES.map((stage) => {
             const _q = search.trim().toLowerCase();
             const stageItems = (groupedByStage[stage.key] || []).filter(i => {
@@ -1143,8 +1143,8 @@ export default function BillingPipeline() {
             const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
             const someStageSelected = stageIds.some(id => selectedIds.has(id));
             return (
-              <div key={stage.key} className="flex-shrink-0 w-72">
-                <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between sticky top-0 z-20`}>
+              <div key={stage.key} className="flex-shrink-0 w-72 flex flex-col min-h-0 max-h-full">
+                <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between flex-shrink-0 z-20`}>
                   <div className="flex items-center gap-2">
                     {canEdit && stageItems.length > 0 && (
                       <Checkbox
@@ -1161,7 +1161,7 @@ export default function BillingPipeline() {
                     <span className="text-[10px] font-semibold text-white/90 mt-0.5">{formatCurrency(stageTotal)}</span>
                   </div>
                 </div>
-                <div className="bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 min-h-[200px]">
+                <div className="bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 flex-1 min-h-0 overflow-y-auto">
                   {/* Seletor de classificação por data de criação (A-Z / Z-A) */}
                   <div className="flex items-center justify-end">
                     <button
