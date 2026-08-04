@@ -140,40 +140,42 @@ function buildRecurrenceDates(base: Date, rec: any): Date[] {
 export function registerFinancialRoutes(app: Express) {
 
   // ============================================================================
-  // REPARO DE BAIXAS revertidas pelo sync 1.0 (idempotente)
-  // Recomputa amount_paid/status de recebiveis e pagaveis a partir dos pagamentos
-  // que SOBREVIVERAM (receivable_payments/payable_payments). Corrige os titulos que
-  // voltaram a "aberto/vencida" com amount_paid=0 embora ja tivessem baixa.
-  // Body { "dryRun": true } (padrao) so conta; { "dryRun": false } aplica.
+  // REPAIR-BAIXAS — REMOVIDO EM 04/08/2026. NAO RECRIAR.
+  // ----------------------------------------------------------------------------
+  // O endpoint POST /api/admin/financial/repair-baixas reescrevia amount_paid como
+  // a SOMA dos pagamentos de cada titulo e recalculava o status a partir disso.
+  // Numa base saudavel isso conserta; nesta base ele fazia estrago em dois sentidos:
+  //
+  //  1. CONSOLIDAVA baixa duplicada. Titulo com dois pagamentos do mesmo boleto
+  //     passava a ter amount_paid = soma dos dois, transformando o erro em "verdade"
+  //     e apagando a evidencia. Foram 256 baixas duplicadas estornadas (R$ 72.092,41)
+  //     justamente desse tipo.
+  //  2. DESPEJAVA a divida historica na cobranca. 7.315 titulos importados do sistema
+  //     antigo estao 'recebida' SEM nenhum pagamento registrado (R$ 2.399.391,63, o
+  //     mais antigo de 20/10/2023). Para eles a soma dos pagamentos e ZERO: o reparo
+  //     gravaria amount_paid = 0 e status 'vencida', jogando R$ 2,4 milhoes de uma vez
+  //     na tela de Debitos Vencidos e no alerta de WhatsApp aos vendedores.
+  //
+  // Em vez dele, use as ferramentas que conferem antes de escrever:
+  //   GET  /api/admin/financial/auditoria-baixas          (somente leitura)
+  //   POST /api/admin/financial/estornar-pagamentos-duplicados   (dryRun por padrao)
+  //   POST /api/admin/financial/estornar-creditos-duplicados     (dryRun por padrao)
+  //   GET  /api/admin/financial/saldo-oficial  +  .../saldo-oficial/aplicar
+  //
+  // A rota responde 410 (em vez de sumir) para que qualquer script ou atalho antigo
+  // receba o MOTIVO, e nao um 404 que alguem "consertaria" recriando o endpoint.
   // ============================================================================
-  app.post('/api/admin/financial/repair-baixas', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
-    try {
-      const dryRun = req.body?.dryRun !== false;
-      // ESCOPO (aditivo; padrao 'ambos' = comportamento antigo). Rodar recebiveis e
-      // pagaveis de uma vez obriga a auditar os dois dominios juntos; 'apenas' limita
-      // o lado e 'ids' limita a titulos ja conferidos um a um.
-      const apenas = String(req.body?.apenas || 'ambos').toLowerCase();
-      const fazRcv = apenas === 'ambos' || apenas === 'receivables';
-      const fazPay = apenas === 'ambos' || apenas === 'payables';
-      const pediuIds = Array.isArray(req.body?.ids);
-      const idsFiltro: string[] = pediuIds
-        ? req.body.ids.map((x: any) => String(x).trim()).filter((x: string) => /^[0-9a-fA-F-]{8,40}$/.test(x))
-        : [];
-      if (pediuIds && idsFiltro.length === 0) {
-        return res.status(400).json({ error: 'ids informado mas nenhum id valido', recebidos: req.body.ids });
-      }
-      const filtroId = idsFiltro.length ? " AND r.id IN (" + idsFiltro.map((x) => "'" + x + "'").join(',') + ")" : '';
-      const rcvPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM receivables r JOIN (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p ON p.receivable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
-      const payPrev: any = await db.execute(sql.raw("SELECT count(*)::int AS n FROM payables r JOIN (SELECT payable_id, sum(amount::numeric) total FROM payable_payments WHERE deleted_at IS NULL GROUP BY payable_id) p ON p.payable_id = r.id WHERE r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
-      const wouldFix = { receivables: fazRcv ? (rcvPrev.rows?.[0]?.n ?? 0) : 0, payables: fazPay ? (payPrev.rows?.[0]?.n ?? 0) : 0 };
-      if (dryRun) return res.json({ dryRun: true, apenas, ids: idsFiltro.length || null, wouldFix });
-
-      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND COALESCE(r.import_origin,'') <> 'omie_historico' AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
-      const pay: any = !fazPay ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND COALESCE(r.import_origin,'') <> 'omie_historico' AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
-      res.json({ dryRun: false, apenas, ids: idsFiltro.length || null, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
-    } catch (e: any) {
-      res.status(500).json({ error: e?.message || String(e) });
-    }
+  app.post('/api/admin/financial/repair-baixas', authenticateUser, isFinancialAuthorized, async (_req: any, res) => {
+    res.status(410).json({
+      error: 'Endpoint removido em 04/08/2026.',
+      motivo: 'Reescrevia amount_paid pela soma dos pagamentos: consolidava baixa duplicada e jogava a divida historica do legado (7.315 titulos, R$ 2.399.391,63) na tela de Debitos Vencidos e no alerta aos vendedores.',
+      useNoLugar: [
+        'GET /api/admin/financial/auditoria-baixas',
+        'POST /api/admin/financial/estornar-pagamentos-duplicados',
+        'POST /api/admin/financial/estornar-creditos-duplicados',
+        'GET /api/admin/financial/saldo-oficial',
+      ],
+    });
   });
 
   // ============================================================================
@@ -197,10 +199,10 @@ export function registerFinancialRoutes(app: Express) {
   // AUDITORIA DE BAIXAS (SOMENTE LEITURA — nao grava nada)
   // ----------------------------------------------------------------------------
   // Varre os recebiveis e devolve, separadas por tipo, as inconsistencias de baixa.
-  // Serve para conferir titulo a titulo ANTES de rodar qualquer reparo: o
-  // repair-baixas reescreve amount_paid a partir da SOMA dos pagamentos, entao se
-  // houver pagamento DUPLICADO ele consolidaria o erro. Por isso duplicidade e a
-  // primeira coisa checada aqui.
+  // Serve para conferir titulo a titulo ANTES de rodar qualquer reparo. Foi por
+  // este motivo que o repair-baixas foi REMOVIDO (ver acima): ele reescrevia
+  // amount_paid pela SOMA dos pagamentos e, havendo pagamento DUPLICADO,
+  // consolidava o erro. Por isso duplicidade e a primeira coisa checada aqui.
   //
   // GET /api/admin/financial/auditoria-baixas?limit=300&status=vencida
   //   status: 'vencida' | 'todas' (padrao 'todas')
