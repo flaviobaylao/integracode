@@ -148,6 +148,10 @@ export default function HotsiteOrders() {
     },
   });
 
+  // Papel do usuario logado — a lixeira na linha e exclusiva de ADMIN.
+  const { data: usuarioLogado } = useQuery<any>({ queryKey: ['/api/auth/user'] });
+  const ehAdmin = String((usuarioLogado as any)?.role || '') === 'admin';
+
   // Mutation para finalizar pedido
   const finalizeMutation = useMutation({
     mutationFn: async (orderId: string) => {
@@ -532,22 +536,20 @@ export default function HotsiteOrders() {
                           <TableCell>{getStatusBadge(order.status)}</TableCell>
                           <TableCell className="text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {order.status !== 'completed' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    finalizeMutation.mutate(order.id);
-                                  }}
-                                  disabled={finalizeMutation.isPending}
-                                  data-testid={`button-finalize-${order.id}`}
-                                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                  title="Finalizar pedido"
-                                >
-                                  <CheckCircle className="h-4 w-4" />
-                                </Button>
-                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSendToPipeline(order.id);
+                                }}
+                                disabled={sendToPipelineMutation.isPending}
+                                data-testid={`button-send-to-pipeline-${order.id}`}
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                title="Enviar para a faixa Pedidos do Pipeline"
+                              >
+                                <Send className="h-4 w-4" />
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -556,9 +558,27 @@ export default function HotsiteOrders() {
                                   setSelectedOrder(order);
                                 }}
                                 data-testid={`button-view-details-${order.id}`}
+                                title="Ver detalhes"
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
+                              {/* Lixeira: SOMENTE admin (o servidor tambem barra quem nao pode). */}
+                              {ehAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteOrder(order.id);
+                                  }}
+                                  disabled={deleteMutation.isPending}
+                                  data-testid={`button-delete-${order.id}`}
+                                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  title="Excluir pedido"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -798,15 +818,17 @@ export default function HotsiteOrders() {
                           {finalizeMutation.isPending ? 'Finalizando...' : 'Finalizar Pedido'}
                         </Button>
                       )}
-                      <Button
-                        variant="destructive"
-                        onClick={() => handleDeleteOrder(selectedOrder.id)}
-                        disabled={deleteMutation.isPending}
-                        data-testid="button-delete-order"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {deleteMutation.isPending ? 'Excluindo...' : 'Excluir Pedido'}
-                      </Button>
+                      {ehAdmin && (
+                        <Button
+                          variant="destructive"
+                          onClick={() => handleDeleteOrder(selectedOrder.id)}
+                          disabled={deleteMutation.isPending}
+                          data-testid="button-delete-order"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          {deleteMutation.isPending ? 'Excluindo...' : 'Excluir Pedido'}
+                        </Button>
+                      )}
                       <Button
                         variant="default"
                         onClick={() => handleSendToPipeline(selectedOrder.id)}
