@@ -1039,6 +1039,39 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         }
       }
 
+      // TRAVA: titulo em estado INCONSISTENTE nunca tem a cobranca cancelada.
+      // 'recebida' sem baixa, com saldo em aberto ou com baixa sem lastro bancario
+      // pode ser status errado — o dinheiro pode ainda ser devido, e cancelar a
+      // cobranca tiraria a cobranca de uma divida real. 'cancelada' com pagamento
+      // tambem e contraditorio. Esses vao para revisarManual.
+      const estadoTitulo: Record<string, any> = {};
+      for (const r of await linhas(sql`
+        WITH viva AS (
+          SELECT DISTINCT receivable_id AS rid FROM boleto_charges
+           WHERE deleted_at IS NULL AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO') AND receivable_id IS NOT NULL
+          UNION
+          SELECT DISTINCT receivable_id FROM pix_charges
+           WHERE deleted_at IS NULL AND status::text = 'ATIVA' AND receivable_id IS NOT NULL)
+        SELECT r.id AS rid, r.status::text AS st, r.amount::numeric AS amt,
+               COALESCE(r.amount_paid, 0)::numeric AS pago,
+               EXISTS (SELECT 1 FROM receivable_payments p WHERE p.receivable_id = r.id AND p.deleted_at IS NULL) AS tem_baixa,
+               EXISTS (SELECT 1 FROM receivable_payments p WHERE p.receivable_id = r.id AND p.deleted_at IS NULL AND p.financial_account_id IS NULL) AS sem_lastro
+        FROM viva JOIN receivables r ON r.id = viva.rid`)) {
+        estadoTitulo[String(r.rid)] = r;
+      }
+      const motivoInconsistente = (rid: any): string | null => {
+        const e = estadoTitulo[String(rid)];
+        if (!e) return null;
+        const amt = Number(e.amt || 0), pago = Number(e.pago || 0);
+        if (e.st === 'recebida') {
+          if (!e.tem_baixa) return 'titulo recebido SEM nenhuma baixa registrada';
+          if (pago < amt - 0.005) return 'titulo recebido mas com saldo em aberto (R$ ' + n2(amt - pago) + ')';
+          if (e.sem_lastro) return 'titulo recebido por baixa SEM lastro bancario';
+        }
+        if (e.st === 'cancelada' && pago > 0.005) return 'titulo cancelado mas com pagamento registrado (R$ ' + n2(pago) + ')';
+        return null;
+      };
+
       // Duplicada: por titulo EM ABERTO, fica a cobranca mais recente.
       const porTitulo: Record<string, any[]> = {};
       for (const c of vivos) if (c.rid) (porTitulo[String(c.rid)] ||= []).push(c);
@@ -1057,8 +1090,18 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         return null;
       };
 
+      const revisarManual: any[] = [];
       const alvos = vivos.map((c) => ({ ...c, categoria: classificar(c) }))
-        .filter((c) => c.categoria && cats.includes(c.categoria));
+        .filter((c) => c.categoria && cats.includes(c.categoria))
+        .filter((c) => {
+          const mot = motivoInconsistente(c.rid);
+          if (!mot) return true;
+          if (revisarManual.length < 80) revisarManual.push({
+            tipo: c.tipo, chave: c.chave, cliente: c.cliente || c.pagador, titulo: c.titulo,
+            valor: n2(c.valor), categoria: c.categoria, motivo: mot,
+          });
+          return false;
+        });
 
       const resumo: Record<string, { boleto: number; pix: number; valor: number }> = {};
       for (const c of alvos) {
@@ -1077,6 +1120,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (dryRun) {
         return res.json({
           dryRun: true, tipos, categorias: cats, total, resumo, amostra,
+          naoCancelaveis: revisarManual.length, revisarManual,
           vivosNoTotal: { boleto: vivos.filter((c) => c.tipo === 'boleto').length, pix: vivos.filter((c) => c.tipo === 'pix').length },
           pixSoNoSistema: 'Cancelar PIX aqui apenas marca o status no sistema; a cobranca NAO e removida no BB e um QR ja distribuido continua pagavel.',
           irreversivel: 'Aplicar da baixa no BB nos boletos — boleto baixado nao volta, so reemitindo.',
@@ -1113,7 +1157,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           after: { categorias: cats, tipos, ...out },
         });
       } catch (e: any) { /* trilha nao bloqueia */ }
-      res.json({ dryRun: false, tipos, categorias: cats, processadas: aplicar.length, restantes: Math.max(0, alvos.length - aplicar.length), ...out });
+      res.json({ dryRun: false, tipos, categorias: cats, processadas: aplicar.length, restantes: Math.max(0, alvos.length - aplicar.length), naoCancelaveis: revisarManual.length, revisarManual, ...out });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
