@@ -1304,13 +1304,13 @@ export function registerReconciliation(app: Express) {
       if (item.reconciliation_status !== "reconciled" && matches.length === 0) {
         return { ok: false, error: "item nao esta conciliado e nao tem vinculo com titulo — nada a desfazer", code: 409 };
       }
-      // ESPELHO fica de fora da abertura acima. Sao 117 linhas espelho que tem
-      // vinculo: desfazer ali marcaria a copia como 'pending' e ela voltaria para
-      // a fila de conciliacao — reintroduzindo a duplicata que o dedup colapsou.
-      // A reversao dessas tem que ser feita no lancamento CANONICO.
-      if (item.reconciliation_status !== "reconciled" && item.mirror_of) {
-        return { ok: false, error: "lancamento espelho (copia de outro extrato) — desfaca no lancamento de origem", code: 409 };
-      }
+      // ESPELHO COM VINCULO: a baixa foi feita contra a COPIA do lancamento (a
+      // conciliacao aconteceu antes de a linha virar espelho no dedup). Barrar aqui
+      // deixaria o titulo preso para sempre — foi o caso da conta de R$ 3.000 que
+      // nao desconciliava. Entao desfaz sim, mas o item NAO volta para 'pending':
+      // devolver a copia para a fila reintroduziria a duplicata que o dedup colapsou.
+      // Ele continua 'mirror'; o que sai e o vinculo e a baixa do titulo.
+      const ehEspelho = !!item.mirror_of;
       const reverted: any[] = [];
       // Vencido por DIA-CALENDÁRIO (fuso Brasil): ao desfazer a baixa, o título só volta a
       // 'vencida' se o vencimento JÁ PASSOU. Vence HOJE (ou futuro) volta a 'a_vencer'.
@@ -1370,9 +1370,14 @@ export function registerReconciliation(app: Express) {
         }
       }
       await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
-      await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_receivable_id=null, matched_payable_id=null, matched_at=null, matched_by=${by}, match_confidence=null, notes=null WHERE id=${id}`);
+      await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = ${ehEspelho ? 'mirror' : 'pending'},
+            matched_receivable_id = null, matched_payable_id = null, matched_at = null,
+            matched_by = ${by}, match_confidence = null, notes = null
+        WHERE id = ${id}`);
       await logReconAudit({ action: "undo", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: matches.map((m: any) => ({ receivable_id: m.receivable_id, payable_id: m.payable_id, amount: m.amount, settled: m.title_amount_settled })), by, details: { reverted } });
-      return { ok: true, status: "pending", reverted };
+      return { ok: true, status: ehEspelho ? "mirror" : "pending", reverted };
     }
   }
 
