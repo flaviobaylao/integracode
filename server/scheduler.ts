@@ -1035,6 +1035,12 @@ cron.schedule('40 8-19 * * 1-5', async () => {
     if (r.fail > 0) {
       console.warn('⚠️  [GARANTIR-COBRANCA] ' + r.fail + ' titulo(s) falharam ao emitir. Detalhe: POST /api/admin/financial/garantir-cobranca { "apply": false }');
     }
+    if ((r.bloqueados || []).length) {
+      // Falharam 3x seguidas e sairam da fila: quase sempre e cadastro do cliente
+      // (CNPJ do pagador invalido, endereco incompleto). So volta corrigindo o
+      // cadastro e rodando com { "destravar": true }.
+      console.warn('⚠️  [GARANTIR-COBRANCA] ' + r.bloqueados.length + ' titulo(s) BLOQUEADOS por falha repetida (corrija o cadastro e rode com destravar:true): ' + r.bloqueados.map((b: any) => b.titulo).join(', '));
+    }
   } catch (e: any) {
     console.error('[GARANTIR-COBRANCA] cron falhou:', e?.message || e);
   }

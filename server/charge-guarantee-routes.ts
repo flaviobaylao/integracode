@@ -93,6 +93,7 @@ export function registerChargeGuarantee(app: Express) {
         apply: req.body?.apply === true,
         sinceISO: req.body?.sinceISO,
         cutoffReset: req.body?.cutoffReset === true,
+        destravar: req.body?.destravar === true,
         limit: Number(req.body?.limit) || 200,
       });
       res.json(out);
@@ -123,7 +124,7 @@ export function registerChargeGuarantee(app: Express) {
 // aparecem em `naoEmitem`, para nao sumirem sem explicacao.
 // ---------------------------------------------------------------------------
 export async function runGarantirCobranca(opts: {
-  apply?: boolean; sinceISO?: string; cutoffReset?: boolean; limit?: number;
+  apply?: boolean; sinceISO?: string; cutoffReset?: boolean; limit?: number; destravar?: boolean;
 } = {}): Promise<any> {
   const apply = opts.apply === true;
   const limit = Math.min(Math.max(Number(opts.limit) || 200, 1), 500);
@@ -170,9 +171,25 @@ export async function runGarantirCobranca(opts: {
       AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)`);
   const naoEmitem = Number(semEmissao?.rows?.[0]?.n || 0);
 
+  // BACKOFF POR TITULO. Emissao que falha por DADO (ex.: "O CNPJ informado para o
+  // pagador esta invalido") vai falhar de novo em toda rodada. Num cron de hora em
+  // hora isso repete o mesmo erro 12x por dia e afoga a falha nova no meio do ruido.
+  // Depois de MAX_TENTATIVAS o titulo sai da fila e passa a aparecer em `bloqueados`
+  // com o erro — que e onde alguem consegue agir: corrigir o cadastro do cliente.
+  // Sucesso limpa o contador; { "destravar": true } zera todos.
+  const MAX_TENTATIVAS = 3;
+  let falhas: Record<string, { n: number; erro: string; titulo?: string; at: string }> = {};
+  try { falhas = JSON.parse((await getSetting("charge_guarantee_falhas")) || "{}"); } catch { falhas = {}; }
+  if (opts.destravar) falhas = {};
+  const travado = (r: any) => (falhas[String(r.id)]?.n || 0) >= MAX_TENTATIVAS;
+  const bloqueados = list.filter(travado).map((r: any) => ({
+    titulo: r.title_number, tentativas: falhas[String(r.id)].n, erro: falhas[String(r.id)].erro,
+  }));
+  const fila = list.filter((r: any) => !travado(r));
+
   let ok = 0, skipped = 0, fail = 0; const detalhes: any[] = [];
   if (apply) {
-    for (const r of list) {
+    for (const r of fila) {
       const receivable = {
         id: r.id, amount: r.amount, dueDate: r.due_date,
         customerName: r.customer_name, customerDocument: r.customer_document,
@@ -189,12 +206,23 @@ export async function runGarantirCobranca(opts: {
         const res1 = fm === "boleto"
           ? await generateBoletoForReceivable(receivable, item)
           : await generatePixForReceivable(receivable, item);
-        if (res1?.ok) { ok++; detalhes.push({ titulo: r.title_number, forma: fm, ok: true }); }
+        if (res1?.ok) { ok++; delete falhas[String(r.id)]; detalhes.push({ titulo: r.title_number, forma: fm, ok: true }); }
         else if (res1?.skipped) { skipped++; detalhes.push({ titulo: r.title_number, forma: fm, skipped: true }); }
-        else { fail++; detalhes.push({ titulo: r.title_number, forma: fm, erro: res1?.error }); }
-      } catch (e: any) { fail++; detalhes.push({ titulo: r.title_number, forma: fm, erro: e?.message }); }
+        else {
+          fail++;
+          const msg = String(res1?.error || 'falha sem mensagem').slice(0, 300);
+          falhas[String(r.id)] = { n: (falhas[String(r.id)]?.n || 0) + 1, erro: msg, titulo: r.title_number, at: new Date().toISOString() };
+          detalhes.push({ titulo: r.title_number, forma: fm, erro: msg, tentativa: falhas[String(r.id)].n });
+        }
+      } catch (e: any) {
+        fail++;
+        const msg = String(e?.message || e).slice(0, 300);
+        falhas[String(r.id)] = { n: (falhas[String(r.id)]?.n || 0) + 1, erro: msg, titulo: r.title_number, at: new Date().toISOString() };
+        detalhes.push({ titulo: r.title_number, forma: fm, erro: msg, tentativa: falhas[String(r.id)].n });
+      }
     }
-    await setSetting("charge_guarantee_last", JSON.stringify({ at: new Date().toISOString(), candidatos: list.length, ok, skipped, fail, naoEmitem }));
+    await setSetting("charge_guarantee_falhas", JSON.stringify(falhas));
+    await setSetting("charge_guarantee_last", JSON.stringify({ at: new Date().toISOString(), candidatos: fila.length, ok, skipped, fail, naoEmitem, bloqueados: bloqueados.length }));
   }
-  return { apply, cutoff, since, limite: limit, candidatos: list.length, naoEmitem, ok, skipped, fail, detalhes: detalhes.slice(0, 50) };
+  return { apply, cutoff, since, limite: limit, candidatos: fila.length, naoEmitem, bloqueados, ok, skipped, fail, detalhes: detalhes.slice(0, 50) };
 }
