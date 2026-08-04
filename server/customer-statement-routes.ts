@@ -65,6 +65,41 @@ function diffDays(a: string | null, b: string | null): number | null {
   return isNaN(d) ? null : d;
 }
 
+// ── Régua oficial de vencimento (ver Correcao_Vencimento_Hoje_Nao_E_Vencida.md,
+// 27/jul/2026): o vencimento é uma DATA DE CALENDÁRIO gravada como meia-noite UTC,
+// e é lido em UTC — exatamente o dia que a tela mostra. HOJE é lido em
+// America/Sao_Paulo. Título que vence HOJE, a qualquer hora, NÃO é vencido:
+// só atrasa depois que o dia do vencimento passa.
+function diaUTC(v: any): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-CA", { timeZone: "UTC" });
+}
+
+function diaBR(v: any): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+function hojeBR(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+function estaVencido(vencimento: any, hoje: string): boolean {
+  const dia = diaUTC(vencimento);
+  return !!dia && dia < hoje;
+}
+
+// Diferença em DIAS DE CALENDÁRIO entre dois dias no formato YYYY-MM-DD.
+function diffDias(a: string | null, b: string | null): number | null {
+  if (!a || !b) return null;
+  const d = Math.round((new Date(`${a}T00:00:00Z`).getTime() - new Date(`${b}T00:00:00Z`).getTime()) / 86400000);
+  return isNaN(d) ? null : d;
+}
+
 const ORIGEM_LABEL: Record<string, string> = {
   financeiro: "Financeiro",
   nfe: "NF-e emitida",
@@ -398,12 +433,13 @@ export function registerCustomerStatementRoutes(app: Express): void {
 
       // ── Constrói as linhas do extrato ──────────────────────────────────────
       const hoje = new Date();
+      const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
       for (const n of Array.from(notas.values())) {
         const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
         const saldoTitulo = Math.max(0, n.valor - n.pago);
-        const vencido = !cancelada && saldoTitulo > 0.009 && n.vencimento && new Date(n.vencimento) < hoje;
+        const vencido = !cancelada && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
         const situacao = cancelada
           ? "Cancelada"
           : saldoTitulo <= 0.009
@@ -457,7 +493,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           situacao,
           origem: n.origem,
           cancelada,
-          diasAtraso: vencido ? diffDays(hoje.toISOString(), n.vencimento) : null,
+          diasAtraso: vencido ? diffDias(hojeDia, diaUTC(n.vencimento)) : null,
           formaPagamento: null,
           estimado: false,
           detalhe: {
@@ -501,7 +537,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
                 formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
                 conta: p.account_name || null,
                 estimado: false,
-                diasAtraso: diffDays(toISO(p.paid_at), toISO(t.due_date)),
+                diasAtraso: diffDias(diaBR(p.paid_at), diaUTC(t.due_date)),
                 detalhe: {
                   tipo: "PAGAMENTO",
                   pagoEm: toISO(p.paid_at),
@@ -514,7 +550,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
                   pedido: n.pedido || null,
                   tituloNumero: String(t.title_number || "").trim() || null,
                   tituloVencimento: toISO(t.due_date),
-                  diasAtraso: diffDays(toISO(p.paid_at), toISO(t.due_date)),
+                  diasAtraso: diffDias(diaBR(p.paid_at), diaUTC(t.due_date)),
                   estimado: false,
                 },
               });
@@ -588,7 +624,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const totalFaturado = notasArr.reduce((s, n) => s + n.valor, 0);
       const totalPago = linhas.filter((l) => l.tipo === "PAGAMENTO").reduce((s, l) => s + l.credito, 0);
       const abertos = notasArr.filter((n) => n.valor - n.pago > 0.009);
-      const vencidos = abertos.filter((n) => n.vencimento && new Date(n.vencimento) < hoje);
+      const vencidos = abertos.filter((n) => estaVencido(n.vencimento, hojeDia));
       const datas = notasArr.map((n) => n.data).filter(Boolean).sort() as string[];
       const atrasos = linhas
         .filter((l) => l.tipo === "PAGAMENTO" && !l.estimado && l.diasAtraso !== null)
@@ -601,7 +637,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
         totalVencido: Math.round(vencidos.reduce((s, n) => s + (n.valor - n.pago), 0) * 100) / 100,
         totalAVencer:
           Math.round(
-            abertos.filter((n) => !(n.vencimento && new Date(n.vencimento) < hoje)).reduce((s, n) => s + (n.valor - n.pago), 0) * 100
+            abertos.filter((n) => !estaVencido(n.vencimento, hojeDia)).reduce((s, n) => s + (n.valor - n.pago), 0) * 100
           ) / 100,
         qtdNotas: notasArr.length,
         qtdNotasAbertas: abertos.length,
