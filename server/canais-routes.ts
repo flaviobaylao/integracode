@@ -124,7 +124,7 @@ export function registerCanaisRoutes(app: Express): void {
         SELECT sc.id, sc.created_at, sc.scheduled_date, sc.status, sc.sale_value, sc.payment_method,
                sc.products, sc.notes, sc.customer_id,
                c.name AS cliente, c.fantasy_name AS cliente_fantasia, c.phone AS telefone,
-               c.cpf, c.cnpj, c.omie_code,
+               c.cpf, c.cnpj,
                bp.id AS pipeline_id, bp.stage AS etapa, bp.order_number AS pipeline_numero,
                (SELECT 1 FROM blocked_orders bo WHERE bo.sales_card_id = sc.id AND bo.status='blocked' LIMIT 1) AS bloqueado
         FROM sales_cards sc
