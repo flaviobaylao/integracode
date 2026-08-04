@@ -166,8 +166,8 @@ export function registerFinancialRoutes(app: Express) {
       const wouldFix = { receivables: fazRcv ? (rcvPrev.rows?.[0]?.n ?? 0) : 0, payables: fazPay ? (payPrev.rows?.[0]?.n ?? 0) : 0 };
       if (dryRun) return res.json({ dryRun: true, apenas, ids: idsFiltro.length || null, wouldFix });
 
-      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
-      const pay: any = !fazPay ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
+      const rcv: any = !fazRcv ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE receivables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'recebida' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT receivable_id, sum(amount::numeric) total FROM receivable_payments WHERE deleted_at IS NULL GROUP BY receivable_id) p WHERE r.id = p.receivable_id AND r.deleted_at IS NULL AND COALESCE(r.import_origin,'') <> 'omie_historico' AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'recebida'))" + filtroId));
+      const pay: any = !fazPay ? { rowCount: 0 } : await db.execute(sql.raw("UPDATE payables r SET amount_paid = p.total, status = (CASE WHEN p.total >= r.amount::numeric THEN 'paga' WHEN (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' ELSE 'a_vencer' END)::payable_status, updated_at = now(), updated_by = 'repair-baixas' FROM (SELECT payable_id, sum(amount::numeric) total FROM payable_payments GROUP BY payable_id) p WHERE r.id = p.payable_id AND r.deleted_at IS NULL AND COALESCE(r.import_origin,'') <> 'omie_historico' AND r.status <> 'cancelada' AND (r.amount_paid::numeric IS DISTINCT FROM p.total OR (p.total >= r.amount::numeric AND r.status <> 'paga'))" + filtroId));
       res.json({ dryRun: false, apenas, ids: idsFiltro.length || null, fixed: { receivables: rcv.rowCount ?? null, payables: pay.rowCount ?? null } });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || String(e) });
@@ -1158,6 +1158,117 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         });
       } catch (e: any) { /* trilha nao bloqueia */ }
       res.json({ dryRun: false, tipos, categorias: cats, processadas: aplicar.length, restantes: Math.max(0, alvos.length - aplicar.length), naoCancelaveis: revisarManual.length, revisarManual, ...out });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
+  // ============================================================================
+  // MARCAR A DIVIDA HISTORICA (importada do sistema antigo) — item 4
+  // POST /api/admin/financial/marcar-divida-historica { dryRun, desfazer, lote }
+  //
+  // Decisao do Flavio (04/ago/2026): "sao historico os itens criados sem origem".
+  // "Sem origem" = o titulo nao nasceu no 2.0:
+  //     created_by IS NULL  AND  billing_pipeline_id IS NULL
+  //     AND fiscal_invoice_id IS NULL  AND  import_origin IS NULL
+  //
+  // EXCECAO: titulo cujo numero comeca com 'NF-' NAO e marcado. Esse formato so e
+  // gerado pelo faturamento do 2.0 (o legado usa numeracao puramente numerica, tipo
+  // 00025644). Sao 47 titulos que perderam o vinculo com o pipeline/NF-e mas sao
+  // divida REAL e recente — 7 deles estao em aberto (R$ 855,50, vencimentos de
+  // mai/2026). Marca-los esconderia divida legitima da cobranca para sempre.
+  //
+  // Marcar import_origin='omie_historico' tira o titulo da cobranca em TODO o
+  // sistema de uma vez, porque a regra ja existe em todos os pontos: tela de
+  // Debitos Vencidos, alerta ao vendedor, IA de cobranca, ranking de debito e
+  // relatorios oficiais.
+  //
+  // REVERSIVEL: grava import_batch_id com o lote; { desfazer: true, lote } volta
+  // import_origin/import_batch_id para NULL apenas do lote informado, sem tocar
+  // nos 47.694 titulos que ja vieram marcados do importador do Omie.
+  // dryRun por padrao.
+  // ============================================================================
+  app.post('/api/admin/financial/marcar-divida-historica', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const desfazer = req.body?.desfazer === true;
+      const lote = String(req.body?.lote || 'auditoria-historico').slice(0, 60);
+      const ator = actorOf(req);
+      const por = String(ator.email || ator.id || 'auditoria-financeira').slice(0, 120);
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      if (desfazer) {
+        if (dryRun) {
+          const p = await linhas(sql`
+            SELECT count(*) AS n FROM receivables
+            WHERE import_batch_id = ${lote} AND COALESCE(import_origin, '') = 'omie_historico'`);
+          return res.json({ dryRun: true, desfazer: true, lote, titulos: Number(p[0]?.n || 0) });
+        }
+        const u: any = await db.execute(sql`
+          UPDATE receivables SET import_origin = NULL, import_batch_id = NULL, updated_by = ${por}, updated_at = now()
+          WHERE import_batch_id = ${lote} AND COALESCE(import_origin, '') = 'omie_historico'`);
+        const n = Number(u?.rowCount ?? 0);
+        try { await logFinancialAudit({ req, action: 'update', entity: 'receivables', note: 'Desfeita a marcacao de divida historica do lote ' + lote + ': ' + n + ' titulo(s)' }); } catch (e: any) { }
+        return res.json({ dryRun: false, desfazer: true, lote, titulos: n });
+      }
+
+      const CRITERIO = sql`
+        deleted_at IS NULL
+        AND import_origin IS NULL
+        AND created_by IS NULL
+        AND billing_pipeline_id IS NULL
+        AND fiscal_invoice_id IS NULL
+        AND COALESCE(title_number, '') NOT LIKE 'NF-%'`;
+
+      const previa = await linhas(sql`
+        SELECT count(*) AS total,
+               round(COALESCE(sum(amount::numeric - COALESCE(amount_paid, 0)::numeric), 0), 2) AS saldo,
+               count(*) FILTER (WHERE status = 'recebida') AS recebida,
+               count(*) FILTER (WHERE status IN ('a_vencer', 'vencida')) AS em_aberto,
+               count(*) FILTER (WHERE status = 'cancelada') AS cancelada,
+               min(due_date)::date AS vence_de, max(due_date)::date AS vence_ate
+        FROM receivables WHERE ${CRITERIO}`);
+
+      // Quanto sai da cobranca de hoje (o que o vendedor deixa de ver)
+      const saiDaCobranca = await linhas(sql`
+        SELECT count(*) AS titulos,
+               round(COALESCE(sum(amount::numeric - COALESCE(amount_paid, 0)::numeric), 0), 2) AS saldo
+        FROM receivables
+        WHERE ${CRITERIO}
+          AND status IN ('a_vencer', 'vencida')
+          AND (amount::numeric - COALESCE(amount_paid, 0)::numeric) > 0.005
+          AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
+
+      const resumo = {
+        titulos: Number(previa[0]?.total || 0), saldo: n2(previa[0]?.saldo),
+        porStatus: { recebida: Number(previa[0]?.recebida || 0), emAberto: Number(previa[0]?.em_aberto || 0), cancelada: Number(previa[0]?.cancelada || 0) },
+        vencimentoDe: previa[0]?.vence_de || null, vencimentoAte: previa[0]?.vence_ate || null,
+        saiDaCobrancaHoje: { titulos: Number(saiDaCobranca[0]?.titulos || 0), saldo: n2(saiDaCobranca[0]?.saldo) },
+      };
+
+      if (dryRun) {
+        const amostra = await linhas(sql`
+          SELECT title_number AS titulo, customer_name AS cliente, status::text AS status,
+                 round(amount::numeric - COALESCE(amount_paid, 0)::numeric, 2) AS saldo, (due_date)::date AS vence
+          FROM receivables WHERE ${CRITERIO} ORDER BY due_date DESC LIMIT 20`);
+        return res.json({ dryRun: true, lote, criterio: 'sem created_by, sem pipeline, sem NF-e, sem import_origin e numero de titulo fora do padrao NF-', resumo, amostra });
+      }
+
+      const u: any = await db.execute(sql`
+        UPDATE receivables
+        SET import_origin = 'omie_historico', import_batch_id = ${lote}, updated_by = ${por}, updated_at = now()
+        WHERE ${CRITERIO}`);
+      const marcados = Number(u?.rowCount ?? 0);
+      try {
+        await logFinancialAudit({
+          req, action: 'update', entity: 'receivables', amount: resumo.saldo,
+          note: 'Divida historica marcada (lote ' + lote + '): ' + marcados + ' titulo(s), saldo R$ ' + resumo.saldo +
+            '. Saiu da cobranca de hoje: ' + resumo.saiDaCobrancaHoje.titulos + ' titulo(s) / R$ ' + resumo.saiDaCobrancaHoje.saldo + '.',
+          after: { lote, marcados, resumo },
+        });
+      } catch (e: any) { }
+      res.json({ dryRun: false, lote, marcados, resumo, comoDesfazer: 'POST mesma rota com { "desfazer": true, "lote": "' + lote + '", "dryRun": false }' });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
