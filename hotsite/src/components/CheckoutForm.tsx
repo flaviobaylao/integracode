@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HonestLogo } from './HonestLogo';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { api } from '../utils/api';
@@ -29,6 +29,22 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   });
   
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
+
+  // CARTAO SOB CHAVE GERAL (03/ago/2026): a opcao so aparece se o servidor disser que o
+  // cartao esta habilitado (/api/public/orders/card/config -> enabled). Enquanto a credencial
+  // da Cielo estiver recusando, o checkout nao oferece cartao — evita o cliente "pagar" e o
+  // pedido nem existir. Em caso de falha na consulta, assume DESLIGADO (fail-safe).
+  const [cardEnabled, setCardEnabled] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    fetch('/api/public/orders/card/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => { if (vivo) setCardEnabled(!!cfg?.enabled); })
+      .catch(() => { if (vivo) setCardEnabled(false); });
+    return () => { vivo = false; };
+  }, []);
+  // Se o cartao cair enquanto a tela esta aberta, volta para PIX.
+  useEffect(() => { if (!cardEnabled && paymentMethod === 'card') setPaymentMethod('pix'); }, [cardEnabled, paymentMethod]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   
   // Estados para validação de CPF/CNPJ
@@ -590,7 +606,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     <span className="text-2xl">💳</span>
                   </label>
 
-                  {customerType === 'pessoa_fisica' && (
+                  {customerType === 'pessoa_fisica' && cardEnabled && (
                     <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
                       <input
                         type="radio"
