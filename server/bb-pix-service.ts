@@ -488,6 +488,60 @@ async function processPixPayment(
   }
 }
 
+// ============================================================================
+// REMOVER a cobranca PIX NO BANCO (nao so no nosso banco de dados)
+//
+// O sistema "cancelava" PIX gravando status REMOVIDA_PELO_USUARIO_RECEBEDOR na
+// nossa tabela — e so. A cob continuava ATIVA no BB, entao um QR ja entregue ao
+// cliente seguia pagavel: dinheiro entrando sem titulo a baixar, que e a origem
+// da familia de baixas duplicadas.
+//
+// Aqui a remocao e feita de verdade, pela API Pix do BB:
+//   GET  /cob|/cobv/{txid}  -> so mexe se estiver ATIVA no banco
+//   PATCH /cob|/cobv/{txid} {"status":"REMOVIDA_PELO_USUARIO_RECEBEDOR"}
+//
+// Nunca remove cobranca CONCLUIDA. Se o BB responder CONCLUIDA, isso e um ACHADO:
+// o cliente pagou e o sistema nao processou — devolvido como `paga` para o
+// operador tratar, jamais silenciado.
+// ============================================================================
+export async function removerCobrancaPix(charge: any): Promise<{
+  ok: boolean; jaRemovida?: boolean; paga?: boolean; statusBanco?: string; erro?: string;
+}> {
+  try {
+    const accountId = charge.financialAccountId || charge.financial_account_id;
+    const txid = String(charge.txid || '');
+    const tipo = String(charge.chargeType || charge.charge_type || 'imediata');
+    if (!accountId || !txid) return { ok: false, erro: 'cobranca sem conta ou sem txid' };
+    const account = await storage.getFinancialAccount(accountId);
+    if (!account) return { ok: false, erro: 'conta financeira nao encontrada' };
+
+    const token = await getAccessToken(account);
+    const client = await createApiClient(account);
+    const rota = (tipo === 'com_vencimento' ? '/cobv/' : '/cob/') + txid;
+
+    let statusBanco: string | undefined;
+    try {
+      const r = await client.get(rota, { headers: { Authorization: `Bearer ${token}` } });
+      statusBanco = r.data?.status;
+    } catch (e: any) {
+      const code = e?.response?.status;
+      // 404 = o BB nao conhece esse txid; nao ha cobranca viva a remover.
+      if (code === 404) return { ok: true, jaRemovida: true, statusBanco: 'NAO_ENCONTRADA' };
+      return { ok: false, erro: 'consulta falhou: ' + String(e?.response?.data?.detail || e?.message || e).slice(0, 140) };
+    }
+
+    if (statusBanco === 'CONCLUIDA') return { ok: false, paga: true, statusBanco, erro: 'cobranca PAGA no banco - nao pode ser removida' };
+    if (statusBanco && statusBanco !== 'ATIVA') return { ok: true, jaRemovida: true, statusBanco };
+
+    await client.patch(rota, { status: 'REMOVIDA_PELO_USUARIO_RECEBEDOR' }, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { ok: true, statusBanco: 'REMOVIDA_PELO_USUARIO_RECEBEDOR' };
+  } catch (e: any) {
+    return { ok: false, erro: String(e?.response?.data?.detail || e?.message || e).slice(0, 160) };
+  }
+}
+
 export async function configureWebhook(accountId: string, webhookUrl: string): Promise<void> {
   const account = await storage.getFinancialAccount(accountId);
   if (!account) throw new Error('Conta financeira não encontrada');

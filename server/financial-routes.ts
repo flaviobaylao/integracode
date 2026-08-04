@@ -5,6 +5,7 @@ import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { cancelarBoleto } from './bb-boleto-service';
 import { lancarNaConta } from './account-ledger';
+import { removerCobrancaPix } from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
@@ -1374,6 +1375,84 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         } catch (e: any) { }
       }
       res.json({ dryRun: false, aplicados: aplicados.length, contas: aplicados, naoAplicaveis: plano.filter((x) => !x.aplicavel) });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
+  // ============================================================================
+  // REMOVER NO BANCO as cobrancas PIX que so foram canceladas no sistema
+  // POST /api/admin/financial/pix/remover-no-banco { dryRun, limit, accountId }
+  //
+  // Fecha o buraco do item 3: cancelar PIX no sistema NAO removia a cob no BB, e
+  // um QR ja entregue continuava pagavel. Alvo: cobranca cujo titulo NAO justifica
+  // cobranca (recebido, cancelado ou inexistente) e que esteja marcada ATIVA ou
+  // REMOVIDA_PELO_USUARIO_RECEBEDOR aqui — a consulta ao BB e que decide.
+  //
+  // Nunca remove cobranca CONCLUIDA. Se o BB responder CONCLUIDA, a cobranca foi
+  // PAGA e o sistema nao processou: sai em `pagasNoBanco` para o operador tratar.
+  // dryRun por padrao. Processa em lote (cada cobranca custa 1 GET + 1 PATCH).
+  // ============================================================================
+  app.post('/api/admin/financial/pix/remover-no-banco', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 25, 1), 200);
+      const accountId = (req.body?.accountId as string) || null;
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      const alvos = await linhas(sql`
+        SELECT p.id, p.txid, p.charge_type, p.financial_account_id, p.status::text AS status_local,
+               p.amount::numeric AS valor, p.debtor_name AS pagador,
+               r.title_number AS titulo, r.status::text AS titulo_status, r.customer_name AS cliente
+        FROM pix_charges p LEFT JOIN receivables r ON r.id = p.receivable_id
+        WHERE p.deleted_at IS NULL
+          AND p.status::text IN ('ATIVA', 'REMOVIDA_PELO_USUARIO_RECEBEDOR')
+          AND (p.receivable_id IS NULL OR r.status::text IN ('recebida', 'cancelada'))
+          AND (${accountId}::text IS NULL OR p.financial_account_id = ${accountId})
+        ORDER BY p.created_at DESC`);
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          candidatos: alvos.length,
+          valor: n2(alvos.reduce((s, a) => s + Number(a.valor || 0), 0)),
+          porStatusLocal: alvos.reduce((m: any, a) => { m[a.status_local] = (m[a.status_local] || 0) + 1; return m; }, {}),
+          amostra: alvos.slice(0, 20).map((a) => ({
+            txid: a.txid, cliente: a.cliente || a.pagador, titulo: a.titulo,
+            tituloStatus: a.titulo_status || 'sem titulo', valor: n2(a.valor), statusLocal: a.status_local,
+          })),
+          observacao: 'Cada cobranca custa 1 GET + 1 PATCH na API do BB. Use limit para processar em lotes.',
+        });
+      }
+
+      const lote = alvos.slice(0, limit);
+      const out = { removidas: 0, jaRemovidas: 0, falhas: 0 };
+      const pagasNoBanco: any[] = [];
+      const erros: any[] = [];
+      for (const a of lote) {
+        const r = await removerCobrancaPix({
+          txid: a.txid, chargeType: a.charge_type, financialAccountId: a.financial_account_id,
+        });
+        if (r.paga) {
+          pagasNoBanco.push({ txid: a.txid, cliente: a.cliente || a.pagador, titulo: a.titulo, valor: n2(a.valor) });
+          continue;
+        }
+        if (!r.ok) { out.falhas++; if (erros.length < 20) erros.push({ txid: a.txid, erro: r.erro }); continue; }
+        if (r.jaRemovida) out.jaRemovidas++; else out.removidas++;
+        await db.execute(sql`
+          UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR', updated_at = now()
+          WHERE id = ${a.id} AND status::text <> 'CONCLUIDA'`);
+      }
+      try {
+        await logFinancialAudit({
+          req, action: 'reverse', entity: 'pix_charges', amount: n2(lote.reduce((s, a) => s + Number(a.valor || 0), 0)),
+          note: 'Remocao de cobranca PIX no BB: ' + out.removidas + ' removida(s), ' + out.jaRemovidas +
+            ' ja estavam fora, ' + out.falhas + ' falha(s), ' + pagasNoBanco.length + ' PAGA(s) no banco sem processamento.',
+          after: { ...out, pagasNoBanco: pagasNoBanco.length },
+        });
+      } catch (e: any) { }
+      res.json({ dryRun: false, processadas: lote.length, restantes: Math.max(0, alvos.length - lote.length), ...out, pagasNoBanco, erros });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
     }
