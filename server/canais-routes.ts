@@ -6,6 +6,7 @@
 //
 //   GET  /api/canais/resumo                 -> contadores dos 2 canais
 //   GET  /api/canais/pedidos?canal=...      -> pedidos do canal (sales_cards)
+//   DELETE /api/canais/pedidos/:id          -> exclui pedido do canal (SOMENTE admin)
 //   GET  /api/canais/hotsite/config         -> regras do canal Hotsite
 //   POST /api/canais/hotsite/config         -> grava as regras
 //   GET  /api/canais/hotsite/pagamentos     -> status REAL dos meios de pagamento
@@ -139,6 +140,43 @@ export function registerCanaisRoutes(app: Express): void {
       }));
       res.json({ ok: true, canal, total: rows.length, pedidos: rows });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // ====================== EXCLUIR PEDIDO DO CANAL (SOMENTE ADMIN) ======================
+  // Espelha o DELETE /api/hotsite-orders/:id, mas vale para os DOIS canais e e restrito
+  // ao papel admin (o do hotsite aceita admin/coordinator/administrative).
+  // Acao DELIBERADA de admin sobre UM pedido especifico.
+  // ATENCAO (04/ago/2026): storage.deleteSalesCard(id) hoje apaga direto — a blindagem
+  // "card com venda e PEDIDO, nao agenda" (28/jul, camada 1) NAO esta mais no storage.ts;
+  // sobrou apenas no visitScheduleService. Quando ela for restaurada, este endpoint
+  // precisara passar a opcao de force para continuar funcionando.
+  // Marca 'deleted_by_admin' no diario para o detector de pedido sumido NAO ressuscitar.
+  app.delete('/api/canais/pedidos/:id', authenticateUser, async (req: any, res) => {
+    try {
+      const u = req.currentUser || req.user;
+      if (!u || String(u.role) !== 'admin') {
+        return res.status(403).json({ message: 'Somente administradores podem excluir pedidos do canal.' });
+      }
+      const id = String(req.params.id);
+      const { storage } = await import('./storage');
+      const card: any = await storage.getSalesCard(id);
+      if (!card) return res.status(404).json({ message: 'Pedido não encontrado' });
+      if (!['hotsite', 'instagram'].includes(String(card.source || ''))) {
+        return res.status(400).json({ message: 'Este pedido não é de um canal digital' });
+      }
+
+      await storage.deleteSalesCard(id);
+      try {
+        const { journalMarkDeleted } = await import('./order-journal');
+        await journalMarkDeleted(id, u.email);
+      } catch (e: any) { console.warn('[CANAIS-DELETE] journal (segue):', e?.message); }
+
+      console.log(`🗑️ [CANAIS-DELETE] pedido ${id} (${card.source}) excluído por ${u.email}`);
+      res.json({ ok: true, message: 'Pedido excluído.' });
+    } catch (e: any) {
+      console.error('❌ [CANAIS-DELETE]', e?.message || e);
+      res.status(500).json({ message: e?.message || String(e) });
+    }
   });
 
   // ====================== HOTSITE — CONFIG ======================
