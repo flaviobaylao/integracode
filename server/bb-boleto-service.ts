@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { storage } from './storage';
+import { lancarNaConta } from './account-ledger';
 import type { FinancialAccount } from '@shared/schema';
 import { nowBrazil } from './brazilTimezone';
 
@@ -630,14 +631,15 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
   }
   if (account && done.length > 0 && creditAmount > 0.005) {
     try {
-      const cur = parseFloat(account.balance || '0'); const nb = cur + creditAmount;
-      await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
-      await storage.createAccountMovement({
-        financialAccountId: account.id, type: 'credito', amount: creditAmount.toFixed(2), balanceAfter: nb.toFixed(2),
-        description: `Boleto recebido BB${isRepair ? ' [reparo]' : ''} - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}${targets.length > 1 ? ` (${targets.length} titulos)` : ''}`,
+      // Saldo e movimento numa transacao so, com idempotencia por nosso numero
+      // (ver server/account-ledger.ts). Este era o ponto que creditou a mesma
+      // cobranca ate 13 vezes e quebrou 344 elos da cadeia de balance_after.
+      await lancarNaConta({
+        accountId: account.id, tipo: 'credito', valor: creditAmount,
+        descricao: `Boleto recebido BB${isRepair ? ' [reparo]' : ''} - ${charge.debtor_name || 'N/A'} - nosso ${charge.nosso_numero}${targets.length > 1 ? ` (${targets.length} titulos)` : ''}`,
         sourceType: 'boleto_charge', sourceId: charge.id, reference: charge.nosso_numero || null,
-        omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema',
-      } as any);
+        omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema', idempotente: true,
+      });
     } catch (e: any) { console.warn('[BB-BOLETO] movimento de conta falhou:', e?.message); }
   }
 

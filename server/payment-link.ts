@@ -35,6 +35,7 @@ import {
 } from './hotsite-card';
 import { storage } from './storage';
 import { cancelarBoleto } from './bb-boleto-service';
+import { lancarNaConta } from './account-ledger';
 import {
   cieloLinkEnabled,
   createCieloLink,
@@ -370,19 +371,13 @@ async function settleReceivableByLink(link: any, sale: any, opts: { last4?: stri
         // so logava — e o saldo ja tinha subido na linha anterior. Resultado: todo
         // pagamento por link inflava o saldo sem deixar rastro no extrato interno.
         // O movimento agora e gravado PRIMEIRO: se ele falhar, o saldo nao sobe.
-        const cur = parseFloat(account.balance || '0');
-        const nb = cur + paid;
-        await storage.createAccountMovement({
-          financialAccountId: account.id,
-          type: 'credito' as any,
-          amount: paid.toFixed(2),
-          balanceAfter: nb.toFixed(2),
-          description: `Recebimento por link de pagamento (cartao) - titulo ${receivable.titleNumber || receivableId}`,
-          sourceType: 'receivable',
-          sourceId: receivableId,
-          createdBy: 'link-pagamento',
-        } as any);
-        await storage.updateFinancialAccount(account.id, { balance: nb.toFixed(2) } as any);
+        // Saldo e movimento numa transacao so (ver server/account-ledger.ts).
+        await lancarNaConta({
+          accountId: account.id, tipo: 'credito', valor: paid,
+          descricao: `Recebimento por link de pagamento (cartao) - titulo ${receivable.titleNumber || receivableId}`,
+          sourceType: 'receivable', sourceId: receivableId, reference: receivableId,
+          createdBy: 'link-pagamento', idempotente: true,
+        });
       } catch (e: any) { console.warn('⚠️ [PAY-LINK] credito na conta falhou:', e?.message || e); }
     }
 

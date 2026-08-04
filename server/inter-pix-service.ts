@@ -2,6 +2,7 @@ import https from 'https';
 import axios, { AxiosInstance } from 'axios';
 import QRCode from 'qrcode';
 import { storage } from './storage';
+import { lancarNaConta } from './account-ledger';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import type { FinancialAccount, PixCharge } from '@shared/schema';
@@ -364,26 +365,13 @@ async function processPixPayment(
     } catch (e: any) { /* tolerante: o indice unico ainda protege */ }
   }
 
-  const currentBalance = parseFloat(account.balance || '0');
-  const newBalance = currentBalance + paidAmount;
-
-  // FIX (ordem): movimento ANTES do saldo — se falhar, o saldo nao sobe sem rastro.
-  await storage.createAccountMovement({
-    financialAccountId: account.id,
-    type: 'credito',
-    amount: paidAmount.toFixed(2),
-    balanceAfter: newBalance.toFixed(2),
-    description: `PIX recebido - ${charge.debtorName || 'N/A'} - ${charge.description || charge.txid}`,
-    sourceType: 'pix_charge',
-    sourceId: charge.id,
-    reference: payment.endToEndId,
-    omieInstanceId: account.omieInstanceId || null,
-    createdBy: 'sistema',
+  // Saldo e movimento numa transacao so (ver server/account-ledger.ts).
+  await lancarNaConta({
+    accountId: account.id, tipo: 'credito', valor: paidAmount,
+    descricao: `PIX recebido - ${charge.debtorName || 'N/A'} - ${charge.description || charge.txid}`,
+    sourceType: 'pix_charge', sourceId: charge.id, reference: payment.endToEndId,
+    omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema', idempotente: true,
   });
-
-  await storage.updateFinancialAccount(account.id, {
-    balance: newBalance.toFixed(2),
-  } as any);
 
   if (charge.receivableId) {
     const receivable = await storage.getReceivable(charge.receivableId);
