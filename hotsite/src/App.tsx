@@ -227,6 +227,9 @@ function HotsiteContent() {
         })),
         totalAmount: calculateTotal(),
         referralCode: (referralCode || '').trim().toUpperCase() || null,
+        // Mesmo texto vai como cupom: o servidor tenta CUPOM primeiro (canal hotsite) e,
+        // se nao for um cupom valido, cai no codigo de indicacao. Um desconto por pedido.
+        couponCode: (referralCode || '').trim().toUpperCase() || null,
         paymentMethod,
         source: 'hotsite' as const,
         priceTable: convertPriceTable(priceTable), // ✅ Adicionar tabela de preço
@@ -239,7 +242,9 @@ function HotsiteContent() {
       // registrado no sistema depois que o pagamento for confirmado.
       if (paymentMethod === 'pix') {
         const pix = await api.initPixOrder(order);
-        if (pix.referralDiscount) setDiscountInfo(pix.referralDiscount); else setDiscountInfo(null);
+        if (pix.couponDiscount) setDiscountInfo({ ...pix.couponDiscount, tipo: 'cupom' });
+        else if (pix.referralDiscount) setDiscountInfo({ ...pix.referralDiscount, tipo: 'indicacao' });
+        else setDiscountInfo(null);
         setPixData(pix);
         setPixStatus('awaiting_payment');
         setPixCopied(false);
@@ -260,7 +265,9 @@ function HotsiteContent() {
       console.log('🔵 Chamando api.createOrder...');
 
       const response = await api.createOrder(order);
-        if (response.referralDiscount) setDiscountInfo(response.referralDiscount); else setDiscountInfo(null);
+        if (response.couponDiscount) setDiscountInfo({ ...response.couponDiscount, tipo: 'cupom' });
+        else if (response.referralDiscount) setDiscountInfo({ ...response.referralDiscount, tipo: 'indicacao' });
+        else setDiscountInfo(null);
       
       console.log('✅ Resposta recebida:', response);
       
@@ -388,7 +395,9 @@ function HotsiteContent() {
           <p className="text-3xl font-bold text-honest-orange mb-3" data-testid="pix-amount">R$ {Number(pixData.amount).toFixed(2)}</p>
           {discountInfo && (
             <div className="bg-green-50 border border-green-300 rounded-xl p-2 mb-3 text-xs text-green-800">
-              Desconto de indicação aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})
+              {discountInfo.tipo === 'cupom'
+                ? <>Cupom <strong>{discountInfo.code}</strong> aplicado: −R$ {Number(discountInfo.amount).toFixed(2)}</>
+                : <>Desconto de indicação aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>}
             </div>
           )}
           {pixStatus === 'paid_order_error' ? (
@@ -445,7 +454,9 @@ function HotsiteContent() {
           <p className="text-2xl font-mono font-bold text-honest-orange mb-6" data-testid="order-number">{orderNumber}</p>
                 {discountInfo && (
                   <div className="bg-green-50 border border-green-300 rounded-xl p-3 mb-4 text-sm text-green-800">
-                    Desconto aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)}) · Total: R$ {Number(discountInfo.total).toFixed(2)}
+                    {discountInfo.tipo === 'cupom'
+                      ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {Number(discountInfo.amount).toFixed(2)}</>
+                      : <>Desconto aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>} · Total: R$ {Number(discountInfo.total).toFixed(2)}
                   </div>
                 )}
           
@@ -487,9 +498,9 @@ function HotsiteContent() {
     return (
       <div>
         <div className="max-w-md mx-auto px-4 pt-4">
-          <label className="block text-sm font-semibold text-gray-700 mb-1">Código de indicação (opcional)</label>
-          <input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} placeholder="Ex.: INDXXXXXX" className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <p className="text-xs text-gray-400 mt-1">Novo cliente ganha 15% no 1º pedido com o código de quem indicou. Se você já indicou alguém, o desconto é aplicado automaticamente.</p>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Cupom ou código de indicação (opcional)</label>
+          <input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} placeholder="Ex.: HONEST8 ou INDXXXXXX" className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" />
+          <p className="text-xs text-gray-400 mt-1">Vale um desconto por pedido — o cupom tem prioridade sobre a indicação. Novo cliente ganha 15% no 1º pedido com o código de quem indicou; se você já indicou alguém, o desconto entra sozinho.</p>
         </div>
         <CheckoutForm
         cartItems={cart}
