@@ -10,8 +10,8 @@ import { nfVendaWhere, nfVendaFrom, nfData, VENDEDOR_JOIN, VIGENCIA_REGRA_OFICIA
 //   dia >= VIGENCIA_REGRA_OFICIAL  -> regra nova (dedup por NF + CFOP + SEM AT TIME ZONE)
 //   dia <  VIGENCIA_REGRA_OFICIAL  -> calculo legado (nao reprocessamos o passado)
 // Grava 1 snapshot/dia: faturamento do dia + faturamento por vendedor do dia.
-// Observacao: o AT TIME ZONE do modulo antigo empurrava as notas do fim da tarde
-// do ultimo dia do mes para o mes seguinte (jun/jul nao batiam). Removido.
+// O backfill LIMPA o intervalo antes de repovoar (senao dias orfaos de um bucket
+// antigo -- ex.: AT TIME ZONE -- sobrevivem e inflam os totais mensais).
 // ============================================================================
 
 // Filtro legado -- IDENTICO ao usado na serie mensal para o periodo anterior a vigencia.
@@ -73,6 +73,9 @@ export async function captureDashboardSnapshot(dateStr?: string): Promise<{ date
 // Reconstroi todos os dias com NF-e desde 2026-01-01, mes a mes, respeitando a vigencia.
 export async function backfillDashboardHistory(): Promise<number> {
   await ensureDashboardHistoryTable();
+  // Limpa o intervalo reconstruido: garante que dias sem NF-e valida (ou orfaos de um
+  // bucket antigo) desaparecam em vez de sobreviver com valor obsoleto.
+  await db.execute(sql`DELETE FROM dashboard_snapshots WHERE snapshot_date >= '2026-01-01'::date`);
   // Meses do periodo LEGADO (< vigencia).
   const mesesLegado = await rawq("SELECT DISTINCT to_char(date_trunc('month', " + LEGADO_DATA + "),'YYYY-MM-DD') AS m FROM fiscal_invoices fi WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date AND " + LEGADO_DATA + "::date >= '2026-01-01'::date ORDER BY 1");
   // Meses do periodo OFICIAL (>= vigencia).
@@ -136,12 +139,6 @@ export function registerDashboardHistoryRoutes(app: Express): void {
       if (token !== "vday-6931") return res.json({ error: "forbidden" });
       const mode = (req.query as any).mode;
       if (mode === "backfill") { const k = await backfillDashboardHistory(); return res.json({ ok: true, backfill: k }); }
-      if (mode === "diag") {
-        const serie = await rawq("SELECT to_char(date_trunc('month'," + LEGADO_DATA + "),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
-        const mineJoin = await rawq("SELECT to_char(date_trunc('month'," + LEGADO_DATA + "),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi " + VENDEDOR_JOIN + " WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
-        const mineDayBucket = await rawq("SELECT to_char((" + LEGADO_DATA + "::date),'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice),0) AS v, COUNT(*) AS n FROM fiscal_invoices fi " + VENDEDOR_JOIN + " WHERE " + LEGADO_WHERE + " AND " + LEGADO_DATA + "::date >= '2026-01-01'::date AND " + LEGADO_DATA + "::date < '" + VIGENCIA_REGRA_OFICIAL + "'::date GROUP BY 1 ORDER BY 1");
-        return res.json({ serie, mineJoin, mineDayBucket });
-      }
       const r = await captureDashboardSnapshot((req.query as any).date);
       res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
