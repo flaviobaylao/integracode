@@ -1472,6 +1472,95 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     }
   });
 
+  // ============================================================================
+  // SAUDE DA COBRANCA — somente leitura
+  // GET /api/admin/financial/saude-cobranca[?limit=]
+  //
+  // As tres coisas que voltam a acontecer sozinhas se ninguem olhar. A auditoria
+  // de 03-04/ago limpou o estoque das tres; isto e o termometro para saber se a
+  // torneira voltou a pingar.
+  //
+  //  1. tituloSemCobranca    — titulo de venda em aberto sem boleto e sem PIX.
+  //                            Ninguem vai pagar o que nao foi cobrado.
+  //  2. boletoPagoSemBaixa   — boleto liquidado no BB com o titulo ainda em
+  //                            aberto. A varredura sweepOpenBoletos NAO pega
+  //                            estes: ela so olha boleto que ainda esta aberto
+  //                            (`status NOT IN ('liquidado','pago',...)`), entao
+  //                            o caso "ja liquidado + titulo sem baixa" escapa
+  //                            por construcao.
+  //  3. cobrancaDuplicada    — titulo com 2+ cobrancas VIVAS ao mesmo tempo. O
+  //                            cliente consegue pagar as duas.
+  //
+  // NAO corrige nada — nem emite cobranca, nem da baixa, nem cancela. Cada bloco
+  // vem com o comando que resolve, para a decisao continuar sendo humana.
+  // ============================================================================
+  app.get('/api/admin/financial/saude-cobranca', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query?.limit) || 50, 1), 500);
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+      const soma = (xs: any[], k: string) => n2(xs.reduce((t, x) => t + Number(x[k] || 0), 0));
+
+      const semCobranca = await linhas(sql`
+        SELECT r.title_number AS titulo, r.customer_name AS cliente,
+               round(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric, 2) AS saldo,
+               (r.due_date)::date AS vence, r.payment_method AS forma
+        FROM receivables r
+        WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL
+          AND r.status IN ('a_vencer', 'vencida')
+          AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005
+          AND COALESCE(r.import_origin, '') <> 'omie_historico'
+          AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)
+        ORDER BY saldo DESC LIMIT ${limit}`);
+
+      const pagoSemBaixa = await linhas(sql`
+        SELECT r.title_number AS titulo, r.customer_name AS cliente, b.nosso_numero AS nosso_numero,
+               round(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric, 2) AS saldo,
+               (r.due_date)::date AS vence, b.status AS status_boleto
+        FROM boleto_charges b JOIN receivables r ON r.id = b.receivable_id
+        WHERE lower(COALESCE(b.status, '')) IN ('liquidado', 'pago', 'recebido')
+          AND r.deleted_at IS NULL AND r.status IN ('a_vencer', 'vencida')
+          AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005
+        ORDER BY saldo DESC LIMIT ${limit}`);
+
+      const duplicada = await linhas(sql`
+        SELECT r.title_number AS titulo, r.customer_name AS cliente, r.status::text AS titulo_status,
+               v.vivas, round(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric, 2) AS saldo
+        FROM (
+          SELECT rid, count(*) AS vivas FROM (
+            SELECT receivable_id AS rid FROM boleto_charges
+             WHERE deleted_at IS NULL AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO') AND receivable_id IS NOT NULL
+            UNION ALL
+            SELECT receivable_id FROM pix_charges
+             WHERE deleted_at IS NULL AND status::text = 'ATIVA' AND receivable_id IS NOT NULL
+          ) t GROUP BY rid HAVING count(*) > 1
+        ) v JOIN receivables r ON r.id = v.rid
+        ORDER BY v.vivas DESC, saldo DESC LIMIT ${limit}`);
+
+      res.json({
+        geradoEm: new Date().toISOString(),
+        somenteLeitura: true,
+        tituloSemCobranca: {
+          n: semCobranca.length, valor: soma(semCobranca, 'saldo'), itens: semCobranca,
+          comoResolver: 'POST /api/admin/financial/garantir-cobranca { "apply": true } — gera a cobranca que faltou (nao toca no legado).',
+        },
+        boletoPagoSemBaixa: {
+          n: pagoSemBaixa.length, valor: soma(pagoSemBaixa, 'saldo'), itens: pagoSemBaixa,
+          atencao: 'A varredura horaria NAO pega estes casos: ela so olha boleto que ainda esta aberto.',
+          comoResolver: 'POST /api/admin/financial/repair-boleto-liquidado-sem-baixa { "dryRun": true } — consulta o BB e mostra o que faria. ISTO DA BAIXA: confira antes.',
+        },
+        cobrancaDuplicada: {
+          n: duplicada.length, valor: soma(duplicada, 'saldo'), itens: duplicada,
+          comoResolver: 'POST /api/admin/financial/cobrancas-vivas { "dryRun": true, "categorias": ["duplicadaNoTitulo"] } — mantem a mais recente. Aplicar da BAIXA no BB e e irreversivel.',
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.post('/api/admin/financial/repair-boleto-liquidado-sem-baixa', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;

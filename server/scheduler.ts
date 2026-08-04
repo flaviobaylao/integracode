@@ -947,9 +947,69 @@ console.log('   - Geração de rotas diárias às 05:00h (UTC-3)');
 console.log('   - Limpeza mensal de registros nao encontrado na lista de ativos (dia 1, 04:00 UTC-3)');
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (20+ min sem pedido/não-venda) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
+console.log('   - Saúde da cobrança (somente leitura) às 07:20 em dias úteis (UTC-3)');
 console.log('   - Etapas Omie: sincronização manual via botão "Atualizar Etapas Omie" no Resumo de Rotas');
 console.log('   ⚠️  Polling fallback WhatsApp DESATIVADO (Evolution API com bug no findChats)');
 console.log('');
+// ---------------------------------------------------------------------------
+// SAUDE DA COBRANCA (07:20, dias uteis) — SOMENTE LEITURA.
+// Mede as tres falhas que voltam sozinhas se ninguem olhar: titulo de venda sem
+// nenhuma cobranca, boleto liquidado no BB com titulo ainda em aberto (a
+// varredura horaria NAO pega esse caso: ela so olha boleto que ainda esta
+// aberto) e titulo com duas cobrancas vivas ao mesmo tempo.
+// Grava o resultado em system_settings ('saude_cobranca_last') para dar serie
+// historica, e loga em WARN quando ha algo. NAO emite cobranca, NAO da baixa e
+// NAO cancela nada — a decisao continua humana.
+// ---------------------------------------------------------------------------
+cron.schedule('20 7 * * 1-5', async () => {
+  try {
+    const um = async (q: any) => { const r: any = await db.execute(q); return ((r.rows || r) as any[])[0] || {}; };
+    const semCobranca = await um(sql`
+      SELECT count(*)::int AS n, COALESCE(sum(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric), 0)::float AS valor
+      FROM receivables r
+      WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL
+        AND r.status IN ('a_vencer', 'vencida')
+        AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005
+        AND COALESCE(r.import_origin, '') <> 'omie_historico'
+        AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
+        AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
+        AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)`);
+    const pagoSemBaixa = await um(sql`
+      SELECT count(*)::int AS n, COALESCE(sum(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric), 0)::float AS valor
+      FROM boleto_charges b JOIN receivables r ON r.id = b.receivable_id
+      WHERE lower(COALESCE(b.status, '')) IN ('liquidado', 'pago', 'recebido')
+        AND r.deleted_at IS NULL AND r.status IN ('a_vencer', 'vencida')
+        AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005`);
+    const duplicada = await um(sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT rid FROM (
+          SELECT receivable_id AS rid FROM boleto_charges
+           WHERE deleted_at IS NULL AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO') AND receivable_id IS NOT NULL
+          UNION ALL
+          SELECT receivable_id FROM pix_charges
+           WHERE deleted_at IS NULL AND status::text = 'ATIVA' AND receivable_id IS NOT NULL
+        ) t GROUP BY rid HAVING count(*) > 1) x`);
+    const snap = {
+      at: new Date().toISOString(),
+      tituloSemCobranca: { n: Number(semCobranca.n || 0), valor: Number(semCobranca.valor || 0) },
+      boletoPagoSemBaixa: { n: Number(pagoSemBaixa.n || 0), valor: Number(pagoSemBaixa.valor || 0) },
+      cobrancaDuplicada: { n: Number(duplicada.n || 0) },
+    };
+    await db.execute(sql`
+      INSERT INTO system_settings (key, value, updated_by)
+      VALUES ('saude_cobranca_last', ${JSON.stringify(snap)}, 'cron-saude-cobranca')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+    const total = snap.tituloSemCobranca.n + snap.boletoPagoSemBaixa.n + snap.cobrancaDuplicada.n;
+    if (total > 0) {
+      console.warn(`⚠️  [SAUDE-COBRANCA] sem cobranca: ${snap.tituloSemCobranca.n} (R$ ${snap.tituloSemCobranca.valor.toFixed(2)}) | boleto pago sem baixa: ${snap.boletoPagoSemBaixa.n} (R$ ${snap.boletoPagoSemBaixa.valor.toFixed(2)}) | cobranca duplicada: ${snap.cobrancaDuplicada.n} titulo(s). Detalhe: GET /api/admin/financial/saude-cobranca`);
+    } else {
+      console.log('✅ [SAUDE-COBRANCA] nada pendente');
+    }
+  } catch (e: any) {
+    console.error('[SAUDE-COBRANCA] falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 console.log('⚠️  Jobs desativados após migração para cards permanentes:');
 console.log('   ✗ Sincronização de agenda futura (não necessário com cards permanentes)');
 console.log('   ✗ Processamento de cards atrasados (não necessário com cards permanentes)');
