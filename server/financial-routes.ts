@@ -593,6 +593,16 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // demais ensure*): a linha NUNCA e apagada, so marcada, para o ajuste ser
   // reversivel e auditavel. Nao vao no schema drizzle de proposito — coluna no
   // schema sem coluna no banco quebra todo SELECT da tabela.
+  // Marca de que a cobranca PIX foi removida NO BANCO (nao so no sistema). Sem
+  // ela nao da para saber o que ja foi tratado — o status local nao distingue
+  // "marcado aqui" de "removido no BB".
+  let __pixRemColReady = false;
+  async function ensurePixRemovidaColumn() {
+    if (__pixRemColReady) return;
+    try { await db.execute(sql`ALTER TABLE pix_charges ADD COLUMN IF NOT EXISTS bank_removed_at timestamp`); } catch {}
+    __pixRemColReady = true;
+  }
+
   let __estornoColsReady = false;
   async function ensureEstornoColumns() {
     if (__estornoColsReady) return;
@@ -1395,6 +1405,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // ============================================================================
   app.post('/api/admin/financial/pix/remover-no-banco', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
+      await ensurePixRemovidaColumn();
       const dryRun = req.body?.dryRun !== false;
       const limit = Math.min(Math.max(Number(req.body?.limit) || 25, 1), 200);
       const accountId = (req.body?.accountId as string) || null;
@@ -1407,6 +1418,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
                r.title_number AS titulo, r.status::text AS titulo_status, r.customer_name AS cliente
         FROM pix_charges p LEFT JOIN receivables r ON r.id = p.receivable_id
         WHERE p.deleted_at IS NULL
+          AND p.bank_removed_at IS NULL
           AND p.status::text IN ('ATIVA', 'REMOVIDA_PELO_USUARIO_RECEBEDOR')
           AND (p.receivable_id IS NULL OR r.status::text IN ('recebida', 'cancelada'))
           AND (${accountId}::text IS NULL OR p.financial_account_id = ${accountId})
@@ -1441,7 +1453,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         if (!r.ok) { out.falhas++; if (erros.length < 20) erros.push({ txid: a.txid, erro: r.erro }); continue; }
         if (r.jaRemovida) out.jaRemovidas++; else out.removidas++;
         await db.execute(sql`
-          UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR', updated_at = now()
+          UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR', bank_removed_at = now(), updated_at = now()
           WHERE id = ${a.id} AND status::text <> 'CONCLUIDA'`);
       }
       try {
