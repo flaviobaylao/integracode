@@ -154,13 +154,68 @@ const ORIGEM_LABEL: Record<string, string> = {
   baixa_importada: "Baixa importada",
 };
 
-function Kpi(props: { label: string; value: string; sub?: string; tone?: string; testId?: string }) {
+// Textos de ajuda de cada KPI — explicam de onde sai o número.
+// Todos os KPIs são de VIDA INTEIRA: não mudam quando o filtro de período é aplicado.
+const KPI_INFO = {
+  faturado:
+    "Soma de todas as notas emitidas para este cliente desde a primeira compra — vida inteira, não muda com o filtro de período. Notas canceladas não entram. Abaixo, a quantidade de notas.",
+  pago:
+    "Soma de todas as baixas recebidas deste cliente, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
+  saldo:
+    "Total faturado menos total pago: o que o cliente ainda deve hoje. Abaixo, a quantidade de notas com saldo em aberto.",
+  vencido:
+    "Parte do saldo devedor cujo vencimento já passou. Nota que vence hoje NÃO conta como vencida — só a partir do dia seguinte.",
+  aVencer:
+    "Parte do saldo devedor com vencimento de hoje em diante. Vencido + A vencer compõem o saldo devedor.",
+  ticket:
+    "Total faturado dividido pela quantidade de notas. Abaixo, a média de dias entre o vencimento e o pagamento efetivo (só de baixas com data real).",
+  relacionamento:
+    "Data da primeira compra do cliente. Abaixo, a data da última compra e há quantos dias ele não compra.",
+} as const;
+
+// "i" no canto do card: abre a explicação no hover e também no clique (toque no celular).
+function InfoDot(props: { text: string; testId?: string }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <span className="relative inline-flex shrink-0">
+      <button
+        type="button"
+        title={props.text}
+        aria-label={props.text}
+        data-testid={props.testId}
+        onClick={(e) => {
+          e.stopPropagation();
+          setAberto((v) => !v);
+        }}
+        onMouseEnter={() => setAberto(true)}
+        onMouseLeave={() => setAberto(false)}
+        onBlur={() => setAberto(false)}
+        className="flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+      >
+        i
+      </button>
+      {aberto ? (
+        <span
+          role="tooltip"
+          className="absolute right-0 top-5 z-50 w-60 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        >
+          {props.text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function Kpi(props: { label: string; value: string; sub?: string; tone?: string; testId?: string; info?: string }) {
   return (
     <div
-      className={`rounded-lg border p-3 ${props.tone || "bg-white dark:bg-gray-800"}`}
+      className={`relative rounded-lg border p-3 ${props.tone || "bg-white dark:bg-gray-800"}`}
       data-testid={props.testId}
     >
-      <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{props.label}</div>
+      <div className="flex items-start justify-between gap-1">
+        <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{props.label}</div>
+        {props.info ? <InfoDot text={props.info} testId={props.testId ? `${props.testId}-info` : undefined} /> : null}
+      </div>
       <div className="text-lg font-bold leading-tight">{props.value}</div>
       {props.sub ? <div className="text-[11px] text-gray-500 dark:text-gray-400">{props.sub}</div> : null}
     </div>
@@ -449,23 +504,25 @@ export default function ExtratoCliente() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
-                <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" />
-                <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" />
+                <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" info={KPI_INFO.faturado} />
+                <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" info={KPI_INFO.pago} />
                 <Kpi
                   label="Saldo devedor"
                   value={fmtBRL(r?.saldoDevedor)}
                   sub={`${r?.qtdNotasAbertas || 0} em aberto`}
                   tone={(r?.saldoDevedor || 0) > 0.009 ? "bg-amber-50 dark:bg-amber-900/20" : "bg-white dark:bg-gray-800"}
                   testId="kpi-saldo"
+                  info={KPI_INFO.saldo}
                 />
-                <Kpi label="Vencido" value={fmtBRL(r?.totalVencido)} tone={(r?.totalVencido || 0) > 0.009 ? "bg-red-50 dark:bg-red-900/20" : ""} testId="kpi-vencido" />
-                <Kpi label="A vencer" value={fmtBRL(r?.totalAVencer)} testId="kpi-a-vencer" />
-                <Kpi label="Ticket médio" value={fmtBRL(r?.ticketMedio)} sub={r?.atrasoMedioDias != null ? `atraso médio: ${r.atrasoMedioDias}d` : undefined} testId="kpi-ticket" />
+                <Kpi label="Vencido" value={fmtBRL(r?.totalVencido)} tone={(r?.totalVencido || 0) > 0.009 ? "bg-red-50 dark:bg-red-900/20" : ""} testId="kpi-vencido" info={KPI_INFO.vencido} />
+                <Kpi label="A vencer" value={fmtBRL(r?.totalAVencer)} testId="kpi-a-vencer" info={KPI_INFO.aVencer} />
+                <Kpi label="Ticket médio" value={fmtBRL(r?.ticketMedio)} sub={r?.atrasoMedioDias != null ? `atraso médio: ${r.atrasoMedioDias}d` : undefined} testId="kpi-ticket" info={KPI_INFO.ticket} />
                 <Kpi
                   label="Relacionamento"
                   value={fmtData(r?.primeiraCompra)}
                   sub={`última: ${fmtData(r?.ultimaCompra)}${r?.diasSemComprar != null ? ` (${r.diasSemComprar}d)` : ""}`}
                   testId="kpi-relacionamento"
+                  info={KPI_INFO.relacionamento}
                 />
               </div>
               {(r?.baixasEstimadas || 0) > 0 ? (
