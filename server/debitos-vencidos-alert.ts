@@ -76,7 +76,16 @@ export async function enviarAlertaDebitosVencidos(apply: boolean, opts?: { toOve
 
   // 1) Recebíveis VENCIDOS em aberto (fonte = aba Contas a Receber).
   const recsAll: any[] = await storage.getReceivables({ status: 'vencida' } as any);
-  const recs = recsAll.filter((r) => String(r.status) === 'vencida' && (Number(r.amount || 0) - Number(r.amountPaid || 0)) > 0.005);
+  // DIVIDA HISTORICA DO OMIE nao vai para o vendedor cobrar: e divida importada do
+  // sistema antigo, ja encerrada la. Mesma regra que a IA de cobranca e os relatorios
+  // ja aplicam (COALESCE(import_origin,'') <> 'omie_historico').
+  const idsHistorico = new Set<string>();
+  try {
+    for (const x of rowsOf(await db.execute(sql`SELECT id FROM receivables WHERE COALESCE(import_origin, '') = 'omie_historico'`))) idsHistorico.add(String(x.id));
+  } catch { /* coluna ausente: nada a excluir */ }
+  const recs = recsAll.filter((r) => String(r.status) === 'vencida'
+    && (Number(r.amount || 0) - Number(r.amountPaid || 0)) > 0.005
+    && !idsHistorico.has(String(r.id)));
 
   // 2) Cadastro de clientes (carteira/vendedor + cidade)
   const cs = rowsOf(await db.execute(sql`SELECT id, name, city, cnpj, cpf, seller_id FROM customers`));

@@ -2461,7 +2461,20 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const digits = (s: any) => String(s == null ? '' : s).replace(/\D/g, '');
       const instanceId = (req.query.instanceId as string) || undefined;
       const rows: any[] = await storage.getReceivables(instanceId ? ({ status: 'vencida', instanceId } as any) : ({ status: 'vencida' } as any));
-      const vencidas = rows.filter((r) => String(r.status) === 'vencida' && !r.deletedAt);
+      // DIVIDA HISTORICA DO OMIE fica FORA da cobranca. O resto do sistema ja aplica
+      // esta regra (IA de cobranca em agent-runtime, relatorios em official-templates,
+      // ranking de debito no index) — a tela e o alerta eram os dois pontos que tinham
+      // ficado sem ela, e por isso o vendedor via divida antiga do Omie para cobrar.
+      // ?incluirHistorico=1 mostra tudo, para conferencia.
+      const incluirHistorico = String(req.query.incluirHistorico || '') === '1';
+      const idsHistorico = new Set<string>();
+      if (!incluirHistorico) {
+        try {
+          const h: any = await db.execute(sql`SELECT id FROM receivables WHERE COALESCE(import_origin, '') = 'omie_historico'`);
+          for (const x of ((h.rows || h) as any[])) idsHistorico.add(String(x.id));
+        } catch { /* coluna ausente: nada a excluir */ }
+      }
+      const vencidas = rows.filter((r) => String(r.status) === 'vencida' && !r.deletedAt && !idsHistorico.has(String(r.id)));
       // Telefone do cliente (por id e por documento) para os botões de WhatsApp.
       const phoneById = new Map<string, string>();
       const phoneByDoc = new Map<string, string>();
