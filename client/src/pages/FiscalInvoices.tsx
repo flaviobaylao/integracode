@@ -380,6 +380,29 @@ export default function FiscalInvoices() {
   const totalFiltrado = useMemo(
     () => invoicesFiltered.reduce((acc: number, inv: any) => acc + Number(inv.totalInvoice || 0), 0),
     [invoicesFiltered]);
+  // DUPLICIDADE. Duas notas com o mesmo (CNPJ emitente, serie, numero) e impossivel
+  // legalmente — quando acontece, e registro repetido. Esta tela e gestao de documento
+  // fiscal e por isso MOSTRA todas as linhas (a nota existe na SEFAZ e precisa ser vista
+  // para ser cancelada); o dashboard mede faturamento e conta cada nota UMA vez. Dai a
+  // diferenca classica entre as duas telas — ex.: julho/2026, 851 linhas x 843 notas,
+  // R$ 2.552,00. Marcar aqui evita que alguem descubra isso so na conferencia.
+  const dupInfo = useMemo(() => {
+    const chave = (inv: any) =>
+      `${onlyDigits(inv.issuerCnpj)}|${String(inv.series ?? '')}|${String(inv.invoiceNumber ?? '')}`;
+    const cont = new Map<string, number>();
+    for (const inv of invoicesFiltered) { const k = chave(inv); cont.set(k, (cont.get(k) || 0) + 1); }
+    const repetidas = new Set<string>();
+    let unicas = 0, valorUnico = 0, excedentes = 0, valorExcedente = 0;
+    const visto = new Set<string>();
+    for (const inv of invoicesFiltered) {
+      const k = chave(inv);
+      const n = cont.get(k) || 1;
+      if (n > 1) repetidas.add(k);
+      if (visto.has(k)) { excedentes++; valorExcedente += Number(inv.totalInvoice || 0); }
+      else { visto.add(k); unicas++; valorUnico += Number(inv.totalInvoice || 0); }
+    }
+    return { chave, repetidas, unicas, valorUnico, excedentes, valorExcedente };
+  }, [invoicesFiltered]);
   // CONTADORES DO TOPO: calculados sobre `invoicesFiltered` — a MESMA lista que alimenta a
   // tabela e a linha "N nota(s) no filtro". Antes vinham de /api/fiscal-dashboard (global) e
   // ignoravam Status/Ambiente/Emitente/Tipo/Periodo/busca, entao o card dizia 1000 notas
@@ -905,6 +928,17 @@ export default function FiscalInvoices() {
             <strong className="text-foreground">{invoicesFiltered.length}</strong> nota(s) no filtro
             {' · '}total <strong className="text-foreground">{formatCurrency(totalFiltrado)}</strong>
             {tipoFilter.length > 0 && <> · tipo: {tipoFilter.map(t => TIPO_LABEL[t] || t).join(', ')}</>}
+            {dupInfo.excedentes > 0 && (
+              <>
+                {' · '}
+                <span className="text-amber-700 dark:text-amber-500">
+                  <strong>{dupInfo.unicas}</strong> apos deduplicacao
+                  {' ('}<strong>{formatCurrency(dupInfo.valorUnico)}</strong>{')'}
+                  {' · '}{dupInfo.excedentes} linha(s) em duplicidade somando{' '}
+                  <strong>{formatCurrency(dupInfo.valorExcedente)}</strong>
+                </span>
+              </>
+            )}
           </div>
 
           <Card>
@@ -936,7 +970,18 @@ export default function FiscalInvoices() {
                   <TableBody>
                     {invoicesView.map(inv => (
                       <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openDetail(inv.id)}>
-                        <TableCell className="font-mono font-medium">{inv.invoiceNumber || '-'}</TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {inv.invoiceNumber || '-'}
+                          {dupInfo.repetidas.has(dupInfo.chave(inv)) && (
+                            <span
+                              className="ml-2 align-middle rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                              title="Mesmo CNPJ emitente, serie e numero de outra linha. O dashboard conta esta nota uma unica vez."
+                              data-testid="badge-duplicada"
+                            >
+                              duplicada
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground" title={inv.issuerCnpj || ''}>{issuerShort(inv.issuerCnpj)}</TableCell>
                         <TableCell>
                           <div>
