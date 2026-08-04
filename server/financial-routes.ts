@@ -2677,6 +2677,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       try {
         const rc: any = await db.execute(sql`
           SELECT m.id, m.amount, m.match_kind, m.title_amount_settled, m.interest, m.discount, m.created_by, m.created_at,
+                 i.id AS bank_statement_item_id,
                  i.transaction_date, i.description AS item_description, i.document AS item_document, i.origin_name, i.amount AS item_amount,
                  i.matched_at, i.matched_by, i.reconciliation_status, i.notes AS item_notes,
                  s.file_name, fa.name AS account_name
@@ -2687,7 +2688,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           WHERE m.receivable_id = ${id}
           ORDER BY COALESCE(i.matched_at, m.created_at) ASC`);
         reconciliations = (rc.rows || []).map((r: any) => ({
-          id: r.id, amount: r.amount, matchKind: r.match_kind, settled: r.title_amount_settled, interest: r.interest, discount: r.discount,
+          id: r.id, bankStatementItemId: r.bank_statement_item_id,
+          amount: r.amount, matchKind: r.match_kind, settled: r.title_amount_settled, interest: r.interest, discount: r.discount,
           matchedAt: r.matched_at, matchedBy: uname(r.matched_by), createdAt: r.created_at, createdBy: uname(r.created_by),
           transactionDate: r.transaction_date, itemDescription: r.item_description, itemDocument: r.item_document, originName: r.origin_name, itemAmount: r.item_amount,
           status: r.reconciliation_status, statement: r.file_name, account: r.account_name, notes: r.item_notes,
@@ -2701,7 +2703,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
             FROM bank_statement_items i LEFT JOIN bank_statements s ON s.id = i.statement_id LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
             WHERE i.matched_receivable_id = ${id} ORDER BY i.matched_at ASC`);
           reconciliations = (rc2.rows || []).map((r: any) => ({
-            id: r.id, matchedAt: r.matched_at, matchedBy: uname(r.matched_by), transactionDate: r.transaction_date,
+            id: r.id, bankStatementItemId: r.id, matchedAt: r.matched_at, matchedBy: uname(r.matched_by), transactionDate: r.transaction_date,
             itemDescription: r.item_description, itemAmount: r.item_amount, status: r.reconciliation_status,
             statement: r.file_name, account: r.account_name, notes: r.item_notes,
           }));
