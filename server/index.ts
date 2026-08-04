@@ -314,6 +314,12 @@ run();
   registerCommunicationAutomationsRoutes(app);
   registerHotsitePix(app);
   registerHotsiteCard(app);
+
+  // 📣 CANAIS DE VENDA (Hotsite + Instagram) — pagina unica de gestao (04/ago/2026)
+  try {
+    const { registerCanaisRoutes } = await import('./canais-routes');
+    registerCanaisRoutes(app);
+  } catch (e: any) { console.error('[canais routes]', e?.message || e); }
   registerPaymentLink(app);
   registerVisitSummary(app);
   registerCadastroReceitaSync(app);

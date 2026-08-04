@@ -24709,10 +24709,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         
       } else {
-        // ✅ NOVO cliente do hotsite - usar configurações padrão
-        customerRouteDay = 'Dom'; // Domingo para novos clientes do hotsite
-        customerRecurrenceType = 'mensal'; // Mensal para novos clientes
-        customerSellerId = hotsiteSeller.id; // ✅ Flavio para novos clientes
+        // ✅ NOVO cliente do hotsite — padroes CONFIGURAVEIS na pagina Canais (04/ago/2026).
+        // Antes eram fixos no codigo (Dom / mensal / Flavio / rota GOIANIA). Agora saem de
+        // system_settings (hotsite_novo_*), com os MESMOS valores como default — ou seja,
+        // enquanto ninguem mexer na tela, o comportamento e identico ao de antes.
+        const _cfgCanal = await (await import('./canais-routes')).getHotsiteDefaults();
+        customerRouteDay = _cfgCanal.dia;
+        customerRecurrenceType = _cfgCanal.periodicidade;
+        customerSellerId = _cfgCanal.vendedorId || hotsiteSeller.id;
         
         console.log(`✅ Novo cliente do hotsite - usando configurações padrão: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
         
@@ -24727,53 +24731,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           cnpj: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.cpfCnpj : null,
           companyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
           fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
-          route: 'GOIÂNIA', // Padrão para clientes do hotsite
-          sellerId: customerSellerId, // ✅ Campo obrigatório - Flavio
-          weekdays: JSON.stringify(['Dom']), // ✅ Domingos para novos clientes hotsite
-          visitPeriodicity: 'mensal', // ✅ Periodicidade mensal
+          route: _cfgCanal.rota, // configuravel em Canais > Hotsite (default GOIÂNIA)
+          sellerId: customerSellerId, // vendedor padrao do canal (default Flavio)
+          weekdays: JSON.stringify([_cfgCanal.dia]), // configuravel (default Dom)
+          visitPeriodicity: _cfgCanal.periodicidade, // configuravel (default mensal)
           isActive: true
         });
         
         customerId = newCustomer.id;
         
-        // ✅ CADASTRAR CLIENTE NO OMIE AUTOMATICAMENTE
-        if (validatedData.customer.cpfCnpj) {
-          console.log('📤 Tentando cadastrar novo cliente no Omie...');
-          try {
-            const omieResult = await omieService.createClient({
-              cpf: validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.cpfCnpj : null,
-              cnpj: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.cpfCnpj : null,
-              name: validatedData.customer.name,
-              fantasyName: validatedData.customer.customerType === 'pessoa_juridica' ? validatedData.customer.name : null,
-              email: validatedData.customer.email,
-              phone: validatedData.customer.phone,
-              address: validatedData.customer.address,
-              city: null,
-              state: null,
-              zipCode: null
-            });
-            
-            if (omieResult.success) {
-              console.log(`✅ Cliente cadastrado no Omie com sucesso! Código: ${omieResult.omieClientCode}`);
-              
-              // Atualizar cliente no Integra com código Omie
-              if (omieResult.omieClientCode) {
-                await storage.updateCustomer(customerId, {
-                  omieCode: omieResult.omieClientCode.toString()
-                });
-                console.log('✅ Código Omie salvo no Integra');
-              }
-            } else {
-              console.warn('⚠️ Não foi possível cadastrar cliente no Omie:', omieResult.message);
-            }
-          } catch (omieError) {
-            // Não falhar o pedido se houver erro no Omie
-            console.error('❌ Erro ao cadastrar cliente no Omie:', omieError);
-            console.log('⚠️ Pedido será processado mesmo sem cadastro no Omie');
-          }
-        } else {
-          console.log('⚠️ Cliente sem CPF/CNPJ - não será cadastrado no Omie');
-        }
+        // 🚫 OMIE DESVINCULADO DO CANAL (04/ago/2026 — decisao do Flavio).
+        // O cliente que compra pelo Hotsite passa a existir SOMENTE no INTEGRA 2.0.
+        // Antes daqui saia um omieService.createClient() que criava o cadastro no Omie e
+        // gravava o omieCode de volta. Removido: o cadastro do canal e do Integra.
+        // (O canal Instagram ja nascia assim — agent-runtime.ts so usa storage.createCustomer.)
+        // O envio manual continua disponivel para os demais canais em POST /api/customers/:id/send-to-omie.
+        console.log(`🆕 [HOTSITE] Cliente novo criado SOMENTE no Integra 2.0 (sem Omie): ${newCustomer.id}`);
       }
       
       // Gerar número de pedido único
