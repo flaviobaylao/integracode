@@ -3372,6 +3372,9 @@ export const receivables = pgTable("receivables", {
   issueDate: timestamp("issue_date").notNull(),
   dueDate: timestamp("due_date").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  // Valor de ORIGEM do titulo, gravado na 1a vez que um desconto reduz `amount`.
+  // Sem isto, depois do desconto ninguem consegue saber por quanto o titulo nasceu.
+  originalAmount: decimal("original_amount", { precision: 12, scale: 2 }),
   amountPaid: decimal("amount_paid", { precision: 12, scale: 2 }).default('0'),
   status: receivableStatusEnum("status").notNull().default("a_vencer"),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
@@ -3436,6 +3439,10 @@ export const receivablePayments = pgTable("receivable_payments", {
   receivableId: varchar("receivable_id").notNull(),
   paidAt: timestamp("paid_at").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  // DESCONTO concedido nesta baixa. NAO e dinheiro recebido: abate o valor do
+  // titulo (receivables.amount). Fica aqui, e nao so na conta, para responder
+  // "quem deu quanto de desconto, quando e por que".
+  discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
   financialAccountId: varchar("financial_account_id"),
   reference: varchar("reference"),
@@ -3499,6 +3506,8 @@ export const payables = pgTable("payables", {
   issueDate: timestamp("issue_date").notNull(),
   dueDate: timestamp("due_date").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  // Valor de ORIGEM do titulo (ver receivables.original_amount).
+  originalAmount: decimal("original_amount", { precision: 12, scale: 2 }),
   amountPaid: decimal("amount_paid", { precision: 12, scale: 2 }).default('0'),
   status: payableStatusEnum("status").notNull().default("a_vencer"),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
@@ -3556,6 +3565,8 @@ export const payablePayments = pgTable("payable_payments", {
   payableId: varchar("payable_id").notNull(),
   paidAt: timestamp("paid_at").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  // DESCONTO concedido nesta baixa (ver receivable_payments.discount).
+  discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
   financialAccountId: varchar("financial_account_id"),
   reference: varchar("reference"),
