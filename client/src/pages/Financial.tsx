@@ -207,6 +207,96 @@ function LancamentoBadges({ item }: { item: any }) {
   );
 }
 
+// Desfaz a CONCILIAÇÃO a partir da própria conta. Antes, a tela apenas avisava
+// "reverter em Conciliação" e o operador tinha que sair daqui, achar o lançamento
+// no extrato e desfazer por lá.
+//
+// Usa exatamente o mesmo endpoint do botão Desfazer da tela de Conciliação
+// (POST /api/reconciliation/items/:id/undo): devolve o amount_paid, recalcula o
+// status do título, apaga o pagamento e o vínculo, e grava a auditoria. Nada de
+// caminho paralelo — reimplementar a reversão aqui seria criar uma segunda regra
+// para a mesma coisa.
+//
+// Confirmação em um passo (e não em dois como o estorno sem lastro): aqui não há
+// escolha a fazer, e a operação é reversível refazendo a conciliação.
+function DesfazerConciliacaoButton({
+  itemId, kind, titleId, label, compact = false, onDone,
+}: {
+  itemId: string;
+  kind: 'receivable' | 'payable';
+  titleId: string;
+  label?: string;
+  compact?: boolean;
+  onDone?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState('');
+  const base = kind === 'receivable' ? 'receivables' : 'payables';
+
+  const executar = async () => {
+    setBusy(true); setErro('');
+    try {
+      const r = await fetch(`/api/reconciliation/items/${itemId}/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ by: 'tela-financeiro' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) throw new Error(j?.error || j?.message || `HTTP ${r.status}`);
+      toast({ title: 'Conciliação desfeita', description: `O título volta a "${j.status || 'em aberto'}" e o lançamento do extrato fica pendente.` });
+      queryClient.invalidateQueries({ queryKey: [`/api/financial/${base}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/financial/${base}`, titleId, 'history'] });
+      queryClient.invalidateQueries({ queryKey: [`/api/financial/${base}`, titleId, 'eventos'] });
+      setOpen(false);
+      onDone?.();
+    } catch (e: any) {
+      const m = String(e?.message || e);
+      setErro(m);
+      toast({ title: 'Não foi possível desfazer', description: m, variant: 'destructive' });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size={compact ? 'icon' : 'sm'}
+        className="text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+        title="Desfazer a conciliação: o título volta a ficar em aberto e o lançamento do extrato volta para pendente"
+        onClick={(e) => { e.stopPropagation(); setErro(''); setOpen(true); }}
+      >
+        <RefreshCw className="h-4 w-4" />{compact ? null : <span className="ml-1">Desfazer conciliação</span>}
+      </Button>
+
+      <Dialog open={open} onOpenChange={(v) => { if (!busy) setOpen(v); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Desfazer conciliação{label ? ` — ${label}` : ''}</DialogTitle>
+            <DialogDescription>O vínculo com o extrato será removido.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <ul className="list-disc pl-5 space-y-1">
+              <li>A baixa é revertida: o valor pago volta e o título fica <b>em aberto</b>.</li>
+              <li>O lançamento do extrato volta para <b>pendente</b> e pode ser conciliado de novo.</li>
+              <li>Fica registrado na auditoria quem desfez e quando.</li>
+            </ul>
+            <p className="text-muted-foreground">Se o título tiver mais de uma conciliação, esta ação desfaz apenas a selecionada.</p>
+            {erro ? <p className="text-red-600">{erro}</p> : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancelar</Button>
+            <Button onClick={executar} disabled={busy} className="bg-amber-600 hover:bg-amber-700">
+              {busy ? 'Desfazendo...' : 'Desfazer conciliação'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // Estorno de baixa SEM LASTRO. Fluxo em dois tempos, de propósito: abre com a
 // PRÉVIA vinda do servidor (dryRun, não escreve nada) e só executa depois que o
 // operador lê o que vai ser apagado e digita o motivo.
@@ -215,13 +305,14 @@ function LancamentoBadges({ item }: { item: any }) {
 // "Desfazer" da Conciliação, e o servidor recusaria com 409 de qualquer forma.
 // Mostramos o aviso em vez do botão para o operador saber onde ir.
 function EstornarBaixaButton({
-  kind, titleId, titleLabel, paymentId, conciliado = false, compact = false, onDone,
+  kind, titleId, titleLabel, paymentId, conciliado = false, bankStatementItemId = null, compact = false, onDone,
 }: {
   kind: 'receivable' | 'payable';
   titleId: string;
   titleLabel?: string;
   paymentId?: string | null;   // ausente = estorna TODAS as baixas do título
   conciliado?: boolean;
+  bankStatementItemId?: string | null;  // lançamento do extrato, quando há UM só
   compact?: boolean;
   onDone?: () => void;
 }) {
@@ -275,7 +366,11 @@ function EstornarBaixaButton({
   };
 
   if (conciliado) {
-    return (
+    // Com o lançamento do extrato identificado, desfaz aqui mesmo. Sem ele (títulos
+    // antigos sem vínculo rastreável), mantém o aviso de onde ir.
+    return bankStatementItemId ? (
+      <DesfazerConciliacaoButton itemId={String(bankStatementItemId)} kind={kind} titleId={titleId} label={titleLabel} compact={compact} onDone={onDone} />
+    ) : (
       <span className="text-xs text-muted-foreground whitespace-nowrap" title="A baixa tem lastro no extrato. Para revertê-la, use Conciliação → Desfazer no lançamento bancário.">
         conciliada — reverter em Conciliação
       </span>
@@ -1194,7 +1289,8 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                           {!readOnly && (
                             <EstornarBaixaButton kind="receivable" titleId={String(selectedItem?.id)}
                               titleLabel={history?.receivable?.titleNumber || selectedItem?.titleNumber || undefined}
-                              paymentId={String(p.id)} conciliado={(history?.reconciliations?.length || 0) > 0} compact />
+                              paymentId={String(p.id)} conciliado={(history?.reconciliations?.length || 0) > 0}
+                              bankStatementItemId={(history?.reconciliations || []).length === 1 ? history.reconciliations[0].bankStatementItemId : null} compact />
                           )}
                         </div>
                       </div>
@@ -1206,7 +1302,8 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                         <div className="text-amber-800">Marcado como baixado em <b>{formatCurrency(history?.receivable?.amountPaid)}</b>, mas <b>sem nenhum pagamento registrado</b>.</div>
                         <EstornarBaixaButton kind="receivable" titleId={String(selectedItem?.id)}
                           titleLabel={history?.receivable?.titleNumber || selectedItem?.titleNumber || undefined}
-                          conciliado={(history?.reconciliations?.length || 0) > 0} />
+                          conciliado={(history?.reconciliations?.length || 0) > 0}
+                          bankStatementItemId={(history?.reconciliations || []).length === 1 ? history.reconciliations[0].bankStatementItemId : null} />
                       </div>
                     )}
                   </div>
@@ -1222,6 +1319,12 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       <div key={r.id} className="border rounded p-2 text-sm">
                         <div className="flex justify-between gap-2"><span>{r.itemDescription || r.originName || 'Extrato'}{r.itemAmount ? ' · ' + formatCurrency(r.itemAmount) : ''}</span><span className="text-xs text-muted-foreground whitespace-nowrap">{r.matchedAt ? formatDateTime(r.matchedAt) : ''}</span></div>
                         <p className="text-xs text-muted-foreground">Conciliado por {r.matchedBy || r.createdBy || '-'}{r.account ? ' · ' + r.account : ''}{r.statement ? ' · ' + r.statement : ''}{(r.interest && Number(r.interest) > 0) ? ' · juros ' + formatCurrency(r.interest) : ''}{(r.discount && Number(r.discount) > 0) ? ' · desc. ' + formatCurrency(r.discount) : ''}</p>
+                        {!readOnly && r.bankStatementItemId ? (
+                          <div className="mt-1">
+                            <DesfazerConciliacaoButton itemId={String(r.bankStatementItemId)} kind="receivable"
+                              titleId={String(selectedItem?.id)} label={history?.receivable?.titleNumber || selectedItem?.titleNumber || undefined} />
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -2019,6 +2122,12 @@ function PayablesTab() {
                             <span className="text-red-600 font-medium"> · ⚠ o lançamento do extrato está como “{c.reconciliation_status || 'pendente'}”</span>
                           )}
                         </div>
+                        {c.item_id ? (
+                          <div className="mt-1">
+                            <DesfazerConciliacaoButton itemId={String(c.item_id)} kind="payable"
+                              titleId={String(selectedItem?.id)} label={selectedItem?.titleNumber || undefined} />
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
