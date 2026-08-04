@@ -749,53 +749,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             </Card>
           )}
 
-          {/* Integração Omie — oculto no mobile (telas pequenas); visível só no desktop (md+). */}
-          {card.status === 'completed' && card.saleValue && parseFloat(card.saleValue) > 0 && (
-            <Card className="hidden md:block">
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Send className="h-5 w-5 text-orange-600" />
-                  <span>Integração Omie ERP</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {card.omieOrderId ? (
-                  <div className="flex items-center space-x-2 text-green-600">
-                    <CheckCircle className="h-5 w-5" />
-                    <span className="font-medium">Enviado para Omie</span>
-                    <Badge variant="outline" className="ml-2">
-                      {card.omieOrderId}
-                    </Badge>
-                  </div>
-                ) : (
-                  <div className="flex items-center space-x-3 flex-wrap gap-2">
-                    <div className="flex items-center space-x-2 text-orange-600">
-                      <AlertCircle className="h-5 w-5" />
-                      <span>Pendente de envio para Omie</span>
-                    </div>
-                    <Button
-                      onClick={handleSendToOmie}
-                      disabled={sendToOmieMutation.isPending}
-                      className="bg-orange-500 hover:bg-orange-600"
-                      data-testid="button-send-to-omie"
-                    >
-                      {sendToOmieMutation.isPending ? (
-                        <>
-                          <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                          Enviando...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="h-4 w-4 mr-2" />
-                          Enviar para Omie
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          {/* Integração Omie ERP removida do formulário da Rota do Dia (04/08/2026, a pedido). */}
         </div>
 
         {/* Botões para Pedidos Finalizados (venda concluída OU não-venda) */}
