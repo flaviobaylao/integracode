@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -48,6 +48,51 @@ type Linha = {
   diasAtraso?: number | null;
   formaPagamento?: string | null;
   conta?: string | null;
+  estimado?: boolean;
+  detalhe?: DetalheNota | DetalhePagamento | null;
+};
+
+type DetalheParcela = {
+  titulo: string | null;
+  vencimento: string | null;
+  valor: number;
+  pago: number;
+  status: string | null;
+  formaPagamento?: string | null;
+  categoria?: string | null;
+  descricao?: string | null;
+};
+
+type DetalheNota = {
+  tipo: "NF";
+  nf: string;
+  pedido?: string | null;
+  emissao?: string | null;
+  vencimento?: string | null;
+  valorTotal: number;
+  pago: number;
+  saldo: number;
+  parcelasQtd: number;
+  origem?: string | null;
+  situacao: string;
+  cancelada?: boolean;
+  parcelas: DetalheParcela[];
+  pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
+};
+
+type DetalhePagamento = {
+  tipo: "PAGAMENTO";
+  pagoEm?: string | null;
+  valor: number;
+  formaPagamento?: string | null;
+  conta?: string | null;
+  referencia?: string | null;
+  obs?: string | null;
+  nf?: string | null;
+  pedido?: string | null;
+  tituloNumero?: string | null;
+  tituloVencimento?: string | null;
+  diasAtraso?: number | null;
   estimado?: boolean;
 };
 
@@ -131,7 +176,26 @@ export default function ExtratoCliente() {
   const [end, setEnd] = useState("");
   const [tipo, setTipo] = useState<"todos" | "NF" | "PAGAMENTO">("todos");
   const [busca, setBusca] = useState("");
+  const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
+  const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const boxRef = useRef<HTMLDivElement | null>(null);
+
+  const toggleSort = (col: "data" | "documento" | "descricao" | "vencimento" | "situacao") => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir(col === "data" || col === "vencimento" ? "desc" : "asc");
+    }
+  };
+
+  const limparCliente = () => {
+    setTerm("");
+    setDebounced("");
+    setSelected(null);
+    setOpen(false);
+  };
 
   // Permite abrir já num cliente: /extrato-cliente?customerId=...
   useEffect(() => {
@@ -187,8 +251,26 @@ export default function ExtratoCliente() {
           String(l.descricao || "").toLowerCase().includes(q)
       );
     }
+    const dir = sortDir === "asc" ? 1 : -1;
+    const val = (l: Linha) => {
+      switch (sortCol) {
+        case "documento": return String(l.documento || "");
+        case "descricao": return String(l.descricao || "");
+        case "situacao": return String(l.situacao || "");
+        case "vencimento": return String(l.vencimento || "");
+        default: return String(l.data || "");
+      }
+    };
+    out = [...out].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (va !== vb) return va < vb ? -1 * dir : 1 * dir;
+      // desempate estável por data e depois documento
+      const da = String(a.data || ""), db_ = String(b.data || "");
+      if (da !== db_) return da < db_ ? 1 : -1;
+      return String(a.documento).localeCompare(String(b.documento));
+    });
     return out;
-  }, [extrato, tipo, busca]);
+  }, [extrato, tipo, busca, sortCol, sortDir]);
 
   const totaisVisiveis = useMemo(() => {
     const deb = linhas.reduce((s, l) => s + (l.debito || 0), 0);
@@ -238,17 +320,31 @@ export default function ExtratoCliente() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="relative min-w-[280px] flex-1" ref={boxRef}>
               <label className="text-xs text-gray-500 dark:text-gray-400">Cliente</label>
-              <input
-                value={term}
-                onChange={(e) => {
-                  setTerm(e.target.value);
-                  setOpen(true);
-                }}
-                onFocus={() => setOpen(true)}
-                placeholder="Digite o nome, fantasia ou CNPJ/CPF do cliente..."
-                className="w-full px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700"
-                data-testid="input-busca-cliente"
-              />
+              <div className="relative">
+                <input
+                  value={term}
+                  onChange={(e) => {
+                    setTerm(e.target.value);
+                    setOpen(true);
+                  }}
+                  onFocus={() => setOpen(true)}
+                  placeholder="Digite o nome, fantasia ou CNPJ/CPF do cliente..."
+                  className="w-full px-3 py-2 pr-9 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700"
+                  data-testid="input-busca-cliente"
+                />
+                {term ? (
+                  <button
+                    type="button"
+                    onClick={limparCliente}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-lg leading-none px-1"
+                    title="Limpar"
+                    aria-label="Limpar busca de cliente"
+                    data-testid="button-limpar-cliente"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
               {open && debounced.length >= 2 ? (
                 <div className="absolute z-30 mt-1 w-full max-h-80 overflow-auto rounded-md border bg-white dark:bg-gray-800 shadow-lg">
                   {buscando ? (
@@ -262,19 +358,20 @@ export default function ExtratoCliente() {
                         type="button"
                         onClick={() => {
                           setSelected(h);
-                          setTerm(h.name);
+                          setTerm(h.fantasyName || h.name);
                           setOpen(false);
                         }}
                         className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 border-b last:border-b-0 dark:border-gray-700"
                         data-testid={`option-cliente-${h.id}`}
                       >
                         <div className="text-sm font-medium flex items-center gap-2">
-                          {h.name}
+                          {h.fantasyName || h.name}
                           {h.isActive === false ? (
                             <Badge variant="outline" className="text-[10px]">inativo</Badge>
                           ) : null}
                         </div>
                         <div className="text-[11px] text-gray-500">
+                          {h.fantasyName && h.fantasyName !== h.name ? `${h.name} · ` : ""}
                           {fmtDoc(h.document)} · {h.city || "—"}/{h.state || "—"}
                           {h.sellerName ? ` · ${h.sellerName}` : ""}
                         </div>
@@ -391,25 +488,34 @@ export default function ExtratoCliente() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[70vh]">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                    <tr className="text-left">
-                      <th className="px-3 py-2 whitespace-nowrap">Data</th>
+                  <thead className="text-gray-600 dark:text-gray-300">
+                    <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:z-20 [&>th]:bg-gray-100 [&>th]:dark:bg-gray-800 [&>th]:shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.12)]">
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        <SortHeader label="Data" col="data" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
+                      </th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo</th>
-                      <th className="px-3 py-2 whitespace-nowrap">Documento</th>
-                      <th className="px-3 py-2">Descrição</th>
-                      <th className="px-3 py-2 whitespace-nowrap">Vencimento</th>
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        <SortHeader label="Documento" col="documento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
+                      </th>
+                      <th className="px-3 py-2">
+                        <SortHeader label="Descrição" col="descricao" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
+                      </th>
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        <SortHeader label="Vencimento" col="vencimento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
+                      </th>
                       <th className="px-3 py-2 text-right whitespace-nowrap">Venda (D)</th>
                       <th className="px-3 py-2 text-right whitespace-nowrap">Pagamento (C)</th>
-                      <th className="px-3 py-2 text-right whitespace-nowrap">Saldo</th>
-                      <th className="px-3 py-2 whitespace-nowrap">Situação</th>
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        <SortHeader label="Situação" col="situacao" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {linhas.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
                           Nenhum lançamento no período/filtro selecionado.
                         </td>
                       </tr>
@@ -427,15 +533,23 @@ export default function ExtratoCliente() {
                             {l.estimado ? <span className="ml-1 text-[10px] text-amber-600">(est.)</span> : null}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            {l.tipo === "NF" ? (
-                              <span className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 font-medium">
-                                <i className="fas fa-file-invoice-dollar text-[11px]" /> Nota
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-medium">
-                                <i className="fas fa-hand-holding-dollar text-[11px]" /> Pagamento
-                              </span>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => setDetalheLinha(l)}
+                              title="Ver pormenores"
+                              data-testid={`link-detalhe-${l.key}`}
+                              className={`inline-flex items-center gap-1 font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid focus:outline-none focus:ring-1 focus:ring-blue-400 rounded ${
+                                l.tipo === "NF"
+                                  ? "text-blue-700 dark:text-blue-300"
+                                  : "text-emerald-700 dark:text-emerald-300"
+                              }`}
+                            >
+                              {l.tipo === "NF" ? (
+                                <><i className="fas fa-file-invoice-dollar text-[11px]" /> Nota</>
+                              ) : (
+                                <><i className="fas fa-hand-holding-dollar text-[11px]" /> Pagamento</>
+                              )}
+                            </button>
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
                             {l.documento}
@@ -462,9 +576,6 @@ export default function ExtratoCliente() {
                           <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-emerald-700 dark:text-emerald-300">
                             {l.credito ? fmtBRL(l.credito) : ""}
                           </td>
-                          <td className={`px-3 py-2 text-right whitespace-nowrap font-semibold ${l.saldo > 0.009 ? "text-amber-700 dark:text-amber-300" : "text-gray-500"}`}>
-                            {fmtBRL(l.saldo)}
-                          </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[l.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
                               {l.situacao}
@@ -478,12 +589,11 @@ export default function ExtratoCliente() {
                     )}
                   </tbody>
                   {linhas.length ? (
-                    <tfoot className="bg-gray-50 dark:bg-gray-800 font-semibold">
-                      <tr className="border-t-2 dark:border-gray-600">
+                    <tfoot className="font-semibold">
+                      <tr className="[&>td]:sticky [&>td]:bottom-0 [&>td]:z-20 [&>td]:bg-gray-100 [&>td]:dark:bg-gray-800 [&>td]:shadow-[inset_0_1px_0_0_rgba(0,0,0,0.12)]">
                         <td className="px-3 py-2" colSpan={5}>Totais do filtro</td>
                         <td className="px-3 py-2 text-right">{fmtBRL(totaisVisiveis.deb)}</td>
                         <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">{fmtBRL(totaisVisiveis.cre)}</td>
-                        <td className="px-3 py-2 text-right">{fmtBRL(totaisVisiveis.saldo)}</td>
                         <td className="px-3 py-2"></td>
                       </tr>
                     </tfoot>
@@ -494,6 +604,255 @@ export default function ExtratoCliente() {
           </Card>
         </>
       ) : null}
+
+      {detalheLinha ? (
+        <DetalheModal linha={detalheLinha} onClose={() => setDetalheLinha(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+// ============================================================================
+// MODAL DE PORMENORES — abre ao clicar em "Nota" ou "Pagamento" no extrato.
+// ============================================================================
+type SortColKey = "data" | "documento" | "descricao" | "vencimento" | "situacao";
+
+function SortHeader(props: {
+  label: string;
+  col: SortColKey;
+  sortCol: SortColKey;
+  sortDir: "asc" | "desc";
+  onSort: (col: SortColKey) => void;
+}) {
+  const active = props.sortCol === props.col;
+  return (
+    <button
+      type="button"
+      onClick={() => props.onSort(props.col)}
+      className="inline-flex items-center gap-1 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none"
+      title="Ordenar A-Z / Z-A"
+      data-testid={`sort-${props.col}`}
+    >
+      {props.label}
+      <span className={`text-[10px] leading-none ${active ? "opacity-100" : "opacity-30"}`}>
+        {active ? (props.sortDir === "asc" ? "▲" : "▼") : "↕"}
+      </span>
+    </button>
+  );
+}
+
+function DetInfo(props: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{props.label}</div>
+      <div className="text-sm font-medium">{props.value}</div>
+    </div>
+  );
+}
+
+function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void }) {
+  const d = linha.detalhe as any;
+  const isNota = linha.tipo === "NF";
+
+  // Fallback: se o backend ainda não enviar `detalhe`, monta a partir da linha.
+  const dNota: DetalheNota | null =
+    isNota && d
+      ? (d as DetalheNota)
+      : isNota
+      ? {
+          tipo: "NF",
+          nf: linha.nf,
+          pedido: linha.pedido || null,
+          emissao: linha.data,
+          vencimento: linha.vencimento || null,
+          valorTotal: linha.valorNota ?? linha.debito,
+          pago: linha.pagoNota ?? 0,
+          saldo: linha.saldoNota ?? 0,
+          parcelasQtd: linha.parcelas || 1,
+          origem: ORIGEM_LABEL[linha.origem] || linha.origem,
+          situacao: linha.situacao,
+          cancelada: linha.cancelada,
+          parcelas: [],
+          pagamentos: [],
+        }
+      : null;
+
+  const dPag: DetalhePagamento | null =
+    !isNota && d
+      ? (d as DetalhePagamento)
+      : !isNota
+      ? {
+          tipo: "PAGAMENTO",
+          pagoEm: linha.data,
+          valor: linha.credito,
+          formaPagamento: linha.formaPagamento || null,
+          conta: linha.conta || null,
+          referencia: null,
+          obs: linha.descricao || null,
+          nf: linha.nf,
+          pedido: linha.pedido || null,
+          tituloNumero: null,
+          tituloVencimento: linha.vencimento || null,
+          diasAtraso: linha.diasAtraso ?? null,
+          estimado: linha.estimado,
+        }
+      : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto"
+      onMouseDown={onClose}
+      data-testid="modal-detalhe-extrato"
+    >
+      <div
+        className="mt-10 w-full max-w-2xl rounded-lg bg-white dark:bg-gray-900 shadow-xl border dark:border-gray-700"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2 border-b dark:border-gray-700 px-4 py-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isNota ? (
+              <span className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 font-semibold">
+                <i className="fas fa-file-invoice-dollar" /> Nota {dNota?.nf && dNota.nf !== "—" ? dNota.nf : ""}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-semibold">
+                <i className="fas fa-hand-holding-dollar" /> Pagamento{dPag?.nf ? ` — NF ${dPag.nf}` : ""}
+              </span>
+            )}
+            <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[linha.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+              {linha.situacao}
+            </span>
+            {(isNota ? dNota?.cancelada : dPag?.estimado) ? (
+              <span className="px-2 py-0.5 rounded-full border text-[11px] bg-gray-200 text-gray-600 border-gray-300">
+                {isNota ? "Cancelada" : "Data estimada"}
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none px-2"
+            data-testid="button-fechar-detalhe"
+            aria-label="Fechar"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+          {isNota && dNota ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <DetInfo label="Emissão" value={fmtData(dNota.emissao)} />
+                <DetInfo label="Vencimento" value={fmtData(dNota.vencimento)} />
+                <DetInfo label="Pedido" value={dNota.pedido || "—"} />
+                <DetInfo label="Valor total" value={fmtBRL(dNota.valorTotal)} />
+                <DetInfo label="Pago" value={<span className="text-emerald-700 dark:text-emerald-300">{fmtBRL(dNota.pago)}</span>} />
+                <DetInfo label="Saldo" value={<span className={dNota.saldo > 0.009 ? "text-amber-700 dark:text-amber-300" : ""}>{fmtBRL(dNota.saldo)}</span>} />
+                <DetInfo label="Parcelas" value={dNota.parcelasQtd} />
+                <DetInfo label="Origem" value={dNota.origem || "—"} />
+              </div>
+
+              {dNota.parcelas && dNota.parcelas.length ? (
+                <div>
+                  <div className="text-sm font-semibold mb-1">Parcelas / títulos</div>
+                  <div className="overflow-x-auto rounded border dark:border-gray-700">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                        <tr className="text-left">
+                          <th className="px-2 py-1">Título</th>
+                          <th className="px-2 py-1">Vencimento</th>
+                          <th className="px-2 py-1 text-right">Valor</th>
+                          <th className="px-2 py-1 text-right">Pago</th>
+                          <th className="px-2 py-1">Forma</th>
+                          <th className="px-2 py-1">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dNota.parcelas.map((p, i) => (
+                          <tr key={i} className="border-t dark:border-gray-700">
+                            <td className="px-2 py-1 font-mono">{p.titulo || "—"}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">{fmtData(p.vencimento)}</td>
+                            <td className="px-2 py-1 text-right">{fmtBRL(p.valor)}</td>
+                            <td className="px-2 py-1 text-right text-emerald-700 dark:text-emerald-300">{p.pago ? fmtBRL(p.pago) : ""}</td>
+                            <td className="px-2 py-1">{p.formaPagamento || "—"}</td>
+                            <td className="px-2 py-1">{p.status || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {dNota.pagamentos && dNota.pagamentos.length ? (
+                <div>
+                  <div className="text-sm font-semibold mb-1">Pagamentos aplicados</div>
+                  <div className="overflow-x-auto rounded border dark:border-gray-700">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                        <tr className="text-left">
+                          <th className="px-2 py-1">Data</th>
+                          <th className="px-2 py-1 text-right">Valor</th>
+                          <th className="px-2 py-1">Forma</th>
+                          <th className="px-2 py-1">Conta</th>
+                          <th className="px-2 py-1">Referência</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dNota.pagamentos.map((p, i) => (
+                          <tr key={i} className="border-t dark:border-gray-700">
+                            <td className="px-2 py-1 whitespace-nowrap">{fmtData(p.data)}</td>
+                            <td className="px-2 py-1 text-right text-emerald-700 dark:text-emerald-300">{fmtBRL(p.valor)}</td>
+                            <td className="px-2 py-1">{p.formaPagamento || "—"}</td>
+                            <td className="px-2 py-1">{p.conta || "—"}</td>
+                            <td className="px-2 py-1 max-w-[200px] truncate" title={p.referencia || ""}>{p.referencia || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500">Nenhum pagamento registrado para esta nota.</div>
+              )}
+
+              {linha.descricao ? (
+                <DetInfo label="Descrição" value={linha.descricao} />
+              ) : null}
+            </>
+          ) : dPag ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <DetInfo label="Data do pagamento" value={<>{fmtData(dPag.pagoEm)}{dPag.estimado ? <span className="ml-1 text-[10px] text-amber-600">(estimada)</span> : null}</>} />
+                <DetInfo label="Valor" value={<span className="text-emerald-700 dark:text-emerald-300">{fmtBRL(dPag.valor)}</span>} />
+                <DetInfo label="Forma de pagamento" value={dPag.formaPagamento || "—"} />
+                <DetInfo label="Conta" value={dPag.conta || "—"} />
+                <DetInfo label="NF" value={dPag.nf || "—"} />
+                <DetInfo label="Pedido" value={dPag.pedido || "—"} />
+                <DetInfo label="Título" value={dPag.tituloNumero || "—"} />
+                <DetInfo label="Vencimento do título" value={fmtData(dPag.tituloVencimento)} />
+                <DetInfo
+                  label="Atraso"
+                  value={
+                    dPag.diasAtraso == null
+                      ? "—"
+                      : dPag.diasAtraso > 0
+                      ? <span className="text-red-600">{dPag.diasAtraso} dia(s)</span>
+                      : dPag.diasAtraso < 0
+                      ? `${Math.abs(dPag.diasAtraso)} dia(s) adiantado`
+                      : "em dia"
+                  }
+                />
+              </div>
+              {dPag.referencia ? <DetInfo label="Referência" value={dPag.referencia} /> : null}
+              {dPag.obs ? <DetInfo label="Observação" value={dPag.obs} /> : null}
+            </>
+          ) : (
+            <div className="text-sm text-gray-500">Sem detalhes disponíveis.</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
