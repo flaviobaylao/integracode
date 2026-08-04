@@ -922,8 +922,33 @@ export function registerReconciliation(app: Express) {
         chartAccountId: t.chartAccountId ? String(t.chartAccountId) : null,
         settled: Number(t.amount || 0) + Number(t.interest || 0) - Number(t.discount || 0),
       }));
+
+      // ---- FASE 3.4y: A CONCILIACAO TEM QUE FECHAR COM O EXTRATO ----------
+      // O backend aceitava QUALQUER valor: o carrinho da tela conferia o delta,
+      // mas o servidor nunca conferia. Quem chamasse a API direto (ou uma tela
+      // com bug) baixava R$ 5.000 de titulo contra um lancamento de R$ 500.
+      // Medido antes da trava: 191 de 1.508 conciliacoes (12,7%) fechadas fora
+      // do extrato, R$ 25.736,33 de diferenca acumulada.
+      // Regra: soma dos titulos (principal + juros - desconto) = valor do
+      // lancamento no extrato, tolerancia de 1 centavo.
+      // Diferenca real e conhecida (tarifa embutida, por exemplo) passa com
+      // aceitarDiferenca:true + motivoDiferenca, e fica REGISTRADA na nota e na
+      // auditoria em vez de passar silenciosa.
+      const valorExtrato = Math.abs(money(item.amount));
+      const totalTitulos = Number(plan.reduce((acc, t) => acc + t.settled, 0).toFixed(2));
+      const difExtrato = Number((totalTitulos - valorExtrato).toFixed(2));
+      const aceitaDif = req.body?.aceitarDiferenca === true;
+      const motivoDif = String(req.body?.motivoDiferenca || "").slice(0, 200);
+      if (Math.abs(difExtrato) > 0.01) {
+        if (!aceitaDif) return res.status(422).json({
+          error: "A soma dos titulos nao fecha com o lancamento do extrato.",
+          valorExtrato, totalTitulos, diferenca: difExtrato,
+          comoProsseguir: "Ajuste principal/juros/desconto ate zerar, ou reenvie com aceitarDiferenca:true e motivoDiferenca.",
+        });
+        if (!motivoDif) return res.status(400).json({ error: "Informe motivoDiferenca para aceitar conciliacao fora do valor do extrato." });
+      }
       if (dryRun) {
-        return res.json({ ok: true, dryRun: true, item: { id: item.id, amount: item.amount, type: item.type, description: item.description }, method, paidAtISO, accountId, plan });
+        return res.json({ ok: true, dryRun: true, item: { id: item.id, amount: item.amount, type: item.type, description: item.description }, method, paidAtISO, accountId, plan, valorExtrato, totalTitulos, diferenca: difExtrato });
       }
 
       // ---- FASE 3.4h: categoria DRE selecionavel na conciliacao ----------
@@ -985,14 +1010,15 @@ export function registerReconciliation(app: Express) {
           INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
           VALUES (gen_random_uuid(), ${id}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${t.amount.toFixed(2)}, ${kind}, ${t.settled.toFixed(2)}, ${t.interest.toFixed(2)}, ${t.discount.toFixed(2)}, ${by}, now())`);
       }
-      const note = `Conciliado por ${by} em ${new Date().toISOString()}${titles.length > 1 ? " (composta " + titles.length + " titulos)" : ""}`;
+      const note = `Conciliado por ${by} em ${new Date().toISOString()}${titles.length > 1 ? " (composta " + titles.length + " titulos)" : ""}`
+        + (Math.abs(difExtrato) > 0.01 ? ` [DIFERENCA vs extrato R$ ${difExtrato.toFixed(2)}: ${motivoDif}]` : "");
       await db.execute(sql`
         UPDATE bank_statement_items
         SET reconciliation_status = 'reconciled', matched_receivable_id = ${firstRecv}, matched_payable_id = ${firstPay},
             matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}
         WHERE id = ${id}`);
       if (cpInfo) await evolvePattern(item, cpInfo, item.s_instance || null, by);
-      await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results } });
+      await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results, valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
       res.json({ ok: true, status: "reconciled", kind, results });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
@@ -1101,6 +1127,23 @@ export function registerReconciliation(app: Express) {
         FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id WHERE i.id = ${id}`))[0];
       if (!item) return res.status(404).json({ error: "item nao encontrado" });
       if (item.reconciliation_status === "reconciled") return res.status(409).json({ error: "item ja conciliado" });
+      // Mesma trava do reconcile: o titulo criado aqui tem que valer o mesmo que
+      // o lancamento do extrato. Antes dava para criar um titulo de qualquer
+      // valor e dar por conciliado um lancamento de outro valor.
+      {
+        const valorExtrato = Math.abs(money(item.amount));
+        const dif = Number((amount - valorExtrato).toFixed(2));
+        if (Math.abs(dif) > 0.01 && b.aceitarDiferenca !== true) {
+          return res.status(422).json({
+            error: "O valor do titulo nao fecha com o lancamento do extrato.",
+            valorExtrato, valorTitulo: amount, diferenca: dif,
+            comoProsseguir: "Use o valor do extrato, ou reenvie com aceitarDiferenca:true e motivoDiferenca.",
+          });
+        }
+        if (Math.abs(dif) > 0.01 && !String(b.motivoDiferenca || "")) {
+          return res.status(400).json({ error: "Informe motivoDiferenca para aceitar titulo fora do valor do extrato." });
+        }
+      }
       const method = (b.paymentMethod || pickMethod(item.description)).toString();
       const paidAtISO = (b.paidAt ? new Date(b.paidAt) : new Date(item.transaction_date || Date.now())).toISOString();
       const accountId = item.s_account || null;
@@ -1233,6 +1276,34 @@ export function registerReconciliation(app: Express) {
       return { ok: true, status: "pending", reverted };
     }
   }
+
+  // Conciliacoes JA FEITAS que nao fecham com o extrato (antes da trava 3.4y).
+  // Somente leitura: mostra onde a baixa foi maior ou menor que o dinheiro que
+  // realmente entrou/saiu, para conferencia manual.
+  app.get("/api/reconciliation/divergencias", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 1000);
+      const accountId = (req.query.accountId as string) || null;
+      const linhas = rowsOf(await db.execute(sql`
+        WITH m AS (
+          SELECT bank_statement_item_id AS iid,
+                 sum(COALESCE(title_amount_settled, amount)::numeric) AS soma,
+                 count(*) AS titulos
+          FROM bank_statement_item_matches GROUP BY 1)
+        SELECT i.id, to_char(i.transaction_date, 'YYYY-MM-DD') AS data, i.type AS tipo,
+               round(i.amount::numeric, 2) AS valor_extrato, round(m.soma, 2) AS total_titulos,
+               round(m.soma - i.amount::numeric, 2) AS diferenca, m.titulos,
+               left(COALESCE(i.description, ''), 80) AS historico, i.matched_by AS conciliado_por,
+               s.financial_account_id AS conta
+        FROM m JOIN bank_statement_items i ON i.id = m.iid
+               JOIN bank_statements s ON s.id = i.statement_id
+        WHERE abs(i.amount::numeric - m.soma) > 0.01
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        ORDER BY abs(i.amount::numeric - m.soma) DESC LIMIT ${limit}`));
+      const total = Number(linhas.reduce((acc: number, r: any) => acc + Math.abs(Number(r.diferenca || 0)), 0).toFixed(2));
+      res.json({ somenteLeitura: true, itens: linhas.length, somaDiferencas: total, linhas });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
 
   app.post("/api/reconciliation/items/:id/undo", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
