@@ -2810,19 +2810,30 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const b = req.body || {};
       // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
       // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
-      const amtBaixaR = parseFloat(String(b.amount ?? '0'));
-      if (!(amtBaixaR > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
+      const amtBaixaR = parseFloat(String(b.amount ?? '0')) || 0;
+      // DESCONTO: abatimento concedido nesta baixa. NAO e dinheiro recebido — reduz
+      // o VALOR DO TITULO. Pode vir sozinho (valor 0 + desconto > 0): e a concessao
+      // de desconto sem recebimento, que so ajusta quanto o cliente ainda deve.
+      const descontoR = parseFloat(String(b.discount ?? '0')) || 0;
+      if (descontoR < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
+      if (amtBaixaR < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
+      if (!(amtBaixaR + descontoR > 0)) return res.status(400).json({ message: 'Informe um valor recebido, um desconto, ou os dois.' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoR = parseFloat((exists as any).amountPaid || '0');
       const totalR = parseFloat((exists as any).amount || '0');
       if (String((exists as any).status) === 'recebida' || (totalR > 0 && jaPagoR >= totalR - 0.005)) {
         return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
       }
+      const emAbertoR = totalR - jaPagoR;
+      if (amtBaixaR + descontoR > emAbertoR + 0.005) {
+        return res.status(422).json({ message: `Valor + desconto (R$ ${(amtBaixaR + descontoR).toFixed(2)}) passa do saldo em aberto (R$ ${emAbertoR.toFixed(2)}).` });
+      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         receivableId: req.params.id,
         paidAt: rawDate ? new Date(rawDate) : new Date(),
-        amount: String(b.amount ?? '0'),
+        amount: amtBaixaR.toFixed(2),
+        discount: descontoR.toFixed(2),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -2830,17 +2841,37 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createReceivablePayment(data);
-      await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
+      await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: amtBaixaR,
+        note: descontoR > 0 ? `baixa R$ ${amtBaixaR.toFixed(2)} + desconto R$ ${descontoR.toFixed(2)}` : 'baixa' });
 
       const receivable = await storage.getReceivable(req.params.id);
       if (receivable) {
-        const totalPaid = parseFloat(receivable.amountPaid || '0') + parseFloat(data.amount);
-        const totalAmount = parseFloat(receivable.amount);
-        const newStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
-        await storage.updateReceivable(req.params.id, { 
-          amountPaid: totalPaid.toFixed(2),
-          status: newStatus as any
-        });
+        const totalPaid = parseFloat(receivable.amountPaid || '0') + amtBaixaR;
+        const valorAntes = parseFloat(receivable.amount);
+        // O desconto reduz o VALOR do titulo. O valor de origem e guardado na
+        // primeira vez, senao depois do desconto ninguem sabe por quanto nasceu.
+        const totalAmount = descontoR > 0 ? Number((valorAntes - descontoR).toFixed(2)) : valorAntes;
+        // FIX: baixa parcial em titulo vencido marcava 'a_vencer' e sumia dos
+        // atrasados (o lado de PAGAR ja tinha sido corrigido; o de RECEBER nao).
+        const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+        const dvR: any = (receivable as any).dueDate;
+        const vencR = dvR instanceof Date
+          ? new Date(dvR.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+          : (dvR ? String(dvR).slice(0, 10) : '');
+        const newStatus = totalPaid >= totalAmount - 0.005
+          ? 'recebida'
+          : (/^\d{4}-\d{2}-\d{2}$/.test(vencR) && vencR < hojeBR ? 'vencida' : 'a_vencer');
+        const patch: any = { amountPaid: totalPaid.toFixed(2), status: newStatus as any };
+        if (descontoR > 0) {
+          patch.amount = totalAmount.toFixed(2);
+          if (!(receivable as any).originalAmount) patch.originalAmount = valorAntes.toFixed(2);
+          await logFinancialAudit({
+            req, action: 'update', entity: 'receivable', entityId: req.params.id, amount: descontoR,
+            before: { amount: valorAntes.toFixed(2) }, after: { amount: totalAmount.toFixed(2), desconto: descontoR.toFixed(2) },
+            note: `Desconto de R$ ${descontoR.toFixed(2)} concedido na baixa: titulo de R$ ${valorAntes.toFixed(2)} passa a R$ ${totalAmount.toFixed(2)}.`,
+          });
+        }
+        await storage.updateReceivable(req.params.id, patch);
 
         // A baixa manual de recebivel NAO creditava a conta: so boleto e PIX
         // automaticos geravam movimento. O razao ficava torto — entrada de
@@ -2848,11 +2879,11 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         // Idempotente pelo id do pagamento, entao nao duplica com o credito que o
         // webhook do boleto/PIX ja faz (aquele usa outro sourceType/reference).
         const contaRecId = (data as any).financialAccountId || (receivable as any).financialAccountId || null;
-        if (contaRecId) {
+        if (contaRecId && amtBaixaR > 0.005) {
           try {
             const contaRec: any = await storage.getFinancialAccount(contaRecId);
             if (contaRec) await lancarNaConta({
-              accountId: contaRecId, tipo: 'credito', valor: parseFloat(data.amount),
+              accountId: contaRecId, tipo: 'credito', valor: amtBaixaR,
               descricao: `Recebimento - ${(receivable as any).customerName || (receivable as any).titleNumber || 'conta a receber'}`,
               sourceType: 'receivable_payment', sourceId: String(req.params.id),
               reference: String((payment as any)?.id || req.params.id),
@@ -3379,19 +3410,29 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const b = req.body || {};
       // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
       // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
-      const amtBaixaP = parseFloat(String(b.amount ?? '0'));
-      if (!(amtBaixaP > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
+      const amtBaixaP = parseFloat(String(b.amount ?? '0')) || 0;
+      // DESCONTO obtido do fornecedor: reduz o VALOR do titulo a pagar. Pode vir
+      // sozinho (valor 0 + desconto > 0) — negociacao de abatimento sem pagamento.
+      const descontoP = parseFloat(String(b.discount ?? '0')) || 0;
+      if (descontoP < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
+      if (amtBaixaP < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
+      if (!(amtBaixaP + descontoP > 0)) return res.status(400).json({ message: 'Informe um valor pago, um desconto, ou os dois.' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoP = parseFloat((exists as any).amountPaid || '0');
       const totalP = parseFloat((exists as any).amount || '0');
       if (String((exists as any).status) === 'paga' || (totalP > 0 && jaPagoP >= totalP - 0.005)) {
         return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
       }
+      const emAbertoPg = totalP - jaPagoP;
+      if (amtBaixaP + descontoP > emAbertoPg + 0.005) {
+        return res.status(422).json({ message: `Valor + desconto (R$ ${(amtBaixaP + descontoP).toFixed(2)}) passa do saldo em aberto (R$ ${emAbertoPg.toFixed(2)}).` });
+      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         payableId: req.params.id,
         paidAt: rawDate ? new Date(rawDate) : new Date(),
-        amount: String(b.amount ?? '0'),
+        amount: amtBaixaP.toFixed(2),
+        discount: descontoP.toFixed(2),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -3399,12 +3440,14 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createPayablePayment(data);
-      await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
+      await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: amtBaixaP,
+        note: descontoP > 0 ? `baixa R$ ${amtBaixaP.toFixed(2)} + desconto R$ ${descontoP.toFixed(2)}` : 'baixa' });
 
       const payable = await storage.getPayable(req.params.id);
       if (payable) {
-        const totalPaid = parseFloat(payable.amountPaid || '0') + parseFloat(data.amount);
-        const totalAmount = parseFloat(payable.amount);
+        const totalPaid = parseFloat(payable.amountPaid || '0') + amtBaixaP;
+        const valorAntesP = parseFloat(payable.amount);
+        const totalAmount = descontoP > 0 ? Number((valorAntesP - descontoP).toFixed(2)) : valorAntesP;
         // FIX: baixa parcial marcava 'a_vencer' mesmo com vencimento no passado,
         // tirando o titulo da lista de atrasados. Tolerancia de meio centavo para
         // arredondamento, e 'vencida' quando o vencimento ja passou (fuso de SP).
@@ -3416,17 +3459,24 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         const newStatus = totalPaid >= totalAmount - 0.005
           ? 'paga'
           : (/^\d{4}-\d{2}-\d{2}$/.test(vencP) && vencP < hojeBR ? 'vencida' : 'a_vencer');
-        await storage.updatePayable(req.params.id, {
-          amountPaid: totalPaid.toFixed(2),
-          status: newStatus as any
-        });
+        const patchP: any = { amountPaid: totalPaid.toFixed(2), status: newStatus as any };
+        if (descontoP > 0) {
+          patchP.amount = totalAmount.toFixed(2);
+          if (!(payable as any).originalAmount) patchP.originalAmount = valorAntesP.toFixed(2);
+          await logFinancialAudit({
+            req, action: 'update', entity: 'payable', entityId: req.params.id, amount: descontoP,
+            before: { amount: valorAntesP.toFixed(2) }, after: { amount: totalAmount.toFixed(2), desconto: descontoP.toFixed(2) },
+            note: `Desconto de R$ ${descontoP.toFixed(2)} obtido na baixa: titulo de R$ ${valorAntesP.toFixed(2)} passa a R$ ${totalAmount.toFixed(2)}.`,
+          });
+        }
+        await storage.updatePayable(req.params.id, patchP);
 
         // FIX: pagar fornecedor NAO debitava a conta. Nao existia um unico
         // movimento de 'debito' no sistema inteiro — o saldo so subia, e o caixa
         // exibido ficava inflado por tudo que ja foi pago. O movimento e gravado
         // ANTES do saldo: se falhar, o saldo nao desce sem rastro.
         const contaId = (data as any).financialAccountId || (payable as any).financialAccountId || null;
-        if (contaId) {
+        if (contaId && amtBaixaP > 0.005) {
           try {
             const conta: any = await storage.getFinancialAccount(contaId);
             if (conta) {
@@ -3434,7 +3484,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
               // (server/account-ledger.ts). Idempotente por pagamento: reenvio da
               // mesma baixa nao debita duas vezes.
               await lancarNaConta({
-                accountId: contaId, tipo: 'debito', valor: parseFloat(data.amount),
+                accountId: contaId, tipo: 'debito', valor: amtBaixaP,
                 descricao: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
                 sourceType: 'payable', sourceId: String(req.params.id), reference: String((payment as any)?.id || req.params.id),
                 omieInstanceId: (conta as any).omieInstanceId || null,
