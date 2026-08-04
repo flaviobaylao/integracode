@@ -27,7 +27,7 @@ const MENU_CARD: Record<string, string> = {
   "check-in-audit": "Auditoria de Check-ins", "delivery-dashboard": "Dashboard de Entregas",
   "delivery-management": "Gestão de Entregas", "delivery-routes": "Resumo das Rotas",
   "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas",
-  products: "Produtos", "hotsite-pricing": "Tabela de Preços Hotsite", "hotsite-orders": "Pedidos do Site",
+  products: "Produtos", "hotsite-pricing": "Tabela de Preços Hotsite", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "billing-pipeline": "Pipeline Faturamento",
   "order-sale": "Pedido de Venda", "order-billing": "Faturar / Faturado", "order-billed": "Faturar / Faturado",
@@ -236,6 +236,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
         { id: 'rota-do-dia', label: (isVendedor || isTelemarketing) ? 'Minha Rota do Dia' : 'Rota do Dia', icon: 'fas fa-map-marked-alt', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
+        { id: 'canais', label: 'Canais', icon: 'fas fa-globe', available: canAccessReports || isTelemarketing, badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null },
         { id: 'relatorios-graficos', label: 'Relatórios Gráficos', icon: 'fas fa-chart-column', available: canAccessReports, badge: null },
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports || isTelemarketing, badge: null },
@@ -295,8 +296,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-box',
       items: [
         { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
-        { id: 'hotsite-pricing', label: 'Tabela de Preços Hotsite', icon: 'fas fa-tags', available: canAccessReports, badge: null },
-        { id: 'hotsite-orders', label: 'Pedidos do Site', icon: 'fas fa-shopping-bag', available: canAccessReports || isTelemarketing, badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null },
+        // Tabela de Preços Hotsite e Pedidos do Site passaram a viver dentro de Canais (04/ago/2026).
+        // As rotas /hotsite-pricing e /hotsite-orders continuam valendo para links salvos.
         { id: 'estoque', label: 'Gestão de Estoque', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         { id: 'cupons', label: 'Cupons de Desconto', icon: 'fas fa-ticket-alt', available: canAccessReports, badge: null },
@@ -473,7 +474,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'];
+  const TMK_WHITELIST = ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
@@ -570,7 +571,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['extrato-cliente', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
+    const routePages = ['extrato-cliente', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
     if (itemId === 'omie-instances') {
       navigate('/admin/omie-instances');
