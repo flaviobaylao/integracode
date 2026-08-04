@@ -23,7 +23,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2, Mic, Square } from "lucide-react";
+import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2, Mic, Square, Bell } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Tipos e rótulos
@@ -307,11 +307,15 @@ export function ChangeRequestControl(props: ControlProps) {
       <Badge
         variant="outline"
         className={`cursor-pointer gap-1 ${m.cls} ${className || ""}`}
-        title={`Alterações ${m.label}${state.resolutionNote ? " — " + state.resolutionNote : ""}`}
+        title={`Alterações ${m.label}${state.resolutionNote ? " — " + state.resolutionNote : ""}${(state.status === "parcial" || state.status === "rejeitadas") ? " · há retorno do admin a responder" : ""}`}
         onClick={(e) => { stop(e); setViewOpen(true); }}
         data-testid={`badge-cr-result-${entityId}`}
       >
         <m.Icon className="h-3 w-3" /> {m.label}
+        {/* 🔔 Retorno do admin (Parcial/Rejeitada) a ser respondido no card. (04/08/2026) */}
+        {(state.status === "parcial" || state.status === "rejeitadas") && (
+          <Bell className="h-3 w-3 ml-0.5 animate-pulse" data-testid={`badge-cr-bell-${entityId}`} />
+        )}
       </Badge>
     );
   } else {
