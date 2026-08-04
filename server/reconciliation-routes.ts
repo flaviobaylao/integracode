@@ -1292,8 +1292,25 @@ export function registerReconciliation(app: Express) {
         await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_by=${by}, matched_at=null, notes=null WHERE id=${id}`);
         return { ok: true, status: "pending", reverted: "ignored" };
       }
-      if (item.reconciliation_status !== "reconciled") return { ok: false, error: "item nao esta conciliado", code: 409 };
       const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`));
+      // FASE 3.5d: ESTADO INCONSISTENTE tambem tem que poder ser desfeito.
+      // Existe titulo baixado com vinculo (bank_statement_item_matches) cujo
+      // lancamento do extrato ficou com status 'pending' — conciliado de um lado,
+      // pendente do outro. Exigir 'reconciled' aqui deixava o operador sem saida
+      // EXATAMENTE no caso que precisa de conserto: a tela mostrava o aviso
+      // "o lancamento do extrato esta como pending" e o Desfazer respondia 409.
+      // Agora so recusa quando nao ha nada a desfazer: status fora de 'reconciled'
+      // E sem nenhum vinculo.
+      if (item.reconciliation_status !== "reconciled" && matches.length === 0) {
+        return { ok: false, error: "item nao esta conciliado e nao tem vinculo com titulo — nada a desfazer", code: 409 };
+      }
+      // ESPELHO fica de fora da abertura acima. Sao 117 linhas espelho que tem
+      // vinculo: desfazer ali marcaria a copia como 'pending' e ela voltaria para
+      // a fila de conciliacao — reintroduzindo a duplicata que o dedup colapsou.
+      // A reversao dessas tem que ser feita no lancamento CANONICO.
+      if (item.reconciliation_status !== "reconciled" && item.mirror_of) {
+        return { ok: false, error: "lancamento espelho (copia de outro extrato) — desfaca no lancamento de origem", code: 409 };
+      }
       const reverted: any[] = [];
       // Vencido por DIA-CALENDÁRIO (fuso Brasil): ao desfazer a baixa, o título só volta a
       // 'vencida' se o vencimento JÁ PASSOU. Vence HOJE (ou futuro) volta a 'a_vencer'.
