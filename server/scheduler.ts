@@ -14,6 +14,7 @@ import { runPositivacaoAlertaCron } from './positivacao-alert';
 import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
 import { runRotaNaoVisitadosCron } from './rota-nao-visitados-alert';
 import { sweepOpenBoletos } from './bb-boleto-service';
+import { runGarantirCobranca } from './charge-guarantee-routes';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
@@ -948,6 +949,7 @@ console.log('   - Limpeza mensal de registros nao encontrado na lista de ativos 
 console.log('   - Sincronização completa (Clientes + Faturamentos + Débitos) de hora em hora das 06:00h às 23:00h (UTC-3)');
 console.log('   - Auto check-out de visitas (20+ min sem pedido/não-venda) a cada 5 minutos das 06:00h às 23:00h (UTC-3)');
 console.log('   - Saúde da cobrança (somente leitura) às 07:20 em dias úteis (UTC-3)');
+console.log('   - Garantir cobrança (emite o que faltou) de hora em hora das 08:40 às 19:40 em dias úteis (UTC-3)');
 console.log('   - Etapas Omie: sincronização manual via botão "Atualizar Etapas Omie" no Resumo de Rotas');
 console.log('   ⚠️  Polling fallback WhatsApp DESATIVADO (Evolution API com bug no findChats)');
 console.log('');
@@ -1007,6 +1009,34 @@ cron.schedule('20 7 * * 1-5', async () => {
     }
   } catch (e: any) {
     console.error('[SAUDE-COBRANCA] falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
+// ---------------------------------------------------------------------------
+// GARANTIR COBRANCA (de hora em hora, 8h-19h, dias uteis).
+// Emite a cobranca que faltou nos titulos de VENDA em aberto criados a partir do
+// cutoff. Titulo faturado sem boleto e sem PIX e dinheiro que nunca entra: o
+// cliente nao paga o que nao foi cobrado.
+//
+// Limite de 25 por rodada: rodando 12x por dia isso e folgado para o volume real
+// (9 pendentes hoje) e, se algo estiver errado na emissao, o estrago para em 25
+// e nao em 200.
+//
+// A instancia que NAO emite (SERV, por decisao de 06/jul) ja fica de fora da lista
+// de candidatos dentro de runGarantirCobranca — sem isso, os 7 titulos dela
+// seriam tentados 12 vezes por dia, para sempre, e o log de erro viraria ruido.
+// ---------------------------------------------------------------------------
+cron.schedule('40 8-19 * * 1-5', async () => {
+  try {
+    const r = await runGarantirCobranca({ apply: true, limit: 25 });
+    if (r.ok > 0 || r.fail > 0) {
+      console.log(`[GARANTIR-COBRANCA] emitidas=${r.ok} falhas=${r.fail} puladas=${r.skipped} candidatos=${r.candidatos} (instancia que nao emite: ${r.naoEmitem})`);
+    }
+    if (r.fail > 0) {
+      console.warn('⚠️  [GARANTIR-COBRANCA] ' + r.fail + ' titulo(s) falharam ao emitir. Detalhe: POST /api/admin/financial/garantir-cobranca { "apply": false }');
+    }
+  } catch (e: any) {
+    console.error('[GARANTIR-COBRANCA] cron falhou:', e?.message || e);
   }
 }, { timezone: 'America/Sao_Paulo' });
 
