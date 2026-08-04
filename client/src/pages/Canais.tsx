@@ -2,10 +2,10 @@
 // INTEGRA 2.0 — CANAIS DE VENDA (04/ago/2026)
 // Pagina unica com os modulos HOTSITE e INSTAGRAM. Cada modulo reune, em abas,
 // a gestao que ate agora estava espalhada pelo sistema (ou so existia por API):
-//   Hotsite   : Pedidos · Tabela de Precos · Configuracoes
+//   Hotsite   : Pedidos · Tabela de Precos · Cupons · Configuracoes
 //   Instagram : Pedidos · Regras da IA · Metricas
-// As telas Pedidos do Site e Tabela de Precos sao REAPROVEITADAS (mesmos
-// componentes de sempre) — nada foi reescrito.
+// As telas Pedidos do Site, Tabela de Precos e Cupons de Desconto sao
+// REAPROVEITADAS (mesmos componentes de sempre) — nada foi reescrito.
 // Cadastro de cliente dos dois canais: SOMENTE INTEGRA 2.0 (sem Omie).
 // ============================================================================
 import { useState } from "react";
@@ -22,8 +22,9 @@ import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import HotsiteOrders from "@/pages/HotsiteOrders";
 import HotsitePricing from "@/pages/HotsitePricing";
+import Cupons from "@/pages/Cupons";
 import {
-  Globe, Instagram, ShoppingBag, Tags, Settings, Bot, BarChart3,
+  Globe, Instagram, ShoppingBag, Tags, Settings, Bot, BarChart3, Ticket,
   Loader2, Save, CheckCircle2, XCircle, AlertTriangle, Database,
 } from "lucide-react";
 
@@ -421,10 +422,12 @@ export default function Canais() {
             <TabsList>
               <TabsTrigger value="pedidos" className="flex items-center gap-2"><ShoppingBag className="h-4 w-4" /> Pedidos</TabsTrigger>
               <TabsTrigger value="precos" className="flex items-center gap-2"><Tags className="h-4 w-4" /> Tabela de Preços</TabsTrigger>
+              <TabsTrigger value="cupons" className="flex items-center gap-2"><Ticket className="h-4 w-4" /> Cupons</TabsTrigger>
               <TabsTrigger value="config" className="flex items-center gap-2"><Settings className="h-4 w-4" /> Configurações</TabsTrigger>
             </TabsList>
             <TabsContent value="pedidos"><HotsiteOrders /></TabsContent>
             <TabsContent value="precos"><HotsitePricing /></TabsContent>
+            <TabsContent value="cupons"><Cupons /></TabsContent>
             <TabsContent value="config"><ConfigHotsite /></TabsContent>
           </Tabs>
         </TabsContent>
