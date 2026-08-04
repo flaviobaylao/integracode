@@ -963,14 +963,29 @@ export function registerReconciliation(app: Express) {
         const problemas: string[] = [];
         for (const t of plan) {
           const row = t.kind === "receivable"
-            ? rowsOf(await db.execute(sql`SELECT status::text AS status, amount::numeric AS amount, COALESCE(amount_paid, 0)::numeric AS pago, deleted_at, title_number AS num FROM receivables WHERE id = ${t.id}`))[0]
-            : rowsOf(await db.execute(sql`SELECT status::text AS status, amount::numeric AS amount, COALESCE(amount_paid, 0)::numeric AS pago, deleted_at, title_number AS num FROM payables WHERE id = ${t.id}`))[0];
+            ? rowsOf(await db.execute(sql`SELECT r.status::text AS status, r.amount::numeric AS amount, COALESCE(r.amount_paid, 0)::numeric AS pago, r.deleted_at, r.title_number AS num, EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = r.id) AS conciliado FROM receivables r WHERE r.id = ${t.id}`))[0]
+            : rowsOf(await db.execute(sql`SELECT p.status::text AS status, p.amount::numeric AS amount, COALESCE(p.amount_paid, 0)::numeric AS pago, p.deleted_at, p.title_number AS num, EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = p.id) AS conciliado FROM payables p WHERE p.id = ${t.id}`))[0];
           const nome = row?.num ? String(row.num) : String(t.id).slice(0, 8);
           if (!row) { problemas.push(`titulo ${nome} nao encontrado`); continue; }
           if (row.deleted_at) { problemas.push(`titulo ${nome} esta excluido`); continue; }
           if (String(row.status) === "cancelada") { problemas.push(`titulo ${nome} esta cancelado`); continue; }
           const saldo = Number(row.amount || 0) - Number(row.pago || 0);
-          if (saldo <= 0.005) { problemas.push(`titulo ${nome} ja esta quitado`); continue; }
+          // ---- FASE 3.5b: VINCULO SEM BAIXA ----------------------------------
+          // Titulo QUITADO e SEM vinculo bancario nao e erro: e o caso que a
+          // propria busca de titulos oferece de proposito (settledUnlinked ->
+          // jaBaixado:true) para "conciliar o extrato ao titulo ja pago — a baixa
+          // nao e duplicada; so cria o vinculo". Recusar aqui deixava o lancamento
+          // do banco SEM NENHUM caminho de conciliacao na tela (ex.: NF-105478,
+          // R$ 120,60, baixa sem lastro do item 3 da auditoria) e o saldo nunca
+          // fechava. E o mesmo tratamento de conciliarPixWebhook (FASE 3.4q):
+          // marca conciliado + match, SEM chamar settle.
+          // Quitado E JA COM vinculo continua sendo erro — ai e conciliacao repetida.
+          if (saldo <= 0.005) {
+            if (row.conciliado === true) { problemas.push(`titulo ${nome} ja esta quitado e ja tem vinculo bancario; desfaca a conciliacao de origem antes`); continue; }
+            (t as any).modo = "vincular";
+            continue;
+          }
+          (t as any).modo = "baixar";
           if (t.settled > saldo + 0.005) problemas.push(`titulo ${nome}: baixa de R$ ${t.settled.toFixed(2)} maior que o saldo em aberto (R$ ${saldo.toFixed(2)})`);
         }
         if (problemas.length) return res.status(422).json({ error: "Conciliacao nao executada — nenhum titulo foi baixado.", problemas });
@@ -1020,23 +1035,40 @@ export function registerReconciliation(app: Express) {
       let firstRecv: string | null = null, firstPay: string | null = null;
       let cpInfo: any = null;
       const jaBaixados: any[] = [];
+      let baixados = 0, vinculados = 0;
       try {
       for (const t of plan) {
+        // FASE 3.5b: titulo ja quitado e sem vinculo -> so vincula, NAO baixa de novo.
+        const vincular = (t as any).modo === "vincular";
         if (t.kind === "receivable") {
-          const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by);
-          results.push({ id: t.id, kind: "receivable", ...r });
+          if (vincular) {
+            results.push({ id: t.id, kind: "receivable", via: "vinculo_sem_baixa" });
+            vinculados++;
+          } else {
+            const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by);
+            results.push({ id: t.id, kind: "receivable", ...r });
+            baixados++;
+          }
           if (!firstRecv) firstRecv = t.id;
           if (!cpInfo) { const rec: any = await storage.getReceivable(t.id); if (rec) cpInfo = { type: "customer", id: rec.customerId || null, name: rec.customerName || null, document: rec.customerDocument || null, category: rec.category || null }; }
         } else {
-          const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by);
-          results.push({ id: t.id, kind: "payable", ...r });
+          if (vincular) {
+            results.push({ id: t.id, kind: "payable", via: "vinculo_sem_baixa" });
+            vinculados++;
+          } else {
+            const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by);
+            results.push({ id: t.id, kind: "payable", ...r });
+            baixados++;
+          }
           if (!firstPay) firstPay = t.id;
           if (!cpInfo) { const pay: any = await storage.getPayable(t.id); if (pay) cpInfo = { type: "supplier", id: null, name: pay.supplierName || null, document: pay.supplierDocument || null, category: pay.category || null }; }
         }
+        // title_amount_settled = 0 no vinculo: NENHUM dinheiro foi baixado agora.
+        // match_kind proprio para o undo e os relatorios distinguirem.
         await db.execute(sql`
           INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at)
-          VALUES (gen_random_uuid(), ${id}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${t.amount.toFixed(2)}, ${kind}, ${t.settled.toFixed(2)}, ${t.interest.toFixed(2)}, ${t.discount.toFixed(2)}, ${by}, now())`);
-        jaBaixados.push({ id: t.id, kind: t.kind, valor: t.settled });
+          VALUES (gen_random_uuid(), ${id}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${t.amount.toFixed(2)}, ${vincular ? "vinculo_sem_baixa" : kind}, ${vincular ? "0.00" : t.settled.toFixed(2)}, ${t.interest.toFixed(2)}, ${t.discount.toFixed(2)}, ${by}, now())`);
+        if (!vincular) jaBaixados.push({ id: t.id, kind: t.kind, valor: t.settled });
       }
       } catch (erroLaco: any) {
         // Sem transacao envolvendo o laco: o que ja foi baixado CONTINUA baixado.
@@ -1055,6 +1087,7 @@ export function registerReconciliation(app: Express) {
         });
       }
       const note = `Conciliado por ${by} em ${new Date().toISOString()}${titles.length > 1 ? " (composta " + titles.length + " titulos)" : ""}`
+        + (vinculados ? ` [${vinculados} titulo(s) ja estavam baixados: vinculo sem nova baixa]` : "")
         + (Math.abs(difExtrato) > 0.01 ? ` [DIFERENCA vs extrato R$ ${difExtrato.toFixed(2)}: ${motivoDif}]` : "");
       await db.execute(sql`
         UPDATE bank_statement_items
@@ -1063,7 +1096,7 @@ export function registerReconciliation(app: Express) {
         WHERE id = ${id}`);
       if (cpInfo) await evolvePattern(item, cpInfo, item.s_instance || null, by);
       await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results, valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
-      res.json({ ok: true, status: "reconciled", kind, results });
+      res.json({ ok: true, status: "reconciled", kind, results, baixados, vinculados });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -1271,7 +1304,12 @@ export function registerReconciliation(app: Express) {
       // que vence HOJE ao desfazer a baixa.)
       const _pastDueBR = (d: Date | null) => !!d && d.toLocaleDateString('en-CA', { timeZone: 'UTC' }) < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       for (const m of matches) {
-        const settled = Number(m.title_amount_settled || m.amount || 0);
+        // FASE 3.5b: match de VINCULO SEM BAIXA nao baixou dinheiro nenhum — estornar
+        // aqui zeraria um titulo que ja estava pago antes desta conciliacao.
+        // (Atencao ao `||`: com title_amount_settled = '0.00' ele cairia no m.amount.)
+        const settled = String(m.match_kind) === "vinculo_sem_baixa" ? 0 : Number(m.title_amount_settled ?? m.amount ?? 0);
+        // Vinculo sem baixa: so apaga o match e devolve o lancamento a 'pending'.
+        if (settled <= 0.005) { reverted.push({ kind: m.receivable_id ? "receivable" : "payable", id: m.receivable_id || m.payable_id, via: "vinculo_sem_baixa", titulo: "intacto" }); continue; }
         if (m.receivable_id) {
           const rec: any = await storage.getReceivable(m.receivable_id);
           if (rec) {
@@ -1332,7 +1370,8 @@ export function registerReconciliation(app: Express) {
         WITH m AS (
           SELECT bank_statement_item_id AS iid,
                  sum(COALESCE(title_amount_settled, amount)::numeric) AS soma,
-                 count(*) AS titulos
+                 count(*) AS titulos,
+                 bool_or(COALESCE(match_kind, '') = 'vinculo_sem_baixa') AS tem_vinculo
           FROM bank_statement_item_matches GROUP BY 1)
         SELECT i.id, to_char(i.transaction_date, 'YYYY-MM-DD') AS data, i.type AS tipo,
                round(i.amount::numeric, 2) AS valor_extrato, round(m.soma, 2) AS total_titulos,
@@ -1342,6 +1381,7 @@ export function registerReconciliation(app: Express) {
         FROM m JOIN bank_statement_items i ON i.id = m.iid
                JOIN bank_statements s ON s.id = i.statement_id
         WHERE abs(i.amount::numeric - m.soma) > 0.01
+          AND NOT m.tem_vinculo
           AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
         ORDER BY abs(i.amount::numeric - m.soma) DESC LIMIT ${limit}`));
       const total = Number(linhas.reduce((acc: number, r: any) => acc + Math.abs(Number(r.diferenca || 0)), 0).toFixed(2));

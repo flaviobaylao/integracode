@@ -2810,30 +2810,19 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const b = req.body || {};
       // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
       // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
-      const amtBaixaR = parseFloat(String(b.amount ?? '0')) || 0;
-      // DESCONTO: abatimento concedido nesta baixa. NAO e dinheiro recebido — reduz
-      // o VALOR DO TITULO. Pode vir sozinho (valor 0 + desconto > 0): e a concessao
-      // de desconto sem recebimento, que so ajusta quanto o cliente ainda deve.
-      const descontoR = parseFloat(String(b.discount ?? '0')) || 0;
-      if (descontoR < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
-      if (amtBaixaR < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
-      if (!(amtBaixaR + descontoR > 0)) return res.status(400).json({ message: 'Informe um valor recebido, um desconto, ou os dois.' });
+      const amtBaixaR = parseFloat(String(b.amount ?? '0'));
+      if (!(amtBaixaR > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoR = parseFloat((exists as any).amountPaid || '0');
       const totalR = parseFloat((exists as any).amount || '0');
       if (String((exists as any).status) === 'recebida' || (totalR > 0 && jaPagoR >= totalR - 0.005)) {
         return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
       }
-      const emAbertoR = totalR - jaPagoR;
-      if (amtBaixaR + descontoR > emAbertoR + 0.005) {
-        return res.status(422).json({ message: `Valor + desconto (R$ ${(amtBaixaR + descontoR).toFixed(2)}) passa do saldo em aberto (R$ ${emAbertoR.toFixed(2)}).` });
-      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         receivableId: req.params.id,
         paidAt: rawDate ? new Date(rawDate) : new Date(),
-        amount: amtBaixaR.toFixed(2),
-        discount: descontoR.toFixed(2),
+        amount: String(b.amount ?? '0'),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -2841,37 +2830,17 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createReceivablePayment(data);
-      await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: amtBaixaR,
-        note: descontoR > 0 ? `baixa R$ ${amtBaixaR.toFixed(2)} + desconto R$ ${descontoR.toFixed(2)}` : 'baixa' });
+      await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
 
       const receivable = await storage.getReceivable(req.params.id);
       if (receivable) {
-        const totalPaid = parseFloat(receivable.amountPaid || '0') + amtBaixaR;
-        const valorAntes = parseFloat(receivable.amount);
-        // O desconto reduz o VALOR do titulo. O valor de origem e guardado na
-        // primeira vez, senao depois do desconto ninguem sabe por quanto nasceu.
-        const totalAmount = descontoR > 0 ? Number((valorAntes - descontoR).toFixed(2)) : valorAntes;
-        // FIX: baixa parcial em titulo vencido marcava 'a_vencer' e sumia dos
-        // atrasados (o lado de PAGAR ja tinha sido corrigido; o de RECEBER nao).
-        const hojeBR = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-        const dvR: any = (receivable as any).dueDate;
-        const vencR = dvR instanceof Date
-          ? new Date(dvR.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
-          : (dvR ? String(dvR).slice(0, 10) : '');
-        const newStatus = totalPaid >= totalAmount - 0.005
-          ? 'recebida'
-          : (/^\d{4}-\d{2}-\d{2}$/.test(vencR) && vencR < hojeBR ? 'vencida' : 'a_vencer');
-        const patch: any = { amountPaid: totalPaid.toFixed(2), status: newStatus as any };
-        if (descontoR > 0) {
-          patch.amount = totalAmount.toFixed(2);
-          if (!(receivable as any).originalAmount) patch.originalAmount = valorAntes.toFixed(2);
-          await logFinancialAudit({
-            req, action: 'update', entity: 'receivable', entityId: req.params.id, amount: descontoR,
-            before: { amount: valorAntes.toFixed(2) }, after: { amount: totalAmount.toFixed(2), desconto: descontoR.toFixed(2) },
-            note: `Desconto de R$ ${descontoR.toFixed(2)} concedido na baixa: titulo de R$ ${valorAntes.toFixed(2)} passa a R$ ${totalAmount.toFixed(2)}.`,
-          });
-        }
-        await storage.updateReceivable(req.params.id, patch);
+        const totalPaid = parseFloat(receivable.amountPaid || '0') + parseFloat(data.amount);
+        const totalAmount = parseFloat(receivable.amount);
+        const newStatus = totalPaid >= totalAmount ? 'recebida' : 'a_vencer';
+        await storage.updateReceivable(req.params.id, { 
+          amountPaid: totalPaid.toFixed(2),
+          status: newStatus as any
+        });
 
         // A baixa manual de recebivel NAO creditava a conta: so boleto e PIX
         // automaticos geravam movimento. O razao ficava torto — entrada de
@@ -2879,11 +2848,11 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         // Idempotente pelo id do pagamento, entao nao duplica com o credito que o
         // webhook do boleto/PIX ja faz (aquele usa outro sourceType/reference).
         const contaRecId = (data as any).financialAccountId || (receivable as any).financialAccountId || null;
-        if (contaRecId && amtBaixaR > 0.005) {
+        if (contaRecId) {
           try {
             const contaRec: any = await storage.getFinancialAccount(contaRecId);
             if (contaRec) await lancarNaConta({
-              accountId: contaRecId, tipo: 'credito', valor: amtBaixaR,
+              accountId: contaRecId, tipo: 'credito', valor: parseFloat(data.amount),
               descricao: `Recebimento - ${(receivable as any).customerName || (receivable as any).titleNumber || 'conta a receber'}`,
               sourceType: 'receivable_payment', sourceId: String(req.params.id),
               reference: String((payment as any)?.id || req.params.id),
@@ -2929,6 +2898,144 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
+  });
+
+  // ==========================================================================
+  // FASE 3.5a — ESTORNO DE BAIXA SEM LASTRO (04/ago/2026)
+  // --------------------------------------------------------------------------
+  // Reabre um titulo dado por recebido/pago SEM vinculo bancario: ESTORNA os
+  // pagamentos (deleted_at/deleted_by/deleted_reason — mesma convencao do
+  // estornar-pagamentos-duplicados: a linha NAO e apagada, sai de toda soma e o
+  // estorno e reversivel limpando deleted_at), recalcula amount_paid pela soma
+  // do que sobrou e devolve o status pela regra de dia-calendario (fuso Brasil).
+  //
+  // NAO substitui o "Desfazer" da Conciliacao: titulo COM vinculo bancario ativo
+  // e recusado com 409. Nao passamos __allowUnsettle de proposito — a trava
+  // assertBaixaLock (storage.ts) continua sendo a ultima linha de defesa.
+  //
+  // Existia a acao 'reverse' na auditoria e a rotina EM LOTE (duplicidade), mas
+  // nao havia como estornar UM titulo: os 48 casos travados do item 3 (recebido
+  // sem baixa, recebido com saldo, baixa sem lastro, cancelado com pagamento)
+  // nao tinham caminho nenhum. Este endpoint e por titulo, exige motivo e deixa
+  // trilha. dryRun:true devolve a previa sem escrever (e nao exige motivo).
+  // ==========================================================================
+  const _estornoPastDueBR = (d: any) => {
+    if (!d) return false;
+    const due = d instanceof Date ? d : new Date(d);
+    if (isNaN(due.getTime())) return false;
+    return due.toLocaleDateString('en-CA', { timeZone: 'UTC' })
+         < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  };
+
+  async function estornarBaixaTitulo(req: any, res: any, kind: 'receivable' | 'payable') {
+    const tabela = kind === 'receivable' ? 'receivables' : 'payables';
+    const tabelaPg = kind === 'receivable' ? 'receivable_payments' : 'payable_payments';
+    const fk = kind === 'receivable' ? 'receivable_id' : 'payable_id';
+    const settledStatus = kind === 'receivable' ? 'recebida' : 'paga';
+    try {
+      const user = actorOf(req);
+      const id = String(req.params.id);
+      const motivo = String(req.body?.motivo ?? req.body?.reason ?? '').trim();
+      const dryRun = req.body?.dryRun === true;
+      const paymentIds: string[] = Array.isArray(req.body?.paymentIds)
+        ? req.body.paymentIds.map((x: any) => String(x)).filter(Boolean) : [];
+      // dryRun nao exige motivo: a tela abre a previa ANTES de o operador digitar.
+      if (!motivo && !dryRun) return res.status(400).json({ message: 'Informe o MOTIVO do estorno da baixa.' });
+
+      const tit: any = kind === 'receivable' ? await storage.getReceivable(id) : await storage.getPayable(id);
+      if (!tit || tit.deletedAt) return res.status(404).json({ message: 'Título não encontrado' });
+
+      // TRAVA: baixa com lastro bancario nao se estorna por aqui.
+      const qc: any = await db.execute(sql.raw(
+        `SELECT EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.${fk} = '${id.replace(/'/g, "''")}') AS conciliado`));
+      if (((qc.rows || [])[0] as any)?.conciliado === true) {
+        return res.status(409).json({ message: 'Título conciliado — desfaça a conciliação bancária (Conciliação → Desfazer) antes de estornar a baixa.' });
+      }
+
+      // Colunas de estorno (aditivo e idempotente) — mesmas do estorno em lote.
+      await db.execute(sql.raw(`ALTER TABLE ${tabelaPg} ADD COLUMN IF NOT EXISTS deleted_at timestamp`));
+      await db.execute(sql.raw(`ALTER TABLE ${tabelaPg} ADD COLUMN IF NOT EXISTS deleted_by varchar`));
+      await db.execute(sql.raw(`ALTER TABLE ${tabelaPg} ADD COLUMN IF NOT EXISTS deleted_reason text`));
+
+      const todosQ: any = await db.execute(sql.raw(
+        `SELECT id, amount::numeric AS amount, paid_at, payment_method, reference, created_by
+         FROM ${tabelaPg} WHERE ${fk} = '${id.replace(/'/g, "''")}' AND deleted_at IS NULL ORDER BY created_at DESC`));
+      const todos: any[] = todosQ.rows || [];
+      const alvo = paymentIds.length ? todos.filter((p) => paymentIds.includes(String(p.id))) : todos;
+
+      const total = parseFloat(tit.amount || '0');
+      const jaPago = parseFloat(tit.amountPaid || '0');
+      const estornado = alvo.reduce((acc, p) => acc + Number(p.amount || 0), 0);
+      if (!alvo.length && !(jaPago > 0.005) && String(tit.status) !== settledStatus) {
+        return res.status(409).json({ message: 'Título não tem baixa a estornar.' });
+      }
+
+      // Sobra a soma das linhas que NAO foram estornadas. Sem paymentIds sobra 0 —
+      // inclusive no caso "recebida SEM nenhuma baixa", em que nao ha linha de
+      // pagamento e o amount_paid esta sujo.
+      const restante = Number(todos.filter((p) => !alvo.some((a) => String(a.id) === String(p.id)))
+        .reduce((acc, p) => acc + Number(p.amount || 0), 0).toFixed(2));
+      // 'cancelada' e estado fechado por decisao (baixa administrativa): estornar o
+      // pagamento nao reabre o titulo, so limpa o dinheiro que nao existiu.
+      const novoStatus = String(tit.status) === 'cancelada'
+        ? 'cancelada'
+        : (total > 0 && restante >= total - 0.005 ? settledStatus : (_estornoPastDueBR(tit.dueDate) ? 'vencida' : 'a_vencer'));
+
+      const previa = {
+        titulo: tit.titleNumber || null,
+        contraparte: kind === 'receivable' ? (tit.customerName || null) : (tit.supplierName || null),
+        valor: total.toFixed(2),
+        amountPaidAtual: jaPago.toFixed(2),
+        pagamentosEstornados: alvo.map((p) => ({
+          id: String(p.id), valor: Number(p.amount).toFixed(2), pagoEm: p.paid_at,
+          metodo: p.payment_method || null, referencia: p.reference || null, criadoPor: p.created_by || null,
+        })),
+        somaEstornada: estornado.toFixed(2),
+        amountPaidNovo: restante.toFixed(2),
+        statusAtual: String(tit.status),
+        statusNovo: novoStatus,
+      };
+      if (dryRun) return res.json({ ok: true, dryRun: true, ...previa });
+
+      const carimbo = `Estorno de baixa sem lastro (${new Date().toISOString().slice(0, 10)}) — ${motivo}`;
+      if (alvo.length) {
+        await db.execute(sql.raw(
+          `UPDATE ${tabelaPg} SET deleted_at = now(), deleted_by = '${String(user?.email || 'sistema').replace(/'/g, "''")}',` +
+          ` deleted_reason = '${carimbo.replace(/'/g, "''")}' WHERE deleted_at IS NULL AND id IN (` +
+          alvo.map((p) => `'${String(p.id).replace(/'/g, "''")}'`).join(',') + `)`));
+      }
+
+      const stamp = `[BAIXA ESTORNADA ${new Date().toISOString().slice(0, 10)} por ${user?.email || '?'}] ${motivo}`
+                  + ` (R$ ${estornado.toFixed(2)}, ${alvo.length} pagamento(s))`;
+      const prevNotes = String(tit.notes || '');
+      const patch: any = {
+        amountPaid: restante.toFixed(2),
+        status: novoStatus,
+        notes: prevNotes ? (prevNotes + '\n' + stamp) : stamp,
+        updatedBy: user?.email || null,
+      };
+      if (kind === 'receivable') await storage.updateReceivable(id, patch);
+      else await storage.updatePayable(id, patch);
+
+      await logFinancialAudit({
+        req, action: 'reverse', entity: kind, entityId: id,
+        before: { amountPaid: jaPago, status: String(tit.status) },
+        after: { amountPaid: Number(restante), status: novoStatus },
+        amount: estornado, note: carimbo,
+      });
+      return res.json({ ok: true, ...previa, observacao: 'As linhas NAO foram apagadas: seguem com deleted_at/deleted_by/deleted_reason e saem de toda soma. Para reverter, basta limpar deleted_at.' });
+    } catch (error: any) {
+      const msg = String(error?.message || error);
+      if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
+      return res.status(500).json({ message: msg });
+    }
+  }
+
+  app.post('/api/financial/receivables/:id/estornar-baixa', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    await estornarBaixaTitulo(req, res, 'receivable');
+  });
+  app.post('/api/financial/payables/:id/estornar-baixa', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    await estornarBaixaTitulo(req, res, 'payable');
   });
 
   // Débitos Vencidos = MESMA lista de "vencida" da Contas a Receber, agrupada por
@@ -3272,29 +3379,19 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const b = req.body || {};
       // FASE 2 - Trava de dupla baixa: titulo cancelado ou ja quitado nao aceita nova baixa.
       // Para lancar de novo, desfaca a baixa/conciliacao original (o titulo volta a ficar aberto).
-      const amtBaixaP = parseFloat(String(b.amount ?? '0')) || 0;
-      // DESCONTO obtido do fornecedor: reduz o VALOR do titulo a pagar. Pode vir
-      // sozinho (valor 0 + desconto > 0) — negociacao de abatimento sem pagamento.
-      const descontoP = parseFloat(String(b.discount ?? '0')) || 0;
-      if (descontoP < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
-      if (amtBaixaP < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
-      if (!(amtBaixaP + descontoP > 0)) return res.status(400).json({ message: 'Informe um valor pago, um desconto, ou os dois.' });
+      const amtBaixaP = parseFloat(String(b.amount ?? '0'));
+      if (!(amtBaixaP > 0)) return res.status(400).json({ message: 'Valor da baixa deve ser maior que zero.' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoP = parseFloat((exists as any).amountPaid || '0');
       const totalP = parseFloat((exists as any).amount || '0');
       if (String((exists as any).status) === 'paga' || (totalP > 0 && jaPagoP >= totalP - 0.005)) {
         return res.status(409).json({ message: 'Título já quitado/conciliado. Desfaça a baixa original antes de lançar nova.' });
       }
-      const emAbertoPg = totalP - jaPagoP;
-      if (amtBaixaP + descontoP > emAbertoPg + 0.005) {
-        return res.status(422).json({ message: `Valor + desconto (R$ ${(amtBaixaP + descontoP).toFixed(2)}) passa do saldo em aberto (R$ ${emAbertoPg.toFixed(2)}).` });
-      }
       const rawDate = b.paidAt || b.paymentDate || b.paidDate;
       const data: any = {
         payableId: req.params.id,
         paidAt: rawDate ? new Date(rawDate) : new Date(),
-        amount: amtBaixaP.toFixed(2),
-        discount: descontoP.toFixed(2),
+        amount: String(b.amount ?? '0'),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -3302,14 +3399,12 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createPayablePayment(data);
-      await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: amtBaixaP,
-        note: descontoP > 0 ? `baixa R$ ${amtBaixaP.toFixed(2)} + desconto R$ ${descontoP.toFixed(2)}` : 'baixa' });
+      await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: Number(data.amount), note: 'baixa' });
 
       const payable = await storage.getPayable(req.params.id);
       if (payable) {
-        const totalPaid = parseFloat(payable.amountPaid || '0') + amtBaixaP;
-        const valorAntesP = parseFloat(payable.amount);
-        const totalAmount = descontoP > 0 ? Number((valorAntesP - descontoP).toFixed(2)) : valorAntesP;
+        const totalPaid = parseFloat(payable.amountPaid || '0') + parseFloat(data.amount);
+        const totalAmount = parseFloat(payable.amount);
         // FIX: baixa parcial marcava 'a_vencer' mesmo com vencimento no passado,
         // tirando o titulo da lista de atrasados. Tolerancia de meio centavo para
         // arredondamento, e 'vencida' quando o vencimento ja passou (fuso de SP).
@@ -3321,24 +3416,17 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         const newStatus = totalPaid >= totalAmount - 0.005
           ? 'paga'
           : (/^\d{4}-\d{2}-\d{2}$/.test(vencP) && vencP < hojeBR ? 'vencida' : 'a_vencer');
-        const patchP: any = { amountPaid: totalPaid.toFixed(2), status: newStatus as any };
-        if (descontoP > 0) {
-          patchP.amount = totalAmount.toFixed(2);
-          if (!(payable as any).originalAmount) patchP.originalAmount = valorAntesP.toFixed(2);
-          await logFinancialAudit({
-            req, action: 'update', entity: 'payable', entityId: req.params.id, amount: descontoP,
-            before: { amount: valorAntesP.toFixed(2) }, after: { amount: totalAmount.toFixed(2), desconto: descontoP.toFixed(2) },
-            note: `Desconto de R$ ${descontoP.toFixed(2)} obtido na baixa: titulo de R$ ${valorAntesP.toFixed(2)} passa a R$ ${totalAmount.toFixed(2)}.`,
-          });
-        }
-        await storage.updatePayable(req.params.id, patchP);
+        await storage.updatePayable(req.params.id, {
+          amountPaid: totalPaid.toFixed(2),
+          status: newStatus as any
+        });
 
         // FIX: pagar fornecedor NAO debitava a conta. Nao existia um unico
         // movimento de 'debito' no sistema inteiro — o saldo so subia, e o caixa
         // exibido ficava inflado por tudo que ja foi pago. O movimento e gravado
         // ANTES do saldo: se falhar, o saldo nao desce sem rastro.
         const contaId = (data as any).financialAccountId || (payable as any).financialAccountId || null;
-        if (contaId && amtBaixaP > 0.005) {
+        if (contaId) {
           try {
             const conta: any = await storage.getFinancialAccount(contaId);
             if (conta) {
@@ -3346,7 +3434,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
               // (server/account-ledger.ts). Idempotente por pagamento: reenvio da
               // mesma baixa nao debita duas vezes.
               await lancarNaConta({
-                accountId: contaId, tipo: 'debito', valor: amtBaixaP,
+                accountId: contaId, tipo: 'debito', valor: parseFloat(data.amount),
                 descricao: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
                 sourceType: 'payable', sourceId: String(req.params.id), reference: String((payment as any)?.id || req.params.id),
                 omieInstanceId: (conta as any).omieInstanceId || null,
