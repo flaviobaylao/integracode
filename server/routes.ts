@@ -5070,6 +5070,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enviar pedido do hotsite para Omie
+  // ============================================================================
+  // ENVIAR PEDIDO DO CANAL PARA O PIPELINE (04/ago/2026)
+  // Substitui o antigo "Enviar para Omie" no botao da tela Pedidos do Site.
+  // Faturamento e 100% interno (Omie descontinuado), entao a acao util e colocar
+  // o pedido na faixa "Pedido" do Pipeline de Faturamento.
+  // Reusa a rede de seguranca ja existente (reconcilePendingOrders), que:
+  //   - marca o card como concluido PRESERVANDO a data de registro original;
+  //   - roteia por autoSendToBillingPipeline (dedup por sales_card_id + regras de bloqueio);
+  //   - com skipHistoryGuard, funciona tambem em pedido antigo (trava de 2 dias dispensada,
+  //     por ser acao DELIBERADA de admin sobre UM pedido especifico).
+  // Se o cliente tiver debito vencido ou o pedido for amostra/troca/bonificacao, o destino
+  // e a coluna "Bloqueados" — e a resposta diz isso, em vez de fingir sucesso.
+  // ============================================================================
+  app.post('/api/hotsite-orders/:id/send-to-pipeline', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const orderId = req.params.id;
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      const order = await storage.getSalesCard(orderId);
+      if (!order) return res.status(404).json({ message: 'Pedido não encontrado' });
+      if (!['hotsite', 'instagram'].includes(String(order.source || ''))) {
+        return res.status(400).json({ message: 'Este pedido não é de um canal digital' });
+      }
+      if (!order.saleValue || parseFloat(String(order.saleValue)) === 0) {
+        return res.status(400).json({ message: 'Pedido sem valor de venda — não há o que faturar' });
+      }
+
+      // Ja esta no pipeline? Devolve o item existente (idempotente, sem duplicar).
+      const jaExiste: any = await db.execute(sql`SELECT id, stage, order_number FROM billing_pipeline WHERE sales_card_id = ${orderId} LIMIT 1`);
+      const existente = ((jaExiste.rows || jaExiste || []) as any[])[0];
+      if (existente) {
+        return res.json({ ok: true, ja: true, stage: existente.stage, orderNumber: existente.order_number,
+          message: `Este pedido já está no pipeline (etapa ${existente.stage}).` });
+      }
+
+      const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
+      const r = await reconcilePendingOrders({ cardIds: [orderId], apply: true, skipHistoryGuard: true });
+      const det = (r.details || [])[0] || {};
+
+      if (r.recovered > 0) {
+        const item: any = await db.execute(sql`SELECT stage, order_number FROM billing_pipeline WHERE sales_card_id = ${orderId} LIMIT 1`);
+        const it = ((item.rows || item || []) as any[])[0] || {};
+        console.log(`📤 [SEND-TO-PIPELINE] ${orderId} enviado por ${user.email} — etapa ${it.stage}`);
+        return res.json({ ok: true, stage: it.stage || 'pedido', orderNumber: it.order_number || null,
+          message: `Pedido enviado para a faixa ${it.stage === 'pedido' ? 'Pedidos' : it.stage} do pipeline.` });
+      }
+
+      // Nao entrou: quase sempre bloqueio (debito vencido / amostra-troca-bonificacao).
+      const bloq: any = await db.execute(sql`SELECT block_reason, block_details FROM blocked_orders WHERE sales_card_id = ${orderId} AND status = 'blocked' LIMIT 1`);
+      const b = ((bloq.rows || bloq || []) as any[])[0];
+      if (b) {
+        return res.status(409).json({ ok: false, bloqueado: true, motivo: b.block_reason,
+          message: `Pedido foi para a coluna Bloqueados: ${b.block_details || b.block_reason}` });
+      }
+      return res.status(422).json({ ok: false, message: 'Não foi possível enviar ao pipeline.', detalhe: det.result || null });
+    } catch (e: any) {
+      console.error('❌ [SEND-TO-PIPELINE]', e?.message || e);
+      res.status(500).json({ message: e?.message || String(e) });
+    }
+  });
+
   app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
