@@ -25,7 +25,7 @@ import HotsitePricing from "@/pages/HotsitePricing";
 import Cupons from "@/pages/Cupons";
 import {
   Globe, Instagram, ShoppingBag, Tags, Settings, Bot, BarChart3, Ticket,
-  Loader2, Save, CheckCircle2, XCircle, AlertTriangle, Database,
+  Loader2, Save, CheckCircle2, XCircle, AlertTriangle, Database, Trash2,
 } from "lucide-react";
 
 const brl = (v: any) =>
@@ -64,8 +64,32 @@ function CartaoResumo({ canal, dados }: { canal: "hotsite" | "instagram"; dados:
 
 // ------------------------------------------------- pedidos (tabela simples)
 function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
+  const { toast } = useToast();
   const { data, isLoading } = useQuery<any>({ queryKey: [`/api/canais/pedidos?canal=${canal}`] });
   const pedidos: any[] = data?.pedidos || [];
+
+  // A lixeira e exclusiva do papel admin (o servidor tambem recusa os demais).
+  const { data: usuarioLogado } = useQuery<any>({ queryKey: ["/api/auth/user"] });
+  const ehAdmin = String((usuarioLogado as any)?.role || "") === "admin";
+
+  const excluir = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/canais/pedidos/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/canais/pedidos?canal=${canal}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/canais/resumo"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hotsite-orders"] });
+      toast({ title: "Pedido excluído", description: "O pedido foi removido do canal." });
+    },
+    onError: (e: any) =>
+      toast({ title: "Não consegui excluir", description: String(e?.message || e), variant: "destructive" }),
+  });
+
+  const pedirExclusao = (p: any) => {
+    const rotulo = p.numero || p.pipeline_numero || p.id;
+    if (confirm(`Excluir definitivamente o pedido ${rotulo}?\n\nEsta ação não tem desfazer.`)) {
+      excluir.mutate(p.id);
+    }
+  };
 
   if (isLoading) {
     return <div className="flex items-center gap-2 p-6 text-gray-500"><Loader2 className="h-4 w-4 animate-spin" /> Carregando pedidos…</div>;
@@ -84,6 +108,7 @@ function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
             <th className="text-left py-2 px-3 font-semibold">Valor</th>
             <th className="text-left py-2 px-3 font-semibold">Pagamento</th>
             <th className="text-left py-2 px-3 font-semibold">Situação</th>
+            {ehAdmin && <th className="text-center py-2 px-3 font-semibold">Ações</th>}
           </tr>
         </thead>
         <tbody>
@@ -103,6 +128,20 @@ function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
                   <Badge variant="outline" className="border-amber-300 text-amber-700 bg-amber-50">fora do pipeline</Badge>
                 )}
               </td>
+              {ehAdmin && (
+                <td className="py-2 px-3 text-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => pedirExclusao(p)}
+                    disabled={excluir.isPending}
+                    title="Excluir pedido"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
