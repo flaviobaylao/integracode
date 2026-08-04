@@ -355,7 +355,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [photosItem, setPhotosItem] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
-  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
   const [custSug, setCustSug] = useState<any[]>([]);
   const custTimer = useRef<any>(null);
   const buscarClientes = (v: string) => {
@@ -568,7 +568,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       setShowPayment(false);
-      setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+      setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
       toast({ title: 'Pagamento registrado com sucesso' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
@@ -728,7 +728,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
                       {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
-                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
                     </div>
@@ -898,7 +898,30 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <DialogDescription>Registre um pagamento para: {selectedItem?.title || selectedItem?.customerName}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div><Label>Valor</Label><Input type="number" step="0.01" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Valor recebido</Label><Input type="number" step="0.01" min="0" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
+              <div><Label>Desconto</Label><Input type="number" step="0.01" min="0" value={paymentForm.discount} onChange={e => setPaymentForm({ ...paymentForm, discount: e.target.value })} placeholder="0.00" /></div>
+            </div>
+            {(() => {
+              // O desconto NAO e dinheiro: ele reduz o valor do titulo. Pode ir
+              // sozinho (valor 0 + desconto), que e conceder abatimento sem receber.
+              const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+              const tot = parseFloat(selectedItem?.amount || '0') || 0;
+              const pago = parseFloat(selectedItem?.amountPaid || '0') || 0;
+              const aberto = Math.max(0, tot - pago);
+              const v = parseFloat(paymentForm.amount || '0') || 0;
+              const d = parseFloat(paymentForm.discount || '0') || 0;
+              const excede = v + d > aberto + 0.005;
+              const resta = Math.max(0, aberto - v - d);
+              return (
+                <div className="rounded border p-2 text-xs text-muted-foreground space-y-0.5">
+                  <div>Em aberto hoje: <b>{brl(aberto)}</b>{tot !== aberto ? <> (título de {brl(tot)})</> : null}</div>
+                  {d > 0 ? <div>Desconto de {brl(d)} <b>reduz o título</b> para {brl(Math.max(0, tot - d))}.</div> : null}
+                  <div>Depois desta baixa resta: <b>{brl(resta)}</b>{resta <= 0.005 ? ' — título quitado' : ''}</div>
+                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto.</div> : null}
+                </div>
+              );
+            })()}
             <div>
               <Label>Forma de Pagamento</Label>
               <Select value={paymentForm.paymentMethod || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, paymentMethod: v === 'none' ? '' : v })}>
@@ -1067,7 +1090,7 @@ function PayablesTab() {
   const [showDetail, setShowDetail] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
-  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [supSug, setSupSug] = useState<any[]>([]);
@@ -1259,7 +1282,7 @@ function PayablesTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
       setShowPayment(false);
-      setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+      setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
       toast({ title: 'Pagamento registrado com sucesso' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
@@ -1362,7 +1385,7 @@ function PayablesTab() {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setDanfeFile(null); setBoletoFiles([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a pagar?')) deleteMutation.mutate(p.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
@@ -1680,7 +1703,30 @@ function PayablesTab() {
             <DialogDescription>Registre um pagamento para: {selectedItem?.title || selectedItem?.supplierName}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div><Label>Valor</Label><Input type="number" step="0.01" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Valor pago</Label><Input type="number" step="0.01" min="0" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
+              <div><Label>Desconto</Label><Input type="number" step="0.01" min="0" value={paymentForm.discount} onChange={e => setPaymentForm({ ...paymentForm, discount: e.target.value })} placeholder="0.00" /></div>
+            </div>
+            {(() => {
+              // O desconto NAO e dinheiro: ele reduz o valor do titulo. Pode ir
+              // sozinho (valor 0 + desconto), que e conceder abatimento sem receber.
+              const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+              const tot = parseFloat(selectedItem?.amount || '0') || 0;
+              const pago = parseFloat(selectedItem?.amountPaid || '0') || 0;
+              const aberto = Math.max(0, tot - pago);
+              const v = parseFloat(paymentForm.amount || '0') || 0;
+              const d = parseFloat(paymentForm.discount || '0') || 0;
+              const excede = v + d > aberto + 0.005;
+              const resta = Math.max(0, aberto - v - d);
+              return (
+                <div className="rounded border p-2 text-xs text-muted-foreground space-y-0.5">
+                  <div>Em aberto hoje: <b>{brl(aberto)}</b>{tot !== aberto ? <> (título de {brl(tot)})</> : null}</div>
+                  {d > 0 ? <div>Desconto de {brl(d)} <b>reduz o título</b> para {brl(Math.max(0, tot - d))}.</div> : null}
+                  <div>Depois desta baixa resta: <b>{brl(resta)}</b>{resta <= 0.005 ? ' — título quitado' : ''}</div>
+                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto.</div> : null}
+                </div>
+              );
+            })()}
             <div>
               <Label>Forma de Pagamento</Label>
               <Select value={paymentForm.paymentMethod || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, paymentMethod: v === 'none' ? '' : v })}>
