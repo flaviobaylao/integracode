@@ -2750,6 +2750,14 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
+  // DESCONTO na baixa (04/08/2026). As colunas estao no shared/schema.ts, mas o
+  // `drizzle-kit push` do deploy NAO as criou — e sem elas TODA baixa manual quebra,
+  // porque o insert do pagamento passou a mandar `discount`. Estes ALTER garantem a
+  // coluna no boot, sao idempotentes e nao dependem do push.
+  db.execute(sql`ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS discount numeric(12,2) DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS discount numeric(12,2) DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
+  db.execute(sql`ALTER TABLE payables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
   // Importacao do historico de NF-e do Omie: marcadores de origem/lote (dedup por access_key).
   db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_origin varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_batch_id varchar`).catch(() => {});
