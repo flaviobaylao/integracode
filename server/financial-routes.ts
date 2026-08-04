@@ -1499,7 +1499,9 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const limit = Math.min(Math.max(Number(req.query?.limit) || 50, 1), 500);
       const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
       const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
-      const soma = (xs: any[], k: string) => n2(xs.reduce((t, x) => t + Number(x[k] || 0), 0));
+      // Os totais sao contados SEM o limite: `itens` e amostra, `n`/`valor` sao o
+      // universo. Misturar os dois faria o operador ler "5" quando sao 17.
+      const totais = async (query: any) => { const r = (await linhas(query))[0] || {}; return { n: Number(r.n || 0), valor: n2(r.valor) }; };
 
       const semCobranca = await linhas(sql`
         SELECT r.title_number AS titulo, r.customer_name AS cliente,
@@ -1539,20 +1541,48 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         ) v JOIN receivables r ON r.id = v.rid
         ORDER BY v.vivas DESC, saldo DESC LIMIT ${limit}`);
 
+      const totSemCobranca = await totais(sql`
+        SELECT count(*)::int AS n, COALESCE(sum(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric), 0)::float AS valor
+        FROM receivables r
+        WHERE r.deleted_at IS NULL AND r.billing_pipeline_id IS NOT NULL
+          AND r.status IN ('a_vencer', 'vencida')
+          AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005
+          AND COALESCE(r.import_origin, '') <> 'omie_historico'
+          AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
+          AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)`);
+      const totPagoSemBaixa = await totais(sql`
+        SELECT count(*)::int AS n, COALESCE(sum(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric), 0)::float AS valor
+        FROM boleto_charges b JOIN receivables r ON r.id = b.receivable_id
+        WHERE lower(COALESCE(b.status, '')) IN ('liquidado', 'pago', 'recebido')
+          AND r.deleted_at IS NULL AND r.status IN ('a_vencer', 'vencida')
+          AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005`);
+      const totDuplicada = await totais(sql`
+        SELECT count(*)::int AS n, COALESCE(sum(r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric), 0)::float AS valor
+        FROM (
+          SELECT rid FROM (
+            SELECT receivable_id AS rid FROM boleto_charges
+             WHERE deleted_at IS NULL AND upper(COALESCE(status, '')) IN ('REGISTRADO', 'VENCIDO') AND receivable_id IS NOT NULL
+            UNION ALL
+            SELECT receivable_id FROM pix_charges
+             WHERE deleted_at IS NULL AND status::text = 'ATIVA' AND receivable_id IS NOT NULL
+          ) t GROUP BY rid HAVING count(*) > 1) v
+        JOIN receivables r ON r.id = v.rid`);
+
       res.json({
         geradoEm: new Date().toISOString(),
         somenteLeitura: true,
         tituloSemCobranca: {
-          n: semCobranca.length, valor: soma(semCobranca, 'saldo'), itens: semCobranca,
+          ...totSemCobranca, itens: semCobranca, amostra: semCobranca.length,
           comoResolver: 'POST /api/admin/financial/garantir-cobranca { "apply": true } — gera a cobranca que faltou (nao toca no legado).',
         },
         boletoPagoSemBaixa: {
-          n: pagoSemBaixa.length, valor: soma(pagoSemBaixa, 'saldo'), itens: pagoSemBaixa,
+          ...totPagoSemBaixa, itens: pagoSemBaixa, amostra: pagoSemBaixa.length,
           atencao: 'A varredura horaria NAO pega estes casos: ela so olha boleto que ainda esta aberto.',
           comoResolver: 'POST /api/admin/financial/repair-boleto-liquidado-sem-baixa { "dryRun": true } — consulta o BB e mostra o que faria. ISTO DA BAIXA: confira antes.',
         },
         cobrancaDuplicada: {
-          n: duplicada.length, valor: soma(duplicada, 'saldo'), itens: duplicada,
+          ...totDuplicada, itens: duplicada, amostra: duplicada.length,
           comoResolver: 'POST /api/admin/financial/cobrancas-vivas { "dryRun": true, "categorias": ["duplicadaNoTitulo"] } — mantem a mais recente. Aplicar da BAIXA no BB e e irreversivel.',
         },
       });
