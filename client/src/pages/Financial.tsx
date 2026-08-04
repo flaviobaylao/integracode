@@ -207,6 +207,168 @@ function LancamentoBadges({ item }: { item: any }) {
   );
 }
 
+// Estorno de baixa SEM LASTRO. Fluxo em dois tempos, de propósito: abre com a
+// PRÉVIA vinda do servidor (dryRun, não escreve nada) e só executa depois que o
+// operador lê o que vai ser apagado e digita o motivo.
+//
+// Não aparece quando o título tem vínculo bancário — nesse caso a reversão é o
+// "Desfazer" da Conciliação, e o servidor recusaria com 409 de qualquer forma.
+// Mostramos o aviso em vez do botão para o operador saber onde ir.
+function EstornarBaixaButton({
+  kind, titleId, titleLabel, paymentId, conciliado = false, compact = false, onDone,
+}: {
+  kind: 'receivable' | 'payable';
+  titleId: string;
+  titleLabel?: string;
+  paymentId?: string | null;   // ausente = estorna TODAS as baixas do título
+  conciliado?: boolean;
+  compact?: boolean;
+  onDone?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [preview, setPreview] = useState<any>(null);
+  const [erro, setErro] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const base = kind === 'receivable' ? 'receivables' : 'payables';
+  const evKey = kind === 'receivable' ? 'history' : 'eventos';
+
+  const chamar = async (dryRun: boolean) => {
+    const r = await fetch(`/api/financial/${base}/${titleId}/estornar-baixa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        motivo: motivo.trim(),
+        dryRun,
+        ...(paymentId ? { paymentIds: [paymentId] } : {}),
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) throw new Error(j?.message || j?.error || `HTTP ${r.status}`);
+    return j;
+  };
+
+  const abrir = async () => {
+    setOpen(true); setMotivo(''); setPreview(null); setErro(''); setBusy(true);
+    try { setPreview(await chamar(true)); }
+    catch (e: any) { setErro(String(e?.message || e)); }
+    finally { setBusy(false); }
+  };
+
+  const executar = async () => {
+    setBusy(true); setErro('');
+    try {
+      const j = await chamar(false);
+      toast({
+        title: 'Baixa estornada',
+        description: `${formatCurrency(j.somaEstornada)} · título volta a "${j.statusNovo}".`,
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/financial/${base}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/financial/${base}`, titleId, evKey] });
+      setOpen(false);
+      onDone?.();
+    } catch (e: any) {
+      setErro(String(e?.message || e));
+      toast({ title: 'Erro ao estornar', description: String(e?.message || e), variant: 'destructive' });
+    } finally { setBusy(false); }
+  };
+
+  if (conciliado) {
+    return (
+      <span className="text-xs text-muted-foreground whitespace-nowrap" title="A baixa tem lastro no extrato. Para revertê-la, use Conciliação → Desfazer no lançamento bancário.">
+        conciliada — reverter em Conciliação
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size={compact ? 'icon' : 'sm'}
+        className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+        title="Estornar esta baixa (título volta a ficar em aberto) — exige motivo"
+        onClick={(e) => { e.stopPropagation(); abrir(); }}
+      >
+        <RefreshCw className="h-4 w-4" />{compact ? null : <span className="ml-1">Estornar</span>}
+      </Button>
+
+      <Dialog open={open} onOpenChange={(v) => { if (!busy) setOpen(v); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Estornar baixa{titleLabel ? ` — ${titleLabel}` : ''}</DialogTitle>
+            <DialogDescription>
+              Apaga {paymentId ? 'este pagamento' : 'os pagamentos'} e reabre o título. Não mexe em
+              conciliação bancária — se houver lastro no extrato, o servidor recusa.
+            </DialogDescription>
+          </DialogHeader>
+
+          {busy && !preview && <p className="text-sm text-muted-foreground">Carregando prévia…</p>}
+          {erro && <p className="text-sm text-red-600 border border-red-200 bg-red-50 rounded p-2">{erro}</p>}
+
+          {preview && (
+            <div className="space-y-2 text-sm">
+              <div className="border rounded p-2 bg-muted/40 space-y-1">
+                <div className="flex justify-between"><span className="text-muted-foreground">Valor do título</span><b>{formatCurrency(preview.valor)}</b></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Baixado hoje</span><b>{formatCurrency(preview.amountPaidAtual)}</b></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Vai ser estornado</span><b className="text-rose-700">− {formatCurrency(preview.somaEstornada)}</b></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Fica baixado</span><b>{formatCurrency(preview.amountPaidNovo)}</b></div>
+                <div className="flex justify-between border-t pt-1"><span className="text-muted-foreground">Status</span><b>{preview.statusAtual} → <span className="text-amber-700">{preview.statusNovo}</span></b></div>
+              </div>
+
+              {(preview.pagamentosEstornados || []).length > 0 ? (
+                <div>
+                  <Label className="text-xs text-muted-foreground">Pagamentos que serão apagados</Label>
+                  <div className="space-y-1 mt-1">
+                    {(preview.pagamentosEstornados || []).map((p: any) => (
+                      <div key={p.id} className="border rounded px-2 py-1 text-xs">
+                        <b>{formatCurrency(p.valor)}</b>{p.pagoEm ? ` em ${formatDate(p.pagoEm)}` : ''}{p.metodo ? ` · ${String(p.metodo).replace(/_/g, ' ')}` : ''}
+                        {p.referencia ? <div className="text-muted-foreground">{p.referencia}</div> : null}
+                        <div className="text-muted-foreground">lançado por {p.criadoPor || '—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-amber-700 border border-amber-200 bg-amber-50 rounded p-2">
+                  Não há linha de pagamento registrada — o título está marcado como baixado com o
+                  valor sujo em <code>amount_paid</code>. O estorno só limpa esse valor.
+                </p>
+              )}
+
+              <div>
+                <Label className="text-xs">Motivo (obrigatório)</Label>
+                <Textarea
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                  placeholder="Ex.: baixa sem lastro bancário — item 3 da auditoria de 03/ago"
+                  rows={2}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Fica registrado no título e na auditoria financeira, com o seu usuário.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancelar</Button>
+            <Button
+              variant="destructive"
+              onClick={executar}
+              disabled={busy || !preview || motivo.trim().length < 5}
+              title={motivo.trim().length < 5 ? 'Descreva o motivo (mínimo 5 caracteres)' : undefined}
+            >
+              {busy ? 'Estornando…' : `Estornar ${preview ? formatCurrency(preview.somaEstornada) : ''}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // FASE 2 - PIX recebidos pelo webhook do BB sem cobranca correspondente no sistema.
 function PixNaoIdentificadosTab() {
   const [statusFilter, setStatusFilter] = useState('pendente');
@@ -1020,16 +1182,33 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
               )}
 
               {/* Recebimentos / baixas */}
-              {((history?.payments?.length || 0) > 0) && (
+              {(((history?.payments?.length || 0) > 0) || Number(history?.receivable?.amountPaid || 0) > 0.005) && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground mb-1">Recebimentos / baixas</p>
                   <div className="space-y-1">
                     {(history?.payments || []).map((p: any) => (
                       <div key={p.id} className="border rounded p-2 text-sm flex justify-between gap-2">
                         <div><b className="text-green-700">{formatCurrency(p.amount)}</b> · {p.paymentMethod || '-'}{p.notes ? <span className="text-muted-foreground"> · {p.notes}</span> : null}</div>
-                        <div className="text-xs text-muted-foreground text-right whitespace-nowrap">{formatDateTime(p.paidAt)}<br />{p.createdBy || '-'}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-muted-foreground text-right whitespace-nowrap">{formatDateTime(p.paidAt)}<br />{p.createdBy || '-'}</div>
+                          {!readOnly && (
+                            <EstornarBaixaButton kind="receivable" titleId={String(selectedItem?.id)}
+                              titleLabel={history?.receivable?.titleNumber || selectedItem?.titleNumber || undefined}
+                              paymentId={String(p.id)} conciliado={(history?.reconciliations?.length || 0) > 0} compact />
+                          )}
+                        </div>
                       </div>
                     ))}
+                    {/* "recebida SEM nenhuma baixa": nao ha linha de pagamento para clicar, mas o
+                        amount_paid esta sujo. Botao no nivel do titulo (30 casos do item 3). */}
+                    {!readOnly && (history?.payments?.length || 0) === 0 && Number(history?.receivable?.amountPaid || 0) > 0.005 && (
+                      <div className="border rounded p-2 text-sm flex justify-between items-center gap-2 bg-amber-50/60">
+                        <div className="text-amber-800">Marcado como baixado em <b>{formatCurrency(history?.receivable?.amountPaid)}</b>, mas <b>sem nenhum pagamento registrado</b>.</div>
+                        <EstornarBaixaButton kind="receivable" titleId={String(selectedItem?.id)}
+                          titleLabel={history?.receivable?.titleNumber || selectedItem?.titleNumber || undefined}
+                          conciliado={(history?.reconciliations?.length || 0) > 0} />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1795,7 +1974,8 @@ function PayablesTab() {
                 ) : (
                   <div className="space-y-1 mt-1">
                     {(payableEventos.pagamentos || []).map((p: any) => (
-                      <div key={p.id} className="text-sm border rounded px-2 py-1 bg-green-50/60">
+                      <div key={p.id} className="text-sm border rounded px-2 py-1 bg-green-50/60 flex justify-between gap-2">
+                        <div>
                         <span className="font-medium">{formatCurrency(p.amount)}</span>
                         {p.paid_at ? <> em <span className="font-medium">{formatDate(p.paid_at)}</span></> : null}
                         {p.payment_method ? <> · {String(p.payment_method).replace(/_/g, ' ')}</> : null}
@@ -1804,6 +1984,10 @@ function PayablesTab() {
                         <div className="text-xs text-muted-foreground">
                           lançado por {p.created_by || '—'}{p.created_at ? ` em ${formatDate(p.created_at)}` : ''}
                         </div>
+                        </div>
+                        <EstornarBaixaButton kind="payable" titleId={String(selectedItem?.id)}
+                          titleLabel={selectedItem?.titleNumber || undefined} paymentId={String(p.id)}
+                          conciliado={(payableEventos?.conciliacoes?.length || 0) > 0} compact />
                       </div>
                     ))}
                     <p className="text-xs text-muted-foreground">Total baixado: <span className="font-medium">{formatCurrency(payableEventos.totalPago)}</span></p>
