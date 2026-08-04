@@ -65,6 +65,14 @@ function diffDays(a: string | null, b: string | null): number | null {
   return isNaN(d) ? null : d;
 }
 
+const ORIGEM_LABEL: Record<string, string> = {
+  financeiro: "Financeiro",
+  nfe: "NF-e emitida",
+  pedido: "Pedido faturado",
+  baixa: "Baixa",
+  baixa_importada: "Baixa importada",
+};
+
 const PM_LABEL: Record<string, string> = {
   dinheiro: "Dinheiro",
   boleto: "Boleto",
@@ -346,6 +354,31 @@ export function registerCustomerStatementRoutes(app: Express): void {
           ? "Parcial"
           : "Em aberto";
 
+        // Pormenores da nota: parcelas (títulos) e pagamentos aplicados a ela.
+        const detParcelas = n.titulos.map((t: any) => ({
+          titulo: String(t.title_number || "").trim() || null,
+          vencimento: toISO(t.due_date),
+          valor: num(t.amount),
+          pago: num(t.amount_paid),
+          status: t.status || null,
+          formaPagamento: PM_LABEL[t.payment_method] || t.payment_method || null,
+          categoria: t.category || null,
+          descricao: t.description || null,
+        }));
+        const detPagsNota: any[] = [];
+        for (const t of n.titulos) {
+          for (const p of (payByRec.get(t.id) || [])) {
+            detPagsNota.push({
+              data: toISO(p.paid_at),
+              valor: num(p.amount),
+              formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
+              conta: p.account_name || null,
+              referencia: p.reference || p.notes || null,
+              titulo: String(t.title_number || "").trim() || null,
+            });
+          }
+        }
+
         linhas.push({
           key: `${n.key}|nf`,
           data: n.data,
@@ -367,6 +400,22 @@ export function registerCustomerStatementRoutes(app: Express): void {
           diasAtraso: vencido ? diffDays(hoje.toISOString(), n.vencimento) : null,
           formaPagamento: null,
           estimado: false,
+          detalhe: {
+            tipo: "NF",
+            nf: n.nf,
+            pedido: n.pedido || null,
+            emissao: n.data,
+            vencimento: n.vencimento,
+            valorTotal: n.valor,
+            pago: n.pago,
+            saldo: saldoTitulo,
+            parcelasQtd: n.parcelas,
+            origem: ORIGEM_LABEL[n.origem] || n.origem,
+            situacao,
+            cancelada,
+            parcelas: detParcelas,
+            pagamentos: detPagsNota,
+          },
         });
 
         // Pagamentos de cada título da nota
@@ -392,6 +441,21 @@ export function registerCustomerStatementRoutes(app: Express): void {
                 conta: p.account_name || null,
                 estimado: false,
                 diasAtraso: diffDays(toISO(p.paid_at), toISO(t.due_date)),
+                detalhe: {
+                  tipo: "PAGAMENTO",
+                  pagoEm: toISO(p.paid_at),
+                  valor: num(p.amount),
+                  formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
+                  conta: p.account_name || null,
+                  referencia: p.reference || null,
+                  obs: p.notes || null,
+                  nf: n.nf,
+                  pedido: n.pedido || null,
+                  tituloNumero: String(t.title_number || "").trim() || null,
+                  tituloVencimento: toISO(t.due_date),
+                  diasAtraso: diffDays(toISO(p.paid_at), toISO(t.due_date)),
+                  estimado: false,
+                },
               });
             }
           } else if (num(t.amount_paid) > 0.009) {
@@ -413,6 +477,21 @@ export function registerCustomerStatementRoutes(app: Express): void {
               formaPagamento: PM_LABEL[t.payment_method] || t.payment_method || null,
               estimado: true,
               diasAtraso: 0,
+              detalhe: {
+                tipo: "PAGAMENTO",
+                pagoEm: toISO(t.due_date),
+                valor: num(t.amount_paid),
+                formaPagamento: PM_LABEL[t.payment_method] || t.payment_method || null,
+                conta: null,
+                referencia: null,
+                obs: "Baixa importada do histórico sem data — estimada no vencimento.",
+                nf: n.nf,
+                pedido: n.pedido || null,
+                tituloNumero: String(t.title_number || "").trim() || null,
+                tituloVencimento: toISO(t.due_date),
+                diasAtraso: 0,
+                estimado: true,
+              },
             });
           }
         }
