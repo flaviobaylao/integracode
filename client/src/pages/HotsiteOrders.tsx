@@ -118,30 +118,31 @@ export default function HotsiteOrders() {
     },
   });
 
-  // Mutation para enviar pedido para Omie
-  const sendToOmieMutation = useMutation({
+  // Mutation para enviar o pedido ao PIPELINE (faixa "Pedidos").
+  // Antes este botao mandava para o Omie; o faturamento hoje e 100% interno.
+  const sendToPipelineMutation = useMutation({
     mutationFn: async (orderId: string) => {
-      const response = await fetch(`/api/hotsite-orders/${orderId}/send-to-omie`, {
+      const response = await fetch(`/api/hotsite-orders/${orderId}/send-to-pipeline`, {
         method: 'POST',
         credentials: 'include',
       });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Erro ao enviar para Omie');
-      }
-      return response.json();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Erro ao enviar para o pipeline');
+      return data;
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/hotsite-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/canais/resumo'] });
       toast({
-        title: 'Pedido enviado para Omie',
-        description: `Pedido criado no Omie: ${data.numero_pedido || 'N/A'}`,
+        title: data?.ja ? 'Pedido já estava no pipeline' : 'Pedido enviado para o pipeline',
+        description: data?.message || 'O pedido está na faixa Pedidos do faturamento.',
       });
     },
     onError: (error: any) => {
       toast({
-        title: 'Erro ao enviar para Omie',
-        description: error.message || 'Não foi possível enviar o pedido para o Omie.',
+        title: 'Não foi para o pipeline',
+        description: error.message || 'Não foi possível enviar o pedido ao pipeline.',
         variant: 'destructive',
       });
     },
@@ -176,9 +177,9 @@ export default function HotsiteOrders() {
     }
   };
 
-  const handleSendToOmie = (orderId: string) => {
-    if (confirm('Deseja enviar este pedido para faturamento no Omie? Se o cliente não estiver cadastrado, será criado automaticamente.')) {
-      sendToOmieMutation.mutate(orderId);
+  const handleSendToPipeline = (orderId: string) => {
+    if (confirm('Enviar este pedido para a faixa Pedidos do Pipeline de Faturamento?\n\nA data de registro original é preservada. Se o cliente tiver débito vencido, o pedido vai para a coluna Bloqueados.')) {
+      sendToPipelineMutation.mutate(orderId);
     }
   };
 
@@ -808,13 +809,13 @@ export default function HotsiteOrders() {
                       </Button>
                       <Button
                         variant="default"
-                        onClick={() => handleSendToOmie(selectedOrder.id)}
-                        disabled={sendToOmieMutation.isPending}
-                        data-testid="button-send-to-omie"
+                        onClick={() => handleSendToPipeline(selectedOrder.id)}
+                        disabled={sendToPipelineMutation.isPending}
+                        data-testid="button-send-to-pipeline"
                         className="bg-green-600 hover:bg-green-700"
                       >
                         <Send className="h-4 w-4 mr-2" />
-                        {sendToOmieMutation.isPending ? 'Enviando...' : 'Enviar para Omie'}
+                        {sendToPipelineMutation.isPending ? 'Enviando...' : 'Enviar para Pipeline'}
                       </Button>
                     </div>
                     <Button
