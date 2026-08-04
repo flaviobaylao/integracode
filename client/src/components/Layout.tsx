@@ -300,7 +300,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         // As rotas /hotsite-pricing e /hotsite-orders continuam valendo para links salvos.
         { id: 'estoque', label: 'Gestão de Estoque', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
-        { id: 'cupons', label: 'Cupons de Desconto', icon: 'fas fa-ticket-alt', available: canAccessReports, badge: null },
+        // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
+        // A rota /cupons continua valendo para links salvos.
         { id: 'fornecedores', label: 'Fornecedores', icon: 'fas fa-truck-loading', available: canAccessReports, badge: null },
       ],
     },
