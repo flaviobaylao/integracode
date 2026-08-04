@@ -4,6 +4,7 @@ import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { cancelarBoleto } from './bb-boleto-service';
+import { lancarNaConta } from './account-ledger';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
@@ -1274,6 +1275,110 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     }
   });
 
+  // ============================================================================
+  // REESCREVER O SALDO DA CONTA A PARTIR DO EXTRATO OFICIAL
+  // POST /api/admin/financial/saldo-oficial/aplicar { accountId, dryRun }
+  //
+  // O saldo gravado nunca vai fechar pelo razao interno: account_movements cobre
+  // so 3 meses e nao tem nenhum debito dos 7 anos de pagamento a fornecedor
+  // (10.646 baixas, R$ 13 milhoes). A unica fonte de verdade e o EXTRATO.
+  //
+  // saldo = LEDGERBAL da ancora oficial + movimento do Livro depois dela.
+  // A ancora segue a mesma prioridade do relatorio: arquivo com "OFICIAL" no
+  // nome > extrato mensal do internet banking > Gerenciador (foto do instante,
+  // que NAO serve de fechamento). Sem ancora confiavel, recusa.
+  //
+  // Grava o saldo antigo e o novo na auditoria; nao apaga nem cria movimento.
+  // dryRun por padrao.
+  // ============================================================================
+  app.post('/api/admin/financial/saldo-oficial/aplicar', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const accountId = (req.body?.accountId as string) || null;
+      const ator = actorOf(req);
+      const por = String(ator.email || ator.id || 'auditoria-financeira').slice(0, 120);
+      const linhas = async (query: any): Promise<any[]> => { const r: any = await db.execute(query); return (r.rows || r) as any[]; };
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+
+      const contas = await linhas(sql`
+        SELECT id, name, COALESCE(balance::numeric, 0) AS saldo_gravado
+        FROM financial_accounts
+        WHERE (${accountId}::text IS NULL OR id = ${accountId})
+        ORDER BY name`);
+
+      const ancoras = await linhas(sql`
+        SELECT s.financial_account_id AS acc, s.file_name AS arquivo,
+               substring(i.raw_ofx from '"saldoData":"([^"]*)"') AS dt,
+               substring(i.raw_ofx from '"saldoFinal":"([^"]*)"') AS bal
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.raw_ofx LIKE '%saldoFinal%'
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        GROUP BY 1, 2, 3, 4`);
+
+      const dias = await linhas(sql`
+        SELECT s.financial_account_id AS acc, i.transaction_date::date::text AS d,
+               COALESCE(sum(CASE WHEN i.type = 'C' THEN i.amount::numeric ELSE -i.amount::numeric END), 0) AS mov
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.mirror_of IS NULL AND COALESCE(i.reconciliation_status, 'pending') <> 'saldo'
+          AND (${accountId}::text IS NULL OR s.financial_account_id = ${accountId})
+        GROUP BY 1, 2`);
+
+      const fonteDe = (arq: string) => /oficial/i.test(arq || '') ? 'oficial'
+        : (/^\s*extrato\s+conta\s+corrente/i.test(arq || '') ? 'mensal' : 'gerenciador');
+      const pesoDe = (f: string) => (f === 'oficial' ? 3 : f === 'mensal' ? 2 : 1);
+      const grupo = (arr: any[]) => { const m: Record<string, any[]> = {}; for (const r of arr) (m[String(r.acc)] ||= []).push(r); return m; };
+      const ancPor = grupo(ancoras), diasPor = grupo(dias);
+
+      const plano: any[] = [];
+      for (const c of contas) {
+        const id = String(c.id);
+        const porData: Record<string, any> = {};
+        for (const a of (ancPor[id] || [])) {
+          if (!a.dt || a.bal === null || a.bal === undefined) continue;
+          const f = fonteDe(String(a.arquivo || ''));
+          const cand = { data: String(a.dt), saldoBanco: n2(a.bal), arquivo: String(a.arquivo || ''), fonte: f };
+          if (!porData[cand.data] || pesoDe(cand.fonte) > pesoDe(porData[cand.data].fonte)) porData[cand.data] = cand;
+        }
+        let ref: any = null;
+        for (const a of Object.values(porData) as any[]) {
+          if (!ref || pesoDe(a.fonte) > pesoDe(ref.fonte) || (pesoDe(a.fonte) === pesoDe(ref.fonte) && a.data > ref.data)) ref = a;
+        }
+        const gravado = n2(c.saldo_gravado);
+        if (!ref) { plano.push({ conta: { id, nome: c.name }, saldoGravado: gravado, aplicavel: false, motivo: 'sem ancora de saldo (nenhum extrato desta conta trouxe LEDGERBAL)' }); continue; }
+        if (ref.fonte === 'gerenciador') { plano.push({ conta: { id, nome: c.name }, saldoGravado: gravado, aplicavel: false, motivo: 'a unica ancora vem do Gerenciador (foto do instante da exportacao) — importe o extrato mensal do internet banking' }); continue; }
+        const ds = (diasPor[id] || []).map((r: any) => ({ d: String(r.d), mov: Number(r.mov) }));
+        const movApos = n2(ds.reduce((s, r) => (r.d > ref.data ? s + r.mov : s), 0));
+        const saldoOficial = n2(ref.saldoBanco + movApos);
+        plano.push({
+          conta: { id, nome: c.name }, aplicavel: true,
+          ancora: { data: ref.data, saldoBanco: ref.saldoBanco, arquivo: ref.arquivo, fonte: ref.fonte },
+          movimentoAposAncora: movApos, saldoGravado: gravado, saldoOficial, ajuste: n2(saldoOficial - gravado),
+        });
+      }
+
+      if (dryRun) return res.json({ dryRun: true, plano });
+
+      const aplicados: any[] = [];
+      for (const p of plano.filter((x) => x.aplicavel && Math.abs(x.ajuste) > 0.005)) {
+        await db.execute(sql`
+          UPDATE financial_accounts SET balance = ${p.saldoOficial.toFixed(2)}::numeric(14,2)
+          WHERE id = ${p.conta.id}`);
+        aplicados.push(p);
+        try {
+          await logFinancialAudit({
+            req, action: 'update', entity: 'financial_account', entityId: p.conta.id, amount: p.saldoOficial,
+            before: { balance: p.saldoGravado }, after: { balance: p.saldoOficial, ancora: p.ancora, movimentoAposAncora: p.movimentoAposAncora },
+            note: 'Saldo reescrito a partir do extrato oficial (' + p.ancora.arquivo + ', ' + p.ancora.data + '): R$ ' +
+              p.saldoGravado + ' -> R$ ' + p.saldoOficial + ' (ajuste R$ ' + p.ajuste + '), por ' + por,
+          });
+        } catch (e: any) { }
+      }
+      res.json({ dryRun: false, aplicados: aplicados.length, contas: aplicados, naoAplicaveis: plano.filter((x) => !x.aplicavel) });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.post('/api/admin/financial/repair-boleto-liquidado-sem-baixa', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
@@ -2524,6 +2629,26 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           amountPaid: totalPaid.toFixed(2),
           status: newStatus as any
         });
+
+        // A baixa manual de recebivel NAO creditava a conta: so boleto e PIX
+        // automaticos geravam movimento. O razao ficava torto — entrada de
+        // dinheiro pela tela nao aparecia no extrato interno.
+        // Idempotente pelo id do pagamento, entao nao duplica com o credito que o
+        // webhook do boleto/PIX ja faz (aquele usa outro sourceType/reference).
+        const contaRecId = (data as any).financialAccountId || (receivable as any).financialAccountId || null;
+        if (contaRecId) {
+          try {
+            const contaRec: any = await storage.getFinancialAccount(contaRecId);
+            if (contaRec) await lancarNaConta({
+              accountId: contaRecId, tipo: 'credito', valor: parseFloat(data.amount),
+              descricao: `Recebimento - ${(receivable as any).customerName || (receivable as any).titleNumber || 'conta a receber'}`,
+              sourceType: 'receivable_payment', sourceId: String(req.params.id),
+              reference: String((payment as any)?.id || req.params.id),
+              omieInstanceId: (contaRec as any).omieInstanceId || null,
+              createdBy: user?.email || 'sistema', idempotente: true,
+            });
+          } catch (e: any) { console.error('[FINANCEIRO] credito da conta na baixa de recebivel falhou:', e?.message || e); }
+        }
       }
       
       res.status(201).json(payment);
@@ -2955,19 +3080,16 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           try {
             const conta: any = await storage.getFinancialAccount(contaId);
             if (conta) {
-              const saldoAtual = parseFloat(conta.balance || '0');
-              const novoSaldo = saldoAtual - parseFloat(data.amount);
-              await storage.createAccountMovement({
-                financialAccountId: contaId,
-                type: 'debito' as any,
-                amount: parseFloat(data.amount).toFixed(2),
-                balanceAfter: novoSaldo.toFixed(2),
-                description: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
-                sourceType: 'payable', sourceId: String(req.params.id),
+              // Saldo e movimento numa transacao so, com a linha da conta travada
+              // (server/account-ledger.ts). Idempotente por pagamento: reenvio da
+              // mesma baixa nao debita duas vezes.
+              await lancarNaConta({
+                accountId: contaId, tipo: 'debito', valor: parseFloat(data.amount),
+                descricao: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
+                sourceType: 'payable', sourceId: String(req.params.id), reference: String((payment as any)?.id || req.params.id),
                 omieInstanceId: (conta as any).omieInstanceId || null,
-                createdBy: user?.email || 'sistema',
-              } as any);
-              await storage.updateFinancialAccount(contaId, { balance: novoSaldo.toFixed(2) } as any);
+                createdBy: user?.email || 'sistema', idempotente: true,
+              });
             }
           } catch (e: any) {
             console.error('[FINANCEIRO] debito da conta no pagamento de pagavel falhou:', e?.message || e);
