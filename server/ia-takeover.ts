@@ -71,8 +71,23 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
 // A IA vai mesmo atender esta conversa agora? Usado pelo webhook para decidir se
 // pula a distribuicao. Se qualquer gate estiver fechado, a fila humana funciona
 // exatamente como hoje — nenhuma conversa fica orfa.
+// A conversa e com um USUARIO do Integra (funcionario/vendedor/admin/etc.)? A IA NUNCA captura nem
+// responde os proprios usuarios — so clientes externos. Casa pelos 8 digitos finais do telefone.
+async function ehUsuarioDoIntegra(phone: string): Promise<boolean> {
+  try {
+    const ph = String(phone || '').replace(/[^0-9]/g, '');
+    if (ph.length < 8) return false;
+    const last8 = ph.slice(-8);
+    const r: any = await db.execute(sql`SELECT 1 FROM users
+      WHERE coalesce(is_active, true) = true AND phone IS NOT NULL
+        AND right(regexp_replace(phone, '[^0-9]', '', 'g'), 8) = ${last8} LIMIT 1`);
+    return !!r.rows?.[0];
+  } catch { return false; }
+}
+
 export async function iaAssumeSozinha(conversationId: string, phone: string): Promise<boolean> {
   try {
+    if (await ehUsuarioDoIntegra(phone)) return false; // nunca captura conversa de usuario do Integra
     if ((await getSetting('ia_front_line', 'off')) !== 'on') return false;
     const mode = await getSetting('agents_runtime_mode', 'off');
     if (mode === 'off') return false;
@@ -227,6 +242,7 @@ async function encerrarPeloBotao(conversationId: string, phone: string, texto: s
 export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
   try {
     if (!incomingText || !incomingText.trim()) return;
+    if (await ehUsuarioDoIntegra(phone)) return; // usuario do Integra: a IA nao responde
     if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
     // Atendente atuando: a IA nao responde NADA aqui — nem as respostas prontas de
     // cobranca/rota/botao. Quem conduz e a pessoa.
@@ -317,6 +333,9 @@ async function selectTakeover(mins: number, teto: number, limit: number): Promis
       -- Conversa ABERTA PELO ATENDENTE nunca entra no takeover: a IA nao captura conversa
       -- iniciada por gente. Ela so assume o que entrou pelo cliente. (regra do Flavio, 05/08)
       AND coalesce(c.initiated_by::text, 'customer') <> 'user'
+      -- Telefone que pertence a um USUARIO do Integra nunca entra no takeover (so clientes externos).
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE coalesce(u.is_active, true) = true AND u.phone IS NOT NULL
+        AND right(regexp_replace(u.phone, '[^0-9]', '', 'g'), 8) = right(regexp_replace(c.customer_phone, '[^0-9]', '', 'g'), 8))
       AND NOT EXISTS (SELECT 1 FROM system_settings s2 WHERE s2.key = 'ia_transferida:' || c.id)
       AND m.sender_type = 'customer'
       AND m.created_at < now() - make_interval(mins => ${mins})
