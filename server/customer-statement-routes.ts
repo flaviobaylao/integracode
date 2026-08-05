@@ -21,7 +21,18 @@ import { authenticateUser } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
-const ROLES_EXTRATO = ["admin", "coordinator", "administrative", "vendedor", "telemarketing"];
+// Decisão do Flavio (04/ago/2026): o Extrato é uma tela de CONSULTA (só GET, nada
+// editável) e fica liberada para TODOS os perfis, sem filtro de carteira —
+// qualquer usuário logado consulta o extrato de qualquer cliente.
+const ROLES_EXTRATO = [
+  "admin",
+  "coordinator",
+  "administrative",
+  "vendedor",
+  "telemarketing",
+  "motorista",
+  "industria",
+];
 
 function isExtratoAuthorized(req: any, res: any, next: any) {
   const user = req.currentUser || req.user;
@@ -126,13 +137,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
     try {
       const q = String(req.query.q || "").trim();
       if (q.length < 2) return res.json([]);
-      const user = req.currentUser || req.user;
       const like = `%${q.toLowerCase()}%`;
       const dig = onlyDigits(q);
 
-      // Vendedor enxerga apenas a própria carteira.
-      const sellerFilter =
-        user?.role === "vendedor" ? sql` AND c.seller_id = ${user.id}` : sql``;
+      // Consulta liberada: nenhum perfil é limitado à própria carteira.
+      const sellerFilter = sql``;
 
       const docFilter =
         dig.length >= 3
@@ -179,7 +188,6 @@ export function registerCustomerStatementRoutes(app: Express): void {
   // ── Extrato completo de um cliente ────────────────────────────────────────
   app.get("/api/customer-statement/:customerId", authenticateUser, isExtratoAuthorized, async (req: any, res) => {
     try {
-      const user = req.currentUser || req.user;
       const customerId = String(req.params.customerId);
       const start = req.query.start ? new Date(String(req.query.start)) : null;
       const end = req.query.end ? new Date(String(req.query.end)) : null;
@@ -192,9 +200,6 @@ export function registerCustomerStatementRoutes(app: Express): void {
       `);
       const cust: any = (cRes?.rows || cRes || [])[0];
       if (!cust) return res.status(404).json({ message: "Cliente não encontrado" });
-      if (user?.role === "vendedor" && cust.seller_id && cust.seller_id !== user.id) {
-        return res.status(403).json({ message: "Cliente fora da sua carteira" });
-      }
 
       const doc = onlyDigits(cust.cnpj || cust.cpf);
       const docCond = doc.length >= 11
