@@ -1873,6 +1873,26 @@ export function registerChatRoutes(app: Express): void {
               mt = (fileMime && /^image\//.test(fileMime)) ? 'image' : (fileMime && /^audio\//.test(fileMime)) ? 'audio' : (fileMime && /^video\//.test(fileMime)) ? 'video' : 'document';
             }
             const umMsgId = String(lm.Id || lm.id || '');
+            // 📶 Status de entrega/leitura do Umbler -> atualiza o ack da mensagem que NOS enviamos
+            // (casada pelo id do Umbler guardado em metadata.delivery.providerStatus). So mexe em msg nossa.
+            if (isFromMe && umMsgId) {
+              try {
+                const _st = String(lm.MessageState || lm.messageState || lm.State || lm.state || '').toLowerCase();
+                let _ack: number | null = null; let _fail = false;
+                if (/read|lida|visualiz|seen/.test(_st)) _ack = 3;
+                else if (/deliver|entreg|receb/.test(_st)) _ack = 2;
+                else if (/sent|enviad/.test(_st)) _ack = 1;
+                if (/fail|erro|error|reject|undeliver|nao.?entreg|not.?deliver/.test(_st)) { _fail = true; _ack = 0; }
+                if (_ack !== null) {
+                  await db.execute(sql`UPDATE chat_messages
+                    SET ack = CASE WHEN ${_fail} THEN 0 ELSE GREATEST(coalesce(ack,0), ${_ack}) END,
+                        metadata = jsonb_set(jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${_st}::text), true),
+                                             '{delivery,success}', ${_fail ? 'false' : 'true'}::jsonb, true)
+                    WHERE metadata->'delivery'->>'providerStatus' = ${umMsgId}
+                      AND created_at > now() - interval '2 days'`);
+                }
+              } catch (e: any) { console.warn('[UMBLER-ACK] falha ao atualizar status de entrega:', e?.message || e); }
+            }
             // Umbler envia o evento Message de midia SEM o arquivo (File=null, upload async). Resolver via API.
             if (mt !== 'text' && !fileUrl && umMsgId && process.env.UMBLER_TALK_TOKEN) {
               const resolved = await fetchUmblerTalkMessageFile(umMsgId);
