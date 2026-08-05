@@ -727,15 +727,30 @@ export async function checkAndSettleBoleto(boletoChargeId: string, source = 'con
 
 // FASE 1c - Varredura de boletos em aberto (consulta BB e da baixa nos pagos).
 // Movida do endpoint HTTP para o agendador interno; o endpoint agora so dispara.
-export async function sweepOpenBoletos(limit = 300, days = 120): Promise<{ candidates: number; checked: number; paid: number; settled: number }> {
+export async function sweepOpenBoletos(limit = 300, days = 120): Promise<{ candidates: number; checked: number; falhas: number; paid: number; settled: number; veredito: string }> {
   const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables rr ON rr.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND rr.status IN ('a_vencer','vencida') AND rr.deleted_at IS NULL AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
   const ids = (r.rows || []).map((x: any) => x.id);
-  let checked = 0, paid = 0, settled = 0; const errors: any[] = [];
+  // FALHA DE CONSULTA NAO E "NAO PAGO". checkAndSettleBoleto devolve {ok:false}
+  // quando o BB nao responde ou o titulo nao resolve — RETORNA, nao lanca. Na
+  // versao anterior esse caso caia no mesmo balde de "consultei e nao estava
+  // pago", e o catch nunca disparava: uma varredura 100% quebrada e uma
+  // varredura 100% sem pagamentos imprimiam exatamente o mesmo relatorio
+  // (checked=300 paid=0 errors=[]). A rede de seguranca dizia "tudo certo"
+  // justamente quando estava cega. Agora falha e contada e nomeada.
+  let checked = 0, falhas = 0, paid = 0, settled = 0; const errors: any[] = [];
+  const anota = (id: string, error: any) => { if (errors.length < 10) errors.push({ id, error: String(error || 'consulta sem resposta').slice(0, 300) }); };
   for (const id of ids) {
-    try { const o: any = await checkAndSettleBoleto(id); checked++; if (o && o.paid) { paid++; if (!o.alreadyPaid) settled++; } }
-    catch (e: any) { errors.push({ id, error: e?.message }); }
+    try {
+      const o: any = await checkAndSettleBoleto(id);
+      if (!o || o.ok === false) { falhas++; anota(id, o?.error); continue; }
+      checked++;
+      if (o.paid) { paid++; if (!o.alreadyPaid) settled++; }
+    } catch (e: any) { falhas++; anota(id, e?.message || e); }
   }
-  try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, paid, settled, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
-  console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} paid=${paid} settled=${settled}`);
-  return { candidates: ids.length, checked, paid, settled };
+  // veredito e o que o painel de saude le: "ok" so quando o banco respondeu
+  // sobre TODOS os boletos da fila.
+  const veredito = ids.length === 0 ? 'sem_fila' : falhas === 0 ? 'ok' : checked === 0 ? 'cega' : 'parcial';
+  try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, falhas, paid, settled, veredito, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+  console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} falhas=${falhas} paid=${paid} settled=${settled} veredito=${veredito}`);
+  return { candidates: ids.length, checked, falhas, paid, settled, veredito };
 }

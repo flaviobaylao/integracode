@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import { settleBoletoCharge } from "./bb-boleto-service";
 import { fetchExtrato, diagnosticarExtrato } from "./bb-extrato-service";
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { lerSentinelaWebhook } from "./webhook-security";
 const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
@@ -2783,6 +2784,130 @@ export function registerReconciliation(app: Express) {
   //    jeito); ignorado significa apenas "nao ha titulo a conciliar".
   //  - so leitura. Nenhuma escrita.
   // =========================================================================
+  // -------------------------------------------------------------------------
+  // FASE 3.5f — SAUDE DOS CANAIS DE BAIXA (somente leitura)
+  //
+  // A conciliacao so fecha se os canais que dao baixa estiverem vivos. Quando um
+  // deles morre, o sintoma que aparece na tela e generico ("titulo em aberto",
+  // "credito sem titulo") e se confunde com atraso normal do cliente — foi assim
+  // que um webhook recusado por token passou semanas sem ser notado, enquanto o
+  // dinheiro entrava no extrato todo dia.
+  //
+  // Esta rota responde a pergunta que ninguem estava fazendo: os canais estao
+  // recebendo? Tres fontes independentes, porque uma so mente:
+  //   1. sentinela do guard  — inclusive as chamadas RECUSADAS, que nao chegam
+  //      a virar log de payload (o log so existe depois do guard);
+  //   2. webhook_debug_log   — quando o ultimo webhook de boleto de fato ENTROU
+  //      (historico anterior a sentinela, serve de marco zero);
+  //   3. varredura diaria    — a rede de seguranca, agora capaz de se declarar
+  //      cega em vez de reportar "0 pagos" quando a consulta ao BB falhou.
+  // -------------------------------------------------------------------------
+  app.get("/api/reconciliation/saude-canais", authenticateUser, requireRole(FIN_ROLES), async (_req, res) => {
+    try {
+      const agora = Date.now();
+      const hs = (iso: any): number | null => {
+        if (!iso) return null;
+        const t = new Date(iso).getTime();
+        return Number.isFinite(t) ? (agora - t) / 3600000 : null;
+      };
+      const desde = (h: number | null): string =>
+        h == null ? "" : h < 1 ? "há menos de 1 hora" : h < 48 ? `há ${Math.floor(h)} hora(s)` : `há ${Math.floor(h / 24)} dia(s)`;
+
+      const sent = await lerSentinelaWebhook();
+
+      // Ultimo webhook de boleto que ATRAVESSOU o guard (o log so e escrito depois dele).
+      let ultimoLogBoleto: string | null = null;
+      try {
+        const r = rowsOf(await db.execute(sql`SELECT max(created_at) AS ultimo FROM webhook_debug_log WHERE raw_remote_jid = 'BB-BOLETO'`));
+        ultimoLogBoleto = r[0]?.ultimo ? new Date(r[0].ultimo).toISOString() : null;
+      } catch { /* tabela pode nao existir em ambiente novo */ }
+
+      const CANAIS = [
+        { chave: "boleto", rotulo: "Webhook de boleto (BB)", rota: "/api/webhooks/bb-boleto", ultimoLog: ultimoLogBoleto },
+        { chave: "pix", rotulo: "Webhook de PIX (BB)", rota: "/api/financial/pix-webhook", ultimoLog: null as string | null },
+      ];
+
+      const webhooks = CANAIS.map((c) => {
+        const r: any = (sent.rotas || {})[c.rota] || {};
+        const hAceito = hs(r.aceito?.ultimo);
+        const hRejeitado = hs(r.rejeitadoToken?.ultimo);
+        const hSemConfig = hs(r.semConfig?.ultimo);
+        const hLog = hs(c.ultimoLog);
+        let situacao = "sem_dado";
+        let detalhe = "nenhuma chamada registrada desde que a sentinela entrou no ar";
+        let acao: string | null = null;
+
+        if (hSemConfig != null && hSemConfig < 72) {
+          situacao = "recusando";
+          detalhe = `respondendo 503 (token do webhook não configurado no sistema) — última ${desde(hSemConfig)}`;
+          acao = "Definir system_settings.webhook_token (ou a variável WEBHOOK_TOKEN).";
+        } else if (hRejeitado != null && hRejeitado < 72) {
+          situacao = "rejeitando";
+          detalhe = `${r.rejeitadoToken?.n || 0} chamada(s) recusada(s) por token — última ${desde(hRejeitado)} · ${r.rejeitadoToken?.detalhe || "token inválido"}`;
+          acao = "Conferir a URL cadastrada no portal do BB: precisa terminar com ?token=<o token do sistema>.";
+        } else if (hAceito != null && hAceito <= 72) {
+          situacao = "ok";
+          detalhe = `última chamada aceita ${desde(hAceito)}`;
+        } else if (hAceito != null) {
+          situacao = "silencioso";
+          detalhe = `última chamada aceita ${desde(hAceito)}`;
+          acao = "Nenhuma notificação em 3 dias: conferir se o evento continua cadastrado no portal do BB.";
+        } else if (hLog != null) {
+          // Sem nada na sentinela, mas o log historico sabe quando o canal ainda funcionava.
+          situacao = hLog > 72 ? "silencioso" : "sem_dado";
+          detalhe = `sentinela ainda sem registro; o último webhook que entrou foi ${desde(hLog)}`;
+          if (hLog > 72) acao = "Conferir a URL e o evento no portal do BB.";
+        }
+        return {
+          chave: c.chave, rotulo: c.rotulo, rota: c.rota, situacao, detalhe, acao,
+          ultimoAceito: r.aceito?.ultimo || null,
+          ultimoRejeitado: r.rejeitadoToken?.ultimo || null,
+          rejeicoes: r.rejeitadoToken?.n || 0,
+          aceites: r.aceito?.n || 0,
+          ultimoWebhookNoLog: c.ultimoLog,
+        };
+      });
+
+      // Varredura diaria (rede de seguranca).
+      let varredura: any = null;
+      try {
+        const r = rowsOf(await db.execute(sql`SELECT value FROM system_settings WHERE key = 'boleto_check_open_last' LIMIT 1`));
+        if (r[0]?.value) varredura = JSON.parse(String(r[0].value));
+      } catch { /* sem execucao ainda */ }
+
+      let varreduraBloco: any = { situacao: "sem_dado", detalhe: "a varredura ainda não rodou", acao: null };
+      if (varredura) {
+        const h = hs(varredura.at);
+        const falhas = Number(varredura.falhas ?? 0);
+        const temCampoNovo = varredura.falhas !== undefined;
+        if (h != null && h > 36) {
+          varreduraBloco = { situacao: "silenciosa", detalhe: `última execução ${desde(h)}`, acao: "A varredura é agendada: conferir se o processo continua de pé." };
+        } else if (!temCampoNovo) {
+          varreduraBloco = { situacao: "sem_dado", detalhe: `execução ${desde(h)} anterior à correção — não separava falha de consulta de "não pago"`, acao: null };
+        } else if (varredura.veredito === "cega") {
+          varreduraBloco = { situacao: "cega", detalhe: `${falhas} consulta(s) ao BB falharam e nenhuma respondeu — o resultado "0 pagos" não vale`, acao: "Ver o motivo em errors e testar a conexão BB Cobrança." };
+        } else if (falhas > 0) {
+          varreduraBloco = { situacao: "parcial", detalhe: `${varredura.checked} boleto(s) respondidos e ${falhas} com falha de consulta`, acao: "Ver o motivo em errors." };
+        } else {
+          varreduraBloco = { situacao: "ok", detalhe: `${varredura.checked} boleto(s) consultados ${desde(h)} · ${varredura.settled || 0} baixado(s)`, acao: null };
+        }
+        varreduraBloco = { ...varreduraBloco, ...varredura };
+      }
+
+      const pior = (l: string[]) => ["recusando", "rejeitando", "cega", "silencioso", "silenciosa", "parcial", "sem_dado", "ok"].find((x) => l.includes(x)) || "ok";
+      res.json({
+        geradoEm: new Date().toISOString(),
+        somenteLeitura: true,
+        sentinelaDesde: sent.desde,
+        situacaoGeral: pior([...webhooks.map((w) => w.situacao), varreduraBloco.situacao]),
+        webhooks,
+        varredura: varreduraBloco,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   app.get("/api/reconciliation/report", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       await ensureMirrorColumn();
