@@ -2252,7 +2252,7 @@ export function registerChatRoutes(app: Express): void {
       
       const savedMsg = await storage.createChatMessage({
         conversationId: conversation.id,
-        senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
+        senderId: isFromMe ? 'umbler-member' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
         content: finalContent,
         messageType: finalMessageType,
@@ -4264,18 +4264,20 @@ export function registerChatRoutes(app: Express): void {
       }
 
       // 🙋 Assinatura do atendente: prefixa "*Nome*\n" p/ o cliente saber com quem fala no WhatsApp.
-      // Guardamos o MESMO texto que sai (o anti-eco casa pelo conteúdo).
+      // Guardamos o MESMO texto que sai (o anti-eco casa pelo conteúdo). Vale p/ texto, legenda de mídia e localização.
       let outgoingContent = content;
+      let sigPrefix = '';
       try {
-        if (content && String(content).trim()) {
-          const _agSig = await storage.getChatAgents();
-          const _mineSig = _agSig.find((a: any) => a.userId === userId);
-          const _rawNameSig = String(_mineSig?.name || (currentUser as any)?.name || (currentUser as any)?.firstName || '').trim();
-          const _firstSig = _rawNameSig.includes('@') ? _rawNameSig.split('@')[0] : _rawNameSig.split(/\s+/)[0];
-          const _cleanSig = _firstSig.replace(/[^\p{L}\p{N}._-]/gu, '').trim();
-          if (_cleanSig) outgoingContent = `*${_cleanSig}*\n${content}`;
-        }
-      } catch (e: any) { console.warn('⚠️ [ASSINATURA] erro ao prefixar nome do atendente:', e?.message || e); outgoingContent = content; }
+        const _agSig = await storage.getChatAgents();
+        const _mineSig = _agSig.find((a: any) => a.userId === userId);
+        const _rawNameSig = String(_mineSig?.name || (currentUser as any)?.name || (currentUser as any)?.firstName || '').trim();
+        const _firstSig = _rawNameSig.includes('@') ? _rawNameSig.split('@')[0] : _rawNameSig.split(/\s+/)[0];
+        const _cleanSig = _firstSig.replace(/[^\p{L}\p{N}._-]/gu, '').trim();
+        if (_cleanSig) sigPrefix = `*${_cleanSig}*\n`;
+        if (sigPrefix && content && String(content).trim()) outgoingContent = sigPrefix + content;
+      } catch (e: any) { console.warn('⚠️ [ASSINATURA] erro ao prefixar nome do atendente:', e?.message || e); outgoingContent = content; sigPrefix = ''; }
+      // Legenda assinada p/ mídia: nome + legenda (ou só o nome, se não houver legenda).
+      const signCaption = (cap?: string | null) => { const _c = String(cap ?? '').trim(); return sigPrefix ? (sigPrefix + _c) : _c; };
 
       // 💬 Salvar mensagem no banco
       const message = await storage.createChatMessage({
@@ -4414,7 +4416,7 @@ export function registerChatRoutes(app: Express): void {
                 const host = req.headers.host || 'integracode-production.up.railway.app';
                 const absMediaUrl = /^https?:\/\//.test(mediaUrl) ? mediaUrl : ('https://' + host + mediaUrl);
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} via Umbler Talk: ${absMediaUrl.substring(0, 80)}`);
-                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, mediaCaption || content || '', (conversation as any).channelPhone);
+                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, signCaption(mediaCaption || content), (conversation as any).channelPhone);
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
                 
@@ -4539,7 +4541,7 @@ export function registerChatRoutes(app: Express): void {
                     config.instanceName,
                     phoneFormatted,
                     finalMediaUrl,
-                    mediaCaption || content || undefined,
+                    signCaption(mediaCaption || content) || undefined,
                     evolutionMediaType,
                     3,
                     { mimetype: detectedMimetype, fileName: detectedFileName }
@@ -4550,7 +4552,7 @@ export function registerChatRoutes(app: Express): void {
                 try { const o: any = typeof content === 'string' ? JSON.parse(content) : content; lat = o.lat || o.latitude; lng = o.lng || o.lon || o.longitude; } catch {}
                 if (!lat || !lng) { const m = String(content).match(/(-?\d+\.\d+)[,;\s]+(-?\d+\.\d+)/); if (m) { lat = m[1]; lng = m[2]; } }
                 const mapsUrl = (lat && lng) ? `https://maps.google.com/?q=${lat},${lng}` : String(content);
-                const locText = (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
+                const locText = sigPrefix + (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
                 if (process.env.UMBLER_TALK_TOKEN) sendResult = await sendUmblerTalkText(chatCustomer.phone, locText, (conversation as any).channelPhone);
                 else sendResult = await evolutionAPIService.sendTextMessage(config.instanceName, phoneFormatted, locText);
               } else {
