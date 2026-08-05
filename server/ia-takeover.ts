@@ -109,37 +109,33 @@ async function humanoFalouPorUltimo(conversationId: string): Promise<boolean> {
 // quando a cliente respondeu 16:06, a "ultima nao-cliente" ja era a do sistema — a IA se
 // achou livre e respondeu por cima do vendedor. Agora a pergunta e outra: TEM atendente
 // atuando nesta conversa? Se tem, a IA fica de fora, ponto.
+//
+// REGRA DE ORIGEM (Flavio, 05/08): conversa INICIADA PELO ATENDENTE a IA nao interfere nem
+// captura — nunca, em nenhum minuto. A IA so trabalha o que ENTROU pelo cliente. Nao ha
+// janela de tempo que solte essa conversa: ela e do atendente do inicio ao fim, e quem a
+// encerra e ele (ou a finalizacao por inatividade, depois de chat_close_atendente_min).
 // ---------------------------------------------------------------------------
 async function atendenteAtuando(conversationId: string): Promise<boolean> {
   try {
     const mins = Math.max(5, parseInt(await getSetting('ia_respeita_atendente_min', '60'), 10) || 60);
     const r: any = await db.execute(sql`
       SELECT
-        -- (a) conversa aberta pelo atendente, ou transferida pela IA para um humano
+        -- (a) ORIGEM: conversa aberta pelo atendente, ou transferida pela IA para um humano.
         (coalesce(c.initiated_by::text, 'customer') = 'user'
          OR EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id)) AS do_atendente,
-        -- (b) alguem de carne e osso escreveu aqui nos ultimos X minutos
+        -- (b) conversa de entrada (do cliente) em que um humano escreveu ha pouco.
         EXISTS (SELECT 1 FROM chat_messages m
                 WHERE m.conversation_id = c.id
                   AND m.sender_type <> 'customer'
                   AND coalesce(m.sender_id, '') NOT LIKE 'agent:%'
                   AND coalesce(m.sender_id, '') <> 'system'
-                  AND m.created_at > now() - make_interval(mins => ${mins})) AS humano_recente,
-        -- (c) ... e no dia (para a conversa que o proprio atendente abriu)
-        EXISTS (SELECT 1 FROM chat_messages m
-                WHERE m.conversation_id = c.id
-                  AND m.sender_type <> 'customer'
-                  AND coalesce(m.sender_id, '') NOT LIKE 'agent:%'
-                  AND coalesce(m.sender_id, '') <> 'system'
-                  AND m.created_at > now() - interval '24 hours') AS humano_no_dia
+                  AND m.created_at > now() - make_interval(mins => ${mins})) AS humano_recente
       FROM chat_conversations c WHERE c.id = ${conversationId} LIMIT 1`);
     const x = r.rows?.[0];
     if (!x) return false;
-    // Qualquer conversa: humano falou ha pouco -> a IA nao entra.
-    // Conversa que o atendente abriu (ou recebeu da IA): enquanto ele estiver nela hoje,
-    // a conversa e dele. Passadas 24h sem nenhum humano, a IA volta a poder ajudar —
-    // a regra se solta sozinha, sem deixar cliente sem resposta para sempre.
-    return !!(x.humano_recente || (x.do_atendente && x.humano_no_dia));
+    // Origem no atendente = sempre dele. Conversa de entrada = da IA, mas ela sai de cena
+    // enquanto um humano estiver falando ali (janela ia_respeita_atendente_min).
+    return !!(x.do_atendente || x.humano_recente);
   } catch { return false; }   // erro nao pode travar o atendimento
 }
 
@@ -318,6 +314,10 @@ async function selectTakeover(mins: number, teto: number, limit: number): Promis
       AND c.customer_phone NOT LIKE '%@g.us%'
       AND coalesce(cu.tags, '') NOT LIKE '%grupo%'
       AND c.status <> 'resolved'
+      -- Conversa ABERTA PELO ATENDENTE nunca entra no takeover: a IA nao captura conversa
+      -- iniciada por gente. Ela so assume o que entrou pelo cliente. (regra do Flavio, 05/08)
+      AND coalesce(c.initiated_by::text, 'customer') <> 'user'
+      AND NOT EXISTS (SELECT 1 FROM system_settings s2 WHERE s2.key = 'ia_transferida:' || c.id)
       AND m.sender_type = 'customer'
       AND m.created_at < now() - make_interval(mins => ${mins})
       AND m.created_at > now() - make_interval(mins => ${teto})
