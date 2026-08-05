@@ -419,6 +419,9 @@ function EstornarBaixaButton({
                     {(preview.pagamentosEstornados || []).map((p: any) => (
                       <div key={p.id} className="border rounded px-2 py-1 text-xs">
                         <b>{formatCurrency(p.valor)}</b>{p.pagoEm ? ` em ${formatDate(p.pagoEm)}` : ''}{p.metodo ? ` · ${String(p.metodo).replace(/_/g, ' ')}` : ''}
+                        {Number(p.multa) > 0 ? <span className="text-amber-700"> · multa {formatCurrency(p.multa)}</span> : null}
+                        {Number(p.juros) > 0 ? <span className="text-amber-700"> · juros {formatCurrency(p.juros)}</span> : null}
+                        {Number(p.desconto) > 0 ? <span className="text-blue-700"> · desconto {formatCurrency(p.desconto)}</span> : null}
                         {p.referencia ? <div className="text-muted-foreground">{p.referencia}</div> : null}
                         <div className="text-muted-foreground">lançado por {p.criadoPor || '—'}</div>
                       </div>
@@ -431,6 +434,20 @@ function EstornarBaixaButton({
                   valor sujo em <code>amount_paid</code>. O estorno só limpa esse valor.
                 </p>
               )}
+
+              {/* O estorno agora desfaz TAMBÉM o movimento na conta financeira. Mostramos
+                  antes de executar, porque é dinheiro saindo (ou voltando) do saldo. */}
+              {preview.contaFinanceira && Number(preview.contaFinanceira.movimentos) > 0 ? (
+                <p className="text-xs border rounded p-2 bg-blue-50/60 text-blue-900">
+                  <b>Conta financeira:</b> {preview.contaFinanceira.movimentos} movimento(s) saem do razão e o saldo
+                  {Number(preview.contaFinanceira.ajusteNoSaldo) < 0 ? ' desce ' : ' sobe '}
+                  <b>{formatCurrency(Math.abs(Number(preview.contaFinanceira.ajusteNoSaldo || 0)))}</b>.
+                </p>
+              ) : preview.contaFinanceira ? (
+                <p className="text-xs text-muted-foreground border rounded p-2">
+                  Esta baixa não gerou movimento em conta financeira — o saldo não muda.
+                </p>
+              ) : null}
 
               <div>
                 <Label className="text-xs">Motivo (obrigatório)</Label>
