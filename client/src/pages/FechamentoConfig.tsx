@@ -67,6 +67,23 @@ export default function FechamentoConfig() {
     if (hora !== cfg.fechoHorario) salvar.mutate({ fechoHorario: hora });
   };
 
+  // Ações do admin (Fase 4): liberar rota bloqueada / reabrir um dia fechado.
+  const { data: usersData } = useQuery<any>({ queryKey: ["/api/users"] });
+  const sellers = (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role));
+  const [admSeller, setAdmSeller] = useState<string>("");
+  const [admDate, setAdmDate] = useState<string>("");
+  const admOk = !!admSeller && /^\d{4}-\d{2}-\d{2}$/.test(admDate);
+  const liberar = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/admin/fechamento/liberar", { sellerId: admSeller, date: admDate }),
+    onSuccess: () => toast({ title: "Rota liberada", description: "O vendedor pode abrir a rota normalmente." }),
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Verifique os campos.", variant: "destructive" }),
+  });
+  const reabrir = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/admin/fechamento/reabrir", { sellerId: admSeller, date: admDate }),
+    onSuccess: () => toast({ title: "Dia reaberto", description: "O fechamento daquele dia foi removido." }),
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Verifique os campos.", variant: "destructive" }),
+  });
+
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
       <BackToDashboardButton />
@@ -142,9 +159,22 @@ export default function FechamentoConfig() {
         </CardContent>
       </Card>
 
-      <div className="text-xs text-muted-foreground mt-4">
-        As telas do vendedor (botão “Fechar rota do dia”) e as ações do admin (liberar rota, reabrir dia) entram nas próximas etapas da implantação.
-      </div>
+      <Card className="mt-4">
+        <CardHeader className="pb-2"><CardTitle className="text-base">Ações do admin</CardTitle></CardHeader>
+        <CardContent>
+          <div className="text-xs text-muted-foreground mb-3"><b>Liberar rota</b>: desbloqueia a rota de um vendedor sem exigir o fechamento do dia anterior. <b>Reabrir dia</b>: remove um fechamento já feito (para correção). Escolha o vendedor e a data.</div>
+          <div className="flex flex-wrap gap-2 items-center">
+            <select className="border rounded-lg px-3 py-2 text-sm font-medium min-w-[220px]" value={admSeller} onChange={(e) => setAdmSeller(e.target.value)}>
+              <option value="">Vendedor…</option>
+              {sellers.map((s: any) => (<option key={s.id} value={s.id}>{(s.firstName || "") + " " + (s.lastName || "")}{s.role === "telemarketing" ? " (TMK)" : ""}</option>))}
+            </select>
+            <Input type="date" value={admDate} onChange={(e) => setAdmDate(e.target.value)} className="w-40" />
+            <button onClick={() => liberar.mutate()} disabled={!admOk || liberar.isPending} className="px-3 py-2 rounded-lg text-sm font-semibold border bg-white text-gray-700 disabled:opacity-50">🔓 Liberar rota</button>
+            <button onClick={() => reabrir.mutate()} disabled={!admOk || reabrir.isPending} className="px-3 py-2 rounded-lg text-sm font-semibold border bg-white text-gray-700 disabled:opacity-50">↺ Reabrir dia</button>
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-3">A “Liberar rota” usa a data do dia pendente que aparece para o vendedor na tela de bloqueio.</div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
