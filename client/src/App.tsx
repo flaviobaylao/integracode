@@ -94,6 +94,7 @@ import RadarChurn from "@/pages/RadarChurn";
 import FilaResgate from "@/pages/FilaResgate";
 import Justificativas from "@/pages/Justificativas";
 import FechamentoConfig from "@/pages/FechamentoConfig";
+import FecharRota from "@/pages/FecharRota";
 import ProgramaIndicacao from "@/pages/ProgramaIndicacao";
 import AgentesIA from "@/pages/AgentesIA";
 import AcessosEDelegacoes from "@/pages/AcessosEDelegacoes";
@@ -343,6 +344,7 @@ function Router() {
           <Route path="/fila-resgate" component={FilaResgate} />
           <Route path="/justificativas" component={Justificativas} />
           <Route path="/fechamento-config" component={FechamentoConfig} />
+          <Route path="/fechar-rota" component={FecharRota} />
             <Route path="/programa-indicacao" component={ProgramaIndicacao} />
           <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
