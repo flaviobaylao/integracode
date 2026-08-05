@@ -205,6 +205,21 @@ export async function carteiraPadrao(): Promise<string> {
   return await getSetting('ia_carteira_padrao', '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794');
 }
 
+// Atendente padrao quando o cliente NAO tem dono de carteira (excecao pedida pelo Flavio):
+// a conversa vai para a Leticia N. Config 'ia_atendente_sem_dono' aceita user_id OU email
+// (padrao: leticia@bebahonest.com.br) e pode ser trocado sem deploy.
+export async function atendenteSemDonoUserId(): Promise<string | null> {
+  try {
+    const v = String(await getSetting('ia_atendente_sem_dono', 'leticia@bebahonest.com.br')).trim();
+    if (!v) return null;
+    if (v.includes('@')) {
+      const u: any = await db.execute(sql`SELECT id FROM users WHERE lower(email) = ${v.toLowerCase()} AND coalesce(is_active, true) = true LIMIT 1`);
+      return u.rows?.[0]?.id ? String(u.rows[0].id) : null;
+    }
+    return v;
+  } catch { return null; }
+}
+
 // ---------------------------------------------------------------------------
 // Dia util / feriado
 // ---------------------------------------------------------------------------
@@ -407,6 +422,15 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
       if (a) { alvoUserId = owner; alvoAgent = a; exclusivo = true; }
     }
 
+    // Excecao: cliente SEM dono de carteira -> vai para o atendente padrao (Leticia N) se online.
+    if (!owner && !alvoAgent) {
+      const fbId = await atendenteSemDonoUserId();
+      if (fbId && (await usuarioOnline(fbId))) {
+        const a = await agentDoUsuario(fbId);
+        if (a) { alvoUserId = fbId; alvoAgent = a; exclusivo = false; }
+      }
+    }
+
     if (!alvoAgent) {
       const lista = await agentesDisponiveis();
       if (lista.length) {
@@ -571,6 +595,30 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
       repassadas++;
       detalhes.push({ conv: h.conversation_id, para: novo.name });
       console.log(`[IA-FILA] repasse por timeout conv=${h.conversation_id} -> ${novo.name}`);
+    }
+
+    // Conversas que ficaram SEM atendente (ninguem online no handoff): assim que alguem fica
+    // online, atribui na hora — dono da carteira; se nao houver dono, o atendente padrao (Leticia N);
+    // senao, o primeiro online por rodizio.
+    const semAt: any = await db.execute(sql`SELECT conversation_id, owner_user_id, customer_phone
+      FROM ia_handoff WHERE status = 'sem_atendente' ORDER BY updated_at ASC LIMIT 20`);
+    for (const h of (semAt.rows || []) as any[]) {
+      const ownerU = h.owner_user_id ? String(h.owner_user_id) : null;
+      let alvo: { agent_id: string; name: string; phone: string | null } | null = null;
+      let alvoUser: string | null = null;
+      if (ownerU && (await usuarioOnline(ownerU))) { const a = await agentDoUsuario(ownerU); if (a) { alvo = a; alvoUser = ownerU; } }
+      if (!alvo && !ownerU) { const fbId = await atendenteSemDonoUserId(); if (fbId && (await usuarioOnline(fbId))) { const a = await agentDoUsuario(fbId); if (a) { alvo = a; alvoUser = fbId; } } }
+      if (!alvo) { const lista = await agentesDisponiveis(); if (lista.length) { const n = lista[0]; alvo = { agent_id: String(n.agent_id), name: n.name, phone: n.phone }; alvoUser = n.user_id ? String(n.user_id) : null; } }
+      if (!alvo) continue;
+      await atribuir(String(h.conversation_id), alvo.agent_id);
+      await db.execute(sql`UPDATE ia_handoff SET target_user_id = ${alvoUser}, target_agent_id = ${alvo.agent_id},
+        exclusivo = false, status = 'waiting', notified_at = now(), deadline_at = NULL, updated_at = now()
+        WHERE conversation_id = ${h.conversation_id}`);
+      await msgSistema(String(h.conversation_id), `[IA] Um atendente ficou online — conversa atribuida a ${alvo.name}.`);
+      await avisarAtendente(alvo.phone, alvo.name, await nomeDoCliente(String(h.conversation_id)), false);
+      repassadas++;
+      detalhes.push({ conv: h.conversation_id, para: alvo.name, origem: 'sem_atendente' });
+      console.log(`[IA-FILA] sem_atendente atribuido conv=${h.conversation_id} -> ${alvo.name}`);
     }
   } catch (e: any) { console.error('[IA-FILA] tick', e?.message || e); }
   return { ran: true, repassadas, detalhes };
