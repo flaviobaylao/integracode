@@ -45,7 +45,7 @@ function mesLabel(m: string): string {
   return `${nomes[Number(mm) - 1]}/${y}`;
 }
 
-export default function FechamentoPainel() {
+export default function FechamentoPainel({ embedded = false }: { embedded?: boolean }) {
   const [mes, setMes] = useState<string>(nowMonthISO());
   const { data } = useQuery<any>({
     queryKey: ["/api/admin/fechamento/mensal", mes],
@@ -63,8 +63,8 @@ export default function FechamentoPainel() {
   const streakCls = (n: number) => (n >= 3 ? "bg-red-50 text-red-600" : n === 2 ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500");
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <BackToDashboardButton />
+    <div className={embedded ? "" : "p-4 md:p-6 max-w-6xl mx-auto"}>
+      {!embedded && <BackToDashboardButton />}
       <div className="flex items-center justify-between gap-3 mt-3 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><BarChart3 className="w-5 h-5" /></div>
