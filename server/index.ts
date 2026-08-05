@@ -1938,7 +1938,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS visit_justifications (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), visit_date date NOT NULL, customer_id text NOT NULL, seller_id text NOT NULL, reason text NOT NULL, notes text, created_at timestamptz DEFAULT now(), created_by varchar)"));
     await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_visit_justif ON visit_justifications (visit_date, customer_id, seller_id)"));
   }
-  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'outro', 'removido'];
+  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'remarcou', 'rota_inviavel', 'imprevisto', 'cancelou', 'outro', 'removido'];
 
   // lista pendencias (nao atendidas) de uma data p/ um vendedor, que ainda NAO foram justificadas
   app.get('/api/vendedor/justificativas/pendentes', async (req: Request, res: Response) => {
@@ -2063,6 +2063,45 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const valor = JSON.stringify(next);
       await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('fechamento_config', ${valor}, 'Regras do Fechamento de Rota') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
       res.json({ ok: true, config: next });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // FECHAMENTO DE ROTA (Fase 2): registro do fechamento do dia por vendedor + status.
+  async function ensureRouteClosures() {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS route_closures (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), seller_id text NOT NULL, close_date date NOT NULL, closed_at timestamptz DEFAULT now(), closed_by varchar, nao_visitados int DEFAULT 0, justificados int DEFAULT 0, pendentes int DEFAULT 0)"));
+    await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_route_closure ON route_closures (seller_id, close_date)"));
+  }
+  app.get('/api/vendedor/fechamento/status', async (req: Request, res: Response) => {
+    try {
+      await ensureRouteClosures();
+      const seller = String(req.query.sellerId || '');
+      let date = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); }
+      const cfg = await getFechamentoConfig();
+      const vendorCfg = { travaObrigatoria: !!cfg.travaObrigatoria, bloqueioDiaSeguinte: !!cfg.bloqueioDiaSeguinte, tipos: cfg.tipos };
+      let closure: any = null;
+      if (seller) {
+        const r: any = await db.execute(sql`SELECT id, seller_id, close_date, closed_at, nao_visitados, justificados, pendentes FROM route_closures WHERE seller_id = ${seller} AND close_date = ${date}::date LIMIT 1`);
+        const row = ((r.rows || r) as any[])[0];
+        if (row) closure = { id: row.id, sellerId: row.seller_id, date, closedAt: row.closed_at, naoVisitados: row.nao_visitados, justificados: row.justificados, pendentes: row.pendentes };
+      }
+      res.json({ ok: true, date, closed: !!closure, closure, config: vendorCfg });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+  app.post('/api/vendedor/fechamento/fechar', async (req: Request, res: Response) => {
+    try {
+      await ensureRouteClosures();
+      const b = req.body || {};
+      const seller = String(b.sellerId || '');
+      const date = String(b.date || '').replace(/[^0-9-]/g, '');
+      if (!seller || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'sellerId e date obrigatorios' });
+      const pend = Math.max(0, parseInt(String(b.pendentes), 10) || 0);
+      const just = Math.max(0, parseInt(String(b.justificados), 10) || 0);
+      const nv = Math.max(0, parseInt(String(b.naoVisitados), 10) || 0);
+      const cfg = await getFechamentoConfig();
+      if (cfg.travaObrigatoria && pend > 0) return res.status(400).json({ error: 'Ha ' + pend + ' cliente(s) sem justificativa. Justifique para fechar.', pendentes: pend });
+      await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, ${seller}, ${nv}, ${just}, ${pend}) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), nao_visitados = EXCLUDED.nao_visitados, justificados = EXCLUDED.justificados, pendentes = EXCLUDED.pendentes`);
+      res.json({ ok: true, date, closed: true });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
