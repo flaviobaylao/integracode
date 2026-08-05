@@ -728,11 +728,35 @@ export function registerReconciliation(app: Express) {
   // FASE 2 — ESCRITA (financeiro). Conciliar dá baixa (reusa a baixa testada).
   // =========================================================================
 
-  async function settleReceivable(recId: string, amount: number, method: string, accountId: string | null, paidAtISO: string, by: string) {
+  // MORA E DESCONTO NA CONCILIACAO (05/08/2026)
+  //
+  // O carrinho da tela separa PRINCIPAL, JUROS e DESCONTO, e o `settled` que o
+  // endpoint calcula (principal + juros - desconto) e o DINHEIRO do lancamento do
+  // extrato — nao o quanto o titulo foi quitado. Esse `settled` vinha sendo usado
+  // como valor da baixa, e isso dava dois resultados errados:
+  //
+  //   * DESCONTO: titulo de R$ 210 com R$ 10 de desconto baixava R$ 200 num titulo
+  //     que continuava valendo R$ 210 -> amount_paid 200 < 210 -> o titulo ficava
+  //     ABERTO por R$ 10 para sempre, mesmo estando liquidado com o cliente.
+  //   * JUROS: o acrescimo entrava como principal (so o teto o segurava) e nao
+  //     ficava registrado em lugar nenhum da baixa.
+  //
+  // Agora vale a MESMA regra da baixa manual: o principal baixa o titulo, o desconto
+  // REDUZ o titulo (guardando original_amount) e o juros vai para a coluna propria,
+  // sem abater nada. O `settled` continua sendo o numero que fecha com o extrato e
+  // segue mandando no caminho do BOLETO, que nao muda.
+  //
+  // O carrinho da conciliacao nao tem campo de MULTA separado (so juros), entao
+  // `fine` fica zerado aqui e todo o acrescimo entra como juros.
+  type MoraTitulo = { principal: number; interest: number; discount: number };
+
+  async function settleReceivable(recId: string, settled: number, method: string, accountId: string | null, paidAtISO: string, by: string, mora?: MoraTitulo) {
     const br = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${recId} ORDER BY created_at DESC NULLS LAST LIMIT 1`);
     const charge = rowsOf(br)[0];
     if (charge) {
-      const result = await settleBoletoCharge(charge, amount, paidAtISO, "conciliacao-bancaria");
+      // Caminho do boleto: inalterado de proposito — o mesmo settleBoletoCharge serve
+      // webhook do BB, planilha de pagamentos e conciliacao; mexer aqui mexeria nos tres.
+      const result = await settleBoletoCharge(charge, settled, paidAtISO, "conciliacao-bancaria");
       return { via: "boleto", result };
     }
     const rec: any = await storage.getReceivable(recId);
@@ -742,35 +766,56 @@ export function registerReconciliation(app: Express) {
     // FIX 3.4b: titulo ja quitado (ex.: conciliacao anterior interrompida no meio) ->
     // nao duplica a baixa; o chamador ainda vincula o item do extrato ao titulo.
     if (amt > 0 && prevPaid >= amt - 0.005) return { via: "ja_baixado", status: rec.status };
-    // FIX (teto): idem ao pagavel — nunca baixar mais do que resta.
-    const emAbertoR = amt > 0 ? amt - prevPaid : amount;
-    const aBaixarR = Math.max(0, Math.min(amount, emAbertoR));
+
+    const juros = Math.max(0, Number(mora?.interest || 0));
+    const desconto = Math.max(0, Number(mora?.discount || 0));
+    // Sem `mora` (chamada antiga) o comportamento e o de antes: baixa pelo settled.
+    const principal = mora ? Math.max(0, Number(mora.principal || 0)) : settled;
+    const novoValor = desconto > 0 ? Number((amt - desconto).toFixed(2)) : amt;
+    // FIX (teto): nunca baixar mais do que resta — agora contra o titulo JA abatido.
+    const emAbertoR = novoValor > 0 ? novoValor - prevPaid : principal;
+    const aBaixarR = Math.max(0, Math.min(principal, emAbertoR));
     const newPaid = prevPaid + aBaixarR;
-    const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : rec.status;
+    const status = novoValor > 0 && newPaid >= novoValor - 0.005 ? "recebida" : rec.status;
     // FIX 3.4b: paid_at precisa ser Date (string quebrava o drizzle com
     // "value.toISOString is not a function"); pagamento criado ANTES da baixa,
     // para nao deixar titulo baixado sem pagamento se algo falhar.
-    await storage.createReceivablePayment({ receivableId: recId, paidAt: new Date(paidAtISO) as any, amount: aBaixarR.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || rec.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
-    await storage.updateReceivable(recId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || rec.financialAccountId || null } as any);
-    return { via: "receivable", status };
+    await storage.createReceivablePayment({ receivableId: recId, paidAt: new Date(paidAtISO) as any, amount: aBaixarR.toFixed(2), fine: "0.00", interest: juros.toFixed(2), discount: desconto.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || rec.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
+    const patchR: any = { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || rec.financialAccountId || null };
+    if (desconto > 0) {
+      patchR.amount = novoValor.toFixed(2);
+      if (!rec.originalAmount) patchR.originalAmount = amt.toFixed(2);
+    }
+    await storage.updateReceivable(recId, patchR);
+    return { via: "receivable", status, juros: juros || undefined, desconto: desconto || undefined };
   }
 
-  async function settlePayable(payId: string, amount: number, method: string, accountId: string | null, paidAtISO: string, by: string) {
+  async function settlePayable(payId: string, settled: number, method: string, accountId: string | null, paidAtISO: string, by: string, mora?: MoraTitulo) {
     const pay: any = await storage.getPayable(payId);
     if (!pay) throw new Error("pagavel nao encontrado: " + payId);
     const prevPaid = Number(pay.amountPaid || 0);
     const amt = Number(pay.amount || 0);
     // FIX 3.4b: titulo ja quitado -> nao duplica a baixa (so vincula o extrato).
     if (amt > 0 && prevPaid >= amt - 0.005) return { via: "ja_baixado", status: pay.status };
+
+    const juros = Math.max(0, Number(mora?.interest || 0));
+    const desconto = Math.max(0, Number(mora?.discount || 0));
+    const principal = mora ? Math.max(0, Number(mora.principal || 0)) : settled;
+    const novoValor = desconto > 0 ? Number((amt - desconto).toFixed(2)) : amt;
     // FIX (teto): a baixa nao pode passar do que falta pagar.
-    const emAbertoP = amt > 0 ? amt - prevPaid : amount;
-    const aBaixarP = Math.max(0, Math.min(amount, emAbertoP));
+    const emAbertoP = novoValor > 0 ? novoValor - prevPaid : principal;
+    const aBaixarP = Math.max(0, Math.min(principal, emAbertoP));
     const newPaid = prevPaid + aBaixarP;
-    const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : pay.status;
+    const status = novoValor > 0 && newPaid >= novoValor - 0.005 ? "paga" : pay.status;
     // FIX 3.4b: paid_at como Date + pagamento antes da baixa (ver settleReceivable).
-    await storage.createPayablePayment({ payableId: payId, paidAt: new Date(paidAtISO) as any, amount: aBaixarP.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || pay.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
-    await storage.updatePayable(payId, { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || pay.financialAccountId || null } as any);
-    return { via: "payable", status };
+    await storage.createPayablePayment({ payableId: payId, paidAt: new Date(paidAtISO) as any, amount: aBaixarP.toFixed(2), fine: "0.00", interest: juros.toFixed(2), discount: desconto.toFixed(2), paymentMethod: method as any, financialAccountId: accountId || pay.financialAccountId || null, reference: "conciliacao-bancaria", createdBy: by } as any);
+    const patchP: any = { amountPaid: newPaid.toFixed(2), status, paymentMethod: method, financialAccountId: accountId || pay.financialAccountId || null };
+    if (desconto > 0) {
+      patchP.amount = novoValor.toFixed(2);
+      if (!pay.originalAmount) patchP.originalAmount = amt.toFixed(2);
+    }
+    await storage.updatePayable(payId, patchP);
+    return { via: "payable", status, juros: juros || undefined, desconto: desconto || undefined };
   }
 
   async function evolvePattern(item: any, cp: { type: string; id: string | null; name: string | null; document: string | null; category: string | null }, instanceId: string | null, by: string) {
@@ -1045,7 +1090,8 @@ export function registerReconciliation(app: Express) {
             results.push({ id: t.id, kind: "receivable", via: "vinculo_sem_baixa" });
             vinculados++;
           } else {
-            const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by);
+            const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by,
+              { principal: t.amount, interest: t.interest, discount: t.discount });
             results.push({ id: t.id, kind: "receivable", ...r });
             baixados++;
           }
@@ -1056,7 +1102,8 @@ export function registerReconciliation(app: Express) {
             results.push({ id: t.id, kind: "payable", via: "vinculo_sem_baixa" });
             vinculados++;
           } else {
-            const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by);
+            const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by,
+              { principal: t.amount, interest: t.interest, discount: t.discount });
             results.push({ id: t.id, kind: "payable", ...r });
             baixados++;
           }

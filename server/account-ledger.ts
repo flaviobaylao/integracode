@@ -110,3 +110,104 @@ export async function lancarNaConta(l: LancamentoConta): Promise<ResultadoLancam
     return { ok: false, erro: msg.slice(0, 200) };
   }
 }
+
+// ============================================================================
+// ESTORNO DE LANCAMENTO — o espelho do lancarNaConta
+//
+// Quando uma baixa e estornada, o movimento que ela gerou na conta tem de sair
+// junto. Ate aqui isso NAO acontecia: o `estornar-baixa` desfazia a linha de
+// pagamento, o amount_paid e o status, mas o credito/debito continuava no razao
+// e no saldo — a conta ficava inflada pelo dinheiro de uma baixa que nao existe
+// mais. Com multa e juros no meio, o buraco passou a incluir o acrescimo.
+//
+// A reversao segue a convencao do modulo: a linha NAO e apagada, ganha
+// `reversed_at/reversed_by/reversed_reason` (o `saldo-oficial` e o proprio
+// lancarNaConta ja ignoram movimento com reversed_at). O que muda em relacao ao
+// estorno em lote de creditos duplicados e que aqui o saldo TAMBEM volta: este
+// movimento foi criado por este sistema, neste fluxo, entao devolver o delta
+// mantem `financial_accounts.balance` coerente com o razao. O estorno em lote
+// nao mexe no saldo de proposito porque trata sujeira historica, em que o saldo
+// ja estava errado por outros motivos.
+//
+// Tudo numa transacao so, com a linha da conta travada pelo UPDATE — mesma
+// mecanica do lancamento. E idempotente por construcao: so age em linha com
+// `reversed_at IS NULL`, entao estornar duas vezes nao devolve o valor duas vezes.
+// ============================================================================
+
+export type EstornoLancamento = {
+  sourceType: string;      // 'receivable_payment' | 'payable' | ...
+  reference: string;       // id do pagamento que gerou o movimento
+  motivo: string;
+  por?: string | null;
+};
+
+export type ResultadoEstorno = {
+  ok: boolean;
+  revertidos: number;      // quantas linhas sairam do razao
+  valor: number;           // soma assinada devolvida ao saldo (credito estornado = negativo)
+  contas: string[];
+  erro?: string;
+};
+
+export async function estornarLancamento(e: EstornoLancamento): Promise<ResultadoEstorno> {
+  const vazio: ResultadoEstorno = { ok: true, revertidos: 0, valor: 0, contas: [] };
+  if (!e.sourceType || !e.reference) return { ...vazio, ok: false, erro: 'sourceType e reference obrigatorios' };
+  try {
+    return await db.transaction(async (tx: any) => {
+      // 1) as linhas vivas deste pagamento
+      const sel: any = await tx.execute(sql`
+        SELECT id, financial_account_id AS acc, type, amount::numeric AS valor
+        FROM account_movements
+        WHERE source_type = ${e.sourceType} AND reference = ${e.reference} AND reversed_at IS NULL`);
+      const linhas = (sel.rows || sel) as any[];
+      if (!linhas.length) return vazio;
+
+      // 2) devolve o delta a cada conta (o UPDATE trava a linha ate o commit)
+      const contas = new Set<string>();
+      let soma = 0;
+      for (const l of linhas) {
+        const delta = String(l.type) === 'debito' ? Math.abs(Number(l.valor)) : -Math.abs(Number(l.valor));
+        soma += delta;
+        contas.add(String(l.acc));
+        await tx.execute(sql`
+          UPDATE financial_accounts
+          SET balance = (COALESCE(balance, 0)::numeric + ${delta.toFixed(2)}::numeric)::numeric(14,2)
+          WHERE id = ${l.acc}`);
+      }
+
+      // 3) marca no razao (se falhar, o saldo volta atras junto — rollback)
+      const upd: any = await tx.execute(sql`
+        UPDATE account_movements
+        SET reversed_at = now(), reversed_by = ${e.por ?? 'sistema'},
+            reversed_reason = ${String(e.motivo || '').slice(0, 300)}
+        WHERE source_type = ${e.sourceType} AND reference = ${e.reference} AND reversed_at IS NULL`);
+      return {
+        ok: true,
+        revertidos: Number(upd?.rowCount ?? linhas.length),
+        valor: Number(soma.toFixed(2)),
+        contas: Array.from(contas),
+      };
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err).slice(0, 200);
+    console.warn('[conta] estorno de lancamento falhou:', msg);
+    return { ...vazio, ok: false, erro: msg };
+  }
+}
+
+// Quais movimentos SERIAM revertidos — sem escrever nada (para a previa do dryRun).
+export async function previaEstornoLancamento(sourceType: string, reference: string): Promise<{ linhas: number; valor: number; contas: string[] }> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT financial_account_id AS acc, type, amount::numeric AS valor
+      FROM account_movements
+      WHERE source_type = ${sourceType} AND reference = ${reference} AND reversed_at IS NULL`);
+    const linhas = (r.rows || r) as any[];
+    let soma = 0; const contas = new Set<string>();
+    for (const l of linhas) {
+      soma += String(l.type) === 'debito' ? Math.abs(Number(l.valor)) : -Math.abs(Number(l.valor));
+      contas.add(String(l.acc));
+    }
+    return { linhas: linhas.length, valor: Number(soma.toFixed(2)), contas: Array.from(contas) };
+  } catch { return { linhas: 0, valor: 0, contas: [] }; }
+}

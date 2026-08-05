@@ -4,7 +4,7 @@ import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
 import * as bbPixService from './bb-pix-service';
 import { cancelarBoleto } from './bb-boleto-service';
-import { lancarNaConta } from './account-ledger';
+import { lancarNaConta, estornarLancamento, previaEstornoLancamento } from './account-ledger';
 import { removerCobrancaPix } from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
@@ -1918,8 +1918,13 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         { code: '7', name: 'Depreciação e Amortização', type: 'despesa' as const, dreGroup: 'depreciacao' },
 
         { code: '8', name: 'Receitas Financeiras', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
+        // Os grupos financeiros so tinham a conta-titulo (codigo sem ponto) e a DRE
+        // monta linha apenas para conta FILHA — por isso viviam zerados. Estas duas
+        // sao alimentadas pela multa/juros das baixas (ver bloco na /api/financial/dre).
+        { code: '8.01', name: 'Multa e juros recebidos (atraso)', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
 
         { code: '9', name: 'Despesas Financeiras (juros, tarifas)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
+        { code: '9.01', name: 'Multa e juros pagos (atraso)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
 
         { code: '10', name: 'IRPJ/CSLL', type: 'despesa' as const, dreGroup: 'irpj_csll' },
       ];
@@ -3011,7 +3016,9 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       await db.execute(sql.raw(`ALTER TABLE ${tabelaPg} ADD COLUMN IF NOT EXISTS deleted_reason text`));
 
       const todosQ: any = await db.execute(sql.raw(
-        `SELECT id, amount::numeric AS amount, paid_at, payment_method, reference, created_by
+        `SELECT id, amount::numeric AS amount, COALESCE(fine, 0)::numeric AS fine,
+                COALESCE(interest, 0)::numeric AS interest, COALESCE(discount, 0)::numeric AS discount,
+                paid_at, payment_method, reference, created_by
          FROM ${tabelaPg} WHERE ${fk} = '${id.replace(/'/g, "''")}' AND deleted_at IS NULL ORDER BY created_at DESC`));
       const todos: any[] = todosQ.rows || [];
       const alvo = paymentIds.length ? todos.filter((p) => paymentIds.includes(String(p.id))) : todos;
@@ -3034,6 +3041,18 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         ? 'cancelada'
         : (total > 0 && restante >= total - 0.005 ? settledStatus : (_estornoPastDueBR(tit.dueDate) ? 'vencida' : 'a_vencer'));
 
+      // MOVIMENTO NA CONTA: a baixa manual credita/debita a conta financeira com
+      // `reference` = id do pagamento. Ate aqui o estorno nao desfazia isso — o
+      // dinheiro de uma baixa inexistente continuava no razao e no saldo. A previa
+      // mostra o que sai; o apply reverte de fato. Baixa vinda da CONCILIACAO nao
+      // gera movimento (o extrato do banco e a propria conta), entao nao acha nada.
+      const sourceTypeMov = kind === 'receivable' ? 'receivable_payment' : 'payable';
+      let movLinhas = 0, movValor = 0; const movContas = new Set<string>();
+      for (const p of alvo) {
+        const pv = await previaEstornoLancamento(sourceTypeMov, String(p.id));
+        movLinhas += pv.linhas; movValor += pv.valor; pv.contas.forEach((c) => movContas.add(c));
+      }
+
       const previa = {
         titulo: tit.titleNumber || null,
         contraparte: kind === 'receivable' ? (tit.customerName || null) : (tit.supplierName || null),
@@ -3042,11 +3061,21 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         pagamentosEstornados: alvo.map((p) => ({
           id: String(p.id), valor: Number(p.amount).toFixed(2), pagoEm: p.paid_at,
           metodo: p.payment_method || null, referencia: p.reference || null, criadoPor: p.created_by || null,
+          multa: Number(p.fine || 0).toFixed(2), juros: Number(p.interest || 0).toFixed(2),
+          desconto: Number(p.discount || 0).toFixed(2),
         })),
         somaEstornada: estornado.toFixed(2),
         amountPaidNovo: restante.toFixed(2),
         statusAtual: String(tit.status),
         statusNovo: novoStatus,
+        contaFinanceira: {
+          movimentos: movLinhas,
+          ajusteNoSaldo: Number(movValor.toFixed(2)),   // negativo = o saldo desce
+          contas: Array.from(movContas),
+          observacao: movLinhas
+            ? 'O movimento desta baixa sai do razão e o saldo da conta volta atrás.'
+            : 'Esta baixa não gerou movimento em conta financeira (baixa sem conta ou vinda da conciliação).',
+        },
       };
       if (dryRun) return res.json({ ok: true, dryRun: true, ...previa });
 
@@ -3057,6 +3086,20 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           ` deleted_reason = '${carimbo.replace(/'/g, "''")}' WHERE deleted_at IS NULL AND id IN (` +
           alvo.map((p) => `'${String(p.id).replace(/'/g, "''")}'`).join(',') + `)`));
       }
+
+      // Reversao do movimento na conta, DEPOIS de marcar o pagamento como estornado:
+      // se algo falhar aqui, a baixa ja saiu e o movimento fica visivel na auditoria
+      // (o contrario — saldo revertido com baixa viva — seria pior).
+      let movRevertidos = 0, movValorRevertido = 0; const movErros: string[] = [];
+      for (const p of alvo) {
+        const r = await estornarLancamento({
+          sourceType: sourceTypeMov, reference: String(p.id),
+          motivo: `Baixa estornada: ${motivo}`, por: user?.email || 'sistema',
+        });
+        if (r.ok) { movRevertidos += r.revertidos; movValorRevertido += r.valor; }
+        else movErros.push(String(p.id) + ': ' + (r.erro || 'falhou'));
+      }
+      if (movErros.length) console.error('[FINANCEIRO] estorno do movimento da conta falhou:', movErros.join(' | '));
 
       const stamp = `[BAIXA ESTORNADA ${new Date().toISOString().slice(0, 10)} por ${user?.email || '?'}] ${motivo}`
                   + ` (R$ ${estornado.toFixed(2)}, ${alvo.length} pagamento(s))`;
@@ -3074,9 +3117,16 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         req, action: 'reverse', entity: kind, entityId: id,
         before: { amountPaid: jaPago, status: String(tit.status) },
         after: { amountPaid: Number(restante), status: novoStatus },
-        amount: estornado, note: carimbo,
+        amount: estornado, note: carimbo
+          + (movRevertidos ? ` | conta financeira: ${movRevertidos} movimento(s) revertido(s), saldo ${movValorRevertido.toFixed(2)}` : ''),
       });
-      return res.json({ ok: true, ...previa, observacao: 'As linhas NAO foram apagadas: seguem com deleted_at/deleted_by/deleted_reason e saem de toda soma. Para reverter, basta limpar deleted_at.' });
+      return res.json({
+        ok: true, ...previa,
+        contaFinanceira: { ...previa.contaFinanceira, movimentosRevertidos: movRevertidos,
+          saldoAjustado: Number(movValorRevertido.toFixed(2)), erros: movErros },
+        observacao: 'As linhas NAO foram apagadas: seguem com deleted_at/deleted_by/deleted_reason e saem de toda soma. Para reverter, basta limpar deleted_at.'
+          + (movRevertidos ? ' O movimento da conta saiu do razao (reversed_at) e o saldo voltou atras.' : ''),
+      });
     } catch (error: any) {
       const msg = String(error?.message || error);
       if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
@@ -3765,8 +3815,39 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // DRE (Income Statement) - Monthly Breakdown
   // ============================================================================
 
+  // As duas contas filhas dos grupos financeiros. O `seed` do plano de contas so
+  // roda em base vazia, entao quem ja tem plano criado nunca as receberia — daqui
+  // elas nascem sob demanda, globais (sem instancia, valem para todas) e so uma vez.
+  let __contasFinDre: { rec: string | null; desp: string | null } | null = null;
+  async function ensureContasFinanceirasDre(): Promise<{ rec: string | null; desp: string | null }> {
+    if (__contasFinDre) return __contasFinDre;
+    const achar = (lista: any[], code: string) => lista.find((a: any) => String(a.code) === code);
+    try {
+      let todas = await storage.getChartOfAccounts();
+      // Sem plano de contas nenhum nao inventamos nada: quem popula e o seed.
+      if (!todas.length) return (__contasFinDre = { rec: null, desp: null });
+      const novas = [
+        { code: '8.01', name: 'Multa e juros recebidos (atraso)', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
+        { code: '9.01', name: 'Multa e juros pagos (atraso)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
+      ];
+      let criou = false;
+      for (const n of novas) {
+        if (achar(todas, n.code)) continue;
+        await storage.createChartOfAccount({ code: n.code, name: n.name, type: n.type, dreGroup: n.dreGroup, isActive: true } as any);
+        criou = true;
+      }
+      if (criou) todas = await storage.getChartOfAccounts();
+      __contasFinDre = { rec: achar(todas, '8.01')?.id || null, desp: achar(todas, '9.01')?.id || null };
+    } catch (e: any) {
+      console.warn('[DRE] nao consegui garantir as contas financeiras:', String(e?.message || e).slice(0, 120));
+      __contasFinDre = { rec: null, desp: null };
+    }
+    return __contasFinDre;
+  }
+
   app.get('/api/financial/dre', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      await ensureContasFinanceirasDre();
       const instanceId = req.query.instanceId as string | undefined;
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
@@ -3869,6 +3950,40 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           if (idx >= 0) lines[idx] = line; else lines.push(line);
         }
       } catch {}
+
+      // MULTA E JUROS -> Receitas/Despesas Financeiras.
+      // A mora nao esta no titulo: ela nasce NA BAIXA (receivable_payments.fine/interest),
+      // porque so existe quando alguem paga atrasado. Por isso estas duas linhas sao as
+      // unicas da DRE por DATA DE PAGAMENTO (`paid_at`) e nao por emissao — como ja
+      // acontece com a linha de devolucoes, que usa a data da NF-e. Baixa estornada
+      // (deleted_at) e titulo cancelado ficam de fora.
+      try {
+        const contasFin = await ensureContasFinanceirasDre();
+        const alvos: Array<{ id: string | null; tabela: string; fk: string; titulo: string; grupo: string }> = [
+          { id: contasFin.rec, tabela: 'receivable_payments', fk: 'receivables', titulo: 'r', grupo: 'receitas_financeiras' },
+          { id: contasFin.desp, tabela: 'payable_payments', fk: 'payables', titulo: 'p', grupo: 'despesas_financeiras' },
+        ];
+        for (const alvo of alvos) {
+          const acc = alvo.id ? chartAccounts.find(a => String(a.id) === String(alvo.id) && inDre(a)) : null;
+          if (!acc) continue;
+          const q: any = await db.execute(sql`
+            SELECT extract(month FROM pg.paid_at)::int AS m,
+                   COALESCE(sum(COALESCE(pg.fine, 0)::numeric + COALESCE(pg.interest, 0)::numeric), 0) AS v
+            FROM ${sql.raw(alvo.tabela)} pg
+            JOIN ${sql.raw(alvo.fk)} t ON t.id = pg.${sql.raw(alvo.tabela === 'receivable_payments' ? 'receivable_id' : 'payable_id')}
+            WHERE pg.deleted_at IS NULL AND t.deleted_at IS NULL
+              AND t.status <> 'cancelada'
+              AND pg.paid_at >= ${startDate} AND pg.paid_at <= ${endDate}
+              AND (${instanceId ?? null}::text IS NULL OR t.omie_instance_id = ${instanceId ?? null})
+            GROUP BY 1`);
+          const monthly = new Array(12).fill(0);
+          for (const r of ((q as any).rows || [])) { const mi = Number(r.m) - 1; if (mi >= 0 && mi < 12) monthly[mi] = Number(r.v || 0); }
+          const total = monthly.reduce((s, v) => s + v, 0);
+          const idx = lines.findIndex(l => l.accountId === acc.id);
+          const line = { code: acc.code, name: acc.name, dreGroup: alvo.grupo, type: acc.type, isHeader: false, monthly, total, accountId: acc.id, porDataDePagamento: true };
+          if (idx >= 0) lines[idx] = line; else lines.push(line);
+        }
+      } catch (e: any) { console.warn('[DRE] linha de multa/juros falhou:', String(e?.message || e).slice(0, 160)); }
 
       const unclassifiedRecMonthly = new Array(12).fill(0);
       for (const r of receivables) {
