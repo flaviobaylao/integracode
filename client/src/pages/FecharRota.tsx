@@ -19,8 +19,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react";
 
-type Tipo = "presencial" | "virtual" | "lead";
+type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
 type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo };
+
+// Vendedores/TMK cujo fechamento também exige justificar a REPESCAGEM (além de presencial/virtual/lead).
+// Maria E. (omie-vendor-4323360115) e Natalia B. (omie-vendor-4317814615) — telemarketing.
+const REPESCAGEM_FECHA_SELLERS = new Set<string>(["omie-vendor-4323360115", "omie-vendor-4317814615"]);
 
 const MOTIVOS: [string, string][] = [
   ["sem_tempo", "Não deu tempo / rota grande"],
@@ -32,14 +36,15 @@ const MOTIVOS: [string, string][] = [
   ["outro", "Outro"],
 ];
 const MOTIVO_LABEL: Record<string, string> = Object.fromEntries(MOTIVOS);
-const TIPO_LABEL: Record<Tipo, string> = { presencial: "Presencial", virtual: "Virtual", lead: "Lead" };
+const TIPO_LABEL: Record<Tipo, string> = { presencial: "Presencial", virtual: "Virtual", lead: "Lead", repescagem: "Repescagem" };
 const TIPO_CLS: Record<Tipo, string> = {
   presencial: "bg-blue-50 text-blue-700",
   virtual: "bg-violet-50 text-violet-700",
   lead: "bg-amber-50 text-amber-700",
+  repescagem: "bg-rose-50 text-rose-700",
 };
 
-function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, allowed: Set<Tipo>, today: string): NaoVisitado[] {
+function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false): NaoVisitado[] {
   const checkedIn = new Set<string>();
   (route?.checkpoints || []).forEach((cp: any) => { if (cp?.checkpointType === "check_in" && cp?.customerId) checkedIn.add(String(cp.customerId)); });
   const attended = new Set<string>(((serviceCounts?.attendedCustomerIds) || []).map(String));
@@ -70,6 +75,16 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (!customerId) continue;
     out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo });
   }
+  // Repescagem (somente para vendedores habilitados): cada cliente da repescagem não atendido também precisa de justificativa.
+  if (includeRepescagem) {
+    for (const r of (Array.isArray(overlay) ? overlay : [])) {
+      const cid = r?.customerId ? String(r.customerId) : "";
+      if (!cid || out.some((o) => o.customerId === cid)) continue;
+      const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
+      if (done) continue;
+      out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem" });
+    }
+  }
   return out;
 }
 
@@ -92,20 +107,22 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const { data: statusData } = useQuery<any>({ queryKey: ["/api/vendedor/fechamento/status", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/vendedor/fechamento/status?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
   const { data: routeData } = useQuery<any>({ queryKey: ["/api/daily-routes", sellerId, "date", today], enabled, queryFn: () => apiRequest("GET", `/api/daily-routes/${encodeURIComponent(sellerId)}/date/${today}`) });
   const route = routeData?.route;
+  const { data: overlayData } = useQuery<any>({ queryKey: ["/api/repescagem/route-overlay", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/repescagem/route-overlay?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
+  const overlay = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
+  const incluiRepescagem = REPESCAGEM_FECHA_SELLERS.has(String(sellerId));
   const routeCustomerIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => { const c = v?.customerId || v?.entityId; if (c) s.add(String(c)); });
+    if (incluiRepescagem) (Array.isArray(overlay) ? overlay : []).forEach((r: any) => { if (r?.customerId) s.add(String(r.customerId)); });
     return Array.from(s);
-  }, [route]);
+  }, [route, overlay, incluiRepescagem]);
   const { data: svcData } = useQuery<any>({ queryKey: ["/api/service-logs/count/customer", sellerId, today, routeCustomerIds.length], enabled: enabled && routeCustomerIds.length > 0, queryFn: () => apiRequest("GET", `/api/service-logs/count/customer?sellerId=${encodeURIComponent(sellerId)}&date=${today}&customerIds=${routeCustomerIds.join(",")}`) });
-  const { data: overlayData } = useQuery<any>({ queryKey: ["/api/repescagem/route-overlay", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/repescagem/route-overlay?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
   const { data: infoData } = useQuery<any>({ queryKey: ["/api/daily-routes", route?.id, "customer-info"], enabled: !!route?.id, queryFn: () => apiRequest("GET", `/api/daily-routes/${route.id}/customer-info`) });
 
   const cfg = statusData?.config || { travaObrigatoria: true, tipos: ["presencial", "virtual", "lead"] };
   const allowed = new Set<Tipo>((cfg.tipos || ["presencial", "virtual", "lead"]) as Tipo[]);
   const orders = infoData?.orders || {};
-  const overlay = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
-  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, allowed, today) : [], [route, svcData, overlay, orders, statusData]);
+  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, allowed, today, incluiRepescagem) : [], [route, svcData, overlay, orders, statusData, incluiRepescagem]);
 
   const totalStops = useMemo(() => {
     let n = 0;
@@ -116,8 +133,9 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
       const isRep = cid && overlay.some((r: any) => String(r?.customerId) === cid);
       if (allowed.has(tipo) && !isRep) n++;
     });
+    if (incluiRepescagem) n += (Array.isArray(overlay) ? overlay : []).length;
     return n;
-  }, [route, overlay, statusData]);
+  }, [route, overlay, statusData, incluiRepescagem]);
 
   // justificativas locais
   const [justified, setJustified] = useState<Record<string, { reason: string; note: string }>>({});
