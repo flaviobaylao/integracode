@@ -3469,6 +3469,58 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     catch (error: any) { res.status(500).json({ message: error.message }); }
   });
 
+  // ==========================================================================
+  // TITULOS PRESOS PELO DESCONTO DA CONCILIACAO — SOMENTE LEITURA
+  // GET /api/admin/financial/desconto-conciliacao-preso
+  //
+  // Ate 05/08/2026 a conciliacao baixava o titulo pelo `settled` (principal +
+  // juros - desconto). Com desconto, o titulo continuava valendo o valor cheio e
+  // recebia uma baixa MENOR: sobrava em aberto exatamente o desconto, para sempre.
+  // Titulo liquidado com o cliente seguia figurando como devedor — e, pior, entra
+  // no bloqueio de pedido e no alerta de cobranca quando passa do vencimento.
+  //
+  // O caminho novo nao produz mais esses casos. Este endpoint mede o passivo que
+  // ficou: titulo com conciliacao de desconto cujo saldo em aberto e (dentro de um
+  // centavo) o proprio desconto. Nao escreve nada — o conserto e decisao do Flavio.
+  // ==========================================================================
+  app.get('/api/admin/financial/desconto-conciliacao-preso', authenticateUser, isFinancialAuthorized, async (_req, res) => {
+    try {
+      const q: any = await db.execute(sql`
+        WITH desc_match AS (
+          SELECT m.receivable_id AS rid, m.payable_id AS pid,
+                 sum(COALESCE(m.discount, 0)::numeric) AS desconto
+          FROM bank_statement_item_matches m
+          WHERE COALESCE(m.discount, 0)::numeric > 0
+          GROUP BY 1, 2)
+        SELECT 'receber' AS lado, r.id, r.title_number AS titulo, r.customer_name AS contraparte,
+               r.amount::numeric AS valor, r.amount_paid::numeric AS pago,
+               (r.amount::numeric - r.amount_paid::numeric) AS em_aberto, d.desconto, r.status, r.due_date
+        FROM desc_match d JOIN receivables r ON r.id = d.rid
+        WHERE r.deleted_at IS NULL AND r.status NOT IN ('cancelada', 'recebida')
+          AND abs((r.amount::numeric - r.amount_paid::numeric) - d.desconto) < 0.011
+        UNION ALL
+        SELECT 'pagar', p.id, p.title_number, p.supplier_name,
+               p.amount::numeric, p.amount_paid::numeric,
+               (p.amount::numeric - p.amount_paid::numeric), d.desconto, p.status, p.due_date
+        FROM desc_match d JOIN payables p ON p.id = d.pid
+        WHERE p.deleted_at IS NULL AND p.status NOT IN ('cancelada', 'paga')
+          AND abs((p.amount::numeric - p.amount_paid::numeric) - d.desconto) < 0.011
+        ORDER BY 7 DESC`);
+      const linhas = ((q as any).rows || []) as any[];
+      const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
+      const resumo = { titulos: linhas.length, valorPreso: n2(linhas.reduce((s, x) => s + Number(x.em_aberto || 0), 0)) };
+      res.json({
+        ok: true, resumo,
+        explicacao: 'Titulos cuja unica pendencia e o desconto concedido na conciliacao: o desconto nao abatia o titulo. O caminho novo nao gera mais isso.',
+        titulos: linhas.slice(0, 200).map((x) => ({
+          lado: x.lado, id: x.id, titulo: x.titulo, contraparte: x.contraparte,
+          valor: n2(x.valor), pago: n2(x.pago), emAberto: n2(x.em_aberto),
+          descontoConcedido: n2(x.desconto), status: x.status, vencimento: x.due_date,
+        })),
+      });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 300) }); }
+  });
+
   app.get('/api/financial/payables/:id/payments', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const payments = await storage.getPayablePayments(req.params.id);
