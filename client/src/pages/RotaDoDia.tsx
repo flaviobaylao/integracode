@@ -259,6 +259,16 @@ export default function RotaDoDia() {
     enabled: !!selectedSellerId && !!selectedDate,
     refetchInterval: 30000,
   });
+  // FECHAMENTO (Fase 4): bloqueio da rota de hoje se um dia anterior nao foi fechado.
+  const { data: bloqueioRota } = useQuery<any>({
+    queryKey: ['/api/vendedor/fechamento/bloqueio', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/vendedor/fechamento/bloqueio?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return { blocked: false };
+      return r.json();
+    },
+    enabled: !isAdmin && !!selectedSellerId && !!selectedDate,
+  });
   const fmtKm = (n: number | undefined) => `${(Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 
   const returnRepescagemMutation = useMutation({
@@ -1187,6 +1197,23 @@ export default function RotaDoDia() {
       void finalizeAdminSession(actingCid, beforeSnap, rid);
     }
   };
+
+  // FECHAMENTO (Fase 4): tela de bloqueio — só para o próprio vendedor/telemarketing.
+  if (!isAdmin && bloqueioRota?.blocked && bloqueioRota?.pendingDate) {
+    const pd = String(bloqueioRota.pendingDate);
+    const pdBR = pd.split('-').reverse().join('/');
+    return (
+      <div className="p-4 md:p-6 max-w-2xl mx-auto">
+        <div className="mt-6 bg-white dark:bg-gray-800 border rounded-2xl shadow-sm p-8 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-4 text-3xl">🔒</div>
+          <h2 className="text-xl font-bold text-gray-800 dark:text-white">Feche a rota anterior primeiro</h2>
+          <p className="text-gray-600 dark:text-gray-300 mt-2">Sua rota está bloqueada porque a rota de <b>{pdBR}</b> não foi fechada.</p>
+          <button onClick={() => navigate('/fechar-rota?date=' + pd)} className="mt-6 w-full bg-green-600 hover:bg-green-700 text-white rounded-xl py-3 font-bold">Fechar rota de {pdBR}</button>
+          <p className="text-xs text-gray-400 mt-3">Se precisar, peça liberação ao seu gestor.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-3 sm:p-6 max-w-7xl mx-auto overflow-x-auto">
