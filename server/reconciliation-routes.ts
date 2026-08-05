@@ -3152,6 +3152,11 @@ export function registerReconciliation(app: Express) {
 
       try {
         // ---- baixas registradas no periodo, nesta conta ---------------------
+        // rp.deleted_at IS NULL e OBRIGATORIO: baixa estornada continua na tabela
+        // (soft delete, para preservar a trilha de quem estornou e por que). Sem
+        // esse filtro o relatorio ressuscita como "recebimento" tudo que as
+        // rotinas de estorno (estornar-pagamentos-duplicados / estornar-creditos-
+        // duplicados / estorno manual) ja desfizeram. Titulo cancelado idem.
         const baixas = rowsOf(await db.execute(sql`
           SELECT rp.id, rp.receivable_id,
                  to_char(rp.paid_at::date, 'YYYY-MM-DD') AS data,
@@ -3163,7 +3168,8 @@ export function registerReconciliation(app: Express) {
           FROM receivable_payments rp
           JOIN receivables r ON r.id = rp.receivable_id AND r.deleted_at IS NULL
           LEFT JOIN chart_of_accounts rc ON rc.id = r.chart_account_id
-          WHERE rp.financial_account_id = ${accountId}
+          WHERE rp.deleted_at IS NULL AND r.status <> 'cancelada'
+            AND rp.financial_account_id = ${accountId}
             AND rp.paid_at::date >= ${from}::date
             AND rp.paid_at::date <= ${to}::date
           ORDER BY rp.paid_at, rp.id
