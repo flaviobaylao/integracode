@@ -2037,7 +2037,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   async function ensureConfigGlobal() {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
   }
-  const FECHAMENTO_DEFAULTS: any = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: '19:00', tipos: ['presencial', 'virtual', 'lead'] };
+  const FECHAMENTO_DEFAULTS: any = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: '19:00', tipos: ['presencial', 'virtual', 'lead'], bloqueioDesde: null };
   async function getFechamentoConfig() {
     await ensureConfigGlobal();
     const r: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'fechamento_config' LIMIT 1`);
@@ -2060,6 +2060,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       if (typeof b.fechoAutomatico === 'boolean') next.fechoAutomatico = b.fechoAutomatico;
       if (typeof b.fechoHorario === 'string' && /^\d{2}:\d{2}$/.test(b.fechoHorario)) next.fechoHorario = b.fechoHorario;
       if (Array.isArray(b.tipos)) next.tipos = b.tipos.filter((t: any) => ['presencial', 'virtual', 'lead'].includes(t));
+      if (b.bloqueioDesde === null || (typeof b.bloqueioDesde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.bloqueioDesde))) next.bloqueioDesde = b.bloqueioDesde;
       const valor = JSON.stringify(next);
       await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('fechamento_config', ${valor}, 'Regras do Fechamento de Rota') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
       res.json({ ok: true, config: next });
@@ -2102,6 +2103,44 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       if (cfg.travaObrigatoria && pend > 0) return res.status(400).json({ error: 'Ha ' + pend + ' cliente(s) sem justificativa. Justifique para fechar.', pendentes: pend });
       await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, ${seller}, ${nv}, ${just}, ${pend}) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), nao_visitados = EXCLUDED.nao_visitados, justificados = EXCLUDED.justificados, pendentes = EXCLUDED.pendentes`);
       res.json({ ok: true, date, closed: true });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // FECHAMENTO DE ROTA (Fase 4): bloqueio da rota de hoje se um dia anterior (>= bloqueioDesde) nao foi fechado.
+  app.get('/api/vendedor/fechamento/bloqueio', async (req: Request, res: Response) => {
+    try {
+      await ensureRouteClosures();
+      const seller = String(req.query.sellerId || '');
+      let date = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); }
+      const cfg = await getFechamentoConfig();
+      if (!seller || !cfg.bloqueioDiaSeguinte) return res.json({ ok: true, blocked: false });
+      const desde = (typeof cfg.bloqueioDesde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cfg.bloqueioDesde)) ? cfg.bloqueioDesde : date;
+      const r: any = await db.execute(sql`SELECT to_char(dr.route_date::date, 'YYYY-MM-DD') AS d FROM daily_routes dr WHERE dr.seller_id = ${seller} AND dr.route_date::date < ${date}::date AND dr.route_date::date >= ${desde}::date AND NOT EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = dr.route_date::date) ORDER BY dr.route_date DESC LIMIT 1`);
+      const row = ((r.rows || r) as any[])[0];
+      res.json({ ok: true, blocked: !!row, pendingDate: row ? row.d : null });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+  app.post('/api/admin/fechamento/liberar', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureRouteClosures();
+      const b = req.body || {};
+      const seller = String(b.sellerId || '');
+      const date = String(b.date || '').replace(/[^0-9-]/g, '');
+      if (!seller || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'sellerId e date obrigatorios' });
+      await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, 'admin-liberado', 0, 0, 0) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), closed_by = 'admin-liberado'`);
+      res.json({ ok: true, date, liberado: true });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+  app.post('/api/admin/fechamento/reabrir', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureRouteClosures();
+      const b = req.body || {};
+      const seller = String(b.sellerId || '');
+      const date = String(b.date || '').replace(/[^0-9-]/g, '');
+      if (!seller || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'sellerId e date obrigatorios' });
+      await db.execute(sql`DELETE FROM route_closures WHERE seller_id = ${seller} AND close_date = ${date}::date`);
+      res.json({ ok: true, date, reaberto: true });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
