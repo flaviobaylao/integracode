@@ -12,11 +12,12 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { usePermissions } from "@/lib/permissions";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import FechamentoPainel from "@/pages/FechamentoPainel";
+import FecharRota from "@/pages/FecharRota";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardCheck, Lock, BarChart3 } from "lucide-react";
+import { ClipboardCheck, Lock, BarChart3, Flag } from "lucide-react";
 
 type Cfg = {
   travaObrigatoria: boolean;
@@ -70,7 +71,7 @@ function RegrasTab() {
 
   // Ações do admin (Fase 4): liberar rota bloqueada / reabrir um dia fechado.
   const { data: usersData } = useQuery<any>({ queryKey: ["/api/users"] });
-  const sellers = (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role));
+  const sellers = (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role) && u?.isActive);
   const [admSeller, setAdmSeller] = useState<string>("");
   const [admDate, setAdmDate] = useState<string>("");
   const admOk = !!admSeller && /^\d{4}-\d{2}-\d{2}$/.test(admDate);
@@ -170,11 +171,16 @@ function RegrasTab() {
   );
 }
 
+type Tab = "fechar" | "painel" | "regras";
+
 export default function FechamentoConfig() {
   const { role } = usePermissions();
   const isAdmin = role === "admin";
-  const [tab, setTab] = useState<"painel" | "regras">("painel");
-  const active = tab === "regras" && !isAdmin ? "painel" : tab;
+  const isReports = ["admin", "coordinator", "administrative"].includes(role);
+  const [tab, setTab] = useState<Tab | null>(null);
+  const allowed = (t: Tab) => t === "fechar" || (t === "painel" && isReports) || (t === "regras" && isAdmin);
+  const defaultTab: Tab = isReports ? "painel" : "fechar";
+  const active: Tab = tab && allowed(tab) ? tab : defaultTab;
 
   const tabCls = (on: boolean) => `flex items-center gap-2 px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition ${on ? "border-blue-600 text-blue-600" : "border-transparent text-muted-foreground hover:text-gray-700"}`;
 
@@ -192,10 +198,15 @@ export default function FechamentoConfig() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b mb-5">
-        <button onClick={() => setTab("painel")} className={tabCls(active === "painel")}>
-          <BarChart3 className="w-4 h-4" /> Painel de Gestão
+      <div className="flex gap-1 border-b mb-5 flex-wrap">
+        <button onClick={() => setTab("fechar")} className={tabCls(active === "fechar")}>
+          <Flag className="w-4 h-4" /> Fechar Rota
         </button>
+        {isReports && (
+          <button onClick={() => setTab("painel")} className={tabCls(active === "painel")}>
+            <BarChart3 className="w-4 h-4" /> Painel de Gestão
+          </button>
+        )}
         {isAdmin && (
           <button onClick={() => setTab("regras")} className={tabCls(active === "regras")}>
             <Lock className="w-4 h-4" /> Regras
@@ -203,7 +214,7 @@ export default function FechamentoConfig() {
         )}
       </div>
 
-      {active === "painel" ? <FechamentoPainel embedded /> : <RegrasTab />}
+      {active === "fechar" ? <FecharRota embedded /> : active === "painel" ? <FechamentoPainel embedded /> : <RegrasTab />}
     </div>
   );
 }
