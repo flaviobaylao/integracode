@@ -1,21 +1,22 @@
 // ============================================================================
-// INTEGRA 2.0 — REGRAS DO FECHAMENTO DE ROTA (Ago/2026)
-// Configuracao (somente admin) das regras do Fechamento de Rota:
-//   - Trava obrigatoria para fechar o dia
-//   - Bloqueio da rota do dia seguinte se o dia anterior nao for fechado
-//   - Fecho automatico em horario de corte (opcional)
-//   - Tipos de cliente incluidos no fechamento (Presencial/Virtual/Lead; Repescagem fora)
+// INTEGRA 2.0 — FECHAMENTO DE ROTAS (Ago/2026)
+// Hub do Fechamento de Rota, com abas:
+//   - Painel de Gestão: acompanhamento mensal (admin + coordenação/administrativo)
+//   - Regras (somente admin): trava, bloqueio do dia seguinte, fecho automático,
+//     tipos de cliente e ações do admin (liberar rota / reabrir dia)
 // Persistencia: config_global (chave 'fechamento_config') via /api/admin/fechamento/config.
 // ============================================================================
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { usePermissions } from "@/lib/permissions";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import FechamentoPainel from "@/pages/FechamentoPainel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardCheck, Lock } from "lucide-react";
+import { ClipboardCheck, Lock, BarChart3 } from "lucide-react";
 
 type Cfg = {
   travaObrigatoria: boolean;
@@ -39,7 +40,7 @@ function RuleRow(props: { title: string; desc: string; checked: boolean; onChang
   );
 }
 
-export default function FechamentoConfig() {
+function RegrasTab() {
   const { toast } = useToast();
   const { data } = useQuery<any>({ queryKey: ["/api/admin/fechamento/config"] });
   const cfg: Cfg = { ...DEFAULTS, ...((data && data.config) || {}) };
@@ -85,20 +86,10 @@ export default function FechamentoConfig() {
   });
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <BackToDashboardButton />
+    <>
+      <div className="text-xs text-muted-foreground flex items-center gap-1 mb-4"><Lock className="w-3 h-3" /> Somente o admin edita. No celular, o vendedor apenas vê o efeito.</div>
 
-      <div className="flex items-center gap-3 mt-3 mb-1">
-        <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-          <ClipboardCheck className="w-5 h-5" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">Regras do Fechamento de Rota</h1>
-          <div className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="w-3 h-3" /> Somente o admin edita. No celular, o vendedor apenas vê o efeito.</div>
-        </div>
-      </div>
-
-      <Card className="mt-5">
+      <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Regras</CardTitle></CardHeader>
         <CardContent>
           <RuleRow
@@ -175,6 +166,44 @@ export default function FechamentoConfig() {
           <div className="text-[11px] text-muted-foreground mt-3">A “Liberar rota” usa a data do dia pendente que aparece para o vendedor na tela de bloqueio.</div>
         </CardContent>
       </Card>
+    </>
+  );
+}
+
+export default function FechamentoConfig() {
+  const { role } = usePermissions();
+  const isAdmin = role === "admin";
+  const [tab, setTab] = useState<"painel" | "regras">("painel");
+  const active = tab === "regras" && !isAdmin ? "painel" : tab;
+
+  const tabCls = (on: boolean) => `flex items-center gap-2 px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition ${on ? "border-blue-600 text-blue-600" : "border-transparent text-muted-foreground hover:text-gray-700"}`;
+
+  return (
+    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <BackToDashboardButton />
+
+      <div className="flex items-center gap-3 mt-3 mb-4">
+        <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+          <ClipboardCheck className="w-5 h-5" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold">Fechamento de Rotas</h1>
+          <div className="text-xs text-muted-foreground">Gestão do fechamento diário das rotas e as regras que valem para todos.</div>
+        </div>
+      </div>
+
+      <div className="flex gap-1 border-b mb-5">
+        <button onClick={() => setTab("painel")} className={tabCls(active === "painel")}>
+          <BarChart3 className="w-4 h-4" /> Painel de Gestão
+        </button>
+        {isAdmin && (
+          <button onClick={() => setTab("regras")} className={tabCls(active === "regras")}>
+            <Lock className="w-4 h-4" /> Regras
+          </button>
+        )}
+      </div>
+
+      {active === "painel" ? <FechamentoPainel embedded /> : <RegrasTab />}
     </div>
   );
 }
