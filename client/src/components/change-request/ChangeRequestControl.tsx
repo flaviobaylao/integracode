@@ -287,13 +287,16 @@ export function ChangeRequestControl(props: ControlProps) {
 
   const stop = (e: any) => e.stopPropagation();
 
-  // ---- Render do gatilho (botão ou selo) ----
-  let trigger: JSX.Element;
+  // ---- Render do gatilho ----
+  // Regra (05/08/2026): o botão "Solicitar Alteração" fica SEMPRE disponível em todos os cards,
+  // mesmo os que já têm solicitação ou registro de atendimento (check-in/venda). Quando há uma
+  // solicitação, mostramos também o selo de status (Pendente/Efetuada/Parcial/Rejeitada + sino).
+  let statusBadge: JSX.Element | null = null;
   if (state?.status === "pending") {
-    trigger = (
+    statusBadge = (
       <Badge
         variant="outline"
-        className={`cursor-pointer bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 gap-1 ${className || ""}`}
+        className="cursor-pointer bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 gap-1"
         title={`Solicitação pendente: ${(state.types || []).map((t) => TYPE_LABEL[t] || t).join(", ")}`}
         onClick={(e) => { stop(e); setViewOpen(true); }}
         data-testid={`badge-cr-pending-${entityId}`}
@@ -303,10 +306,10 @@ export function ChangeRequestControl(props: ControlProps) {
     );
   } else if (state && RESULT_META[state.status]) {
     const m = RESULT_META[state.status];
-    trigger = (
+    statusBadge = (
       <Badge
         variant="outline"
-        className={`cursor-pointer gap-1 ${m.cls} ${className || ""}`}
+        className={`cursor-pointer gap-1 ${m.cls}`}
         title={`Alterações ${m.label}${state.resolutionNote ? " — " + state.resolutionNote : ""}${(state.status === "parcial" || state.status === "rejeitadas") ? " · há retorno do admin a responder" : ""}`}
         onClick={(e) => { stop(e); setViewOpen(true); }}
         data-testid={`badge-cr-result-${entityId}`}
@@ -318,21 +321,22 @@ export function ChangeRequestControl(props: ControlProps) {
         )}
       </Badge>
     );
-  } else {
-    trigger = (
+  }
+  const trigger: JSX.Element = (
+    <div className={`flex items-center gap-2 flex-wrap justify-end ${className || ""}`}>
+      {statusBadge}
       <Button
         size="sm"
         variant="outline"
-        disabled={disabled}
-        className={`h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800 disabled:opacity-50 ${className || ""}`}
-        onClick={(e) => { stop(e); if (!disabled) setOpen(true); }}
-        title={disabled ? "Indisponível: já há check-in ou venda registrada" : "Solicitar Alteração"}
+        className="h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800"
+        onClick={(e) => { stop(e); setOpen(true); }}
+        title="Solicitar Alteração"
         data-testid={`button-cr-open-${entityId}`}
       >
         <ClipboardList className="h-3.5 w-3.5" /> Solicitar Alteração
       </Button>
-    );
-  }
+    </div>
+  );
 
   return (
     <>
@@ -525,7 +529,7 @@ export function ChangeRequestControl(props: ControlProps) {
           )}
           <DialogFooter>
             {state?.status !== "pending" && (
-              <Button variant="outline" disabled={disabled} onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
+              <Button variant="outline" onClick={() => { setViewOpen(false); setOpen(true); }} data-testid="cr-new-from-view">Nova solicitação</Button>
             )}
             <Button variant="outline" onClick={() => setViewOpen(false)}>Fechar</Button>
           </DialogFooter>
