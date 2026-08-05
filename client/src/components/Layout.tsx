@@ -239,7 +239,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'sales-goals', label: user?.role === 'vendedor' ? 'Minhas Metas' : 'Metas de Vendas', icon: 'fas fa-bullseye', available: true, badge: null },
         { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
         { id: 'rota-do-dia', label: (isVendedor || isTelemarketing) ? 'Minha Rota do Dia' : 'Rota do Dia', icon: 'fas fa-map-marked-alt', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
-        { id: 'fechar-rota', label: 'Fechar Rota do Dia', icon: 'fas fa-flag-checkered', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'canais', label: 'Canais', icon: 'fas fa-globe', available: canAccessReports || isTelemarketing, badge: hotsitePendentesCount > 0 ? hotsitePendentesCount : null },
         { id: 'relatorios-graficos', label: 'Relatórios Gráficos', icon: 'fas fa-chart-column', available: canAccessReports, badge: null },
@@ -247,7 +246,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports || isTelemarketing, badge: null },
         { id: 'execucao-rota', label: 'Execução de Rota', icon: 'fas fa-route', available: canAccessReports, badge: null },
         { id: 'justificativas', label: 'Justificar Visitas', icon: 'fas fa-clipboard-check', available: true, badge: null },
-        { id: 'fechamento-config', label: 'Fechamento de Rotas', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
+        { id: 'fechamento-config', label: 'Fechamento de Rotas', icon: 'fas fa-clipboard-check', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'minha-agenda', label: 'Minha Agenda', icon: 'fas fa-calendar-day', available: true, badge: null },
         { id: 'visitas-dia', label: 'Visitas', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
         { id: 'resumo-visitas', label: 'Resumo de Visitas', icon: 'fas fa-calendar-check', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
@@ -482,7 +481,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechar-rota', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'];
+  const TMK_WHITELIST = ['dashboard', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
