@@ -3494,14 +3494,18 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           GROUP BY 1, 2)
         SELECT 'receber' AS lado, r.id, r.title_number AS titulo, r.customer_name AS contraparte,
                r.amount::numeric AS valor, r.amount_paid::numeric AS pago,
-               (r.amount::numeric - r.amount_paid::numeric) AS em_aberto, d.desconto, r.status, r.due_date
+               -- status::text nos DOIS lados: receivable_status e payable_status sao
+               -- enums DIFERENTES e o UNION recusa converter um no outro (deu 500 em
+               -- producao na 1a versao; o teste local usava colunas text e nao pegou).
+               (r.amount::numeric - r.amount_paid::numeric) AS em_aberto, d.desconto,
+               r.status::text AS status, r.due_date
         FROM desc_match d JOIN receivables r ON r.id = d.rid
         WHERE r.deleted_at IS NULL AND r.status NOT IN ('cancelada', 'recebida')
           AND abs((r.amount::numeric - r.amount_paid::numeric) - d.desconto) < 0.011
         UNION ALL
         SELECT 'pagar', p.id, p.title_number, p.supplier_name,
                p.amount::numeric, p.amount_paid::numeric,
-               (p.amount::numeric - p.amount_paid::numeric), d.desconto, p.status, p.due_date
+               (p.amount::numeric - p.amount_paid::numeric), d.desconto, p.status::text, p.due_date
         FROM desc_match d JOIN payables p ON p.id = d.pid
         WHERE p.deleted_at IS NULL AND p.status NOT IN ('cancelada', 'paga')
           AND abs((p.amount::numeric - p.amount_paid::numeric) - d.desconto) < 0.011
