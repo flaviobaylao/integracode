@@ -612,7 +612,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [photosItem, setPhotosItem] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
-  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
   const [custSug, setCustSug] = useState<any[]>([]);
   const custTimer = useRef<any>(null);
   const buscarClientes = (v: string) => {
@@ -825,7 +825,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       setShowPayment(false);
-      setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+      setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
       toast({ title: 'Pagamento registrado com sucesso' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
@@ -985,7 +985,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
                       {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
-                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
                     </div>
@@ -1159,23 +1159,36 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
               <div><Label>Valor recebido</Label><Input type="number" step="0.01" min="0" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
               <div><Label>Desconto</Label><Input type="number" step="0.01" min="0" value={paymentForm.discount} onChange={e => setPaymentForm({ ...paymentForm, discount: e.target.value })} placeholder="0.00" /></div>
             </div>
+            {/* MULTA e JUROS por atraso: dinheiro a MAIS que o cliente pagou. Nao
+                abatem o titulo — entram na conta financeira junto com o principal. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Multa recebida</Label><Input type="number" step="0.01" min="0" value={paymentForm.fine} onChange={e => setPaymentForm({ ...paymentForm, fine: e.target.value })} placeholder="0.00" /></div>
+              <div><Label>Juros recebidos</Label><Input type="number" step="0.01" min="0" value={paymentForm.interest} onChange={e => setPaymentForm({ ...paymentForm, interest: e.target.value })} placeholder="0.00" /></div>
+            </div>
             {(() => {
               // O desconto NAO e dinheiro: ele reduz o valor do titulo. Pode ir
               // sozinho (valor 0 + desconto), que e conceder abatimento sem receber.
+              // Multa e juros sao o espelho: SAO dinheiro, entram na conta, e NAO
+              // abatem o titulo — por isso ficam fora da conta do saldo em aberto.
               const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
               const tot = parseFloat(selectedItem?.amount || '0') || 0;
               const pago = parseFloat(selectedItem?.amountPaid || '0') || 0;
               const aberto = Math.max(0, tot - pago);
               const v = parseFloat(paymentForm.amount || '0') || 0;
               const d = parseFloat(paymentForm.discount || '0') || 0;
+              const mu = parseFloat(paymentForm.fine || '0') || 0;
+              const ju = parseFloat(paymentForm.interest || '0') || 0;
+              const acr = mu + ju;
               const excede = v + d > aberto + 0.005;
               const resta = Math.max(0, aberto - v - d);
               return (
                 <div className="rounded border p-2 text-xs text-muted-foreground space-y-0.5">
                   <div>Em aberto hoje: <b>{brl(aberto)}</b>{tot !== aberto ? <> (título de {brl(tot)})</> : null}</div>
                   {d > 0 ? <div>Desconto de {brl(d)} <b>reduz o título</b> para {brl(Math.max(0, tot - d))}.</div> : null}
+                  {acr > 0 ? <div>Acréscimo de {brl(acr)}{mu > 0 ? ` (multa ${brl(mu)}` : ''}{mu > 0 && ju > 0 ? ` + juros ${brl(ju)})` : (mu > 0 ? ')' : (ju > 0 ? ` (juros ${brl(ju)})` : ''))} <b>não abate o título</b> — é receita a mais.</div> : null}
                   <div>Depois desta baixa resta: <b>{brl(resta)}</b>{resta <= 0.005 ? ' — título quitado' : ''}</div>
-                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto.</div> : null}
+                  {acr > 0 ? <div>Entra na conta financeira: <b>{brl(v + acr)}</b>.</div> : null}
+                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto (multa e juros não contam aqui).</div> : null}
                 </div>
               );
             })()}
@@ -1283,7 +1296,11 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   <div className="space-y-1">
                     {(history?.payments || []).map((p: any) => (
                       <div key={p.id} className="border rounded p-2 text-sm flex justify-between gap-2">
-                        <div><b className="text-green-700">{formatCurrency(p.amount)}</b> · {p.paymentMethod || '-'}{p.notes ? <span className="text-muted-foreground"> · {p.notes}</span> : null}</div>
+                        <div><b className="text-green-700">{formatCurrency(p.amount)}</b> · {p.paymentMethod || '-'}
+                          {Number(p.fine) > 0 ? <span className="text-amber-700"> · multa {formatCurrency(p.fine)}</span> : null}
+                          {Number(p.interest) > 0 ? <span className="text-amber-700"> · juros {formatCurrency(p.interest)}</span> : null}
+                          {Number(p.discount) > 0 ? <span className="text-blue-700"> · desconto {formatCurrency(p.discount)}</span> : null}
+                          {p.notes ? <span className="text-muted-foreground"> · {p.notes}</span> : null}</div>
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-muted-foreground text-right whitespace-nowrap">{formatDateTime(p.paidAt)}<br />{p.createdBy || '-'}</div>
                           {!readOnly && (
@@ -1372,7 +1389,7 @@ function PayablesTab() {
   const [showDetail, setShowDetail] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
-  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [supSug, setSupSug] = useState<any[]>([]);
@@ -1564,7 +1581,7 @@ function PayablesTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/payables'] });
       setShowPayment(false);
-      setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
+      setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
       toast({ title: 'Pagamento registrado com sucesso' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
@@ -1667,7 +1684,7 @@ function PayablesTab() {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', discount: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setDanfeFile(null); setBoletoFiles([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a pagar?')) deleteMutation.mutate(p.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
@@ -1989,23 +2006,36 @@ function PayablesTab() {
               <div><Label>Valor pago</Label><Input type="number" step="0.01" min="0" value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="0.00" /></div>
               <div><Label>Desconto</Label><Input type="number" step="0.01" min="0" value={paymentForm.discount} onChange={e => setPaymentForm({ ...paymentForm, discount: e.target.value })} placeholder="0.00" /></div>
             </div>
+            {/* MULTA e JUROS por atraso: dinheiro a MAIS que saiu da conta. Nao
+                abatem o titulo — somam ao principal no debito da conta financeira. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Multa paga</Label><Input type="number" step="0.01" min="0" value={paymentForm.fine} onChange={e => setPaymentForm({ ...paymentForm, fine: e.target.value })} placeholder="0.00" /></div>
+              <div><Label>Juros pagos</Label><Input type="number" step="0.01" min="0" value={paymentForm.interest} onChange={e => setPaymentForm({ ...paymentForm, interest: e.target.value })} placeholder="0.00" /></div>
+            </div>
             {(() => {
               // O desconto NAO e dinheiro: ele reduz o valor do titulo. Pode ir
-              // sozinho (valor 0 + desconto), que e conceder abatimento sem receber.
+              // sozinho (valor 0 + desconto), que e negociar abatimento sem pagar.
+              // Multa e juros sao o espelho: SAO dinheiro, saem da conta, e NAO
+              // abatem o titulo — por isso ficam fora da conta do saldo em aberto.
               const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
               const tot = parseFloat(selectedItem?.amount || '0') || 0;
               const pago = parseFloat(selectedItem?.amountPaid || '0') || 0;
               const aberto = Math.max(0, tot - pago);
               const v = parseFloat(paymentForm.amount || '0') || 0;
               const d = parseFloat(paymentForm.discount || '0') || 0;
+              const mu = parseFloat(paymentForm.fine || '0') || 0;
+              const ju = parseFloat(paymentForm.interest || '0') || 0;
+              const acr = mu + ju;
               const excede = v + d > aberto + 0.005;
               const resta = Math.max(0, aberto - v - d);
               return (
                 <div className="rounded border p-2 text-xs text-muted-foreground space-y-0.5">
                   <div>Em aberto hoje: <b>{brl(aberto)}</b>{tot !== aberto ? <> (título de {brl(tot)})</> : null}</div>
                   {d > 0 ? <div>Desconto de {brl(d)} <b>reduz o título</b> para {brl(Math.max(0, tot - d))}.</div> : null}
+                  {acr > 0 ? <div>Acréscimo de {brl(acr)}{mu > 0 ? ` (multa ${brl(mu)}` : ''}{mu > 0 && ju > 0 ? ` + juros ${brl(ju)})` : (mu > 0 ? ')' : (ju > 0 ? ` (juros ${brl(ju)})` : ''))} <b>não abate o título</b> — é despesa a mais.</div> : null}
                   <div>Depois desta baixa resta: <b>{brl(resta)}</b>{resta <= 0.005 ? ' — título quitado' : ''}</div>
-                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto.</div> : null}
+                  {acr > 0 ? <div>Sai da conta financeira: <b>{brl(v + acr)}</b>.</div> : null}
+                  {excede ? <div className="text-red-600 font-medium">Valor + desconto passa do saldo em aberto (multa e juros não contam aqui).</div> : null}
                 </div>
               );
             })()}
@@ -2082,6 +2112,9 @@ function PayablesTab() {
                         <span className="font-medium">{formatCurrency(p.amount)}</span>
                         {p.paid_at ? <> em <span className="font-medium">{formatDate(p.paid_at)}</span></> : null}
                         {p.payment_method ? <> · {String(p.payment_method).replace(/_/g, ' ')}</> : null}
+                        {Number(p.fine) > 0 ? <span className="text-amber-700"> · multa {formatCurrency(p.fine)}</span> : null}
+                        {Number(p.interest) > 0 ? <span className="text-amber-700"> · juros {formatCurrency(p.interest)}</span> : null}
+                        {Number(p.discount) > 0 ? <span className="text-blue-700"> · desconto {formatCurrency(p.discount)}</span> : null}
                         {p.conta ? <> · conta {p.conta}</> : <> · <span className="text-amber-700">sem conta bancária</span></>}
                         {p.reference ? <div className="text-xs text-muted-foreground">{p.reference}</div> : null}
                         <div className="text-xs text-muted-foreground">
