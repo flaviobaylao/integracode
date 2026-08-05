@@ -230,7 +230,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-shopping-cart',
       items: [
         { id: 'sales-cards', label: user?.role === 'vendedor' ? 'Meus Cards de Venda' : 'Cards de Venda', icon: 'fas fa-clipboard-list', available: true, badge: null },
-        { id: 'extrato-cliente', label: 'Extrato do Cliente', icon: 'fas fa-file-invoice-dollar', available: true, badge: null },
         { id: 'sales-schedule', label: 'Agenda de Vendas', icon: 'fas fa-calendar-week', available: true, badge: null },
         { id: 'sales-goals', label: user?.role === 'vendedor' ? 'Minhas Metas' : 'Metas de Vendas', icon: 'fas fa-bullseye', available: true, badge: null },
         { id: 'visit-routes', label: 'Rota de Visitas', icon: 'fas fa-route', available: true, badge: null },
@@ -258,6 +257,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-users',
       items: [
         { id: 'customers', label: user?.role === 'vendedor' ? 'Minha Carteira' : 'Clientes', icon: 'fas fa-users', available: true, badge: null },
+        { id: 'extrato-cliente', label: 'Extrato do Cliente', icon: 'fas fa-file-invoice-dollar', available: true, badge: null },
         { id: 'clientes-ativos', label: 'Clientes Ativos', icon: 'fas fa-check-circle', available: !isMotorista, badge: null },
         { id: 'clientes-virtuais-hoje', label: 'Clientes Virtuais do Dia', icon: 'fas fa-phone', available: !isMotorista, badge: null },
         { id: 'radar-churn', label: 'Radar de Churn', icon: 'fas fa-heart-pulse', available: canAccessReports, badge: null },
