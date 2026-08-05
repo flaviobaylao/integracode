@@ -4263,12 +4263,26 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
+      // 🙋 Assinatura do atendente: prefixa "*Nome*\n" p/ o cliente saber com quem fala no WhatsApp.
+      // Guardamos o MESMO texto que sai (o anti-eco casa pelo conteúdo).
+      let outgoingContent = content;
+      try {
+        if (content && String(content).trim()) {
+          const _agSig = await storage.getChatAgents();
+          const _mineSig = _agSig.find((a: any) => a.userId === userId);
+          const _rawNameSig = String(_mineSig?.name || (currentUser as any)?.name || (currentUser as any)?.firstName || '').trim();
+          const _firstSig = _rawNameSig.includes('@') ? _rawNameSig.split('@')[0] : _rawNameSig.split(/\s+/)[0];
+          const _cleanSig = _firstSig.replace(/[^\p{L}\p{N}._-]/gu, '').trim();
+          if (_cleanSig) outgoingContent = `*${_cleanSig}*\n${content}`;
+        }
+      } catch (e: any) { console.warn('⚠️ [ASSINATURA] erro ao prefixar nome do atendente:', e?.message || e); outgoingContent = content; }
+
       // 💬 Salvar mensagem no banco
       const message = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: userId,
         senderType: "agent",
-        content: content || mediaCaption || "Mídia enviada",
+        content: outgoingContent || mediaCaption || "Mídia enviada",
         messageType,
         mediaUrl,
       });
@@ -4384,16 +4398,16 @@ export function registerChatRoutes(app: Express): void {
               if (messageType === 'text' && content) {
                 if (process.env.UMBLER_TALK_TOKEN) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler Talk para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content, (conversation as any).channelPhone);
+                  sendResult = await sendUmblerTalkText(chatCustomer.phone, outgoingContent, (conversation as any).channelPhone);
                 } else if (process.env.UMBLER_API_KEY) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerText(chatCustomer.phone, content);
+                  sendResult = await sendUmblerText(chatCustomer.phone, outgoingContent);
                 } else {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
                   sendResult = await evolutionAPIService.sendTextMessage(
                     config.instanceName,
                     phoneFormatted,
-                    content
+                    outgoingContent
                   );
                 }
               } else if (mediaUrl && process.env.UMBLER_TALK_TOKEN) {
