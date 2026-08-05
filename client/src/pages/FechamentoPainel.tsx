@@ -47,6 +47,7 @@ function mesLabel(m: string): string {
 
 export default function FechamentoPainel({ embedded = false }: { embedded?: boolean }) {
   const [mes, setMes] = useState<string>(nowMonthISO());
+  const [filtroVendedor, setFiltroVendedor] = useState<string>("__all__");
   const { data } = useQuery<any>({
     queryKey: ["/api/admin/fechamento/mensal", mes],
     queryFn: () => apiRequest("GET", `/api/admin/fechamento/mensal?mes=${mes}`),
@@ -59,6 +60,8 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   const totalJust = useMemo(() => porVendedor.reduce((s, v) => s + (v.justificados || 0), 0), [porVendedor]);
   const totalPend = useMemo(() => porVendedor.reduce((s, v) => s + (v.pendentes || 0), 0), [porVendedor]);
   const maxMotivo = Math.max(1, ...porMotivo.map((m) => m.n));
+  const vendedoresLista = useMemo(() => Array.from(new Set(clientes.map((c) => c.vendedor).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))), [clientes]);
+  const clientesFiltrados = useMemo(() => (filtroVendedor === "__all__" ? clientes : clientes.filter((c) => c.vendedor === filtroVendedor)), [clientes, filtroVendedor]);
 
   const streakCls = (n: number) => (n >= 3 ? "bg-red-50 text-red-600" : n === 2 ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500");
 
@@ -104,13 +107,21 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Clientes não visitados no mês</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base">Clientes não visitados no mês</CardTitle>
+              <select className="border rounded-lg px-2 py-1 text-xs font-semibold max-w-[180px]" value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
+                <option value="__all__">Todos os vendedores</option>
+                {vendedoresLista.map((v) => (<option key={v} value={v}>{v}</option>))}
+              </select>
+            </div>
+          </CardHeader>
           <CardContent>
             <div className="text-xs text-muted-foreground mb-3">Ordenado por recorrência · 🔴 3+ rever periodicidade · 🟡 2 atenção · ⚪ 1 ocasional.</div>
             <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto pr-1">
-              {clientes.length === 0 ? <div className="text-sm text-muted-foreground">Sem registros neste mês.</div> : clientes.map((c, i) => (
+              {clientesFiltrados.length === 0 ? <div className="text-sm text-muted-foreground">Sem registros neste mês.</div> : clientesFiltrados.map((c, i) => (
                 <div key={c.customerId + i} className="flex items-center justify-between gap-2 border rounded-xl px-3 py-2">
-                  <div><div className="font-semibold text-sm">{c.nome} {c.cidade ? <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 ml-1">{c.cidade}</span> : null}</div><div className="text-[11px] text-muted-foreground">{c.vendedor || "—"} · último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div></div>
+                  <div className="min-w-0"><div className="font-semibold text-sm">{c.nome} {c.cidade ? <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 ml-1">{c.cidade}</span> : null}</div><div className="text-[11px] text-muted-foreground">{c.vendedor || "—"} · último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div>{c.motivo === "outro" && c.obs ? <div className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 mt-1 break-words">✍️ {c.obs}</div> : null}</div>
                   <span className={`text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap ${streakCls(c.n)}`}>{c.n}x no mês</span>
                 </div>
               ))}
