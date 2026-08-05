@@ -2247,9 +2247,18 @@ function ChatCenterInner() {
                                 </>
                                 )}
                                 <div className="flex items-center justify-between gap-2 mt-1">
-                                  <p className={`text-xs ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
+                                  <span className={`text-xs flex items-center gap-1 ${msg.senderType === "agent" ? "opacity-70" : "opacity-75"}`}>
                                     {msg.createdAt ? format(new Date(msg.createdAt), "HH:mm", { locale: ptBR }) : ""}
-                                  </p>
+                                    {msg.senderType === "agent" && (() => {
+                                      const dl: any = (msg as any)?.metadata?.delivery;
+                                      const ackv = Number((msg as any)?.ack || 0);
+                                      if (dl && dl.success === false) return <span title={`Falha na entrega${dl?.error ? ': ' + dl.error : ''}`} className="text-red-500 font-semibold" data-testid="ack-failed">⚠ não entregue</span>;
+                                      if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-500" data-testid="ack-read">✓✓</span>;
+                                      if (ackv >= 2) return <span title="Entregue no WhatsApp" className="text-gray-500" data-testid="ack-delivered">✓✓</span>;
+                                      if (ackv >= 1) return <span title="Enviada" className="text-gray-400" data-testid="ack-sent">✓</span>;
+                                      return <span title="Enviando…" className="text-gray-400" data-testid="ack-pending">🕓</span>;
+                                    })()}
+                                  </span>
                                   {isOwnMessage(msg) && !isDeletedMessage(msg) && (
                                     confirmDeleteMsgId === msg.id ? (
                                       <span className="flex items-center gap-1 text-xs">
