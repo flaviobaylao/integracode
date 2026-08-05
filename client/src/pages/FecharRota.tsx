@@ -73,7 +73,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
   return out;
 }
 
-export default function FecharRota() {
+export default function FecharRota({ embedded = false }: { embedded?: boolean }) {
   const { user } = useAuth();
   const uAny = user as any;
   const role = uAny?.role;
@@ -86,7 +86,7 @@ export default function FecharRota() {
   const sellerId = isAdmin ? pickSeller : (uAny?.id || "");
 
   const { data: usersData } = useQuery<any>({ queryKey: ["/api/users"], enabled: isAdmin && !!user });
-  const sellers = useMemo(() => (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role)), [usersData]);
+  const sellers = useMemo(() => (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role) && u?.isActive), [usersData]);
 
   const enabled = !!sellerId && !!today;
   const { data: statusData } = useQuery<any>({ queryKey: ["/api/vendedor/fechamento/status", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/vendedor/fechamento/status?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
@@ -149,8 +149,8 @@ export default function FecharRota() {
   const canSave = !!draftReason && (draftReason !== "outro" || !!draftNote.trim());
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto">
-      <BackToDashboardButton />
+    <div className={embedded ? "" : "p-4 md:p-6 max-w-3xl mx-auto"}>
+      {!embedded && <BackToDashboardButton />}
       <div className="flex items-center gap-3 mt-3 mb-1">
         <div className="w-10 h-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center"><Flag className="w-5 h-5" /></div>
         <div>
