@@ -9,9 +9,18 @@ import BackToDashboardButton from "@/components/BackToDashboardButton";
 //   2. Movimentações ........ extrato conciliado (entradas/saídas + saldo corrido)
 //   3. Recebidos ............ títulos de clientes baixados pela conciliação
 //   4. Pagos ................ títulos de fornecedores baixados pela conciliação
-//   5. Pendentes ............ lançamentos do banco ainda sem título
-//   6. Categorias ........... movimento por plano de contas
-//   7. Histórico mensal ..... série fixa mês a mês da conta (todo o período)
+//   5. Automáticos .......... recebimentos compensados por WEBHOOK (boleto BB,
+//                             PIX, cartão/hotsite) + conferência dia a dia da
+//                             cobrança de boletos contra o crédito "COBRANCA"
+//                             do extrato. NÃO entra no saldo (ver nota abaixo).
+//   6. Pendentes ............ lançamentos do banco ainda sem título
+//   7. Categorias ........... movimento por plano de contas
+//   8. Histórico mensal ..... série fixa mês a mês da conta (todo o período)
+//
+// REGRA DE OURO da aba 5: o saldo (entradas − saídas) continua vindo SÓ do
+// extrato. Recebimento que o webhook já baixou mas que ainda não apareceu no
+// OFX é mostrado à parte ("fora do extrato") — somá-lo ao saldo contaria o
+// mesmo dinheiro duas vezes quando o extrato do dia for importado.
 // Cada aba exporta a SI MESMA (Excel/CSV) e há o "Excel completo" com tudo.
 // Fonte: GET /api/reconciliation/report (read-only, nada é escrito no banco).
 // ---------------------------------------------------------------------------
@@ -54,6 +63,7 @@ const ABAS = [
   { id: "movimentacoes", label: "Movimentações", icone: "📄" },
   { id: "recebidos", label: "Recebidos", icone: "🟢" },
   { id: "pagos", label: "Pagos", icone: "🔴" },
+  { id: "automaticos", label: "Recebidos automáticos", icone: "⚡" },
   { id: "pendentes", label: "Pendentes", icone: "⏳" },
   { id: "categorias", label: "Categorias", icone: "🗂️" },
   { id: "mensal", label: "Histórico mensal", icone: "📅" },
@@ -284,6 +294,36 @@ export default function RelatorioConciliacao(props: {
     Contraparte: i.contraparte || "", Histórico: i.historico || "", "CPF/CNPJ": fmtDoc(i.documento),
     Valor: brlNum(i.valor), Extrato: i.arquivo || "",
   }));
+  // ---- recebimentos compensados por WEBHOOK (boleto BB, PIX, cartão, ...) --
+  const auto = dados?.recebimentosAutomaticos || null;
+  const cobr = dados?.cobrancaBoletos || null;
+  const SIT_COBR: Record<string, { label: string; cls: string }> = {
+    bate: { label: "✅ bate", cls: "text-green-700" },
+    diverge: { label: "❌ diverge", cls: "text-red-700" },
+    aguardando_extrato: { label: "⏳ aguardando extrato", cls: "text-amber-700" },
+    so_extrato: { label: "só no extrato", cls: "text-gray-600" },
+  };
+  const automaticos = useMemo(() => {
+    const f = filtro.trim().toLowerCase();
+    return ((auto?.itens || []) as any[])
+      .filter((x) => x.automatica)
+      .filter((x) => !f || `${x.titulo || ""} ${x.nome || ""} ${x.origemRotulo || ""} ${x.referencia || ""}`.toLowerCase().includes(f));
+  }, [auto, filtro]);
+  const linhasAutomaticos = () => automaticos.map((x: any) => ({
+    Data: dt(x.data), Origem: x.origemRotulo || x.origem, "Forma": x.formaPagamento || "",
+    Cliente: x.nome || "", "CPF/CNPJ": fmtDoc(x.documento), Título: x.titulo || "",
+    Vencimento: x.vencimento ? dt(x.vencimento) : "",
+    "Valor do título": x.valorTitulo == null ? "" : brlNum(x.valorTitulo),
+    "Valor recebido": brlNum(x.valor), Categoria: x.categoria || "",
+    "No extrato?": x.noExtrato ? "SIM" : "NÃO (aguardando)",
+    "Como casou": x.casamento || "", Referência: x.referencia || "", Observação: x.observacao || "",
+  }));
+  const linhasCobranca = () => ((cobr?.linhas || []) as any[]).map((l) => ({
+    Data: dt(l.data), "Boletos recebidos (qtd)": l.qtdBoletos, "Valor recebido (webhook)": brlNum(l.valorBoletos),
+    'Créditos "COBRANCA" (qtd)': l.qtdCreditos, "Valor no extrato": brlNum(l.valorExtrato),
+    Diferença: brlNum(l.diferenca), Situação: (SIT_COBR[l.situacao] || { label: l.situacao }).label,
+  }));
+
   const linhasCategorias = () => (dados?.porCategoria || []).map((c: any) => ({
     Categoria: c.categoria, Entradas: brlNum(c.entradas), Saídas: brlNum(c.saidas), Lançamentos: c.qtd,
   }));
@@ -307,6 +347,8 @@ export default function RelatorioConciliacao(props: {
       add("Movimentações", linhasMovimentacoes());
       add("Recebidos", linhasTitulos(recebidos, "Cliente"));
       add("Pagos", linhasTitulos(pagos, "Fornecedor"));
+      add("Recebidos automáticos", linhasAutomaticos());
+      add("Cobrança x extrato", linhasCobranca());
       add("Pendentes", linhasPendentes());
       add("Categorias", linhasCategorias());
       add("Histórico mensal", linhasMensal());
@@ -317,6 +359,7 @@ export default function RelatorioConciliacao(props: {
   const abaAtual = ABAS.find((a) => a.id === aba) || ABAS[0];
   const contagemAba: Record<string, number> = {
     movimentacoes: itens.length, recebidos: recebidos.length, pagos: pagos.length,
+    automaticos: automaticos.length,
     pendentes: pendentes.length, categorias: (dados?.porCategoria || []).length, mensal: (dados?.porMes || []).length,
   };
 
@@ -343,7 +386,7 @@ export default function RelatorioConciliacao(props: {
         <div className="flex gap-2 no-print">
           <button onClick={exportarTudo} disabled={!dados}
             className="px-3 py-2 border rounded-md text-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
-            data-testid="button-export-tudo">Excel completo (8 abas)</button>
+            data-testid="button-export-tudo">Excel completo (10 abas)</button>
           <button onClick={() => window.print()} disabled={!dados}
             className="px-3 py-2 border rounded-md text-sm bg-gray-800 text-white hover:bg-gray-900 disabled:opacity-40"
             data-testid="button-print">Imprimir / PDF</button>
@@ -553,6 +596,34 @@ export default function RelatorioConciliacao(props: {
                     Detalhe título a título nas abas <button className="underline no-print" onClick={() => setAba("recebidos")}>Recebidos</button> e{" "}
                     <button className="underline no-print" onClick={() => setAba("pagos")}>Pagos</button>.
                   </div>
+                  {Number(auto?.automaticos?.qtd || 0) > 0 && (
+                    <div className="border-t">
+                      <table className="w-full text-sm">
+                        <tbody>
+                          <tr>
+                            <td className="px-3 py-1.5 font-medium text-emerald-700">⚡ Recebido automático (webhook)</td>
+                            <td className="px-3 py-1.5 text-right">{auto?.automaticos?.qtd || 0}</td>
+                            <td className="px-3 py-1.5 text-right">{brl(auto?.automaticos?.valor)}</td>
+                            <td className="px-3 py-1.5 text-right text-[11px] text-gray-500" colSpan={2}>
+                              boleto BB · PIX · cartão
+                            </td>
+                          </tr>
+                          <tr className="border-t">
+                            <td className="px-3 py-1.5 pl-6 text-amber-700">⏳ ainda sem lançamento no extrato</td>
+                            <td className="px-3 py-1.5 text-right text-amber-700">{auto?.foraDoExtrato?.qtd || 0}</td>
+                            <td className="px-3 py-1.5 text-right text-amber-700">{brl(auto?.foraDoExtrato?.valor)}</td>
+                            <td className="px-3 py-1.5 text-right text-[11px] text-gray-500" colSpan={2}>
+                              <button className="underline no-print" onClick={() => setAba("automaticos")}>ver detalhe</button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div className="px-3 py-2 text-[11px] text-gray-500 border-t bg-emerald-50/40">
+                        Recebimento compensado por webhook <b>não entra</b> em Entradas/Saldo: o mesmo dinheiro chega pelo
+                        extrato do dia e seria contado duas vezes. O saldo acima continua sendo o do banco.
+                      </div>
+                    </div>
+                  )}
                 </Bloco>
               </div>
             </div>
@@ -713,6 +784,192 @@ export default function RelatorioConciliacao(props: {
               </Bloco>
             );
           })()}
+
+          {/* ---------------- ABA: RECEBIDOS AUTOMÁTICOS (WEBHOOK) ---------------- */}
+          {aba === "automaticos" && (
+            <div className="space-y-3">
+              {auto?.erro && (
+                <div className="border rounded-lg bg-amber-50 border-amber-200 p-3 text-xs text-amber-800">
+                  Não foi possível ler as baixas automáticas nesta base: {auto.erro}
+                </div>
+              )}
+
+              {/* KPIs */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <Kpi titulo="Recebido por webhook" valor={brl(auto?.automaticos?.valor)} tom="verde"
+                  sub={`${auto?.automaticos?.qtd || 0} baixa(s) no período`} />
+                <Kpi titulo="Já refletido no extrato" valor={brl(auto?.jaNoExtrato?.valor)} tom="azul"
+                  sub={`${auto?.jaNoExtrato?.qtd || 0} · já conta no saldo`} />
+                <Kpi titulo="Fora do extrato" valor={brl(auto?.foraDoExtrato?.valor)} tom="vermelho"
+                  sub={`${auto?.foraDoExtrato?.qtd || 0} · aguardando o OFX do dia`} />
+                <Kpi titulo="Cobrança × extrato" valor={brl(cobr?.totais?.diferenca)}
+                  tom={Math.abs(Number(cobr?.totais?.diferenca || 0)) < 0.01 ? "verde" : "vermelho"}
+                  sub={`boletos ${brl(cobr?.totais?.valorBoletos)} · extrato ${brl(cobr?.totais?.valorExtrato)}`} />
+              </div>
+
+              {/* Cobrança de boletos dia a dia x crédito "COBRANCA" do extrato */}
+              <Bloco titulo="🏦 Cobrança (boletos) dia a dia × crédito “COBRANCA” do extrato"
+                acao={<>
+                  <BotaoExport label="Excel" onClick={() => baixarXlsx(linhasCobranca(), "Cobrança x extrato", `Cobranca_x_Extrato_${sufixo}`)} />
+                  <BotaoExport label="CSV" onClick={() => baixarCsv(linhasCobranca(), `Cobranca_x_Extrato_${sufixo}`)} />
+                </>}>
+                <div className="px-3 py-2 text-[11px] text-gray-600 border-b bg-gray-50">
+                  O BB credita a liquidação dos boletos do dia em <b>uma linha “COBRANCA”</b> no extrato (repasse
+                  consolidado) — por isso título a título nunca casa 1:1. Aqui os boletos recebidos são <b>somados por dia</b>
+                  {" "}e comparados com o crédito do extrato daquele dia.
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-xs text-gray-600">
+                      <tr>
+                        <th className="text-left px-2 py-2 whitespace-nowrap">Data</th>
+                        <th className="text-right px-2 py-2">Boletos</th>
+                        <th className="text-right px-2 py-2 whitespace-nowrap">Recebido (webhook)</th>
+                        <th className="text-right px-2 py-2 whitespace-nowrap">Créditos “COBRANCA”</th>
+                        <th className="text-right px-2 py-2 whitespace-nowrap">Valor no extrato</th>
+                        <th className="text-right px-2 py-2">Diferença</th>
+                        <th className="text-left px-2 py-2">Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {((cobr?.linhas || []).length === 0) && (
+                        <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-gray-500">
+                          Nenhum boleto liquidado nem crédito “COBRANCA” no período.
+                        </td></tr>
+                      )}
+                      {(cobr?.linhas || []).map((l: any, k: number) => {
+                        const s = SIT_COBR[l.situacao] || { label: l.situacao, cls: "text-gray-600" };
+                        return (
+                          <tr key={k} className="border-t hover:bg-gray-50">
+                            <td className="px-2 py-1.5 whitespace-nowrap">{dt(l.data)}</td>
+                            <td className="px-2 py-1.5 text-right">{l.qtdBoletos || "—"}</td>
+                            <td className="px-2 py-1.5 text-right text-green-700 whitespace-nowrap">{brl(l.valorBoletos)}</td>
+                            <td className="px-2 py-1.5 text-right">{l.qtdCreditos || "—"}</td>
+                            <td className="px-2 py-1.5 text-right whitespace-nowrap">{brl(l.valorExtrato)}</td>
+                            <td className={`px-2 py-1.5 text-right font-medium whitespace-nowrap ${Math.abs(Number(l.diferenca || 0)) < 0.01 ? "text-gray-500" : "text-red-700"}`}>{brl(l.diferenca)}</td>
+                            <td className={`px-2 py-1.5 text-xs whitespace-nowrap ${s.cls}`}>{s.label}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-gray-50 font-semibold">
+                      <tr className="border-t">
+                        <td className="px-2 py-2">Total do período</td>
+                        <td className="px-2 py-2 text-right">{cobr?.totais?.qtdBoletos || 0}</td>
+                        <td className="px-2 py-2 text-right text-green-700">{brl(cobr?.totais?.valorBoletos)}</td>
+                        <td className="px-2 py-2 text-right">{cobr?.totais?.qtdCreditos || 0}</td>
+                        <td className="px-2 py-2 text-right">{brl(cobr?.totais?.valorExtrato)}</td>
+                        <td className={`px-2 py-2 text-right ${Math.abs(Number(cobr?.totais?.diferenca || 0)) < 0.01 ? "text-gray-600" : "text-red-700"}`}>{brl(cobr?.totais?.diferenca)}</td>
+                        <td className="px-2 py-2"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <div className="px-3 py-2 text-[11px] text-gray-500 border-t">
+                  O acumulado do período é a conferência que vale: o BB às vezes credita em D+1, então um dia pode
+                  divergir e o total fechar. {cobr?.ultimoDiaExtrato ? `Extrato importado até ${dt(cobr.ultimoDiaExtrato)}.` : ""}
+                </div>
+              </Bloco>
+
+              {/* Por origem */}
+              <Bloco titulo="⚡ Por origem da baixa automática">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs text-gray-600">
+                    <tr>
+                      <th className="text-left px-3 py-2">Origem</th>
+                      <th className="text-right px-3 py-2">Baixas</th>
+                      <th className="text-right px-3 py-2">Valor</th>
+                      <th className="text-right px-3 py-2">Fora do extrato</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(auto?.porOrigem || []).length === 0 && (
+                      <tr><td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-500">Nenhuma baixa no período.</td></tr>
+                    )}
+                    {(auto?.porOrigem || []).map((o: any, k: number) => (
+                      <tr key={k} className="border-t">
+                        <td className="px-3 py-1.5">
+                          <span className={o.automatica ? "font-medium text-emerald-700" : "text-gray-600"}>{o.rotulo}</span>
+                          {!o.automatica && <span className="ml-2 text-[11px] text-gray-400">(não é webhook)</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right">{o.qtd}</td>
+                        <td className="px-3 py-1.5 text-right">{brl(o.valor)}</td>
+                        <td className="px-3 py-1.5 text-right text-amber-700">{o.foraQtd ? `${o.foraQtd} · ${brl(o.foraValor)}` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="px-3 py-2 text-[11px] text-gray-500 border-t">
+                  Um gateway novo entra sozinho: a origem é classificada no backend por uma tabela de regras
+                  (<code>ORIGENS_BAIXA</code>) — incluir Mercado Pago, PagSeguro etc. é uma linha.
+                </div>
+              </Bloco>
+
+              {/* Título a título */}
+              <Bloco titulo="⚡ Recebimentos compensados automaticamente — título a título"
+                acao={<>
+                  <BotaoExport label="Excel" onClick={() => baixarXlsx(linhasAutomaticos(), "Recebidos automáticos", `Recebidos_Automaticos_${sufixo}`)} />
+                  <BotaoExport label="CSV" onClick={() => baixarCsv(linhasAutomaticos(), `Recebidos_Automaticos_${sufixo}`)} />
+                </>}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-xs text-gray-600">
+                      <tr>
+                        <th className="text-left px-2 py-2 whitespace-nowrap">Data</th>
+                        <th className="text-left px-2 py-2">Origem</th>
+                        <th className="text-left px-2 py-2">Cliente</th>
+                        <th className="text-left px-2 py-2 whitespace-nowrap">Título</th>
+                        <th className="text-left px-2 py-2 whitespace-nowrap">Vencimento</th>
+                        <th className="text-right px-2 py-2 whitespace-nowrap">Valor do título</th>
+                        <th className="text-right px-2 py-2 whitespace-nowrap">Recebido</th>
+                        <th className="text-left px-2 py-2 whitespace-nowrap">No extrato?</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {automaticos.length === 0 && (
+                        <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-500">
+                          Nenhum recebimento compensado por webhook no período.
+                        </td></tr>
+                      )}
+                      {automaticos.map((x: any, k: number) => (
+                        <tr key={k} className="border-t hover:bg-gray-50">
+                          <td className="px-2 py-1.5 whitespace-nowrap">{dt(x.data)}</td>
+                          <td className="px-2 py-1.5 text-xs">{x.origemRotulo}</td>
+                          <td className="px-2 py-1.5">
+                            <div className="font-medium">{x.nome || "—"}</div>
+                            {x.documento && <div className="text-[11px] text-gray-500">{fmtDoc(x.documento)}</div>}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap font-mono text-xs">{x.titulo || "s/nº"}</td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs">{x.vencimento ? dt(x.vencimento) : "—"}</td>
+                          <td className="px-2 py-1.5 text-right whitespace-nowrap">{x.valorTitulo == null ? "—" : brl(x.valorTitulo)}</td>
+                          <td className="px-2 py-1.5 text-right font-medium text-green-700 whitespace-nowrap">{brl(x.valor)}</td>
+                          <td className="px-2 py-1.5 text-xs whitespace-nowrap">
+                            {x.noExtrato
+                              ? <span className="text-blue-700">✅ sim<span className="text-gray-400"> · {x.casamento}</span></span>
+                              : <span className="text-amber-700">⏳ aguardando</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50 font-semibold">
+                      <tr className="border-t">
+                        <td className="px-2 py-2" colSpan={6}>{automaticos.length} recebimento(s)</td>
+                        <td className="px-2 py-2 text-right text-green-700">
+                          {brl(automaticos.reduce((a: number, x: any) => a + Number(x.valor || 0), 0))}
+                        </td>
+                        <td className="px-2 py-2"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <div className="px-3 py-2 text-[11px] text-gray-500 border-t">
+                  <b>“No extrato? ⏳ aguardando”</b> = o webhook já baixou o título, mas o crédito ainda não foi
+                  conciliado no extrato desta conta — é o que explica o financeiro estar à frente do banco. Assim que o
+                  OFX do dia entrar, a linha vira ✅ e o valor deixa de ser contado duas vezes.
+                </div>
+              </Bloco>
+            </div>
+          )}
 
           {/* ---------------- ABA: PENDENTES ---------------- */}
           {aba === "pendentes" && (
