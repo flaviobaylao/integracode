@@ -2875,6 +2875,19 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS discount numeric(12,2) DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
   db.execute(sql`ALTER TABLE payables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
+  // MULTA e JUROS na baixa (05/08/2026). Mesma licao do desconto: declarar no
+  // shared/schema.ts NAO basta (o `drizzle-kit push` do deploy nao criou as de
+  // desconto) e sem as colunas TODA baixa manual quebraria, porque o insert do
+  // pagamento passa a mandar `fine`/`interest`. Idempotentes.
+  db.execute(sql`ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS fine numeric(12,2) DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS interest numeric(12,2) DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS fine numeric(12,2) DEFAULT 0`).catch(() => {});
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS interest numeric(12,2) DEFAULT 0`).catch(() => {});
+  // Colunas de estorno de payable_payments: existiam so via ALTER dentro do
+  // endpoint de estorno; agora estao no schema, mas o push pode nao cria-las.
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS deleted_at timestamp`).catch(() => {});
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS deleted_by varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS deleted_reason text`).catch(() => {});
   // Importacao do historico de NF-e do Omie: marcadores de origem/lote (dedup por access_key).
   db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_origin varchar`).catch(() => {});
   db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS import_batch_id varchar`).catch(() => {});

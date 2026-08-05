@@ -2667,6 +2667,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         const pays: any[] = await storage.getReceivablePayments(id);
         payments = (pays || []).map((pp: any) => ({
           id: pp.id, paidAt: pp.paidAt, amount: pp.amount, paymentMethod: pp.paymentMethod,
+          discount: pp.discount, fine: pp.fine, interest: pp.interest,
           reference: pp.reference, notes: pp.notes, financialAccountId: pp.financialAccountId,
           createdAt: pp.createdAt, createdBy: uname(pp.createdBy),
         }));
@@ -2817,9 +2818,17 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       // o VALOR DO TITULO. Pode vir sozinho (valor 0 + desconto > 0): e a concessao
       // de desconto sem recebimento, que so ajusta quanto o cliente ainda deve.
       const descontoR = parseFloat(String(b.discount ?? '0')) || 0;
+      // MULTA e JUROS por atraso: o ESPELHO do desconto. Sao DINHEIRO (entram na
+      // conta financeira junto com o principal) e NAO abatem o titulo — o saldo em
+      // aberto so cai pelo `amount`. Por isso ficam FORA da checagem de saldo.
+      const multaR = parseFloat(String(b.fine ?? '0')) || 0;
+      const jurosR = parseFloat(String(b.interest ?? '0')) || 0;
+      const acrescimoR = Number((multaR + jurosR).toFixed(2));
       if (descontoR < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
+      if (multaR < 0) return res.status(400).json({ message: 'Multa não pode ser negativa.' });
+      if (jurosR < 0) return res.status(400).json({ message: 'Juros não podem ser negativos.' });
       if (amtBaixaR < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
-      if (!(amtBaixaR + descontoR > 0)) return res.status(400).json({ message: 'Informe um valor recebido, um desconto, ou os dois.' });
+      if (!(amtBaixaR + descontoR + acrescimoR > 0)) return res.status(400).json({ message: 'Informe um valor recebido, um desconto ou um acréscimo (multa/juros).' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoR = parseFloat((exists as any).amountPaid || '0');
       const totalR = parseFloat((exists as any).amount || '0');
@@ -2836,6 +2845,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         paidAt: rawDate ? new Date(rawDate) : new Date(),
         amount: amtBaixaR.toFixed(2),
         discount: descontoR.toFixed(2),
+        fine: multaR.toFixed(2),
+        interest: jurosR.toFixed(2),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -2843,8 +2854,12 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createReceivablePayment(data);
+      const _notaBaixaR = ['baixa R$ ' + amtBaixaR.toFixed(2)]
+        .concat(descontoR > 0 ? [`desconto R$ ${descontoR.toFixed(2)}`] : [])
+        .concat(multaR > 0 ? [`multa R$ ${multaR.toFixed(2)}`] : [])
+        .concat(jurosR > 0 ? [`juros R$ ${jurosR.toFixed(2)}`] : []).join(' + ');
       await logFinancialAudit({ req, action: 'pay', entity: 'receivable', entityId: req.params.id, amount: amtBaixaR,
-        note: descontoR > 0 ? `baixa R$ ${amtBaixaR.toFixed(2)} + desconto R$ ${descontoR.toFixed(2)}` : 'baixa' });
+        note: (descontoR + acrescimoR) > 0 ? _notaBaixaR : 'baixa' });
 
       const receivable = await storage.getReceivable(req.params.id);
       if (receivable) {
@@ -2881,12 +2896,17 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         // Idempotente pelo id do pagamento, entao nao duplica com o credito que o
         // webhook do boleto/PIX ja faz (aquele usa outro sourceType/reference).
         const contaRecId = (data as any).financialAccountId || (receivable as any).financialAccountId || null;
-        if (contaRecId && amtBaixaR > 0.005) {
+        // O que entra no banco e o principal MAIS multa/juros — e exatamente esse
+        // total que vai aparecer no extrato, entao e ele que tem de virar movimento
+        // (senao a conciliacao nunca casa o lancamento do banco com a baixa).
+        const creditoRec = Number((amtBaixaR + acrescimoR).toFixed(2));
+        if (contaRecId && creditoRec > 0.005) {
           try {
             const contaRec: any = await storage.getFinancialAccount(contaRecId);
             if (contaRec) await lancarNaConta({
-              accountId: contaRecId, tipo: 'credito', valor: amtBaixaR,
-              descricao: `Recebimento - ${(receivable as any).customerName || (receivable as any).titleNumber || 'conta a receber'}`,
+              accountId: contaRecId, tipo: 'credito', valor: creditoRec,
+              descricao: `Recebimento - ${(receivable as any).customerName || (receivable as any).titleNumber || 'conta a receber'}`
+                + (acrescimoR > 0.005 ? ` (principal R$ ${amtBaixaR.toFixed(2)}${multaR > 0 ? ` + multa R$ ${multaR.toFixed(2)}` : ''}${jurosR > 0 ? ` + juros R$ ${jurosR.toFixed(2)}` : ''})` : ''),
               sourceType: 'receivable_payment', sourceId: String(req.params.id),
               reference: String((payment as any)?.id || req.params.id),
               omieInstanceId: (contaRec as any).omieInstanceId || null,
@@ -3349,10 +3369,12 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     try {
       const r: any = await db.execute(sql`
         SELECT p.id, p.paid_at, p.amount, p.payment_method, p.reference, p.notes,
+               COALESCE(p.discount, 0) AS discount, COALESCE(p.fine, 0) AS fine,
+               COALESCE(p.interest, 0) AS interest,
                p.created_by, p.created_at, p.financial_account_id, fa.name AS conta
         FROM ${sql.raw('"' + tbl + '"')} p
         LEFT JOIN financial_accounts fa ON fa.id = p.financial_account_id
-        WHERE p.${sql.raw('"' + fk + '"')} = ${id}
+        WHERE p.${sql.raw('"' + fk + '"')} = ${id} AND p.deleted_at IS NULL
         ORDER BY p.paid_at NULLS LAST, p.created_at`);
       out.pagamentos = (r.rows || r || []);
       out.totalPago = out.pagamentos.reduce((a: number, p: any) => a + Number(String(p.amount ?? '0').replace(/[^0-9.-]/g, '') || 0), 0);
@@ -3416,9 +3438,17 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       // DESCONTO obtido do fornecedor: reduz o VALOR do titulo a pagar. Pode vir
       // sozinho (valor 0 + desconto > 0) — negociacao de abatimento sem pagamento.
       const descontoP = parseFloat(String(b.discount ?? '0')) || 0;
+      // MULTA e JUROS pagos por atraso: DINHEIRO que sai da conta junto com o
+      // principal e que NAO abate o titulo (o saldo em aberto so cai pelo `amount`).
+      // Ficam de fora da checagem de saldo, ao contrario do desconto.
+      const multaP = parseFloat(String(b.fine ?? '0')) || 0;
+      const jurosP = parseFloat(String(b.interest ?? '0')) || 0;
+      const acrescimoP = Number((multaP + jurosP).toFixed(2));
       if (descontoP < 0) return res.status(400).json({ message: 'Desconto não pode ser negativo.' });
+      if (multaP < 0) return res.status(400).json({ message: 'Multa não pode ser negativa.' });
+      if (jurosP < 0) return res.status(400).json({ message: 'Juros não podem ser negativos.' });
       if (amtBaixaP < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
-      if (!(amtBaixaP + descontoP > 0)) return res.status(400).json({ message: 'Informe um valor pago, um desconto, ou os dois.' });
+      if (!(amtBaixaP + descontoP + acrescimoP > 0)) return res.status(400).json({ message: 'Informe um valor pago, um desconto ou um acréscimo (multa/juros).' });
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoP = parseFloat((exists as any).amountPaid || '0');
       const totalP = parseFloat((exists as any).amount || '0');
@@ -3435,6 +3465,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         paidAt: rawDate ? new Date(rawDate) : new Date(),
         amount: amtBaixaP.toFixed(2),
         discount: descontoP.toFixed(2),
+        fine: multaP.toFixed(2),
+        interest: jurosP.toFixed(2),
         paymentMethod: b.paymentMethod || null,
         financialAccountId: b.financialAccountId || null,
         reference: b.reference || null,
@@ -3442,8 +3474,12 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         createdBy: user?.email || null,
       };
       const payment = await storage.createPayablePayment(data);
+      const _notaBaixaP = ['baixa R$ ' + amtBaixaP.toFixed(2)]
+        .concat(descontoP > 0 ? [`desconto R$ ${descontoP.toFixed(2)}`] : [])
+        .concat(multaP > 0 ? [`multa R$ ${multaP.toFixed(2)}`] : [])
+        .concat(jurosP > 0 ? [`juros R$ ${jurosP.toFixed(2)}`] : []).join(' + ');
       await logFinancialAudit({ req, action: 'pay', entity: 'payable', entityId: req.params.id, amount: amtBaixaP,
-        note: descontoP > 0 ? `baixa R$ ${amtBaixaP.toFixed(2)} + desconto R$ ${descontoP.toFixed(2)}` : 'baixa' });
+        note: (descontoP + acrescimoP) > 0 ? _notaBaixaP : 'baixa' });
 
       const payable = await storage.getPayable(req.params.id);
       if (payable) {
@@ -3478,7 +3514,10 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         // exibido ficava inflado por tudo que ja foi pago. O movimento e gravado
         // ANTES do saldo: se falhar, o saldo nao desce sem rastro.
         const contaId = (data as any).financialAccountId || (payable as any).financialAccountId || null;
-        if (contaId && amtBaixaP > 0.005) {
+        // Sai do banco o principal MAIS multa/juros — e esse total que aparece no
+        // extrato, entao e ele que vira movimento (senao a conciliacao nao casa).
+        const debitoPag = Number((amtBaixaP + acrescimoP).toFixed(2));
+        if (contaId && debitoPag > 0.005) {
           try {
             const conta: any = await storage.getFinancialAccount(contaId);
             if (conta) {
@@ -3486,8 +3525,9 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
               // (server/account-ledger.ts). Idempotente por pagamento: reenvio da
               // mesma baixa nao debita duas vezes.
               await lancarNaConta({
-                accountId: contaId, tipo: 'debito', valor: amtBaixaP,
-                descricao: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`,
+                accountId: contaId, tipo: 'debito', valor: debitoPag,
+                descricao: `Pagamento a fornecedor - ${(payable as any).supplierName || (payable as any).description || 'conta a pagar'}`
+                  + (acrescimoP > 0.005 ? ` (principal R$ ${amtBaixaP.toFixed(2)}${multaP > 0 ? ` + multa R$ ${multaP.toFixed(2)}` : ''}${jurosP > 0 ? ` + juros R$ ${jurosP.toFixed(2)}` : ''})` : ''),
                 sourceType: 'payable', sourceId: String(req.params.id), reference: String((payment as any)?.id || req.params.id),
                 omieInstanceId: (conta as any).omieInstanceId || null,
                 createdBy: user?.email || 'sistema', idempotente: true,

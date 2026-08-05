@@ -9105,7 +9105,12 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getPayablePayments(payableId: string): Promise<PayablePayment[]> {
-    return db.select().from(payablePayments).where(eq(payablePayments.payableId, payableId)).orderBy(desc(payablePayments.createdAt));
+    // Mesma regra do lado de RECEBER: baixa estornada (deleted_at preenchido pelo
+    // estorno) sai da listagem e de qualquer soma. Aqui o filtro faltava — baixa
+    // ja estornada continuava sendo contada.
+    return db.select().from(payablePayments)
+      .where(and(eq(payablePayments.payableId, payableId), sql`deleted_at IS NULL`))
+      .orderBy(desc(payablePayments.createdAt));
   }
 
   async createPayablePayment(data: InsertPayablePayment): Promise<PayablePayment> {
