@@ -204,7 +204,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     enabled: canAccessReports,
     refetchInterval: 30000,
   });
-  const hotsiteOrdersCount = hotsiteOrdersData?.orders?.length || 0;
+  // Badge do card Canais: conta SOMENTE os pedidos PENDENTES (mesma noção de
+  // "Pendente" que a tela Pedidos do Site mostra na coluna Status). Antes contava
+  // o total de pedidos do canal, o que dava um número alto e sem ação associada.
+  const hotsitePendentesCount = (hotsiteOrdersData?.orders || []).filter(
+    (o: any) => String(o?.status || '') === 'pending',
+  ).length;
 
   type MenuItem = { id: string; label: string; icon: string; available: boolean | string | null | undefined; badge: number | null };
   type MenuGroup = { groupLabel: string; color: string; bgColor: string; textColor: string; icon: string; hexColor: string; items: MenuItem[]; subGroups?: { label: string; icon: string; items: MenuItem[]; stateKey: string }[] };
@@ -236,7 +241,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'rota-do-dia', label: (isVendedor || isTelemarketing) ? 'Minha Rota do Dia' : 'Rota do Dia', icon: 'fas fa-map-marked-alt', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'fechar-rota', label: 'Fechar Rota do Dia', icon: 'fas fa-flag-checkered', available: isVendedor || isTelemarketing || canAccessReports, badge: null },
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
-        { id: 'canais', label: 'Canais', icon: 'fas fa-globe', available: canAccessReports || isTelemarketing, badge: hotsiteOrdersCount > 0 ? hotsiteOrdersCount : null },
+        { id: 'canais', label: 'Canais', icon: 'fas fa-globe', available: canAccessReports || isTelemarketing, badge: hotsitePendentesCount > 0 ? hotsitePendentesCount : null },
         { id: 'relatorios-graficos', label: 'Relatórios Gráficos', icon: 'fas fa-chart-column', available: canAccessReports, badge: null },
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports || isTelemarketing, badge: null },
