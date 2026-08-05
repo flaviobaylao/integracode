@@ -3047,6 +3047,221 @@ export function registerReconciliation(app: Express) {
         };
       });
 
+      // =====================================================================
+      // FASE 3.5e — RECEBIMENTOS COMPENSADOS POR WEBHOOK (BB e futuros)
+      // ---------------------------------------------------------------------
+      // O relatorio acima nasce 100% do EXTRATO (bank_statement_items) e so
+      // enxerga titulo baixado via bank_statement_item_matches. Recebimento
+      // compensado e baixado por WEBHOOK (settleBoletoCharge do boleto BB, PIX
+      // CONCLUIDA, cartao do hotsite) grava em receivable_payments e NAO cria
+      // match — logo, sumia do "Recebidos".
+      //
+      // Aqui lemos a fonte de verdade da BAIXA (receivable_payments) na conta
+      // do relatorio, classificamos por ORIGEM (tabela ORIGENS_BAIXA: incluir
+      // um gateway novo = uma linha) e cruzamos com os matches do extrato para
+      // saber o que JA esta representado no extrato e o que ainda nao chegou.
+      //
+      // REGRA DE OURO: nada disso entra em entradas/saidas/saldo. O saldo
+      // continua saindo so do extrato, senao o dinheiro seria contado duas
+      // vezes quando o OFX do dia for importado e o relatorio deixaria de
+      // bater com o banco. O que o webhook ja recebeu e o extrato ainda nao
+      // mostrou aparece em bloco proprio ("fora do extrato").
+      // =====================================================================
+      const ORIGENS_BAIXA: Array<{
+        chave: string; rotulo: string; grupo: "cobranca" | "pix" | "cartao" | "conciliacao" | "manual";
+        automatica: boolean; casa: (p: any) => boolean;
+      }> = [
+        // A ordem importa: o primeiro que casar define a origem.
+        { chave: "conciliacao", rotulo: "Conciliação bancária (extrato)", grupo: "conciliacao", automatica: false,
+          casa: (p) => /conciliacao-bancaria/i.test(String(p.reference || "")) },
+        { chave: "boleto_bb", rotulo: "Boleto BB (webhook)", grupo: "cobranca", automatica: true,
+          casa: (p) => /boleto\s*bb|bb-boleto|baixa automatica boleto/i.test(String(p.notes || ""))
+                    || (String(p.payment_method || "").toLowerCase() === "boleto" && /sistema|webhook|cron|bb/i.test(String(p.created_by || ""))) },
+        { chave: "pix_bb", rotulo: "PIX BB (webhook)", grupo: "pix", automatica: true,
+          casa: (p) => /pix/i.test(String(p.notes || "") + " " + String(p.reference || ""))
+                    || (String(p.payment_method || "").toLowerCase() === "pix" && /sistema|webhook|cron|bb/i.test(String(p.created_by || ""))) },
+        { chave: "cartao_hotsite", rotulo: "Cartão / hotsite (Cielo, Google Pay)", grupo: "cartao", automatica: true,
+          casa: (p) => /hotsite|cielo|google\s*pay|cart[aã]o|card/i.test(String(p.notes || "") + " " + String(p.payment_method || "")) },
+        // >>> Novo gateway entra AQUI (uma linha). Ex.:
+        // { chave: "mercadopago", rotulo: "Mercado Pago (webhook)", grupo: "cartao", automatica: true,
+        //   casa: (p) => /mercado\s*pago/i.test(String(p.notes || "")) },
+        { chave: "automatica_outros", rotulo: "Outra baixa automática", grupo: "cobranca", automatica: true,
+          casa: (p) => /sistema|webhook|cron/i.test(String(p.created_by || "")) },
+        { chave: "manual", rotulo: "Baixa manual (operador)", grupo: "manual", automatica: false, casa: () => true },
+      ];
+      const classificarOrigem = (p: any) => ORIGENS_BAIXA.find((o) => o.casa(p)) || ORIGENS_BAIXA[ORIGENS_BAIXA.length - 1];
+
+      let recebimentosAutomaticos: any = {
+        disponivel: false,
+        total: { qtd: 0, valor: 0 }, automaticos: { qtd: 0, valor: 0 },
+        foraDoExtrato: { qtd: 0, valor: 0 }, jaNoExtrato: { qtd: 0, valor: 0 },
+        porOrigem: [] as any[], itens: [] as any[],
+      };
+      let cobrancaBoletos: any = {
+        disponivel: false, linhas: [] as any[],
+        totais: { qtdBoletos: 0, valorBoletos: 0, qtdCreditos: 0, valorExtrato: 0, diferenca: 0 },
+        ultimoDiaExtrato: null as string | null,
+      };
+
+      try {
+        // ---- baixas registradas no periodo, nesta conta ---------------------
+        const baixas = rowsOf(await db.execute(sql`
+          SELECT rp.id, rp.receivable_id,
+                 to_char(rp.paid_at::date, 'YYYY-MM-DD') AS data,
+                 round(COALESCE(NULLIF(rp.amount::text, '')::numeric, 0), 2)::text AS amt,
+                 rp.payment_method, rp.reference, rp.notes, rp.created_by,
+                 r.title_number, r.customer_name, r.customer_document, r.due_date,
+                 r.amount AS r_amount, r.status AS r_status,
+                 (rc.code || ' ' || rc.name) AS categoria
+          FROM receivable_payments rp
+          JOIN receivables r ON r.id = rp.receivable_id AND r.deleted_at IS NULL
+          LEFT JOIN chart_of_accounts rc ON rc.id = r.chart_account_id
+          WHERE rp.financial_account_id = ${accountId}
+            AND rp.paid_at::date >= ${from}::date
+            AND rp.paid_at::date <= ${to}::date
+          ORDER BY rp.paid_at, rp.id
+          LIMIT 20000`));
+
+        // ---- o que dessas baixas JA aparece conciliado no extrato desta conta
+        // (evita contar duas vezes o mesmo dinheiro)
+        const recIds = [...new Set(baixas.map((b: any) => String(b.receivable_id)).filter(Boolean))];
+        const porRecValor = new Set<string>();
+        const porRec = new Map<string, { qtd: number; valor: number; kinds: string[] }>();
+        if (recIds.length) {
+          const mm = rowsOf(await db.execute(sql`
+            SELECT m.receivable_id,
+                   round(COALESCE(NULLIF(m.amount::text, '')::numeric, 0), 2)::text AS amt,
+                   COALESCE(m.match_kind, '') AS kind
+            FROM bank_statement_item_matches m
+            JOIN bank_statement_items i ON i.id = m.bank_statement_item_id
+            JOIN bank_statements s ON s.id = i.statement_id
+            WHERE m.receivable_id IN (${inList(recIds)})
+              AND s.financial_account_id = ${accountId}`));
+          for (const m of mm) {
+            const rid = String(m.receivable_id);
+            porRecValor.add(`${rid}|${m.amt}`);
+            const cur = porRec.get(rid) || { qtd: 0, valor: 0, kinds: [] as string[] };
+            cur.qtd++; cur.valor += Number(m.amt || 0);
+            if (m.kind && !cur.kinds.includes(String(m.kind))) cur.kinds.push(String(m.kind));
+            porRec.set(rid, cur);
+          }
+        }
+
+        const itensAuto = baixas.map((b: any) => {
+          const o = classificarOrigem(b);
+          const rid = String(b.receivable_id);
+          const valor = Number(b.amt || 0);
+          // representado no extrato = ha match do mesmo titulo (mesmo valor, ou
+          // qualquer match do titulo nesta conta) OU a baixa saiu da propria
+          // conciliacao bancaria.
+          const casouValor = porRecValor.has(`${rid}|${b.amt}`);
+          const casouTitulo = porRec.has(rid);
+          const noExtrato = o.chave === "conciliacao" || casouValor || casouTitulo;
+          return {
+            id: b.id, receivableId: rid, data: b.data, valor,
+            origem: o.chave, origemRotulo: o.rotulo, grupo: o.grupo, automatica: o.automatica,
+            formaPagamento: b.payment_method || null,
+            titulo: b.title_number || null, nome: b.customer_name || null,
+            documento: b.customer_document || null, vencimento: b.due_date || null,
+            valorTitulo: b.r_amount == null ? null : Number(b.r_amount),
+            situacaoTitulo: b.r_status || null,
+            categoria: b.categoria || null,
+            referencia: b.reference || null, observacao: b.notes || null, por: b.created_by || null,
+            noExtrato, casamento: noExtrato ? (o.chave === "conciliacao" ? "conciliacao" : casouValor ? "valor" : "titulo") : null,
+            matchKinds: (porRec.get(rid)?.kinds || []),
+          };
+        });
+
+        const somaQ = (ls: any[]) => ({
+          qtd: ls.length,
+          valor: Number(ls.reduce((a: number, x: any) => a + Number(x.valor || 0), 0).toFixed(2)),
+        });
+        const automaticos = itensAuto.filter((x: any) => x.automatica);
+        const fora = automaticos.filter((x: any) => !x.noExtrato);
+        const dentro = automaticos.filter((x: any) => x.noExtrato);
+        const porOrigemMap: Record<string, any> = {};
+        for (const x of itensAuto) {
+          const k = x.origem;
+          (porOrigemMap[k] ||= { origem: k, rotulo: x.origemRotulo, grupo: x.grupo, automatica: x.automatica,
+                                 qtd: 0, valor: 0, foraQtd: 0, foraValor: 0 });
+          porOrigemMap[k].qtd++; porOrigemMap[k].valor += x.valor;
+          if (x.automatica && !x.noExtrato) { porOrigemMap[k].foraQtd++; porOrigemMap[k].foraValor += x.valor; }
+        }
+        recebimentosAutomaticos = {
+          disponivel: true,
+          total: somaQ(itensAuto),
+          automaticos: somaQ(automaticos),
+          foraDoExtrato: somaQ(fora),
+          jaNoExtrato: somaQ(dentro),
+          porOrigem: Object.values(porOrigemMap)
+            .map((c: any) => ({ ...c, valor: Number(c.valor.toFixed(2)), foraValor: Number(c.foraValor.toFixed(2)) }))
+            .sort((a: any, b: any) => b.valor - a.valor),
+          itens: itensAuto,
+        };
+
+        // ---- COBRANCA (boletos) DIA A DIA x credito do extrato --------------
+        // O BB credita a liquidacao dos boletos do dia em UMA linha "COBRANCA"
+        // no extrato (repasse consolidado) — por isso o titulo a titulo nunca
+        // casa 1:1. A conferencia correta e SOMAR os boletos recebidos no dia e
+        // comparar com o(s) credito(s) "COBRANCA" daquele dia.
+        const boletosPorDia: Record<string, { qtd: number; valor: number }> = {};
+        for (const x of itensAuto) {
+          if (x.grupo !== "cobranca" || !x.automatica) continue;
+          (boletosPorDia[x.data] ||= { qtd: 0, valor: 0 });
+          boletosPorDia[x.data].qtd++; boletosPorDia[x.data].valor += x.valor;
+        }
+        const credCobr = rowsOf(await db.execute(sql`
+          SELECT to_char(i.transaction_date::date, 'YYYY-MM-DD') AS d,
+                 COUNT(*)::int AS qtd, SUM(i.amount::numeric)::numeric AS valor
+          FROM bank_statement_items i
+          JOIN bank_statements s ON s.id = i.statement_id
+          WHERE i.mirror_of IS NULL AND ${filtroConta} AND i.type = 'C'
+            AND regexp_replace(lower(COALESCE(i.description, '')), '[^a-z]', '', 'g') IN ('cobranca', 'cobrana', 'cobranaa')
+            AND i.transaction_date::date >= ${from}::date
+            AND i.transaction_date::date <= ${to}::date
+          GROUP BY 1 ORDER BY 1`));
+        const extPorDia: Record<string, { qtd: number; valor: number }> = {};
+        for (const c of credCobr) extPorDia[String(c.d)] = { qtd: Number(c.qtd || 0), valor: Number(Number(c.valor || 0).toFixed(2)) };
+        // ate onde o extrato foi importado (depois disso e "aguardando extrato")
+        const ultDia = rowsOf(await db.execute(sql`
+          SELECT to_char(MAX(i.transaction_date::date), 'YYYY-MM-DD') AS d
+          FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+          WHERE i.mirror_of IS NULL AND ${filtroConta}`))[0];
+        const ultimoDiaExtrato = ultDia?.d ? String(ultDia.d) : null;
+
+        const dias = [...new Set([...Object.keys(boletosPorDia), ...Object.keys(extPorDia)])].sort();
+        const linhasCobr = dias.map((d) => {
+          const b = boletosPorDia[d] || { qtd: 0, valor: 0 };
+          const e = extPorDia[d] || { qtd: 0, valor: 0 };
+          const dif = Number((b.valor - e.valor).toFixed(2));
+          const semExtrato = ultimoDiaExtrato != null && d > ultimoDiaExtrato;
+          const situacao = Math.abs(dif) < 0.01 ? "bate"
+            : semExtrato || (e.qtd === 0 && b.qtd > 0) ? "aguardando_extrato"
+            : b.qtd === 0 ? "so_extrato" : "diverge";
+          return {
+            data: d, qtdBoletos: b.qtd, valorBoletos: Number(b.valor.toFixed(2)),
+            qtdCreditos: e.qtd, valorExtrato: e.valor, diferenca: dif, situacao,
+          };
+        });
+        const tB = linhasCobr.reduce((a, l) => a + l.valorBoletos, 0);
+        const tE = linhasCobr.reduce((a, l) => a + l.valorExtrato, 0);
+        cobrancaBoletos = {
+          disponivel: true, linhas: linhasCobr, ultimoDiaExtrato,
+          totais: {
+            qtdBoletos: linhasCobr.reduce((a, l) => a + l.qtdBoletos, 0),
+            valorBoletos: Number(tB.toFixed(2)),
+            qtdCreditos: linhasCobr.reduce((a, l) => a + l.qtdCreditos, 0),
+            valorExtrato: Number(tE.toFixed(2)),
+            diferenca: Number((tB - tE).toFixed(2)),
+          },
+        };
+      } catch (e: any) {
+        // Nunca derruba o relatorio: se a base nao tiver receivable_payments (ou
+        // alguma coluna), o relatorio continua funcionando exatamente como antes.
+        recebimentosAutomaticos.erro = String(e?.message || e).slice(0, 200);
+        cobrancaBoletos.erro = recebimentosAutomaticos.erro;
+      }
+
       // ---- fechamento: calculado x banco ----------------------------------
       // Ancora usada no fechamento = a mais recente com data <= fim do periodo.
       const ancoraFim = [...conferencia].filter((a: any) => (a.data as string) <= to).pop() || null;
@@ -3081,8 +3296,16 @@ export function registerReconciliation(app: Express) {
         porCategoria,
         porMes,
         conferencia,
+        recebimentosAutomaticos,
+        cobrancaBoletos,
         itens: linhas,
         avisos: [
+          ...(Number(recebimentosAutomaticos?.foraDoExtrato?.qtd || 0) > 0
+            ? [`${recebimentosAutomaticos.foraDoExtrato.qtd} recebimento(s) compensado(s) automaticamente (webhook) somando R$ ${Number(recebimentosAutomaticos.foraDoExtrato.valor).toFixed(2)} ainda NÃO aparecem conciliados no extrato desta conta. O saldo não os inclui de propósito — eles entram quando o extrato do dia for importado.`]
+            : []),
+          ...(cobrancaBoletos?.disponivel && Math.abs(Number(cobrancaBoletos?.totais?.diferenca || 0)) >= 0.01
+            ? [`Cobrança (boletos) do período: recebido R$ ${Number(cobrancaBoletos.totais.valorBoletos).toFixed(2)} contra R$ ${Number(cobrancaBoletos.totais.valorExtrato).toFixed(2)} creditado como "COBRANCA" no extrato — diferença de R$ ${Number(cobrancaBoletos.totais.diferenca).toFixed(2)}.`]
+            : []),
           ...(baseOrigem === "zero" ? ["Nenhum saldo do banco foi encontrado nos extratos importados (bloco LEDGERBAL do OFX). O saldo inicial foi considerado ZERO — informe o saldo inicial no filtro para o relatório fechar com o extrato."] : []),
           ...(baseOrigem === "informado" ? ["Saldo inicial informado manualmente no filtro."] : []),
           ...(ancoraFim && Math.abs(diferenca as number) >= 0.01 ? [`O saldo calculado NÃO bate com o extrato em ${String(ancoraFim.data).split("-").reverse().join("/")}: diferença de R$ ${(diferenca as number).toFixed(2)}. Verifique lançamentos faltando (extrato não importado) ou duplicados.${(ancoraFim as any).parcial ? " (esse arquivo é uma foto do meio do dia; a comparação já considera só o que o banco tinha naquele instante)" : ""}`] : []),
