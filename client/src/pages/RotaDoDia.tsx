@@ -269,6 +269,16 @@ export default function RotaDoDia() {
     },
     enabled: !isAdmin && !!selectedSellerId && !!selectedDate,
   });
+  // FECHAMENTO (Fase 5): status do fechamento do dia — habilita o botão "Fechar o dia" direto na Rota do Dia.
+  const { data: fechamentoStatus } = useQuery<any>({
+    queryKey: ['/api/vendedor/fechamento/status', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/vendedor/fechamento/status?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return { closed: false };
+      return r.json();
+    },
+    enabled: (isVendedor || isTelemarketing) && !!selectedSellerId && !!selectedDate,
+  });
   const fmtKm = (n: number | undefined) => `${(Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
 
   const returnRepescagemMutation = useMutation({
@@ -1241,6 +1251,23 @@ export default function RotaDoDia() {
           </Button>
         )}
       </div>
+
+      {/* FECHAMENTO (Fase 5): botão "Fechar o dia" direto na Rota do Dia (vendedor/telemarketing) */}
+      {(isVendedor || isTelemarketing) && (
+        fechamentoStatus?.closed ? (
+          <div className="mb-6 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-bold"><CheckCircle className="h-5 w-5" /> Dia fechado{fechamentoStatus?.closure?.closedAt ? ` às ${String(fechamentoStatus.closure.closedAt).slice(11, 16)}` : ''}</div>
+            <button onClick={() => navigate('/fechar-rota?date=' + selectedDate)} className="text-sm font-semibold text-green-700 dark:text-green-300 underline">Ver fechamento</button>
+          </div>
+        ) : (
+          <button
+            onClick={() => navigate('/fechar-rota?date=' + selectedDate)}
+            className="mb-6 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-xl py-4 font-bold text-lg shadow-lg shadow-green-600/20 transition"
+          >
+            <CheckCircle className="h-5 w-5" /> Fechar o dia
+          </button>
+        )
+      )}
 
       {/* 🎨 Legenda das cores dos cards */}
       <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
