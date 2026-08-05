@@ -1921,6 +1921,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         // Os grupos financeiros so tinham a conta-titulo (codigo sem ponto) e a DRE
         // monta linha apenas para conta FILHA — por isso viviam zerados. Estas duas
         // sao alimentadas pela multa/juros das baixas (ver bloco na /api/financial/dre).
+        // Em base ja existente elas nascem pelo ensureContasFinanceirasDre, com o
+        // proximo codigo livre — o codigo daqui vale so para base nova.
         { code: '8.01', name: 'Multa e juros recebidos (atraso)', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
 
         { code: '9', name: 'Despesas Financeiras (juros, tarifas)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
@@ -3815,29 +3817,49 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // DRE (Income Statement) - Monthly Breakdown
   // ============================================================================
 
-  // As duas contas filhas dos grupos financeiros. O `seed` do plano de contas so
-  // roda em base vazia, entao quem ja tem plano criado nunca as receberia — daqui
-  // elas nascem sob demanda, globais (sem instancia, valem para todas) e so uma vez.
+  // As duas contas filhas dos grupos financeiros que recebem a mora das baixas. O
+  // `seed` do plano de contas so roda em base vazia, entao quem ja tem plano criado
+  // nunca as receberia — daqui elas nascem sob demanda, globais (sem instancia).
+  //
+  // A busca e por NOME, jamais por codigo fixo. O plano de contas e editado pelo
+  // cliente, e um codigo "livre" na nossa cabeca pode ja estar ocupado: em producao
+  // 9.01 ja era "Juros e financiamentos" e 9.02 "Tarifas bancarias" (criadas em
+  // 12/jul). Assumir 9.01 sequestraria uma conta em uso — a linha dela na DRE
+  // passaria a mostrar a mora e o valor real sumiria sem aviso. Quando a conta nao
+  // existe, ela nasce com o PROXIMO codigo livre do grupo.
+  const MORA_DRE = {
+    rec: { nome: 'Multa e juros recebidos (atraso)', grupo: 'receitas_financeiras', tipo: 'receita' as const, base: '8' },
+    desp: { nome: 'Multa e juros pagos (atraso)', grupo: 'despesas_financeiras', tipo: 'despesa' as const, base: '9' },
+  };
   let __contasFinDre: { rec: string | null; desp: string | null } | null = null;
   async function ensureContasFinanceirasDre(): Promise<{ rec: string | null; desp: string | null }> {
     if (__contasFinDre) return __contasFinDre;
-    const achar = (lista: any[], code: string) => lista.find((a: any) => String(a.code) === code);
+    const porNome = (lista: any[], nome: string, grupo: string) => lista.find(
+      (a: any) => String(a.dreGroup) === grupo && String(a.name || '').trim().toLowerCase() === nome.toLowerCase());
+    const proximoCodigo = (lista: any[], base: string) => {
+      let maior = 0;
+      for (const a of lista) {
+        const m = String(a.code || '').match(new RegExp('^' + base + '\\.(\\d+)$'));
+        if (m) maior = Math.max(maior, Number(m[1]));
+      }
+      return base + '.' + String(maior + 1).padStart(2, '0');
+    };
     try {
       let todas = await storage.getChartOfAccounts();
       // Sem plano de contas nenhum nao inventamos nada: quem popula e o seed.
       if (!todas.length) return (__contasFinDre = { rec: null, desp: null });
-      const novas = [
-        { code: '8.01', name: 'Multa e juros recebidos (atraso)', type: 'receita' as const, dreGroup: 'receitas_financeiras' },
-        { code: '9.01', name: 'Multa e juros pagos (atraso)', type: 'despesa' as const, dreGroup: 'despesas_financeiras' },
-      ];
-      let criou = false;
-      for (const n of novas) {
-        if (achar(todas, n.code)) continue;
-        await storage.createChartOfAccount({ code: n.code, name: n.name, type: n.type, dreGroup: n.dreGroup, isActive: true } as any);
-        criou = true;
+      for (const alvo of [MORA_DRE.rec, MORA_DRE.desp]) {
+        if (porNome(todas, alvo.nome, alvo.grupo)) continue;
+        await storage.createChartOfAccount({
+          code: proximoCodigo(todas, alvo.base), name: alvo.nome,
+          type: alvo.tipo, dreGroup: alvo.grupo, isActive: true,
+        } as any);
+        todas = await storage.getChartOfAccounts();   // o proximo codigo ja conta com esta
       }
-      if (criou) todas = await storage.getChartOfAccounts();
-      __contasFinDre = { rec: achar(todas, '8.01')?.id || null, desp: achar(todas, '9.01')?.id || null };
+      __contasFinDre = {
+        rec: porNome(todas, MORA_DRE.rec.nome, MORA_DRE.rec.grupo)?.id || null,
+        desp: porNome(todas, MORA_DRE.desp.nome, MORA_DRE.desp.grupo)?.id || null,
+      };
     } catch (e: any) {
       console.warn('[DRE] nao consegui garantir as contas financeiras:', String(e?.message || e).slice(0, 120));
       __contasFinDre = { rec: null, desp: null };
