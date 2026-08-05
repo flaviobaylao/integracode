@@ -3443,6 +3443,13 @@ export const receivablePayments = pgTable("receivable_payments", {
   // titulo (receivables.amount). Fica aqui, e nao so na conta, para responder
   // "quem deu quanto de desconto, quando e por que".
   discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
+  // MULTA e JUROS recebidos por atraso. Sao o ESPELHO do desconto: o desconto
+  // reduz o titulo e NAO e dinheiro; a multa/juros E dinheiro (entra na conta
+  // junto com o principal) e NAO abate o titulo — o saldo em aberto so cai pelo
+  // `amount`. Separados porque multa (percentual fixo) e juros (mora pro rata)
+  // sao receitas financeiras distintas e o boleto do banco as discrimina.
+  fine: decimal("fine", { precision: 12, scale: 2 }).default('0'),
+  interest: decimal("interest", { precision: 12, scale: 2 }).default('0'),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
   financialAccountId: varchar("financial_account_id"),
   reference: varchar("reference"),
@@ -3567,12 +3574,23 @@ export const payablePayments = pgTable("payable_payments", {
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   // DESCONTO concedido nesta baixa (ver receivable_payments.discount).
   discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
+  // MULTA e JUROS pagos por atraso (ver receivable_payments.fine/interest).
+  // Saem da conta junto com o principal e NAO abatem o titulo.
+  fine: decimal("fine", { precision: 12, scale: 2 }).default('0'),
+  interest: decimal("interest", { precision: 12, scale: 2 }).default('0'),
   paymentMethod: financialPaymentMethodEnum("payment_method"),
   financialAccountId: varchar("financial_account_id"),
   reference: varchar("reference"),
   notes: text("notes"),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // ESTORNO (soft-delete). Iguais as de receivable_payments: eram criadas por
+  // ALTER dentro do endpoint de estorno e NAO existiam aqui — como o deploy roda
+  // `drizzle-kit push`, que so conhece este arquivo, um push destrutivo derrubaria
+  // as tres colunas e as baixas ja estornadas voltariam a somar.
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by"),
+  deletedReason: text("deleted_reason"),
 }, (table) => [
   index("idx_payable_payments_payable").on(table.payableId),
   index("idx_payable_payments_paid_at").on(table.paidAt),
