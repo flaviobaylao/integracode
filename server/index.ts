@@ -2144,6 +2144,41 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
+  // FECHAMENTO (Fase 5): painel mensal — agregados de justificativas e fechamentos do mes.
+  app.get('/api/admin/fechamento/mensal', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable(); await ensureRouteClosures();
+      let mes = String(req.query.mes || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}$/.test(mes)) { mes = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7); }
+      const rm: any = await db.execute(sql`SELECT reason AS motivo, COUNT(*)::int AS n FROM visit_justifications WHERE to_char(visit_date, 'YYYY-MM') = ${mes} AND reason <> 'removido' GROUP BY reason ORDER BY n DESC`);
+      const porMotivo = ((rm.rows || rm) as any[]).map((x: any) => ({ motivo: x.motivo, n: Number(x.n) }));
+      const rc: any = await db.execute(sql.raw("SELECT vj.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade, COUNT(*)::int AS n, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor, (array_agg(vj.reason ORDER BY vj.visit_date DESC))[1] AS motivo FROM visit_justifications vj LEFT JOIN customers c ON c.id = vj.customer_id WHERE to_char(vj.visit_date,'YYYY-MM') = '" + mes + "' AND vj.reason <> 'removido' GROUP BY vj.customer_id, vj.seller_id ORDER BY n DESC, nome LIMIT 200"));
+      const clientes = ((rc.rows || rc) as any[]).map((x: any) => ({ customerId: String(x.cid), nome: x.nome || x.cid, cidade: x.cidade || '', vendedor: x.vendedor || '', n: Number(x.n), motivo: x.motivo }));
+      const rv: any = await db.execute(sql.raw("SELECT rc.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = rc.seller_id OR u.omie_vendor_code = replace(COALESCE(rc.seller_id,''),'omie-vendor-','') OR u.id = rc.seller_id LIMIT 1) AS vendedor, COUNT(*)::int AS dias, COALESCE(SUM(rc.nao_visitados),0)::int AS nv, COALESCE(SUM(rc.justificados),0)::int AS just, COALESCE(SUM(rc.pendentes),0)::int AS pend FROM route_closures rc WHERE to_char(rc.close_date,'YYYY-MM') = '" + mes + "' GROUP BY rc.seller_id ORDER BY nv DESC"));
+      const porVendedor = ((rv.rows || rv) as any[]).map((x: any) => ({ sellerId: String(x.sid), vendedor: x.vendedor || x.sid, dias: Number(x.dias), naoVisitados: Number(x.nv), justificados: Number(x.just), pendentes: Number(x.pend) }));
+      res.json({ ok: true, mes, totalNaoVisitados: porMotivo.reduce((s: number, x: any) => s + x.n, 0), porMotivo, clientes, porVendedor });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // FECHAMENTO (Fase 5): fecho automatico no horario de corte (se ligado). Verifica a cada 10 min, roda 1x/dia.
+  async function fechamentoAutoTick() {
+    try {
+      const cfg = await getFechamentoConfig();
+      if (!cfg.fechoAutomatico) return;
+      const now = new Date();
+      const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now);
+      if (String(hhmm) < String(cfg.fechoHorario || '19:00')) return;
+      await ensureConfigGlobal();
+      const lr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'fechamento_auto_last' LIMIT 1`);
+      if (((lr.rows || lr) as any[])[0]?.valor === today) return;
+      await ensureRouteClosures();
+      await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by) SELECT dr.seller_id, ${today}::date, 'auto' FROM daily_routes dr WHERE dr.route_date::date = ${today}::date AND NOT EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = ${today}::date) ON CONFLICT (seller_id, close_date) DO NOTHING`);
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('fechamento_auto_last', ${today}, 'Ultimo fecho automatico do dia') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+    } catch { /* noop */ }
+  }
+  setInterval(fechamentoAutoTick, 10 * 60 * 1000);
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
