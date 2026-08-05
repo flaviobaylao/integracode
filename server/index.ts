@@ -2033,6 +2033,39 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     }
   });
 
+  // FECHAMENTO DE ROTA (Ago/2026): regras configuraveis pelo admin (config_global, chave 'fechamento_config').
+  async function ensureConfigGlobal() {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+  }
+  const FECHAMENTO_DEFAULTS: any = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: '19:00', tipos: ['presencial', 'virtual', 'lead'] };
+  async function getFechamentoConfig() {
+    await ensureConfigGlobal();
+    const r: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'fechamento_config' LIMIT 1`);
+    const row = ((r.rows || r) as any[])[0];
+    let cfg: any = { ...FECHAMENTO_DEFAULTS };
+    if (row && row.valor) { try { cfg = { ...FECHAMENTO_DEFAULTS, ...JSON.parse(row.valor) }; } catch { /* usa defaults */ } }
+    return cfg;
+  }
+  app.get('/api/admin/fechamento/config', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: Request, res: Response) => {
+    try { res.json({ ok: true, config: await getFechamentoConfig() }); }
+    catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+  app.post('/api/admin/fechamento/config', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      const cur = await getFechamentoConfig();
+      const b = req.body || {};
+      const next: any = { ...cur };
+      if (typeof b.travaObrigatoria === 'boolean') next.travaObrigatoria = b.travaObrigatoria;
+      if (typeof b.bloqueioDiaSeguinte === 'boolean') next.bloqueioDiaSeguinte = b.bloqueioDiaSeguinte;
+      if (typeof b.fechoAutomatico === 'boolean') next.fechoAutomatico = b.fechoAutomatico;
+      if (typeof b.fechoHorario === 'string' && /^\d{2}:\d{2}$/.test(b.fechoHorario)) next.fechoHorario = b.fechoHorario;
+      if (Array.isArray(b.tipos)) next.tipos = b.tipos.filter((t: any) => ['presencial', 'virtual', 'lead'].includes(t));
+      const valor = JSON.stringify(next);
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('fechamento_config', ${valor}, 'Regras do Fechamento de Rota') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, config: next });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
 // Limpeza (02/jul/2026): remove visitas PENDENTES (hoje+futuras) de clientes fora da lista de Clientes Ativos
   app.post('/api/admin/visits/cleanup-off-list', async (req: Request, res: Response) => {
     try {
