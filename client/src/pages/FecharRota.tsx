@@ -80,7 +80,8 @@ export default function FecharRota() {
   const isAdmin = ["admin", "coordinator", "administrative"].includes(role);
   const { toast } = useToast();
 
-  const today = getBrazilDateISO();
+  const _qd = (typeof window !== "undefined") ? new URLSearchParams(window.location.search).get("date") : null;
+  const today = (_qd && /^\d{4}-\d{2}-\d{2}$/.test(_qd)) ? _qd : getBrazilDateISO();
   const [pickSeller, setPickSeller] = useState<string>("");
   const sellerId = isAdmin ? pickSeller : (uAny?.id || "");
 
