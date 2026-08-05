@@ -569,8 +569,7 @@ export interface IStorage {
   deleteDigitalCertificate(id: string): Promise<void>;
 
   // Fiscal Invoices
-  getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string; startDate?: string; endDate?: string }): Promise<FiscalInvoice[]>;
-  getFiscalInvoiceStats(): Promise<{ total: number; draft: number; authorized: number; cancelled: number; rejected: number; totalValueAuthorized: number; environment: string }>;
+  getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string }): Promise<FiscalInvoice[]>;
   getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined>;
   getNextInvoiceNumber(series?: string, issuerCnpj?: string): Promise<number>;
   createFiscalInvoice(data: InsertFiscalInvoice): Promise<FiscalInvoice>;
@@ -6213,8 +6212,12 @@ export class DatabaseStorage implements IStorage {
         }
       } catch { /* mantém o padrão */ }
       if (!(timeoutMinutes > 0)) return { count: 0, conversations: [] };
-      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
-      
+      // ⏰ last_message_time / last_attended_at sao gravados com nowBrazil() (hora de parede
+      // de Brasilia). O corte tem que sair do MESMO relogio — com new Date() a conversa
+      // parecia 3h parada e era encerrada logo depois de o atendente escrever.
+      const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
+
+
       // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
       // Status a fechar: 'new', 'assigned', 'in-progress'
       // Também limpa assignedAgentId para que cliente possa ser atendido novamente
@@ -7910,7 +7913,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getConversationsAwaitingResponse(timeoutMinutes: number): Promise<ChatConversation[]> {
-    const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+    // ⏰ mesmo relogio de lastMessageTime (nowBrazil), senao tudo parece 3h parado.
+    const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
     
     const conversations = await db
       .select()
@@ -8291,48 +8295,8 @@ export class DatabaseStorage implements IStorage {
   // FISCAL INVOICES
   // ============================================================================
 
-  // CONTADORES REAIS da tela Faturamento NF-e. NAO reaproveita getFiscalInvoices():
-  // aquele metodo tem teto de 1000 linhas (visao rapida da listagem), entao contar o array
-  // devolvia sempre "1000" como se fosse o total da tabela (~60k notas) e o "Valor Total
-  // Autorizado" era so a soma das 1000 mais recentes. Aqui a agregacao e feita em SQL sobre
-  // a tabela INTEIRA, sem limite e sem trafegar linha nenhuma.
-  async getFiscalInvoiceStats(): Promise<{ total: number; draft: number; authorized: number; cancelled: number; rejected: number; totalValueAuthorized: number; environment: string }> {
-    const rows: any = await db.select({
-      total: sql<number>`count(*)::int`,
-      draft: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'draft')::int`,
-      authorized: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'authorized')::int`,
-      cancelled: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'cancelled')::int`,
-      rejected: sql<number>`count(*) filter (where ${fiscalInvoices.status} = 'rejected')::int`,
-      totalValueAuthorized: sql<number>`coalesce(sum(case when ${fiscalInvoices.status} = 'authorized' then ${fiscalInvoices.totalInvoice} else 0 end), 0)::float8`,
-    }).from(fiscalInvoices);
-    const r = rows?.[0] || {};
-    const [last]: any = await db.select({ environment: fiscalInvoices.environment })
-      .from(fiscalInvoices).orderBy(desc(fiscalInvoices.createdAt)).limit(1);
-    return {
-      total: Number(r.total || 0),
-      draft: Number(r.draft || 0),
-      authorized: Number(r.authorized || 0),
-      cancelled: Number(r.cancelled || 0),
-      rejected: Number(r.rejected || 0),
-      totalValueAuthorized: Number(r.totalValueAuthorized || 0),
-      environment: last?.environment || 'homologacao',
-    };
-  }
-
-  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string; startDate?: string; endDate?: string }): Promise<FiscalInvoice[]> {
+  async getFiscalInvoices(filters?: { status?: string; customerId?: string; environment?: string; search?: string }): Promise<FiscalInvoice[]> {
     const conditions = [];
-    // PERIODO NO SERVIDOR (03/08): sem isto a tela recebia so as 1.000 notas mais recentes por
-    // data de CRIACAO e filtrava o periodo no navegador — conferir um mes fechado trazia meio
-    // mes. Ex.: julho/2026 mostrava 423 das 845 notas de venda (R$ 118.772,18 de R$ 239.149,67),
-    // porque as 1.000 mais recentes comecavam em 16/07. A data usada e a mesma da Regra Oficial:
-    // COALESCE(emissao, autorizacao, criacao), sem conversao de fuso.
-    const _dtCol = sql`COALESCE(${fiscalInvoices.emissionDate}, ${fiscalInvoices.authorizationDate}, ${fiscalInvoices.createdAt})::date`;
-    const _per = String(filters?.startDate || '').trim();
-    const _perFim = String(filters?.endDate || '').trim();
-    const _isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
-    const temPeriodo = _isDate(_per) || _isDate(_perFim);
-    if (_isDate(_per)) conditions.push(sql`${_dtCol} >= ${_per}::date`);
-    if (_isDate(_perFim)) conditions.push(sql`${_dtCol} <= ${_perFim}::date`);
     if (filters?.status) conditions.push(eq(fiscalInvoices.status, filters.status));
     if (filters?.customerId) conditions.push(eq(fiscalInvoices.customerId, filters.customerId));
     if (filters?.environment) conditions.push(eq(fiscalInvoices.environment, filters.environment));
@@ -8358,9 +8322,7 @@ export class DatabaseStorage implements IStorage {
     const { xmlEnvio, xmlRetorno, xmlAutorizacao, ...listCols } = getTableColumns(fiscalInvoices);
     // Com busca ativa o resultado ja e restrito pelo filtro -> teto de 500; sem busca,
     // mantem as 1000 mais recentes (visao padrao rapida).
-    // Com periodo definido o recorte ja e pequeno (um mes ~ 1.100 notas) e o teto sobe para
-    // 5.000, garantindo o MES INTEIRO. Sem periodo, mantem as 1.000 mais recentes.
-    const lim = temPeriodo ? 5000 : (q ? 500 : 1000);
+    const lim = q ? 500 : 1000;
 
     if (conditions.length > 0) {
       return db.select(listCols).from(fiscalInvoices)
@@ -9033,12 +8995,7 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getReceivablePayments(receivableId: string): Promise<ReceivablePayment[]> {
-    // Pagamento ESTORNADO (deleted_at preenchido pelo estorno de duplicidade) sai da
-    // listagem e de qualquer soma feita a partir dela. A linha continua na tabela,
-    // com quem estornou e por que — consultavel pelo endpoint de auditoria.
-    return db.select().from(receivablePayments)
-      .where(and(eq(receivablePayments.receivableId, receivableId), sql`deleted_at IS NULL`))
-      .orderBy(desc(receivablePayments.createdAt));
+    return db.select().from(receivablePayments).where(eq(receivablePayments.receivableId, receivableId)).orderBy(desc(receivablePayments.createdAt));
   }
 
   async createReceivablePayment(data: InsertReceivablePayment): Promise<ReceivablePayment> {
@@ -9105,12 +9062,7 @@ export class DatabaseStorage implements IStorage {
   // ============================================================================
 
   async getPayablePayments(payableId: string): Promise<PayablePayment[]> {
-    // Mesma regra do lado de RECEBER: baixa estornada (deleted_at preenchido pelo
-    // estorno) sai da listagem e de qualquer soma. Aqui o filtro faltava — baixa
-    // ja estornada continuava sendo contada.
-    return db.select().from(payablePayments)
-      .where(and(eq(payablePayments.payableId, payableId), sql`deleted_at IS NULL`))
-      .orderBy(desc(payablePayments.createdAt));
+    return db.select().from(payablePayments).where(eq(payablePayments.payableId, payableId)).orderBy(desc(payablePayments.createdAt));
   }
 
   async createPayablePayment(data: InsertPayablePayment): Promise<PayablePayment> {

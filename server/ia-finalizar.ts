@@ -66,6 +66,15 @@ async function sendDespedida(convId: string, toPhone: string, text: string): Pro
   }
 }
 
+// ⏰ RELOGIO CERTO — a causa da "IA encerrando em 1 minuto".
+// chat_conversations.last_message_time / last_attended_at sao gravados com nowBrazil(),
+// que devolve a hora de Brasilia como se fosse local: a coluna (timestamp SEM fuso) guarda
+// 16:03 quando em UTC sao 19:03. Comparar essa coluna com now() do Postgres (UTC) fazia
+// TODA conversa parecer 3 horas parada — o lembrete de 15 min e a finalizacao de 120 min
+// disparavam no minuto seguinte a mensagem do atendente. Aqui a comparacao usa o mesmo
+// relogio da coluna: hora de parede de Brasilia.
+const AGORA_BR = sql`(now() AT TIME ZONE 'America/Sao_Paulo')`;
+
 // Consulta as conversas elegíveis para finalização (WhatsApp, inativas, sem humano).
 async function selectElegiveis(mins: number, limit: number, minsAtendente: number): Promise<Array<{ id: string; customer_phone: string }>> {
   const q: any = await db.execute(sql`
@@ -83,12 +92,19 @@ async function selectElegiveis(mins: number, limit: number, minsAtendente: numbe
       AND (
         (coalesce(c.initiated_by::text, 'customer') <> 'user'
          AND NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id))
-        OR (c.last_message_time < now() - make_interval(mins => ${minsAtendente})
-            AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${minsAtendente})))
+        OR (c.last_message_time < ${AGORA_BR} - make_interval(mins => ${minsAtendente})
+            AND (c.last_attended_at IS NULL OR c.last_attended_at < ${AGORA_BR} - make_interval(mins => ${minsAtendente})))
       )
+      -- Ninguem — nem cliente, nem atendente, nem IA — escreveu nada nos ultimos X min.
+      -- last_message_time sozinho nao bastava: mensagem enviada pelo painel nem sempre o
+      -- atualiza, e a conversa "viva" era encerrada por baixo do atendente.
+      AND NOT EXISTS (
+        SELECT 1 FROM chat_messages m
+        WHERE m.conversation_id = c.id
+          AND m.created_at > now() - make_interval(mins => ${mins}))
       AND c.last_message_time IS NOT NULL
-      AND c.last_message_time < now() - make_interval(mins => ${mins})
-      AND (c.last_attended_at IS NULL OR c.last_attended_at < now() - make_interval(mins => ${mins}))
+      AND c.last_message_time < ${AGORA_BR} - make_interval(mins => ${mins})
+      AND (c.last_attended_at IS NULL OR c.last_attended_at < ${AGORA_BR} - make_interval(mins => ${mins}))
     ORDER BY c.last_message_time ASC
     LIMIT ${limit}`);
   return (q.rows || []) as any;
@@ -214,7 +230,19 @@ export function registerIaFinalizar(app: any) {
       const p = normalizeBrPhone(r.customer_phone);
       return { conv: r.id, phone: p, ehTeste: tests.includes(p) };
     });
-    res.json({ regra: on ? 'on' : 'off', canal: waMode, inatividadeMin: mins, elegiveis: rows.length, amostra });
+    // Diagnostico de relogio: se "defasagem_min" nao for ~0, a coluna e o now() do banco
+    // estao em fusos diferentes de novo e TODA conversa volta a parecer parada.
+    let relogio: any = null;
+    try {
+      const t: any = await db.execute(sql`SELECT
+        to_char(now(), 'DD/MM HH24:MI') AS now_utc,
+        to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS now_br,
+        to_char(max(c.last_message_time), 'DD/MM HH24:MI') AS msg_mais_recente,
+        round(EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'America/Sao_Paulo') - max(c.last_message_time))) / 60) AS defasagem_min
+        FROM chat_conversations c WHERE c.last_message_time IS NOT NULL`);
+      relogio = t.rows?.[0] || null;
+    } catch {}
+    res.json({ regra: on ? 'on' : 'off', canal: waMode, inatividadeMin: mins, elegiveis: rows.length, relogio, amostra });
   });
 
   // Executa 1 varredura AGORA (respeita gates). ?force=1 ignora os gates mas mantém a proteção

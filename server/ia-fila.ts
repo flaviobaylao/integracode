@@ -293,7 +293,15 @@ export async function lembreteTick(): Promise<{ ran: boolean; lembradas: number;
       WHERE (coalesce(c.initiated_by::text, 'customer') = 'user' OR s.key IS NOT NULL)
         AND c.status <> 'resolved'
         AND c.last_message_time IS NOT NULL
-        AND c.last_message_time < now() - make_interval(mins => ${mins})
+        -- ⏰ last_message_time e gravado com nowBrazil() (hora de parede de Brasilia).
+        -- Comparar com now() do Postgres (UTC) deixava toda conversa "3 horas parada" e o
+        -- lembrete saia 1 minuto depois de o atendente escrever. Mesmo relogio dos dois lados.
+        AND c.last_message_time < (now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(mins => ${mins})
+        -- E ninguem escreveu nada na conversa nesse periodo (created_at aqui e UTC de verdade).
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages m
+          WHERE m.conversation_id = c.id
+            AND m.created_at > now() - make_interval(mins => ${mins}))
       ORDER BY c.last_message_time ASC LIMIT 20`);
     for (const c of (r.rows || []) as any[]) {
       const k = 'ia_lembrete_ts:' + c.id;
@@ -354,7 +362,9 @@ async function msgSistema(conversationId: string, texto: string): Promise<void> 
 async function atribuir(conversationId: string, agentId: string): Promise<void> {
   try {
     await db.execute(sql`UPDATE chat_conversations
-      SET assigned_agent_id = ${agentId}, status = 'assigned', last_attended_at = now(), updated_at = now()
+      SET assigned_agent_id = ${agentId}, status = 'assigned',
+          last_attended_at = (now() AT TIME ZONE 'America/Sao_Paulo'),
+          updated_at = (now() AT TIME ZONE 'America/Sao_Paulo')
       WHERE id = ${conversationId}`);
   } catch (e: any) { console.error('[IA-FILA] atribuir', e?.message || e); }
 }

@@ -45,10 +45,13 @@ const KEYS: Record<string, string> = {
   agents_routing: 'keyword',               // keyword = roteia por palavra-chave; fixo = sempre o agente padrao
   ia_pausa_horas: '24',                    // horas que a IA fica fora da conversa apos transferir p/ humano
   chat_auto_close_min: '120',              // minutos de inatividade p/ encerrar conversa automaticamente
+  chat_close_atendente_min: '60',          // prazo proprio da conversa em andamento com atendente
+  ia_respeita_atendente: 'on',             // atendente atuando na conversa: a IA nao interfere
+  ia_respeita_atendente_min: '60',         // minutos desde a ultima fala do humano p/ considerar "atuando"
 };
 const MODES = ['agents_runtime_mode', 'agents_ig_mode'];
-const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841', 'ia_wpp_vendas', 'ia_front_line', 'ia_notifica_wa', 'ia_trava_admin', 'ia_lembrete_on'];
-const NUMS = ['ia_timeout_min', 'ia_finalizar_min', 'ia_pausa_horas', 'chat_auto_close_min', 'ia_handoff_min', 'ia_lembrete_min', 'ia_lembrete_repete_h'];
+const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841', 'ia_wpp_vendas', 'ia_front_line', 'ia_notifica_wa', 'ia_trava_admin', 'ia_lembrete_on', 'ia_respeita_atendente'];
+const NUMS = ['ia_timeout_min', 'ia_finalizar_min', 'ia_pausa_horas', 'chat_auto_close_min', 'ia_handoff_min', 'ia_lembrete_min', 'ia_lembrete_repete_h', 'chat_close_atendente_min', 'ia_respeita_atendente_min'];
 
 export function registerIaAtendimento(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
@@ -203,6 +206,16 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
       <input type="number" id="n_ia_lembrete_min" min="5" onchange="setNum('ia_lembrete_min', this.value)"> min
       <span id="t_ia_lembrete_on"></span></div></div>
 
+  <div class="row"><div>Atendente atuando: a IA nao interfere
+      <div class="desc">Enquanto uma pessoa estiver na conversa (abriu, recebeu por transferencia ou escreveu ha pouco), a IA fica calada. O tempo e a janela desde a ultima fala do atendente.</div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" id="n_ia_respeita_atendente_min" min="5" onchange="setNum('ia_respeita_atendente_min', this.value)"> min
+      <span id="t_ia_respeita_atendente"></span></div></div>
+
+  <div class="row"><div>Fechar conversa do atendente depois de
+      <div class="desc">Conversa em andamento com atendente so e finalizada pela IA depois desse tempo sem ninguem falar — ou quando o atendente finalizar na mao.</div></div>
+    <div><input type="number" id="n_chat_close_atendente_min" min="5" onchange="setNum('chat_close_atendente_min', this.value)"> min</div></div>
+
   <div class="row"><div>Vender pelo WhatsApp (modo Instagram)
       <div class="desc">Libera no WhatsApp as ferramentas de registrar pedido no pipeline e gerar/enviar PIX — o mesmo que a IA ja faz no Direct do Instagram.</div></div>
     <div id="t_ia_wpp_vendas"></div></div>
@@ -242,13 +255,15 @@ async function load(){
   try{
     const d = await (await fetch('/api/admin/ia-atendimento/estado'+q(''))).json();
     for(const m of ['agents_runtime_mode','agents_ig_mode']){ const b=document.getElementById('b_'+m); b.textContent=d[m]; b.className='badge m-'+d[m]; }
-    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841','ia_wpp_vendas','ia_front_line','ia_notifica_wa','ia_trava_admin','ia_lembrete_on']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
+    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841','ia_wpp_vendas','ia_front_line','ia_notifica_wa','ia_trava_admin','ia_lembrete_on','ia_respeita_atendente']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
     document.getElementById('n_ia_timeout_min').value=d.ia_timeout_min;
     document.getElementById('n_ia_finalizar_min').value=d.ia_finalizar_min;
     document.getElementById('n_ia_pausa_horas').value=d.ia_pausa_horas;
     document.getElementById('n_chat_auto_close_min').value=d.chat_auto_close_min;
     document.getElementById('n_ia_handoff_min').value=d.ia_handoff_min;
     document.getElementById('n_ia_lembrete_min').value=d.ia_lembrete_min;
+    document.getElementById('n_ia_respeita_atendente_min').value=d.ia_respeita_atendente_min;
+    document.getElementById('n_chat_close_atendente_min').value=d.chat_close_atendente_min;
     { const el=document.getElementById('n_canal_saida_padrao'); if(document.activeElement!==el) el.value=d.canal_saida_padrao||''; }
     document.getElementById('v_agents_routing').textContent='atual: '+d.agents_routing;
     const ta=document.getElementById('txt_ia_despedida'); if(document.activeElement!==ta) ta.value=d.ia_despedida;

@@ -102,6 +102,47 @@ async function humanoFalouPorUltimo(conversationId: string): Promise<boolean> {
   } catch { return false; }
 }
 
+// ---------------------------------------------------------------------------
+// ATENDENTE EM CENA — a IA nao entra no meio.
+// humanoFalouPorUltimo olhava so a ULTIMA mensagem nao-cliente. Na conversa da AGOSFOOD o
+// Robson escreveu 16:03, a propria varredura postou a despedida 16:04 (sender 'system') e,
+// quando a cliente respondeu 16:06, a "ultima nao-cliente" ja era a do sistema — a IA se
+// achou livre e respondeu por cima do vendedor. Agora a pergunta e outra: TEM atendente
+// atuando nesta conversa? Se tem, a IA fica de fora, ponto.
+// ---------------------------------------------------------------------------
+async function atendenteAtuando(conversationId: string): Promise<boolean> {
+  try {
+    const mins = Math.max(5, parseInt(await getSetting('ia_respeita_atendente_min', '60'), 10) || 60);
+    const r: any = await db.execute(sql`
+      SELECT
+        -- (a) conversa aberta pelo atendente, ou transferida pela IA para um humano
+        (coalesce(c.initiated_by::text, 'customer') = 'user'
+         OR EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id)) AS do_atendente,
+        -- (b) alguem de carne e osso escreveu aqui nos ultimos X minutos
+        EXISTS (SELECT 1 FROM chat_messages m
+                WHERE m.conversation_id = c.id
+                  AND m.sender_type <> 'customer'
+                  AND coalesce(m.sender_id, '') NOT LIKE 'agent:%'
+                  AND coalesce(m.sender_id, '') <> 'system'
+                  AND m.created_at > now() - make_interval(mins => ${mins})) AS humano_recente,
+        -- (c) ... e no dia (para a conversa que o proprio atendente abriu)
+        EXISTS (SELECT 1 FROM chat_messages m
+                WHERE m.conversation_id = c.id
+                  AND m.sender_type <> 'customer'
+                  AND coalesce(m.sender_id, '') NOT LIKE 'agent:%'
+                  AND coalesce(m.sender_id, '') <> 'system'
+                  AND m.created_at > now() - interval '24 hours') AS humano_no_dia
+      FROM chat_conversations c WHERE c.id = ${conversationId} LIMIT 1`);
+    const x = r.rows?.[0];
+    if (!x) return false;
+    // Qualquer conversa: humano falou ha pouco -> a IA nao entra.
+    // Conversa que o atendente abriu (ou recebeu da IA): enquanto ele estiver nela hoje,
+    // a conversa e dele. Passadas 24h sem nenhum humano, a IA volta a poder ajudar —
+    // a regra se solta sozinha, sem deixar cliente sem resposta para sempre.
+    return !!(x.humano_recente || (x.do_atendente && x.humano_no_dia));
+  } catch { return false; }   // erro nao pode travar o atendimento
+}
+
 // Envio de IMAGEM (QR do PIX). O 1841 nao tem endpoint de midia proprio; como ele tambem e um
 // canal do Umbler, a midia sai pelo mesmo numero que o cliente usou (channel_phone da conversa).
 async function replyImageVia(convId: string, toPhone: string, url: string, caption?: string): Promise<any> {
@@ -140,6 +181,13 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
   try {
     // Modo "IA na frente": se um humano interveio nesta conversa, a IA sai dela
     // (evita os dois respondendo o mesmo cliente).
+    // Atendente atuando na conversa: a IA nao interfere (regra do Flavio, 05/08).
+    // Vem ANTES de tudo e nao depende de nenhum toggle — desligavel so por
+    // ia_respeita_atendente = 'off' se um dia for preciso.
+    if ((await getSetting('ia_respeita_atendente', 'on')) === 'on' && (await atendenteAtuando(conversationId))) {
+      console.log(`[IA-TAKEOVER] ${conversationId}: atendente atuando — IA fora`);
+      return false;
+    }
     if ((await getSetting('ia_front_line', 'off')) === 'on' && (await humanoFalouPorUltimo(conversationId))) return false;
     if ((await getSetting('ia_regra_timeout_on', 'off')) !== 'on') return true; // regra off -> comportamento atual
     const r: any = await db.execute(sql`SELECT sender_id, sender_type FROM chat_messages
@@ -184,6 +232,12 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
   try {
     if (!incomingText || !incomingText.trim()) return;
     if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
+    // Atendente atuando: a IA nao responde NADA aqui — nem as respostas prontas de
+    // cobranca/rota/botao. Quem conduz e a pessoa.
+    if ((await getSetting('ia_respeita_atendente', 'on')) === 'on' && (await atendenteAtuando(conversationId))) {
+      console.log(`[IA-REACTIVE] ${conversationId}: atendente atuando — IA nao responde`);
+      return;
+    }
     // "Previsao de Pagamento" / "Sera pago hoje": o cliente esta INFORMANDO quando paga.
     try {
       const { respostaDeCobranca } = await import('./promessa-pagamento');

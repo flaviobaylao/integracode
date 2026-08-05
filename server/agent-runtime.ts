@@ -326,17 +326,7 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
     if (name === 'buscar_boleto') {
       const cid = await resolveCustomerId(ctx, input?.documento);
       if (!cid) return 'Cliente não identificado. Peça o CPF/CNPJ para localizar o boleto.';
-      const r: any = await db.execute(sql`SELECT bc.id, bc.valor_original, bc.data_vencimento, bc.status, bc.linha_digitavel FROM boleto_charges bc
-        WHERE bc.customer_id=${cid}
-          -- FIX: lower() porque o legado grava PAGO/CANCELADO em MAIUSCULO e passavam
-          -- direto pelo filtro; a IA entregava ao cliente o link de um boleto ja quitado.
-          AND lower(COALESCE(bc.status,'')) NOT IN ('liquidado','cancelado','cancelada','pago','recebido','baixado')
-          -- FIX: baixa manual (dinheiro/PIX avulso/deposito) NAO cancela o boleto, entao
-          -- checar so o status do boleto nao basta — o titulo tem que estar em aberto.
-          AND NOT EXISTS (
-            SELECT 1 FROM receivables r WHERE r.id = bc.receivable_id
-              AND (r.status IN ('recebida','cancelada') OR COALESCE(r.amount_paid,0)::numeric >= r.amount::numeric - 0.005))
-        ORDER BY bc.created_at DESC LIMIT 1`);
+      const r: any = await db.execute(sql`SELECT id, valor_original, data_vencimento, status, linha_digitavel FROM boleto_charges WHERE customer_id=${cid} AND COALESCE(status,'') NOT IN ('liquidado','cancelado','pago') ORDER BY created_at DESC LIMIT 1`);
       const b = r.rows?.[0];
       if (!b) return 'Nenhum boleto em aberto encontrado para este cliente.';
       return `Boleto em aberto encontrado. Valor: ${brl(b.valor_original)}; Vencimento: ${b.data_vencimento ? new Date(b.data_vencimento).toLocaleDateString('pt-BR') : '-'}; Link de pagamento (boleto+PIX): ${APP_URL}/api/boleto-view/${b.id} . Envie esse link ao cliente.`;
@@ -868,7 +858,20 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
       'Se o cliente saudar com o periodo errado, responda com o periodo CERTO, sem corrigi-lo.',
     ].join('\n');
     const _aviso = ctx?.phone ? await contextoDoAviso(String(ctx.phone)) : '';
+    // Calendario + retrato do cliente. Sem isso a IA falou em "finalzinho de julho" no dia
+    // 05/08 e prometeu prazo sem saber quando o cliente compra nem quando o vendedor passa.
+    let _cal = '', _cli = '';
+    try {
+      const { blocoCalendario, contextoDoCliente } = await import('./contexto-cliente');
+      _cal = blocoCalendario();
+      if (ctx) {
+        const _cid = await resolveCustomerId(ctx, undefined).catch(() => null);
+        if (_cid) _cli = await contextoDoCliente(_cid);
+      }
+    } catch (e: any) { console.error('[CTX-CLIENTE]', e?.message || e); }
     const systemPrompt = _tempo + '\n\n'
+      + (_cal ? _cal + '\n\n' : '')
+      + (_cli ? _cli + '\n\n' : '')
       + (_aviso ? _aviso + '\n\n' : '')
       + (base ? base + '\n\n' : '')
       + (kb ? '# BASE DE CONHECIMENTO (fatos da Honest — responda so com o que esta aqui; se faltar, ofereca falar com uma pessoa)\n' + kb + '\n\n' : '')
