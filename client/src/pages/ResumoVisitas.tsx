@@ -26,9 +26,12 @@ type Row = {
   neighborhood: string;
   periodicity: string;
   weekdays: string;
+  segmento?: string;
   cycles?: Cycle[];
   visits: Visit[];
 };
+
+const SEM_SEGMENTO = "(Sem segmento)";
 
 type StatusKey = "green" | "yellow" | "red" | "orange" | "lilac" | "teal" | "sky" | "blue" | "future" | "none";
 
@@ -92,6 +95,7 @@ export default function ResumoVisitas() {
   const [seller, setSeller] = useState("");
   const [city, setCity] = useState("");
   const [freq, setFreq] = useState("");
+  const [segmento, setSegmento] = useState("");
   const [sortBy, setSortBy] = useState<{ key: "cliente" | "cidade" | "efet" | "freq" | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
 
   const { data, isLoading } = useQuery<{ rows?: Row[]; today?: string }>({
@@ -120,6 +124,10 @@ export default function ResumoVisitas() {
   );
   const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort(), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
+  const segmentos = useMemo(() => {
+    const lista = Array.from(new Set(rows.map((r) => (r.segmento || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+    return rows.some((r) => !(r.segmento || "").trim()) ? [...lista, SEM_SEGMENTO] : lista;
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -127,10 +135,11 @@ export default function ResumoVisitas() {
       if (seller && r.sellerName !== seller) return false;
       if (city && r.city !== city) return false;
       if (freq && r.periodicity !== freq) return false;
+      if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
       if (q && !((r.customerName || "").toLowerCase().includes(q) || (r.city || "").toLowerCase().includes(q) || (r.neighborhood || "").toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [rows, search, seller, city, freq]);
+  }, [rows, search, seller, city, freq, segmento]);
 
   // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
   const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
@@ -255,6 +264,7 @@ export default function ResumoVisitas() {
         <select className="border rounded px-2 py-1 text-sm" value={seller} onChange={(e) => setSeller(e.target.value)}><option value="">Todos os vendedores</option>{sellers.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={city} onChange={(e) => setCity(e.target.value)}><option value="">Todas as cidades</option>{cities.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+        <select className="border rounded px-2 py-1 text-sm" value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ maxWidth: 260 }} title="Segmento de negócio do cliente (derivado do CNAE)"><option value="">Todos os segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select>
       </div>
 
       {/* Legenda */}
