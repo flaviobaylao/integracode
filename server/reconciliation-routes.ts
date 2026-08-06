@@ -2426,6 +2426,71 @@ export function registerReconciliation(app: Express) {
   //      para conferencia manual.
   // A linha mantida e a que TEM match; sem match, a conciliada; senao a de menor id.
   // dryRun por padrao. Reversivel (basta limpar mirror_of).
+  // =========================================================================
+  // NORMALIZAR ESPELHO COM STATUS ERRADO
+  // POST /api/reconciliation/normalizar-espelhos { dryRun }
+  //
+  // Linha que JA e espelho (mirror_of preenchido) mas ficou com
+  // reconciliation_status = 'pending'. E o status que a coloca na fila de
+  // pendentes, entao a copia aparece como se fosse lancamento a conciliar —
+  // inclusive quando o lancamento CANONICO ja esta conciliado. Foi o que deu a
+  // impressao de que "conciliacoes foram desfeitas": medido em 06/08, 2.017
+  // linhas nessa situacao, 872 delas com o canonico ja reconciliado.
+  //
+  // De onde vem: ate a correcao de 05/08 o undoReconciliation devolvia o
+  // lancamento para 'pending' sem olhar se era espelho — desfazer a conciliacao
+  // de uma copia jogava a copia de volta na fila. O fix-baixa-dupla fez isso 72
+  // vezes de uma vez em 03/08.
+  //
+  // Aqui NAO se decide nada: a linha ja e espelho, so o status esta errado. Nao
+  // toca em baixa, em titulo, em vinculo nem no lancamento canonico — e por isso
+  // e seguro em lote. Reversivel: basta voltar o status para 'pending'.
+  // dryRun por padrao.
+  // =========================================================================
+  app.post("/api/reconciliation/normalizar-espelhos", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "normalizar-espelhos").toString();
+
+      const resumo = rowsOf(await db.execute(sql`
+        SELECT count(*)::int AS candidatos,
+               count(*) FILTER (WHERE c.reconciliation_status = 'reconciled')::int AS canonico_conciliado,
+               count(*) FILTER (WHERE c.reconciliation_status IS DISTINCT FROM 'reconciled')::int AS canonico_nao_conciliado,
+               COALESCE(round(sum(i.amount::numeric), 2), 0)::text AS valor_bruto
+        FROM bank_statement_items i
+        LEFT JOIN bank_statement_items c ON c.id = i.mirror_of
+        WHERE i.mirror_of IS NOT NULL
+          AND (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')`))[0] || {};
+
+      if (dryRun) {
+        const amostra = rowsOf(await db.execute(sql`
+          SELECT to_char(i.transaction_date, 'YYYY-MM-DD') AS data, round(i.amount::numeric, 2)::text AS valor,
+                 i.type AS tipo, left(COALESCE(i.description, ''), 60) AS historico,
+                 COALESCE(c.reconciliation_status, '(sem canonico)') AS status_do_canonico
+          FROM bank_statement_items i
+          LEFT JOIN bank_statement_items c ON c.id = i.mirror_of
+          WHERE i.mirror_of IS NOT NULL
+            AND (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+          ORDER BY i.amount::numeric DESC LIMIT 20`));
+        return res.json({ dryRun: true, ...resumo, amostra });
+      }
+
+      const u: any = await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = 'mirror',
+            notes = COALESCE(NULLIF(notes, ''), 'Espelho normalizado: status estava pending indevidamente')
+        WHERE mirror_of IS NOT NULL
+          AND (reconciliation_status IS NULL OR reconciliation_status = 'pending')`);
+      const normalizados = Number((u as any)?.rowCount ?? 0);
+      try {
+        await logReconAudit({ action: "repair", itemId: null, by,
+          details: { rotina: "normalizar-espelhos", normalizados, ...resumo } });
+      } catch (e: any) { /* trilha e observabilidade */ }
+      res.json({ dryRun: false, normalizados, ...resumo });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   app.post("/api/reconciliation/dedup-canonical", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
