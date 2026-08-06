@@ -7,97 +7,124 @@
 // mensagem do cliente. Fora dela, so template aprovado — a Meta recusa e a mensagem
 // morre. O sistema tentava assim mesmo e devolvia um HTTP cru que ninguem entendia.
 //
-// Aqui a rota e escolhida antes de tentar:
-//   1841 com janela ABERTA  -> sai pelo proprio 1841 (texto livre vale)
-//   1841 com janela FECHADA -> sai pelo canal principal (2630), que nao tem essa trava
-//   qualquer outro canal    -> sai pelo canal da conversa, como sempre
-// E se o envio falhar pelo 1841 mesmo assim, tenta o principal antes de desistir.
+// O erro cru era HTTP 400 com {"ChatId":["ContactCannotReceiveMessages",
+// "ContactInactiveTemplateRequired"]} — ou seja, a janela. Duas coisas mudam aqui:
 //
-// O motivo da falha vira texto de gente ("janela de 24h fechada..."), nao HTTP 400.
+// 1) O envio deixa de tentar UM numero so. Percorre os numeros da Honest em cadeia
+//    (o da conversa, o padrao, os demais) e para no primeiro que aceitar. Se um canal
+//    esta com a janela fechada, outro pode entregar.
+// 2) Quando NENHUM aceita, o motivo vira texto de gente: o cliente esta fora da janela
+//    de 24h e so um template aprovado reabre a conversa. Sem isso o atendente ficava
+//    reescrevendo a mesma mensagem contra uma parede.
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 const FONE_1841 = '5562994981841';
 
-export type Envio = { success: boolean; messageId?: string; error?: string; via?: string; rota?: string };
+// Os tres numeros da Honest, na ordem em que vale a pena tentar. O oficial fica por
+// ultimo: e ele que tem a trava de 24h da Meta.
+const CANAIS = [
+  { fone: '5562992682630', nome: '2630 (principal)' },
+  { fone: '5562993227169', nome: '7169 (reserva)' },
+  { fone: FONE_1841, nome: '1841 (oficial)' },
+];
+
+export type Envio = { success: boolean; messageId?: string; error?: string; via?: string; rota?: string; tentativas?: any[] };
 
 function so(n: any): string { return String(n || '').replace(/\D/g, ''); }
+
+// O provedor recusou porque a janela de 24h fechou? Nesse caso trocar de numero pode
+// resolver (canal broker nao tem a trava) — por isso vale tentar o proximo da fila.
+function janelaFechada(erro: string): boolean {
+  return /ContactInactiveTemplateRequired|ContactCannotReceiveMessages|template|24h|outside|re-?engagement/i.test(String(erro || ''));
+}
 
 // Traduz o erro do provedor para algo que o atendente resolve sozinho.
 export function explicaFalha(erro: string, canal: string): string {
   const e = String(erro || '');
   if (/canal_desligado/i.test(e)) return `O número ${canal} está desligado no painel de Gestão de Canais.`;
   if (/token/i.test(e)) return 'Integração com o Umbler sem token configurado.';
-  if (/contato nao resolvido|chat nao resolvido/i.test(e)) return 'O Umbler não encontrou esse contato/conversa para o canal oficial.';
-  if (/24|window|template|re-?engagement|outside/i.test(e)) {
-    return 'Janela de 24h do canal oficial fechada: fora dela o WhatsApp só aceita template aprovado. '
-      + 'Reenvie — a mensagem sai pelo número principal.';
+  if (/contato nao resolvido|chat nao resolvido/i.test(e)) return 'O Umbler não encontrou esse contato para este canal.';
+  if (janelaFechada(e)) {
+    return 'O cliente está fora da janela de 24h em todos os números: o WhatsApp só entrega mensagem livre '
+      + 'até 24h depois da ÚLTIMA mensagem do cliente. Para reabrir a conversa é preciso um template aprovado '
+      + '(os disparos de pedido/entrega/cobrança fazem isso) — ou esperar o cliente escrever.';
   }
-  if (/HTTP 4\d\d/.test(e)) return 'O WhatsApp recusou a mensagem (' + e.slice(0, 80) + ').';
   if (/HTTP 5\d\d|timeout|ECONN/i.test(e)) return 'O provedor está fora do ar no momento. Tente reenviar em instantes.';
-  return e.slice(0, 160);
+  if (/HTTP 4\d\d/.test(e)) return 'O WhatsApp recusou a mensagem (' + e.slice(0, 120) + ').';
+  return e.slice(0, 200);
 }
 
 /**
- * Envia um texto pela melhor rota da conversa. Nunca lanca: devolve o resultado.
+ * Envia um texto tentando os numeros em cadeia. Antes o sistema tentava UM numero so e
+ * desistia — se aquele canal estivesse com a janela fechada, a mensagem morria mesmo
+ * havendo outro numero capaz de entregar. Nunca lanca: devolve o resultado e o caminho.
  */
 export async function enviarTexto(conversationId: string, toPhone: string, texto: string): Promise<Envio> {
   const destino = so(toPhone);
   if (!destino) return { success: false, error: 'Telefone do cliente vazio' };
   if (!texto || !texto.trim()) return { success: false, error: 'Mensagem vazia' };
 
-  let canal = '', oficial = false, janelaAberta = false;
+  let canalDaConversa = '', oficial = false, janelaAberta = false;
   try {
     const r: any = await db.execute(sql`SELECT channel_phone, last_inbound_channel,
         (window_open_until IS NOT NULL AND window_open_until > now()) AS janela
       FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
     const row = r.rows?.[0] || {};
-    canal = so(row.channel_phone);
+    canalDaConversa = so(row.channel_phone);
     janelaAberta = !!row.janela;
-    oficial = canal === FONE_1841 || String(row.last_inbound_channel || '') === 'oficial_1841';
-  } catch { /* sem dados da conversa: segue pelo caminho comum */ }
+    oficial = canalDaConversa === FONE_1841 || String(row.last_inbound_channel || '') === 'oficial_1841';
+  } catch { /* sem dados da conversa: segue pela ordem padrao */ }
 
-  const principal = async (motivo: string): Promise<Envio> => {
-    const { sendUmblerTalkText, canalSaidaPadrao } = await import('./chat-routes');
-    const from = await canalSaidaPadrao();
-    const r = await sendUmblerTalkText(destino, texto, from || undefined);
-    return { ...r, via: so(from) || 'padrao', rota: motivo };
-  };
+  const { sendUmblerTalkText, canalSaidaPadrao } = await import('./chat-routes');
+  const { canalAtivoPorTelefone } = await import('./canais-gestao');
+  const padrao = so(await canalSaidaPadrao());
 
-  // Canal oficial: a janela manda.
-  if (oficial) {
-    if (janelaAberta) {
+  // Ordem: o numero em que o cliente escreveu primeiro (e o que ele reconhece), depois o
+  // padrao, depois os demais. O 1841 so entra na frente quando a janela dele esta aberta.
+  const fila: string[] = [];
+  const põe = (f: string) => { const d = so(f); if (d && !fila.includes(d)) fila.push(d); };
+  if (oficial && janelaAberta) põe(FONE_1841);
+  else if (canalDaConversa && canalDaConversa !== FONE_1841) põe(canalDaConversa);
+  põe(padrao);
+  for (const c of CANAIS) if (c.fone !== FONE_1841) põe(c.fone);
+  if (oficial && janelaAberta) { /* ja esta na frente */ } else põe(FONE_1841);
+
+  const tentativas: any[] = [];
+  for (const fone of fila) {
+    if (!(await canalAtivoPorTelefone(fone).catch(() => true))) {
+      tentativas.push({ canal: fone, resultado: 'desligado no painel' });
+      continue;
+    }
+    // O 1841 com janela aberta tem endpoint proprio (chat oficial).
+    if (fone === FONE_1841 && janelaAberta) {
       try {
         const { sendOfficialText } = await import('./official-dispatch');
         const r = await sendOfficialText(destino, texto);
-        if (r?.success) return { success: true, via: '1841', rota: 'oficial, janela aberta' };
-        // Falhou no oficial: antes de dar a mensagem como perdida, tenta o principal.
-        const alt = await principal('oficial falhou (' + (r?.error || 'sem motivo') + '), saiu pelo principal');
-        if (alt.success) return alt;
-        return { success: false, via: '1841', rota: 'oficial, janela aberta',
-                 error: explicaFalha(r?.error || alt.error || 'falha desconhecida', '1841') };
-      } catch (e: any) {
-        const alt = await principal('erro no oficial, saiu pelo principal');
-        if (alt.success) return alt;
-        return { success: false, error: explicaFalha(e?.message || String(e), '1841') };
-      }
+        tentativas.push({ canal: fone, resultado: r?.success ? 'entregue' : (r?.error || 'falhou') });
+        if (r?.success) return { success: true, via: '1841', rota: 'canal oficial, janela aberta', tentativas };
+        continue;
+      } catch (e: any) { tentativas.push({ canal: fone, resultado: e?.message || String(e) }); continue; }
     }
-    // Janela fechada: nem tenta o oficial — a Meta recusaria. Vai direto pelo principal.
-    const r = await principal('1841 com janela de 24h fechada — enviado pelo número principal');
-    if (r.success) return r;
-    return { ...r, error: explicaFalha(r.error || '', r.via || 'principal') };
+    try {
+      const r = await sendUmblerTalkText(destino, texto, fone);
+      tentativas.push({ canal: fone, resultado: r?.success ? 'entregue' : (r?.error || 'falhou') });
+      if (r?.success) {
+        const nome = CANAIS.find(c => c.fone === fone)?.nome || fone;
+        return { success: true, messageId: r.messageId, via: fone,
+                 rota: fila[0] === fone ? 'canal da conversa' : ('enviado pelo ' + nome), tentativas };
+      }
+      // Erro que nao e de janela (canal fora do ar, config): nao adianta insistir igual,
+      // mas o proximo numero pode estar bom — segue a fila do mesmo jeito.
+    } catch (e: any) { tentativas.push({ canal: fone, resultado: e?.message || String(e) }); }
   }
 
-  // Canais comuns (2630 / 7169): sai pelo mesmo numero em que o cliente escreveu.
-  try {
-    const { sendUmblerTalkText } = await import('./chat-routes');
-    const r = await sendUmblerTalkText(destino, texto, canal || undefined);
-    if (r?.success) return { ...r, via: canal || 'padrao', rota: 'canal da conversa' };
-    return { ...r, via: canal || 'padrao', rota: 'canal da conversa', error: explicaFalha(r?.error || '', canal || 'padrao') };
-  } catch (e: any) {
-    return { success: false, error: explicaFalha(e?.message || String(e), canal || 'padrao') };
-  }
+  const ultimo = tentativas.length ? String(tentativas[tentativas.length - 1].resultado || '') : '';
+  const algumaJanela = tentativas.some(t => janelaFechada(String(t.resultado || '')));
+  return { success: false, tentativas, via: fila[0] || undefined,
+           rota: 'tentou ' + fila.length + ' número(s)',
+           error: explicaFalha(algumaJanela ? 'ContactInactiveTemplateRequired' : ultimo, fila[0] || 'padrao') };
 }
 
 export function registerEnvioTexto(app: any) {
