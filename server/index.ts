@@ -2409,8 +2409,16 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       }
       const t2: any = await db.execute(sql.raw("SELECT id, cnpj, cpf, name, fantasy_name, city, seller_id FROM customers"));
       const rows2 = (t2.rows || t2) as any[];
-      const toFixDoc: any[] = []; const toFixName: any[] = [];
+      // PROTECAO: nao sobrescrever clientes com rezoneamento manual (historico do sellerId por edit/bulk).
+      // Sem isto, o reconcile 1.0:=fonte revertia vendedores ajustados a mao no 2.0 (ex.: cliente volta p/ "MW TRADING").
+      const rezonedIds = new Set<string>();
+      try {
+        const rz: any = await db.execute(sql.raw("SELECT DISTINCT customer_id FROM customer_change_history WHERE field = 'sellerId' AND source IN ('edit','bulk')"));
+        for (const r of (rz.rows || rz) as any[]) rezonedIds.add(String(r.customer_id));
+      } catch (_e) {}
+      const toFixDoc: any[] = []; const toFixName: any[] = []; let protegidosPorRezoneamento = 0;
       for (const c of rows2) {
+        if (rezonedIds.has(String(c.id))) { protegidosPorRezoneamento++; continue; }
         const d = dg(c.cnpj) || dg(c.cpf);
         let want: string | null | undefined = (d && d.length >= 11) ? docSeller.get(d) : undefined;
         let via = 'doc';
@@ -2419,7 +2427,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       }
       const RAD = 'e9149282-adfc-448e-8d0e-a07765a06637';
       const radBefore: any = await db.execute(sql`SELECT count(*)::int n FROM customers WHERE seller_id = ${RAD}`);
-      const result: any = { srcSellers: s1.length, docKeys: docSeller.size, nameKeys: nameCity.size, corrigirPorDoc: toFixDoc.length, corrigirPorNome: toFixName.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
+      const result: any = { srcSellers: s1.length, docKeys: docSeller.size, nameKeys: nameCity.size, protegidosPorRezoneamento, corrigirPorDoc: toFixDoc.length, corrigirPorNome: toFixName.length, apply, updated: 0, radiltonAntes: (radBefore.rows || radBefore)[0].n };
       if (apply) {
         let upd = 0;
         for (const f of [...toFixDoc, ...toFixName]) { try { const u: any = await db.execute(sql`UPDATE customers SET seller_id = ${f.val}, updated_at = now() WHERE id = ${f.id}`); upd += (u.rowCount || 0); } catch (e) {} }
