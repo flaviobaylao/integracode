@@ -7270,8 +7270,15 @@ export class DatabaseStorage implements IStorage {
           last3MonthsAvg: _effId ? (avg3mMap.get(String(_effId)) || 0) : 0
         };
       });
-      
-      return result;
+
+      // CLIENTES ATIVOS: nunca listar cliente INATIVADO. A linha em active_customers pode ficar
+      // presa em is_active=true (ex.: inativacao por caminho que nao casou o customer_id, ou o sync
+      // do 1.0 reativando active_customers). O status autoritativo e o do proprio cliente resolvido
+      // (por id OU por documento): se customer.isActive === false, some da lista. Linhas sem cliente
+      // resolvido (nao encontrado de fato) permanecem para reconciliacao.
+      const filtered = result.filter((row: any) => !(row.customer && row.customer.isActive === false));
+
+      return filtered;
     } catch (error) {
       console.error('Erro em getActiveCustomersWithVisits:', error);
       return [];
