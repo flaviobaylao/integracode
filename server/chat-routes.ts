@@ -643,6 +643,50 @@ export async function canalSaidaPadrao(): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
+// 📶 Polling de entrega/leitura: a API do Umbler ATUALIZA o messageState (Sent -> Received -> Read)
+// mesmo sem webhook. Consultamos as mensagens enviadas recentes e atualizamos o ack.
+let _umblerPollBusy = false;
+export async function pollUmblerDeliveryStatus(): Promise<{ checked: number; updated: number }> {
+  if (_umblerPollBusy) return { checked: 0, updated: 0 };
+  if (!process.env.UMBLER_TALK_TOKEN) return { checked: 0, updated: 0 };
+  _umblerPollBusy = true;
+  let checked = 0, updated = 0;
+  try {
+    const cfg = await resolveUmblerTalkConfig();
+    if ('error' in cfg) return { checked, updated };
+    const rows: any = await db.execute(sql`SELECT id, metadata->'delivery'->>'providerStatus' AS pid
+      FROM chat_messages
+      WHERE sender_type IN ('agent','system')
+        AND metadata->'delivery'->>'providerStatus' IS NOT NULL
+        AND coalesce(ack,0) < 3
+        AND created_at > now() - interval '12 hours'
+      ORDER BY created_at DESC LIMIT 25`);
+    for (const r of (rows.rows || [])) {
+      const pid = String(r.pid || ''); if (!pid) continue; checked++;
+      try {
+        const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(pid) + '/?organizationId=' + encodeURIComponent((cfg as any).orgId));
+        if (!resp.ok) continue;
+        const j: any = await resp.json().catch(() => null);
+        const st = String(j?.messageState || j?.MessageState || '').toLowerCase();
+        let ack: number | null = null; let fail = false;
+        if (/read|seen|lida|visualiz/.test(st)) ack = 3;
+        else if (/receiv|received|deliver|entreg|receb/.test(st)) ack = 2;
+        else if (/sent|enviad/.test(st)) ack = 1;
+        if (/fail|erro|error|reject|undeliver|nao.?entreg|not.?deliver/.test(st)) { fail = true; ack = 0; }
+        if (ack !== null) {
+          await db.execute(sql`UPDATE chat_messages
+            SET ack = CASE WHEN ${fail} THEN 0 ELSE GREATEST(coalesce(ack,0), ${ack}) END,
+                metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${st}::text), true)
+            WHERE id = ${r.id}`);
+          updated++;
+        }
+      } catch {}
+    }
+  } catch (e: any) { console.warn('[UMBLER-POLL] erro:', e?.message || e); }
+  finally { _umblerPollBusy = false; }
+  return { checked, updated };
+}
+
 export async function sendUmblerTalkText(toPhone: string, text: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   // Numero de saida real desta mensagem (o mesmo que sera usado no envio).
   const _from = fromPhoneOverride || (await canalSaidaPadrao());
@@ -6468,7 +6512,17 @@ export function registerChatRoutes(app: Express): void {
     res.json({ configured: !!process.env.OPENAI_API_KEY });
   });
 
+  app.get("/api/chat/umbler-talk/poll-now", async (req: any, res: any) => {
+    try { res.json(await pollUmblerDeliveryStatus()); } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   console.log("✅ Chat routes registered successfully");
+
+  // 📶 Polling de status de entrega/leitura das mensagens enviadas (a cada 90s).
+  try {
+    setInterval(() => { pollUmblerDeliveryStatus().catch((e: any) => console.warn('[UMBLER-POLL] tick', e?.message || e)); }, 90 * 1000);
+    console.log('📶 [UMBLER-POLL] polling de entrega/leitura ativo (90s)');
+  } catch {}
 }
 
 // Helper para configurações padrão
