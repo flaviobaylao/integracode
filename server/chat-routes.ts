@@ -1721,6 +1721,24 @@ export function registerChatRoutes(app: Express): void {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // Testa se a API do Umbler expoe status de ENTREGA/LEITURA de uma mensagem (GET /v1/messages/{id}).
+  app.get("/api/chat/umbler-talk/msg-status", async (req: any, res: any) => {
+    try {
+      const cfg = await resolveUmblerTalkConfig();
+      if ('error' in cfg) return res.status(400).json({ error: cfg.error });
+      let id = String(req.query.id || '');
+      if (!id) { const m: any = await db.execute(sql`SELECT metadata->'delivery'->>'providerStatus' AS pid FROM chat_messages WHERE metadata->'delivery'->>'providerStatus' IS NOT NULL ORDER BY created_at DESC LIMIT 1`); id = String(m.rows?.[0]?.pid || ''); }
+      if (!id) return res.json({ error: 'nenhum id de mensagem enviada encontrado' });
+      const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(id) + '/?organizationId=' + encodeURIComponent(cfg.orgId));
+      const raw = await resp.text();
+      let j: any = null; try { j = JSON.parse(raw); } catch {}
+      const found: string[] = [];
+      const walk = (o: any) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { const v = o[k]; if (/state|deliver|read|seen|visualiz|status/i.test(k) && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null)) found.push(k + '=' + String(v)); if (v && typeof v === 'object') walk(v); } };
+      if (j) walk(j);
+      res.json({ id, httpStatus: resp.status, ok: resp.ok, estadosEncontrados: Array.from(new Set(found)).slice(0, 80), rawPreview: raw.slice(0, 600) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // Teste de envio de MIDIA via Umbler Talk (file = URL publica acessivel)
   app.get("/api/chat/umbler-talk/test-media", async (req: any, res: any) => {
     try {
