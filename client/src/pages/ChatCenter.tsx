@@ -1309,6 +1309,30 @@ function ChatCenterInner() {
     !!(user as any)?.id && String(msg?.senderId) === String((user as any).id);
   const isDeletedMessage = (msg: any): boolean => !!(msg?.metadata as any)?.deleted;
   const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState<string | null>(null);
+  // Reenviar mensagem que nao chegou ao cliente. O servidor reaproveita a MESMA mensagem
+  // e escolhe outra rota quando a janela de 24h do canal oficial esta fechada — por isso
+  // aqui nao criamos uma mensagem nova, so recarregamos a conversa.
+  const resendMessageMutation = useMutation({
+    mutationFn: async (messageId: string) => {
+      const res = await fetch(`/api/chat/messages/${messageId}/reenviar`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok || (data as any)?.ok === false) {
+        throw new Error((data as any)?.delivery?.error || (data as any)?.error || 'Nao foi possivel reenviar');
+      }
+      return data;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      toast({ title: "Mensagem reenviada", description: data?.delivery?.rota || undefined });
+    },
+    onError: (e: any) => {
+      toast({ title: "Ainda nao foi entregue", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const deleteMessageMutation = useMutation({
     mutationFn: async (messageId: string) => {
       const res = await fetch(`/api/chat/messages/${messageId}`, {
@@ -2252,7 +2276,21 @@ function ChatCenterInner() {
                                     {msg.senderType === "agent" && (() => {
                                       const dl: any = (msg as any)?.metadata?.delivery;
                                       const ackv = Number((msg as any)?.ack || 0);
-                                      if (dl && dl.success === false) return <span title={`Falha na entrega${dl?.error ? ': ' + dl.error : ''}`} className="text-red-500 font-semibold" data-testid="ack-failed">⚠ não entregue</span>;
+                                      if (dl && dl.success === false) return (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span title={`Falha na entrega${dl?.error ? ': ' + dl.error : ''}`} className="text-red-500 font-semibold" data-testid="ack-failed">⚠ não entregue</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => resendMessageMutation.mutate(msg.id)}
+                                            disabled={resendMessageMutation.isPending}
+                                            title={dl?.error ? `Reenviar — ${dl.error}` : 'Reenviar esta mensagem'}
+                                            className="text-red-500 hover:text-red-700 disabled:opacity-40"
+                                            data-testid={`resend-msg-${msg.id}`}
+                                          >
+                                            <RefreshCw className={`w-3.5 h-3.5 ${resendMessageMutation.isPending ? 'animate-spin' : ''}`} />
+                                          </button>
+                                        </span>
+                                      );
                                       if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-500" data-testid="ack-read">✓✓</span>;
                                       if (ackv >= 2) return <span title="Entregue no WhatsApp" className="text-gray-500" data-testid="ack-delivered">✓✓</span>;
                                       if (ackv >= 1) return <span title="Enviada" className="text-gray-400" data-testid="ack-sent">✓</span>;
