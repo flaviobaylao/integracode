@@ -4,13 +4,14 @@
 // relacao de clientes nao visitados no mes e desempenho por vendedor.
 // Fonte: /api/admin/fechamento/mensal (visit_justifications + route_closures).
 // Renova por mes (seletor); meses anteriores ficam no historico.
+// Filtro por vendedor (global) + exportacao em PDF para envio ao vendedor.
 // ============================================================================
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3, Ban, CheckCircle2, ClipboardList } from "lucide-react";
+import { BarChart3, Ban, CheckCircle2, ClipboardList, FileDown } from "lucide-react";
 
 const MOTIVO_LABEL: Record<string, string> = {
   sem_tempo: "Não deu tempo / rota grande",
@@ -47,23 +48,98 @@ function mesLabel(m: string): string {
 
 export default function FechamentoPainel({ embedded = false }: { embedded?: boolean }) {
   const [mes, setMes] = useState<string>(nowMonthISO());
-  const [filtroVendedor, setFiltroVendedor] = useState<string>("__all__");
+  const [sellerId, setSellerId] = useState<string>("__all__");
+  const [gerandoPdf, setGerandoPdf] = useState<boolean>(false);
   const { data } = useQuery<any>({
-    queryKey: ["/api/admin/fechamento/mensal", mes],
-    queryFn: () => apiRequest("GET", `/api/admin/fechamento/mensal?mes=${mes}`),
+    queryKey: ["/api/admin/fechamento/mensal", mes, sellerId],
+    queryFn: () => apiRequest("GET", `/api/admin/fechamento/mensal?mes=${mes}${sellerId !== "__all__" ? `&sellerId=${encodeURIComponent(sellerId)}` : ""}`),
   });
 
   const porMotivo = (data?.porMotivo || []) as any[];
   const clientes = (data?.clientes || []) as any[];
   const porVendedor = (data?.porVendedor || []) as any[];
+  const vendedores = (data?.vendedores || []) as any[];
   const totalNV = data?.totalNaoVisitados || 0;
-  const totalJust = useMemo(() => porVendedor.reduce((s, v) => s + (v.justificados || 0), 0), [porVendedor]);
-  const totalPend = useMemo(() => porVendedor.reduce((s, v) => s + (v.pendentes || 0), 0), [porVendedor]);
+  const totalJust = porVendedor.reduce((s, v) => s + (v.justificados || 0), 0);
+  const totalPend = porVendedor.reduce((s, v) => s + (v.pendentes || 0), 0);
   const maxMotivo = Math.max(1, ...porMotivo.map((m) => m.n));
-  const vendedoresLista = useMemo(() => Array.from(new Set(clientes.map((c) => c.vendedor).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))), [clientes]);
-  const clientesFiltrados = useMemo(() => (filtroVendedor === "__all__" ? clientes : clientes.filter((c) => c.vendedor === filtroVendedor)), [clientes, filtroVendedor]);
+  const vendedorLabel = sellerId === "__all__" ? "Todos os vendedores" : (vendedores.find((v) => v.sellerId === sellerId)?.vendedor || sellerId);
 
   const streakCls = (n: number) => (n >= 3 ? "bg-red-50 text-red-600" : n === 2 ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500");
+
+  async function exportarPDF() {
+    try {
+      setGerandoPdf(true);
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default as any;
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const W = doc.internal.pageSize.getWidth();
+
+      doc.setFontSize(16); doc.setTextColor(30, 64, 175);
+      doc.text("Fechamento de Rotas — mensal", 14, 18);
+      doc.setFontSize(11); doc.setTextColor(0, 0, 0);
+      doc.text(`Período: ${mesLabel(mes)}`, 14, 26);
+      doc.text(`Vendedor: ${vendedorLabel}`, 14, 32);
+      doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+      doc.text(`Gerado em: ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`, 14, 38);
+
+      // Indicadores
+      doc.setTextColor(0, 0, 0);
+      autoTable(doc, {
+        startY: 44,
+        head: [["Não visitados (mês)", "Justificados (fechos)", "Sem justificativa"]],
+        body: [[String(totalNV), String(totalJust), String(totalPend)]],
+        theme: "grid",
+        headStyles: { fillColor: [30, 64, 175], halign: "center" },
+        bodyStyles: { halign: "center", fontStyle: "bold", fontSize: 14 },
+        margin: { left: 14, right: 14 },
+      });
+
+      // Motivos
+      let y = (doc as any).lastAutoTable.finalY + 6;
+      doc.setFontSize(12); doc.setTextColor(30, 64, 175); doc.text("Por que não foram visitados", 14, y);
+      autoTable(doc, {
+        startY: y + 3,
+        head: [["Motivo", "Qtd"]],
+        body: (porMotivo.length ? porMotivo : [{ motivo: "", n: 0 }]).map((m) => [MOTIVO_LABEL[m.motivo] || m.motivo, String(m.n)]),
+        theme: "striped",
+        headStyles: { fillColor: [30, 64, 175] },
+        columnStyles: { 1: { halign: "right", cellWidth: 24 } },
+        margin: { left: 14, right: 14 },
+      });
+
+      // Clientes
+      y = (doc as any).lastAutoTable.finalY + 6;
+      doc.setFontSize(12); doc.setTextColor(30, 64, 175); doc.text("Clientes não visitados no mês", 14, y);
+      autoTable(doc, {
+        startY: y + 3,
+        head: [["Cliente", "Cidade", "Último motivo", "Observação", "Recorr."]],
+        body: (clientes.length ? clientes : []).map((c) => [
+          c.nome, c.cidade || "", MOTIVO_LABEL[c.motivo] || c.motivo || "", (c.motivo === "outro" ? (c.obs || "") : ""), `${c.n}x`,
+        ]),
+        theme: "striped",
+        headStyles: { fillColor: [30, 64, 175] },
+        styles: { fontSize: 8, cellPadding: 1.5, overflow: "linebreak" },
+        columnStyles: { 0: { cellWidth: 55 }, 1: { cellWidth: 24 }, 2: { cellWidth: 40 }, 3: { cellWidth: 45 }, 4: { halign: "right", cellWidth: 14 } },
+        margin: { left: 14, right: 14 },
+      });
+
+      // Rodapé
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+        doc.text(`INTEGRA 2.0 · Fechamento de Rotas · Página ${i}/${totalPages}`, W / 2, doc.internal.pageSize.getHeight() - 8, { align: "center" });
+      }
+
+      const nomeArq = `Fechamento_${vendedorLabel.replace(/[^a-zA-Z0-9]+/g, "-")}_${mes}.pdf`;
+      doc.save(nomeArq);
+    } catch (e) {
+      alert("Não foi possível gerar o PDF. Tente novamente.");
+    } finally {
+      setGerandoPdf(false);
+    }
+  }
 
   return (
     <div className={embedded ? "" : "p-4 md:p-6 max-w-6xl mx-auto"}>
@@ -76,9 +152,18 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
             <div className="text-xs text-muted-foreground">Renova por mês · meses anteriores ficam no histórico</div>
           </div>
         </div>
-        <select className="border rounded-lg px-3 py-2 text-sm font-semibold" value={mes} onChange={(e) => setMes(e.target.value)}>
-          {monthOptions().map((m) => (<option key={m} value={m}>{mesLabel(m)}</option>))}
-        </select>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="border rounded-lg px-3 py-2 text-sm font-semibold max-w-[220px]" value={sellerId} onChange={(e) => setSellerId(e.target.value)} title="Filtrar por vendedor">
+            <option value="__all__">Todos os vendedores</option>
+            {vendedores.map((v) => (<option key={v.sellerId} value={v.sellerId}>{v.vendedor}</option>))}
+          </select>
+          <select className="border rounded-lg px-3 py-2 text-sm font-semibold" value={mes} onChange={(e) => setMes(e.target.value)}>
+            {monthOptions().map((m) => (<option key={m} value={m}>{mesLabel(m)}</option>))}
+          </select>
+          <button onClick={exportarPDF} disabled={gerandoPdf} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold px-3 py-2 hover:bg-blue-700 disabled:opacity-60" title="Exportar PDF para enviar ao vendedor">
+            <FileDown className="w-4 h-4" /> {gerandoPdf ? "Gerando…" : "Exportar PDF"}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
@@ -107,19 +192,11 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <CardTitle className="text-base">Clientes não visitados no mês</CardTitle>
-              <select className="border rounded-lg px-2 py-1 text-xs font-semibold max-w-[180px]" value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
-                <option value="__all__">Todos os vendedores</option>
-                {vendedoresLista.map((v) => (<option key={v} value={v}>{v}</option>))}
-              </select>
-            </div>
-          </CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Clientes não visitados no mês</CardTitle></CardHeader>
           <CardContent>
             <div className="text-xs text-muted-foreground mb-3">Ordenado por recorrência · 🔴 3+ rever periodicidade · 🟡 2 atenção · ⚪ 1 ocasional.</div>
             <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto pr-1">
-              {clientesFiltrados.length === 0 ? <div className="text-sm text-muted-foreground">Sem registros neste mês.</div> : clientesFiltrados.map((c, i) => (
+              {clientes.length === 0 ? <div className="text-sm text-muted-foreground">Sem registros neste mês.</div> : clientes.map((c, i) => (
                 <div key={c.customerId + i} className="flex items-center justify-between gap-2 border rounded-xl px-3 py-2">
                   <div className="min-w-0"><div className="font-semibold text-sm">{c.nome} {c.cidade ? <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 ml-1">{c.cidade}</span> : null}</div><div className="text-[11px] text-muted-foreground">{c.vendedor || "—"} · último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div>{c.motivo === "outro" && c.obs ? <div className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 mt-1 break-words">✍️ {c.obs}</div> : null}</div>
                   <span className={`text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap ${streakCls(c.n)}`}>{c.n}x no mês</span>
