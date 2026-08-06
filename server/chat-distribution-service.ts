@@ -202,8 +202,29 @@ export async function distributeNewConversation(
     return { assignedTo: "chatgpt", isChatGpt: true };
   }
   
-  // ChatGPT desativado: distribuir para atendentes humanos via round-robin
+  // ChatGPT desativado: distribuir para atendentes humanos.
   console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano para conversa ${conversationId}`);
+
+  // 🎯 Dono da carteira (vendedor do cliente): se estiver online, a conversa vai para ELE
+  // (nao rodizio aleatorio). Evita a conversa 'pular' para outro atendente e o dono ficar travado.
+  try {
+    const convRow: any = await db.execute(sql`SELECT customer_phone FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
+    const phone = String(convRow.rows?.[0]?.customer_phone || '');
+    if (phone && !phone.startsWith('ig:')) {
+      const { donoDaCarteira, usuarioOnline } = await import('./ia-fila');
+      const owner = await donoDaCarteira(phone);
+      if (owner && (await usuarioOnline(owner))) {
+        const ownerAgent = await db.select().from(chatAgents).where(eq(chatAgents.userId, owner)).limit(1);
+        if (ownerAgent.length) {
+          const ownerColor = await getAgentColor(ownerAgent[0].id);
+          await assignConversationToAgent(conversationId, ownerAgent[0].id, ownerColor, { reason: 'initial_customer', agentName: ownerAgent[0].name });
+          console.log(`🎯 [DISTRIBUTION] Conversa ${conversationId} -> dono da carteira ${ownerAgent[0].name}`);
+          return { assignedTo: ownerAgent[0].id, isChatGpt: false };
+        }
+      }
+    }
+  } catch (e: any) { console.warn('[DISTRIBUTION] carteira:', e?.message || e); }
+
   const nextAgent = await getNextAgentRoundRobin();
   
   if (nextAgent) {
