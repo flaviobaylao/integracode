@@ -2907,6 +2907,64 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
+  // ==========================================================================
+  // INSTRUMENTACAO: toda mudanca de reconciliation_status fica registrada.
+  //
+  // Em 06/08 apareceram 55 lancamentos com vinculo e baixa intactos constando
+  // como PENDENTES. Descartamos restauracao de backup (trilha de auditoria sem
+  // buraco), cron (nenhum toca a tabela), drizzle push (a tabela nao esta no
+  // schema) e sync do 1.0 (nao esta em SYNC_TABLES) — e mesmo assim nao deu para
+  // provar QUEM desconciliou: o rastro que sobrou (matched_by nulo) nao bate com
+  // nenhum caminho do codigo atual.
+  //
+  // O log fica no BANCO, por TRIGGER, e nao na aplicacao, de proposito: assim ele
+  // pega tambem UPDATE feito por fora do sistema (console, script, migracao) —
+  // justamente a hipotese que nao conseguimos descartar. Grava o usuario do banco,
+  // o application_name e o IP do cliente, que e o que identifica a origem.
+  // Idempotente: pode rodar em todo boot.
+  // ==========================================================================
+  db.execute(sql`CREATE TABLE IF NOT EXISTS bank_statement_item_status_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    bank_statement_item_id varchar NOT NULL,
+    status_de varchar, status_para varchar,
+    matched_by_de varchar, matched_by_para varchar,
+    mirror_de varchar, mirror_para varchar,
+    changed_at timestamp DEFAULT now(),
+    db_user text, app_name text, client_addr text
+  )`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_status_log_item ON bank_statement_item_status_log (bank_statement_item_id)`).catch(() => {});
+  db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_status_log_at ON bank_statement_item_status_log (changed_at DESC)`).catch(() => {});
+  db.execute(sql.raw(`
+    CREATE OR REPLACE FUNCTION log_bsi_status_change() RETURNS trigger AS $fn$
+    BEGIN
+      IF NEW.reconciliation_status IS DISTINCT FROM OLD.reconciliation_status
+         OR NEW.mirror_of IS DISTINCT FROM OLD.mirror_of THEN
+        INSERT INTO bank_statement_item_status_log
+          (bank_statement_item_id, status_de, status_para, matched_by_de, matched_by_para,
+           mirror_de, mirror_para, changed_at, db_user, app_name, client_addr)
+        VALUES
+          (OLD.id, OLD.reconciliation_status, NEW.reconciliation_status,
+           OLD.matched_by, NEW.matched_by, OLD.mirror_of, NEW.mirror_of, now(),
+           current_user, current_setting('application_name', true),
+           COALESCE(host(inet_client_addr()), 'local'));
+      END IF;
+      RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;`)).catch((e: any) => console.warn('[instrumentacao] funcao:', e?.message));
+  db.execute(sql.raw(`DROP TRIGGER IF EXISTS trg_bsi_status_change ON bank_statement_items`)).catch(() => {});
+  db.execute(sql.raw(`
+    CREATE TRIGGER trg_bsi_status_change AFTER UPDATE ON bank_statement_items
+    FOR EACH ROW EXECUTE FUNCTION log_bsi_status_change()`)).catch((e: any) => console.warn('[instrumentacao] trigger:', e?.message));
+
+  // created_at das tabelas de extrato parou de ser gravado em 21/07/2026: dos
+  // 24.081 lancamentos, so 14.053 tem data. O INSERT da ingestao monta as colunas
+  // por introspeccao e nao inclui created_at — sem DEFAULT, entra NULL. Isso nao
+  // apaga conciliacao, mas cega qualquer investigacao por data (foi o que
+  // atrapalhou a apuracao de 06/08). Restaura o DEFAULT; o passado fica como esta,
+  // porque nao ha como inventar a data de quem entrou sem ela.
+  db.execute(sql`ALTER TABLE bank_statement_items ALTER COLUMN created_at SET DEFAULT now()`).catch(() => {});
+  db.execute(sql`ALTER TABLE bank_statements ALTER COLUMN created_at SET DEFAULT now()`).catch(() => {});
+
   // DESCONTO na baixa (04/08/2026). As colunas estao no shared/schema.ts, mas o
   // `drizzle-kit push` do deploy NAO as criou — e sem elas TODA baixa manual quebra,
   // porque o insert do pagamento passou a mandar `discount`. Estes ALTER garantem a

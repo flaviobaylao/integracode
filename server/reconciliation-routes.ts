@@ -2427,6 +2427,52 @@ export function registerReconciliation(app: Express) {
   // A linha mantida e a que TEM match; sem match, a conciliada; senao a de menor id.
   // dryRun por padrao. Reversivel (basta limpar mirror_of).
   // =========================================================================
+  // QUEM MUDOU O STATUS DESTE LANCAMENTO — somente leitura
+  // GET /api/reconciliation/status-log?itemId=&limit=&desde=&apenasPerdaDeConciliacao=1
+  //
+  // Le o log gravado pelo TRIGGER do banco (bank_statement_item_status_log), que
+  // registra toda transicao de reconciliation_status / mirror_of com o usuario do
+  // banco, o application_name e o IP de origem.
+  //
+  // Existe porque em 06/08 55 conciliacoes viraram "pendente" e nao foi possivel
+  // provar a origem: nenhum caminho do codigo produzia aquele rastro. Com o log no
+  // banco, a proxima ocorrencia e identificada em vez de deduzida — inclusive se
+  // vier de fora da aplicacao.
+  // =========================================================================
+  app.get("/api/reconciliation/status-log", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 2000);
+      const itemId = (req.query.itemId as string) || null;
+      const desde = (req.query.desde as string) || null;
+      const soPerda = String(req.query.apenasPerdaDeConciliacao || "") === "1";
+      const linhas = rowsOf(await db.execute(sql`
+        SELECT l.bank_statement_item_id AS item, l.status_de, l.status_para,
+               l.matched_by_de, l.matched_by_para,
+               (l.mirror_de IS NOT NULL) AS era_espelho, (l.mirror_para IS NOT NULL) AS virou_espelho,
+               to_char(l.changed_at, 'YYYY-MM-DD HH24:MI:SS') AS quando,
+               l.db_user, l.app_name, l.client_addr,
+               round(i.amount::numeric, 2)::text AS valor,
+               left(COALESCE(i.description, ''), 60) AS historico
+        FROM bank_statement_item_status_log l
+        LEFT JOIN bank_statement_items i ON i.id = l.bank_statement_item_id
+        WHERE (${itemId}::text IS NULL OR l.bank_statement_item_id = ${itemId})
+          AND (${desde}::text IS NULL OR l.changed_at >= ${desde}::timestamp)
+          AND (${soPerda ? sql`(l.status_de = 'reconciled' AND COALESCE(l.status_para, '') <> 'reconciled')` : sql`TRUE`})
+        ORDER BY l.changed_at DESC LIMIT ${limit}`));
+      const resumo = rowsOf(await db.execute(sql`
+        SELECT COALESCE(l.db_user, '?') AS db_user, COALESCE(l.app_name, '?') AS app_name,
+               count(*)::int AS transicoes,
+               count(*) FILTER (WHERE l.status_de = 'reconciled' AND COALESCE(l.status_para, '') <> 'reconciled')::int AS perdas_de_conciliacao
+        FROM bank_statement_item_status_log l
+        WHERE (${desde}::text IS NULL OR l.changed_at >= ${desde}::timestamp)
+        GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20`));
+      res.json({ somenteLeitura: true, total: linhas.length, porOrigem: resumo, linhas });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e), dica: "o log e criado no boot do servidor (trigger); se a tabela nao existir, reinicie a aplicacao" });
+    }
+  });
+
+  // =========================================================================
   // REPARAR STATUS DE LANCAMENTO CONCILIADO QUE VOLTOU A "PENDENTE"
   // POST /api/reconciliation/reparar-status-conciliado { dryRun }
   //
