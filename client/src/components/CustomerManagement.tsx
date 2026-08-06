@@ -147,6 +147,22 @@ export default function CustomerManagement() {
     onError: (e: any) => { toast({ title: "Erro na inativação em massa", description: e?.message || String(e), variant: "destructive" }); },
   });
 
+  const bulkReactivateMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedIds);
+      const r: any = await apiRequest('POST', '/api/customers/bulk-reactivate', { ids });
+      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+    },
+    onSuccess: (res: any) => {
+      const extra: string[] = [];
+      if (res.alreadyActive) extra.push(`${res.alreadyActive} já estavam ativos`);
+      toast({ title: "Reativação em massa concluída", description: `${res.reactivated ?? 0} cliente(s) reativado(s)${extra.length ? ' · ' + extra.join(' · ') : ''}.` });
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+    },
+    onError: (e: any) => { toast({ title: "Erro na reativação em massa", description: e?.message || String(e), variant: "destructive" }); },
+  });
+
   const deleteCustomerMutation = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest('DELETE', `/api/customers/${id}`);
@@ -596,6 +612,17 @@ export default function CustomerManagement() {
                 data-testid="button-bulk-inactivate"
               >
                 🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedIds.size})`}
+              </Button>
+            )}
+            {selectedIds.size > 0 && (statusFilter === 'inactive' || statusFilter === 'all') && perms.can(CARD_CLIENTES, "excluir") && (
+              <Button
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white h-9 ml-1"
+                onClick={() => { if (window.confirm(`Reativar ${selectedIds.size} cliente(s) selecionado(s)?\n\nEles voltam a ficar ativos e reaparecem no cadastro.`)) bulkReactivateMutation.mutate(); }}
+                disabled={bulkReactivateMutation.isPending}
+                data-testid="button-bulk-reactivate"
+              >
+                ✅ {bulkReactivateMutation.isPending ? "Reativando…" : `Reativar selecionados (${selectedIds.size})`}
               </Button>
             )}
           </div>
