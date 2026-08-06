@@ -132,5 +132,61 @@ export function registerIaDiag(app: any) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu)');
+  // ---------------------------------------------------------------------------
+  // Ensaio: roda o MESMO caminho de uma mensagem que chega, porta por porta, e no fim
+  // chama o modelo de verdade — mas NAO envia nada ao cliente. E o unico jeito honesto de
+  // saber onde a resposta morre: ler o codigo so mostra o que deveria acontecer.
+  //   /api/admin/ia-atendimento/testar-resposta?phone=5562...&texto=oi
+  // ---------------------------------------------------------------------------
+  app.get('/api/admin/ia-atendimento/testar-resposta', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    const passos: any[] = [];
+    try {
+      const fone = String(req.query.phone || '').replace(/\D/g, '');
+      const texto = String(req.query.texto || 'oi, tudo bem?');
+      if (!fone) return res.status(400).json({ error: 'informe ?phone=' });
+
+      const c: any = await db.execute(sql`SELECT id, customer_id, customer_phone, status,
+          coalesce(initiated_by::text,'customer') AS origem
+        FROM chat_conversations WHERE right(customer_phone, 8) = right(${fone}, 8)
+        ORDER BY last_message_time DESC NULLS LAST LIMIT 1`);
+      const conv = c.rows?.[0];
+      if (!conv) return res.json({ erro: 'nenhuma conversa para esse numero', passos });
+      passos.push({ passo: 'conversa', ok: true, detalhe: { id: conv.id, status: conv.status, origem: conv.origem } });
+
+      const { avaliarCanal } = await import('./canais-gestao');
+      const av = await avaliarCanal(String(conv.id));
+      passos.push({ passo: 'canal', ok: !!(av.ativo && av.iaAtiva && av.dentroHorario), detalhe: av });
+
+      const modo = await _get('agents_runtime_mode', 'off');
+      passos.push({ passo: 'modo_whatsapp', ok: modo !== 'off', detalhe: { modo, testNumbers: await _get('agents_test_numbers', '') } });
+      passos.push({ passo: 'anthropic_key', ok: !!process.env.ANTHROPIC_API_KEY,
+        detalhe: { presente: !!process.env.ANTHROPIC_API_KEY, tamanho: (process.env.ANTHROPIC_API_KEY || '').length } });
+
+      const pausada: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${'chat_ai_paused:' + conv.id} LIMIT 1`);
+      passos.push({ passo: 'ia_pausada', ok: !pausada.rows?.length, detalhe: { pausada: !!pausada.rows?.length } });
+
+      // Agente escolhido + chamada real ao modelo (sem enviar nada ao cliente).
+      const defId = await _get('agents_default', 'sdr');
+      const a: any = await db.execute(sql`SELECT id, nome, modelo, ativo FROM agentes_config WHERE id = ${defId} LIMIT 1`);
+      passos.push({ passo: 'agente', ok: !!a.rows?.[0]?.ativo, detalhe: a.rows?.[0] || { id: defId, achou: false } });
+
+      const { generateAgentReply } = await import('./agent-runtime');
+      const t0 = Date.now();
+      const gen = await generateAgentReply(defId, [{ role: 'user', content: texto }], {
+        conversationId: String(conv.id), customerId: conv.customer_id, phone: fone, channel: 'whatsapp',
+        sendText: async () => ({ dry: true }), sendImage: async () => ({ dry: true }),
+      });
+      passos.push({ passo: 'modelo', ok: !!gen.ok, ms: Date.now() - t0,
+        detalhe: { erro: gen.error || null, modelo: gen.model || null, tools: gen.usedTools || [], resposta: (gen.reply || '').slice(0, 400) } });
+
+      const parou = passos.find(p => p.ok === false);
+      res.json({ enviou: false, veredito: parou ? ('parou em: ' + parou.passo) : 'todas as portas abertas — a IA responderia', passos });
+    } catch (e: any) {
+      passos.push({ passo: 'excecao', ok: false, detalhe: e?.message || String(e) });
+      res.status(500).json({ error: e?.message || String(e), passos });
+    }
+  });
+
+  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta)');
 }
