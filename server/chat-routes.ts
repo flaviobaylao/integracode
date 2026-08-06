@@ -676,7 +676,7 @@ export async function pollUmblerDeliveryStatus(): Promise<{ checked: number; upd
         if (ack !== null) {
           await db.execute(sql`UPDATE chat_messages
             SET ack = CASE WHEN ${fail} THEN 0 ELSE GREATEST(coalesce(ack,0), ${ack}) END,
-                metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${st}::text), true)
+                metadata = jsonb_set(jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${st}::text), true), '{delivery,success}', ${fail ? 'false' : 'true'}::jsonb, true)
             WHERE id = ${r.id}`);
           updated++;
         }
