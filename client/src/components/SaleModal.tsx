@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import WhatsAppButton from "./WhatsAppButton";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { writeLine, brl } from '@/lib/pdfLayout';
 import honestLogo from '@/assets/honest-logo.png';
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -164,48 +165,54 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     pdf.setFontSize(20);
     pdf.text('ORÇAMENTO DE VENDA', 20, 30);
     
-    // Informações da empresa
-    pdf.setFontSize(12);
-    pdf.text('Honest Sucos', 20, 50);
-    pdf.text('Sucos Naturais e Saudáveis', 20, 60);
+    // Cabecalho com cursor (antes: posicoes fixas ate y=170, que empurravam a
+    // tabela para 190 e estouravam a folha em orcamentos com varios itens).
+    let hy = 50;
+    hy = writeLine(pdf, hy, ['Honest Sucos', 'Sucos Naturais e Saudáveis'], { size: 12, gap: 7 });
     
     // Informações do cliente
     const customer = (salesCard as any)?.customer;
     if (customer) {
-      pdf.text(`Cliente: ${customer.fantasyName || customer.name}`, 20, 80);
-      if (customer.cnpj) pdf.text(`CNPJ: ${customer.cnpj}`, 20, 90);
-      if (customer.cpf) pdf.text(`CPF: ${customer.cpf}`, 20, 90);
-      if (customer.phone) pdf.text(`Telefone: ${customer.phone}`, 20, 100);
+      const dadosCliente = [`Cliente: ${customer.fantasyName || customer.name}`];
+      if (customer.cnpj) dadosCliente.push(`CNPJ: ${customer.cnpj}`);
+      else if (customer.cpf) dadosCliente.push(`CPF: ${customer.cpf}`);
+      if (customer.phone) dadosCliente.push(`Telefone: ${customer.phone}`);
+      hy = writeLine(pdf, hy + 4, dadosCliente, { size: 12, gap: 7 });
     }
     
     // Informações do vendedor
     const seller = (salesCard as any)?.seller;
     if (seller) {
-      pdf.text(`Vendedor: ${seller.firstName} ${seller.lastName}`, 20, 110);
+      hy = writeLine(pdf, hy, `Vendedor: ${seller.firstName} ${seller.lastName}`, { size: 12, gap: 7 });
     }
     
-    // Informações do pedido
-    pdf.text(`Número do Orçamento: HS-${Date.now()}`, 20, 130);
-    pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
-    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
-    if (paymentMethod === 'boleto') {
-      pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
-    }
-    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    // Informações do orçamento
+    const dadosPedido = [
+      `Número do Orçamento: HS-${Date.now()}`,
+      `Data: ${new Date().toLocaleDateString('pt-BR')}`,
+      `Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`,
+    ];
+    if (paymentMethod === 'boleto') dadosPedido.push(`Prazo do Boleto: ${boletoDays} dias`);
+    dadosPedido.push(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`);
+    hy = writeLine(pdf, hy + 4, dadosPedido, { size: 12, gap: 7 });
     
-    // Tabela de produtos
+    // Tabela de produtos. O somatorio vai TAMBEM como rodape da tabela
+    // (`foot`), acompanhando a quebra de pagina do autoTable.
+    const totalItens = saleItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
     const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
     const tableRows = saleItems.map(item => [
       item.name,
       item.quantity.toString(),
-      `R$ ${item.unitPrice.toFixed(2)}`,
-      `R$ ${item.totalPrice.toFixed(2)}`
+      brl(item.unitPrice),
+      brl(item.totalPrice)
     ]);
     
     autoTable(pdf, {
       head: [tableColumn],
       body: tableRows,
-      startY: 190,
+      foot: [[`TOTAL (${saleItems.length} itens / ${totalItens} un.)`, '', '', brl(totalSale)]],
+      showFoot: 'lastPage',
+      startY: Math.max(hy + 6, 60),
       styles: {
         fontSize: 10,
         cellPadding: 3
@@ -213,24 +220,27 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       headStyles: {
         fillColor: [41, 128, 185],
         textColor: 255
+      },
+      footStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255,
+        fontStyle: 'bold'
       }
     });
     
-    // Total da venda
-    const finalY = (pdf as any).lastAutoTable?.finalY || 250;
-    pdf.setFontSize(14);
-    pdf.text(`TOTAL GERAL: R$ ${totalSale.toFixed(2)}`, 20, finalY + 20);
+    // Total em destaque — `writeLine` abre pagina nova se nao couber. Antes era
+    // `finalY + 20` fixo e, com a tabela terminando baixo, caia fora da folha.
+    let y = ((pdf as any).lastAutoTable?.finalY || 250) + 10;
+    y = writeLine(pdf, y, `TOTAL GERAL: ${brl(totalSale)}`, { size: 14, gap: 10 });
     
     // Observações
-    pdf.setFontSize(10);
-    pdf.text('Observações:', 20, finalY + 40);
-    pdf.text('- Este orçamento tem validade de 15 dias.', 20, finalY + 50);
-    pdf.text('- Preços sujeitos a alteração sem aviso prévio.', 20, finalY + 60);
-    pdf.text('- Produtos naturais, sem conservantes.', 20, finalY + 70);
-    
-    if (shouldBlockOrder) {
-      pdf.text('- Este pedido requer aprovação manual.', 20, finalY + 80);
-    }
+    y = writeLine(pdf, y + 4, [
+      'Observações:',
+      '- Este orçamento tem validade de 15 dias.',
+      '- Preços sujeitos a alteração sem aviso prévio.',
+      '- Produtos naturais, sem conservantes.',
+      ...(shouldBlockOrder ? ['- Este pedido requer aprovação manual.'] : []),
+    ], { size: 10 });
     
     // Salvar o PDF
     const fileName = `orcamento-${customer?.name || 'cliente'}-${Date.now()}.pdf`;
@@ -268,47 +278,53 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     pdf.setFontSize(20);
     pdf.text('ORÇAMENTO DE VENDA', 20, 30);
     
-    // Informações da empresa
-    pdf.setFontSize(12);
-    pdf.text('Honest Sucos', 20, 50);
-    pdf.text('Sucos Naturais e Saudáveis', 20, 60);
+    // Cabecalho com cursor (antes: posicoes fixas ate y=170, que empurravam a
+    // tabela para 190 e estouravam a folha em orcamentos com varios itens).
+    let hy = 50;
+    hy = writeLine(pdf, hy, ['Honest Sucos', 'Sucos Naturais e Saudáveis'], { size: 12, gap: 7 });
     
     // Informações do cliente
     if (customer) {
-      pdf.text(`Cliente: ${customer.fantasyName || customer.name}`, 20, 80);
-      if (customer.cnpj) pdf.text(`CNPJ: ${customer.cnpj}`, 20, 90);
-      if (customer.cpf) pdf.text(`CPF: ${customer.cpf}`, 20, 90);
-      if (customer.phone) pdf.text(`Telefone: ${customer.phone}`, 20, 100);
+      const dadosCliente = [`Cliente: ${customer.fantasyName || customer.name}`];
+      if (customer.cnpj) dadosCliente.push(`CNPJ: ${customer.cnpj}`);
+      else if (customer.cpf) dadosCliente.push(`CPF: ${customer.cpf}`);
+      if (customer.phone) dadosCliente.push(`Telefone: ${customer.phone}`);
+      hy = writeLine(pdf, hy + 4, dadosCliente, { size: 12, gap: 7 });
     }
     
     // Informações do vendedor
     const seller = (salesCard as any)?.seller;
     if (seller) {
-      pdf.text(`Vendedor: ${seller.firstName} ${seller.lastName}`, 20, 110);
+      hy = writeLine(pdf, hy, `Vendedor: ${seller.firstName} ${seller.lastName}`, { size: 12, gap: 7 });
     }
     
-    // Informações do pedido
-    pdf.text(`Número do Orçamento: HS-${Date.now()}`, 20, 130);
-    pdf.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 20, 140);
-    pdf.text(`Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`, 20, 150);
-    if (paymentMethod === 'boleto') {
-      pdf.text(`Prazo do Boleto: ${boletoDays} dias`, 20, 160);
-    }
-    pdf.text(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`, 20, 170);
+    // Informações do orçamento
+    const dadosPedido = [
+      `Número do Orçamento: HS-${Date.now()}`,
+      `Data: ${new Date().toLocaleDateString('pt-BR')}`,
+      `Forma de Pagamento: ${PAYMENT_METHOD_LABELS[paymentMethod]}`,
+    ];
+    if (paymentMethod === 'boleto') dadosPedido.push(`Prazo do Boleto: ${boletoDays} dias`);
+    dadosPedido.push(`Tipo de Operação: ${OPERATION_TYPE_LABELS[operationType]}`);
+    hy = writeLine(pdf, hy + 4, dadosPedido, { size: 12, gap: 7 });
     
-    // Tabela de produtos
+    // Tabela de produtos. O somatorio vai TAMBEM como rodape da tabela
+    // (`foot`), acompanhando a quebra de pagina do autoTable.
+    const totalItens = saleItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
     const tableColumn = ['Produto', 'Qtd', 'Preço Unit.', 'Total'];
     const tableRows = saleItems.map(item => [
       item.name,
       item.quantity.toString(),
-      `R$ ${item.unitPrice.toFixed(2)}`,
-      `R$ ${item.totalPrice.toFixed(2)}`
+      brl(item.unitPrice),
+      brl(item.totalPrice)
     ]);
     
     autoTable(pdf, {
       head: [tableColumn],
       body: tableRows,
-      startY: 190,
+      foot: [[`TOTAL (${saleItems.length} itens / ${totalItens} un.)`, '', '', brl(totalSale)]],
+      showFoot: 'lastPage',
+      startY: Math.max(hy + 6, 60),
       styles: {
         fontSize: 10,
         cellPadding: 3
@@ -316,24 +332,27 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       headStyles: {
         fillColor: [41, 128, 185],
         textColor: 255
+      },
+      footStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255,
+        fontStyle: 'bold'
       }
     });
     
-    // Total da venda
-    const finalY = (pdf as any).lastAutoTable?.finalY || 250;
-    pdf.setFontSize(14);
-    pdf.text(`TOTAL GERAL: R$ ${totalSale.toFixed(2)}`, 20, finalY + 20);
+    // Total em destaque — `writeLine` abre pagina nova se nao couber. Antes era
+    // `finalY + 20` fixo e, com a tabela terminando baixo, caia fora da folha.
+    let y = ((pdf as any).lastAutoTable?.finalY || 250) + 10;
+    y = writeLine(pdf, y, `TOTAL GERAL: ${brl(totalSale)}`, { size: 14, gap: 10 });
     
     // Observações
-    pdf.setFontSize(10);
-    pdf.text('Observações:', 20, finalY + 40);
-    pdf.text('- Este orçamento tem validade de 15 dias.', 20, finalY + 50);
-    pdf.text('- Preços sujeitos a alteração sem aviso prévio.', 20, finalY + 60);
-    pdf.text('- Produtos naturais, sem conservantes.', 20, finalY + 70);
-    
-    if (shouldBlockOrder) {
-      pdf.text('- Este pedido requer aprovação manual.', 20, finalY + 80);
-    }
+    y = writeLine(pdf, y + 4, [
+      'Observações:',
+      '- Este orçamento tem validade de 15 dias.',
+      '- Preços sujeitos a alteração sem aviso prévio.',
+      '- Produtos naturais, sem conservantes.',
+      ...(shouldBlockOrder ? ['- Este pedido requer aprovação manual.'] : []),
+    ], { size: 10 });
 
     // 💬 Criar conversa no Integra
     try {
