@@ -1155,6 +1155,38 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  // Reativação em massa: inverso da inativação. Volta isActive=true, omie_status='ativo',
+  // limpa inactivatedAt e reabilita a linha em active_customers (se existir). NAO recria cards.
+  async bulkReactivateCustomers(ids: string[]): Promise<{ processed: number; reactivated: number; alreadyActive: number; reactivatedIds: string[] }> {
+    if (!ids || ids.length === 0) return { processed: 0, reactivated: 0, alreadyActive: 0, reactivatedIds: [] };
+
+    // Quais estavam INATIVOS antes (para auditoria e contagem)
+    const inactiveBefore = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(inArray(customers.id, ids), eq(customers.isActive, false)));
+    const reactivatedIds = inactiveBefore.map((r) => r.id);
+
+    // 1. customers: isActive=true, omie_status='ativo', limpa inactivatedAt
+    await db
+      .update(customers)
+      .set({ isActive: true, omieStatus: 'ativo', inactivatedAt: null, updatedAt: nowBrazil() })
+      .where(inArray(customers.id, ids));
+
+    // 2. Reabilita na lista de Clientes Ativos (inverso da inativacao); afeta so quem tinha linha
+    await db
+      .update(activeCustomers)
+      .set({ isActive: true, deactivatedAt: null, updatedAt: nowBrazil() })
+      .where(inArray(activeCustomers.customerId, ids));
+
+    return {
+      processed: ids.length,
+      reactivated: reactivatedIds.length,
+      alreadyActive: ids.length - reactivatedIds.length,
+      reactivatedIds,
+    };
+  }
+
   async deleteCustomer(id: string): Promise<void> {
     await db.update(customers).set({ omieStatus: 'inativo' }).where(eq(customers.id, id));
   }
