@@ -1701,22 +1701,23 @@ export function registerChatRoutes(app: Express): void {
   // Diagnostico do ACK (read-only): MessageState/Id REAIS dos ultimos webhooks + se casam com a msg enviada.
   app.get("/api/chat/umbler-talk/ack-debug", async (req: any, res: any) => {
     try {
-      const rows: any = await db.execute(sql`SELECT raw_payload FROM webhook_debug_log ORDER BY created_at DESC LIMIT 60`);
-      const out: any[] = [];
+      const rows: any = await db.execute(sql`SELECT raw_payload FROM webhook_debug_log ORDER BY created_at DESC LIMIT 200`);
+      const topTypes: Record<string, number> = {}; const payTypes: Record<string, number> = {};
+      const statesDeep = new Set<string>(); const stateKeys = new Set<string>();
+      let comLastMessage = 0, semLastMessage = 0; const semLmTypes: Record<string, number> = {};
+      const walk = (o: any) => { if (!o || typeof o !== 'object') return; for (const k of Object.keys(o)) { const v = o[k];
+        if (/messagestate|deliverystate|^state$|status/i.test(k) && (typeof v === 'string' || typeof v === 'number')) { stateKeys.add(k); statesDeep.add(k + '=' + String(v)); }
+        if (v && typeof v === 'object') walk(v); } };
       for (const r of (rows.rows || [])) {
         let pp: any = null; try { pp = JSON.parse(r.raw_payload); } catch {}
+        if (!pp) continue;
+        const tt = String(pp.Type || pp.type || '?'); topTypes[tt] = (topTypes[tt]||0)+1;
+        const pt = String(pp?.Payload?.Type || pp?.payload?.type || '?'); payTypes[pt] = (payTypes[pt]||0)+1;
         const lm = pp?.Payload?.Content?.LastMessage || pp?.payload?.content?.lastMessage;
-        if (!lm) continue;
-        const id = String(lm.Id || lm.id || '');
-        const state = String(lm.MessageState || lm.messageState || lm.State || lm.state || '');
-        const source = String(lm.Source || lm.source || '');
-        const fromMember = !!(lm.SentByOrganizationMember || lm.sentByOrganizationMember);
-        let matched: any = null;
-        if (id) { const m: any = await db.execute(sql`SELECT id, ack, metadata->'delivery'->>'state' AS saved_state, left(content, 30) AS preview FROM chat_messages WHERE metadata->'delivery'->>'providerStatus' = ${id} LIMIT 1`); matched = m.rows?.[0] || null; }
-        out.push({ umblerId: id, state, source, fromMember, matchedMsg: matched });
+        if (lm) comLastMessage++; else { semLastMessage++; semLmTypes[tt+'/'+pt] = (semLmTypes[tt+'/'+pt]||0)+1; }
+        walk(pp);
       }
-      const estados = Array.from(new Set(out.map(o => o.state).filter(Boolean)));
-      res.json({ estadosDistintos: estados, totalComMatch: out.filter(o => o.matchedMsg).length, total: out.length, itens: out.slice(0, 25) });
+      res.json({ topTypes, payTypes, comLastMessage, semLastMessage, semLmTypes, stateKeys: Array.from(stateKeys), statesDeep: Array.from(statesDeep).slice(0, 60) });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
