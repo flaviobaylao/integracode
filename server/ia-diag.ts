@@ -171,6 +171,40 @@ export function registerIaDiag(app: any) {
       const a: any = await db.execute(sql`SELECT id, nome, modelo, ativo FROM agentes_config WHERE id = ${defId} LIMIT 1`);
       passos.push({ passo: 'agente', ok: !!a.rows?.[0]?.ativo, detalhe: a.rows?.[0] || { id: defId, achou: false } });
 
+      // A cadeia do reactiveInbound: cada handler que pode responder no lugar da IA ou
+      // simplesmente encerrar o processamento. E aqui que a resposta some sem log.
+      const ult: any = await db.execute(sql`SELECT sender_id, sender_type, LEFT(content, 60) AS txt,
+          to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando
+        FROM chat_messages WHERE conversation_id = ${conv.id} AND sender_type <> 'customer'
+        ORDER BY created_at DESC LIMIT 1`);
+      const u = ult.rows?.[0];
+      const sid = String(u?.sender_id || '');
+      const humanoUltimo = !!sid && !sid.startsWith('agent:') && sid !== 'system';
+      const frontLine = (await _get('ia_front_line', 'off')) === 'on';
+      passos.push({ passo: 'ia_front_line (humano falou por ultimo)', ok: !(frontLine && humanoUltimo),
+        detalhe: { ia_front_line: frontLine ? 'on' : 'off', ultimaNaoCliente: u || null, humanoUltimo,
+                   nota: 'sem janela de tempo: com front_line on, um humano que falou por ultimo tira a IA da conversa ate ela ser finalizada' } });
+
+      const roboAv: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${'ia_robo_avisado:' + conv.id} LIMIT 1`);
+      passos.push({ passo: 'detector_robo', ok: !roboAv.rows?.length,
+        detalhe: { jaAvisado: !!roboAv.rows?.length, nota: 'depois de avisado, a IA fica em silencio nesta conversa (sem expiracao)' } });
+
+      try {
+        const { respostaDeCobranca } = await import('./promessa-pagamento');
+        const rc = await respostaDeCobranca(fone, texto);
+        passos.push({ passo: 'previsao_pagamento', ok: !rc, detalhe: { interceptou: !!rc, texto: (rc || '').slice(0, 120) } });
+      } catch (e: any) { passos.push({ passo: 'previsao_pagamento', ok: true, detalhe: { erro: e?.message } }); }
+      try {
+        const { respostaDaRota } = await import('./rota-respostas');
+        const rr = await respostaDaRota(fone, texto);
+        passos.push({ passo: 'resposta_rota', ok: !rr, detalhe: { interceptou: !!rr, texto: (rr || '').slice(0, 120) } });
+      } catch (e: any) { passos.push({ passo: 'resposta_rota', ok: true, detalhe: { erro: e?.message } }); }
+      try {
+        const { botaoDeEncerramento } = await import('./official-templates');
+        const be = await botaoDeEncerramento(fone, texto);
+        passos.push({ passo: 'botao_encerramento', ok: !be, detalhe: { interceptou: !!be } });
+      } catch (e: any) { passos.push({ passo: 'botao_encerramento', ok: true, detalhe: { erro: e?.message } }); }
+
       const { generateAgentReply } = await import('./agent-runtime');
       const t0 = Date.now();
       const gen = await generateAgentReply(defId, [{ role: 'user', content: texto }], {
