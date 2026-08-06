@@ -1873,26 +1873,6 @@ export function registerChatRoutes(app: Express): void {
               mt = (fileMime && /^image\//.test(fileMime)) ? 'image' : (fileMime && /^audio\//.test(fileMime)) ? 'audio' : (fileMime && /^video\//.test(fileMime)) ? 'video' : 'document';
             }
             const umMsgId = String(lm.Id || lm.id || '');
-            // 📶 Status de entrega/leitura do Umbler -> atualiza o ack da mensagem que NOS enviamos
-            // (casada pelo id do Umbler guardado em metadata.delivery.providerStatus). So mexe em msg nossa.
-            if (isFromMe && umMsgId) {
-              try {
-                const _st = String(lm.MessageState || lm.messageState || lm.State || lm.state || '').toLowerCase();
-                let _ack: number | null = null; let _fail = false;
-                if (/read|lida|visualiz|seen/.test(_st)) _ack = 3;
-                else if (/deliver|entreg|receb/.test(_st)) _ack = 2;
-                else if (/sent|enviad/.test(_st)) _ack = 1;
-                if (/fail|erro|error|reject|undeliver|nao.?entreg|not.?deliver/.test(_st)) { _fail = true; _ack = 0; }
-                if (_ack !== null) {
-                  await db.execute(sql`UPDATE chat_messages
-                    SET ack = CASE WHEN ${_fail} THEN 0 ELSE GREATEST(coalesce(ack,0), ${_ack}) END,
-                        metadata = jsonb_set(jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${_st}::text), true),
-                                             '{delivery,success}', ${_fail ? 'false' : 'true'}::jsonb, true)
-                    WHERE metadata->'delivery'->>'providerStatus' = ${umMsgId}
-                      AND created_at > now() - interval '2 days'`);
-                }
-              } catch (e: any) { console.warn('[UMBLER-ACK] falha ao atualizar status de entrega:', e?.message || e); }
-            }
             // Umbler envia o evento Message de midia SEM o arquivo (File=null, upload async). Resolver via API.
             if (mt !== 'text' && !fileUrl && umMsgId && process.env.UMBLER_TALK_TOKEN) {
               const resolved = await fetchUmblerTalkMessageFile(umMsgId);
@@ -2169,14 +2149,21 @@ export function registerChatRoutes(app: Express): void {
       // trava de envio) ficavam os dois de fora. Parecia "a IA fechou em 1 minuto";
       // na verdade ela nunca tinha reaberto desde a finalizacao anterior.
       try {
-        if (String((conversation as any).status || '') === 'resolved') {
+        if (!isFromMe && String((conversation as any).status || '') === 'resolved') {
+          // A conversa reaberta e uma conversa NOVA, de ENTRADA: quem escreveu foi o cliente.
+          // Sem zerar initiated_by, um atendimento que o atendente abriu uma vez marcava
+          // aquele telefone como "conversa do atendente" para sempre (ha uma unica conversa
+          // por numero) — e a IA, que nao entra em conversa iniciada por atendente, ficava
+          // muda com aquele cliente dali em diante.
           await storage.updateChatConversation(conversation.id, {
             status: 'new', assignedAgentId: null, assignedAgentColor: null,
+            initiatedBy: 'customer', initiatedByUserId: null,
           } as any);
           (conversation as any).status = 'new';
           (conversation as any).assignedAgentId = null;
+          (conversation as any).initiatedBy = 'customer';
           try { const { liberarIA } = await import('./ia-fila'); await liberarIA(conversation.id); } catch {}
-          console.log(`🔄 [WEBHOOK] Conversa ${conversation.id} REABERTA (estava finalizada e o cliente escreveu de novo)`);
+          console.log(`🔄 [WEBHOOK] Conversa ${conversation.id} REABERTA como conversa de ENTRADA (cliente escreveu de novo)`);
         }
       } catch (e: any) { console.error('[WEBHOOK] reabertura', e?.message || e);
       }
@@ -2272,7 +2259,7 @@ export function registerChatRoutes(app: Express): void {
       
       const savedMsg = await storage.createChatMessage({
         conversationId: conversation.id,
-        senderId: isFromMe ? 'umbler-member' : (customer?.id || 'unknown'),
+        senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
         senderType: isFromMe ? 'system' : 'customer',
         content: finalContent,
         messageType: finalMessageType,
@@ -4283,28 +4270,12 @@ export function registerChatRoutes(app: Express): void {
         }
       }
 
-      // 🙋 Assinatura do atendente: prefixa "*Nome*\n" p/ o cliente saber com quem fala no WhatsApp.
-      // Guardamos o MESMO texto que sai (o anti-eco casa pelo conteúdo). Vale p/ texto, legenda de mídia e localização.
-      let outgoingContent = content;
-      let sigPrefix = '';
-      try {
-        const _agSig = await storage.getChatAgents();
-        const _mineSig = _agSig.find((a: any) => a.userId === userId);
-        const _rawNameSig = String(_mineSig?.name || (currentUser as any)?.name || (currentUser as any)?.firstName || '').trim();
-        const _firstSig = _rawNameSig.includes('@') ? _rawNameSig.split('@')[0] : _rawNameSig.split(/\s+/)[0];
-        const _cleanSig = _firstSig.replace(/[^\p{L}\p{N}._-]/gu, '').trim();
-        if (_cleanSig) sigPrefix = `*${_cleanSig}*\n`;
-        if (sigPrefix && content && String(content).trim()) outgoingContent = sigPrefix + content;
-      } catch (e: any) { console.warn('⚠️ [ASSINATURA] erro ao prefixar nome do atendente:', e?.message || e); outgoingContent = content; sigPrefix = ''; }
-      // Legenda assinada p/ mídia: nome + legenda (ou só o nome, se não houver legenda).
-      const signCaption = (cap?: string | null) => { const _c = String(cap ?? '').trim(); return sigPrefix ? (sigPrefix + _c) : _c; };
-
       // 💬 Salvar mensagem no banco
       const message = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: userId,
         senderType: "agent",
-        content: outgoingContent || mediaCaption || "Mídia enviada",
+        content: content || mediaCaption || "Mídia enviada",
         messageType,
         mediaUrl,
       });
@@ -4420,23 +4391,23 @@ export function registerChatRoutes(app: Express): void {
               if (messageType === 'text' && content) {
                 if (process.env.UMBLER_TALK_TOKEN) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler Talk para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerTalkText(chatCustomer.phone, outgoingContent, (conversation as any).channelPhone);
+                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content, (conversation as any).channelPhone);
                 } else if (process.env.UMBLER_API_KEY) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerText(chatCustomer.phone, outgoingContent);
+                  sendResult = await sendUmblerText(chatCustomer.phone, content);
                 } else {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${phoneFormatted}: "${content.substring(0, 50)}..."`);
                   sendResult = await evolutionAPIService.sendTextMessage(
                     config.instanceName,
                     phoneFormatted,
-                    outgoingContent
+                    content
                   );
                 }
               } else if (mediaUrl && process.env.UMBLER_TALK_TOKEN) {
                 const host = req.headers.host || 'integracode-production.up.railway.app';
                 const absMediaUrl = /^https?:\/\//.test(mediaUrl) ? mediaUrl : ('https://' + host + mediaUrl);
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} via Umbler Talk: ${absMediaUrl.substring(0, 80)}`);
-                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, signCaption(mediaCaption || content), (conversation as any).channelPhone);
+                sendResult = await sendUmblerTalkMedia(chatCustomer.phone, absMediaUrl, mediaCaption || content || '', (conversation as any).channelPhone);
               } else if (mediaUrl) {
                 console.log(`📤 [SEND-WHATSAPP] Enviando ${messageType} para ${phoneFormatted}`);
                 
@@ -4561,7 +4532,7 @@ export function registerChatRoutes(app: Express): void {
                     config.instanceName,
                     phoneFormatted,
                     finalMediaUrl,
-                    signCaption(mediaCaption || content) || undefined,
+                    mediaCaption || content || undefined,
                     evolutionMediaType,
                     3,
                     { mimetype: detectedMimetype, fileName: detectedFileName }
@@ -4572,7 +4543,7 @@ export function registerChatRoutes(app: Express): void {
                 try { const o: any = typeof content === 'string' ? JSON.parse(content) : content; lat = o.lat || o.latitude; lng = o.lng || o.lon || o.longitude; } catch {}
                 if (!lat || !lng) { const m = String(content).match(/(-?\d+\.\d+)[,;\s]+(-?\d+\.\d+)/); if (m) { lat = m[1]; lng = m[2]; } }
                 const mapsUrl = (lat && lng) ? `https://maps.google.com/?q=${lat},${lng}` : String(content);
-                const locText = sigPrefix + (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
+                const locText = (mediaCaption ? mediaCaption + ' ' : '') + mapsUrl;
                 if (process.env.UMBLER_TALK_TOKEN) sendResult = await sendUmblerTalkText(chatCustomer.phone, locText, (conversation as any).channelPhone);
                 else sendResult = await evolutionAPIService.sendTextMessage(config.instanceName, phoneFormatted, locText);
               } else {

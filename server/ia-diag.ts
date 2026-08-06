@@ -16,6 +16,14 @@ const CHANNEL_LABELS: Record<string, string> = {
   'ajqNf-Vjp4yjcaJf': '1841 (HONESTAPI oficial)',
 };
 
+async function _get(key: string, def: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
+    const v = r.rows?.[0]?.value;
+    return v == null ? def : String(v).replace(/^"|"$/g, '');
+  } catch { return def; }
+}
+
 export function registerIaDiag(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
 
@@ -62,5 +70,67 @@ export function registerIaDiag(app: any) {
     res.json({ analisados: rows.length, porCanal, amostra });
   });
 
-  console.log('[IA-DIAG] registrado (/api/admin/ia-atendimento/diag-webhooks)');
+  // ---------------------------------------------------------------------------
+  // "Por que a IA nao respondeu?" — abre TODAS as portas que a mensagem atravessa,
+  // conversa por conversa, com o veredito de cada uma. Sem isto so restava adivinhar
+  // qual regra estava barrando (e ja errei assim antes: testei por curl, nunca pelo
+  // caminho de verdade). ?phone=5562... para um numero; sem phone, as ultimas conversas.
+  // ---------------------------------------------------------------------------
+  app.get('/api/admin/ia-atendimento/porque-nao-respondeu', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try {
+      const fone = String(req.query.phone || '').replace(/\D/g, '');
+      const lim = Math.min(20, Math.max(1, parseInt(String(req.query.n || '8'), 10) || 8));
+      const mins = Math.max(5, parseInt(await _get('ia_respeita_atendente_min', '60'), 10) || 60);
+      const respeita = (await _get('ia_respeita_atendente', 'on')) === 'on';
+
+      const q: any = await db.execute(sql`
+        SELECT c.id, c.customer_phone, c.customer_name, c.status,
+               coalesce(c.initiated_by::text, 'customer') AS origem,
+               c.assigned_agent_id,
+               to_char(c.last_message_time, 'DD/MM HH24:MI') AS ult_msg,
+               EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_transferida:' || c.id) AS transferida,
+               EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'chat_ai_paused:' || c.id) AS pausada,
+               EXISTS (SELECT 1 FROM system_settings s WHERE s.key = 'ia_robo_avisado:' || c.id) AS robo,
+               EXISTS (SELECT 1 FROM chat_messages m
+                       WHERE m.conversation_id = c.id AND m.sender_type <> 'customer'
+                         AND coalesce(m.sender_id,'') NOT LIKE 'agent:%'
+                         AND coalesce(m.sender_id,'') <> 'system'
+                         AND m.created_at > now() - make_interval(mins => ${mins})) AS humano_recente,
+               (SELECT to_char(max(m.created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI')
+                  FROM chat_messages m WHERE m.conversation_id = c.id AND m.sender_type = 'customer') AS ult_cliente,
+               (SELECT to_char(max(m.created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI')
+                  FROM chat_messages m WHERE m.conversation_id = c.id AND coalesce(m.sender_id,'') LIKE 'agent:%') AS ult_ia
+        FROM chat_conversations c
+        WHERE (${fone} = '' OR right(c.customer_phone, 8) = right(${fone}, 8))
+          AND c.customer_phone NOT LIKE 'ig:%'
+        ORDER BY c.last_message_time DESC NULLS LAST
+        LIMIT ${lim}`);
+
+      const itens = (q.rows || []).map((c: any) => {
+        const portas: string[] = [];
+        if (String(c.status) === 'resolved') portas.push('conversa finalizada (so reabre quando o cliente escrever)');
+        if (respeita && String(c.origem) === 'user') portas.push('conversa INICIADA PELO ATENDENTE — a IA nao entra (regra de origem)');
+        if (respeita && c.transferida) portas.push('conversa TRANSFERIDA pela IA para um humano');
+        if (respeita && c.humano_recente) portas.push('humano escreveu ha menos de ' + mins + ' min');
+        if (c.pausada) portas.push('IA pausada nesta conversa (chat_ai_paused)');
+        if (c.robo) portas.push('detector de robo: aguardando um humano');
+        return {
+          conv: c.id, cliente: c.customer_name, fone: c.customer_phone, status: c.status,
+          origem: c.origem, dono: c.assigned_agent_id, ult_msg: c.ult_msg,
+          ult_cliente: c.ult_cliente, ult_ia: c.ult_ia,
+          iaResponde: portas.length === 0,
+          portasFechadas: portas,
+        };
+      });
+      const total = itens.length;
+      const barradas = itens.filter((i: any) => !i.iaResponde).length;
+      const motivos: Record<string, number> = {};
+      for (const i of itens) for (const p of i.portasFechadas) motivos[p] = (motivos[p] || 0) + 1;
+      res.json({ regras: { ia_respeita_atendente: respeita ? 'on' : 'off', janela_min: mins },
+                 resumo: { conversas: total, barradas, motivos }, itens });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu)');
 }
