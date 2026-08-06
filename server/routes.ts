@@ -3370,6 +3370,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ✅ Reativação em massa (admin/coordenador/administrativo). Inverso da inativação:
+  // customers.isActive=true, omie_status='ativo', volta para a lista de Clientes Ativos.
+  app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
+      const result = await storage.bulkReactivateCustomers(ids.map((x: any) => String(x)));
+      // 📜 Auditoria: registra "Ativo: Não → Sim" para os que estavam inativos
+      const u = req.currentUser;
+      const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
+      for (const cid of (result.reactivatedIds || [])) {
+        try { await logCustomerChanges({ customerId: cid, before: { isActive: false }, changes: { isActive: true }, actor, source: 'bulk' }); } catch (_e) {}
+      }
+      res.json({ ok: true, ...result });
+    } catch (error: any) {
+      console.error("Error bulk reactivating customers:", error);
+      res.status(500).json({ message: "Falha na reativação em massa: " + String(error?.message || error) });
+    }
+  });
+
   // 📜 Histórico das últimas alterações de um cliente (rezoneamento, periodicidade, etc.)
   app.get('/api/customers/:id/change-history', authenticateUser, async (req: any, res) => {
     try {
