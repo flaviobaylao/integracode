@@ -1698,6 +1698,28 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Diagnostico do ACK (read-only): MessageState/Id REAIS dos ultimos webhooks + se casam com a msg enviada.
+  app.get("/api/chat/umbler-talk/ack-debug", async (req: any, res: any) => {
+    try {
+      const rows: any = await db.execute(sql`SELECT raw_payload FROM webhook_debug_log ORDER BY created_at DESC LIMIT 60`);
+      const out: any[] = [];
+      for (const r of (rows.rows || [])) {
+        let pp: any = null; try { pp = JSON.parse(r.raw_payload); } catch {}
+        const lm = pp?.Payload?.Content?.LastMessage || pp?.payload?.content?.lastMessage;
+        if (!lm) continue;
+        const id = String(lm.Id || lm.id || '');
+        const state = String(lm.MessageState || lm.messageState || lm.State || lm.state || '');
+        const source = String(lm.Source || lm.source || '');
+        const fromMember = !!(lm.SentByOrganizationMember || lm.sentByOrganizationMember);
+        let matched: any = null;
+        if (id) { const m: any = await db.execute(sql`SELECT id, ack, metadata->'delivery'->>'state' AS saved_state, left(content, 30) AS preview FROM chat_messages WHERE metadata->'delivery'->>'providerStatus' = ${id} LIMIT 1`); matched = m.rows?.[0] || null; }
+        out.push({ umblerId: id, state, source, fromMember, matchedMsg: matched });
+      }
+      const estados = Array.from(new Set(out.map(o => o.state).filter(Boolean)));
+      res.json({ estadosDistintos: estados, totalComMatch: out.filter(o => o.matchedMsg).length, total: out.length, itens: out.slice(0, 25) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // Teste de envio de MIDIA via Umbler Talk (file = URL publica acessivel)
   app.get("/api/chat/umbler-talk/test-media", async (req: any, res: any) => {
     try {
