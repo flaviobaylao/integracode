@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { registerEntregaAvisos } from './entrega-avisos';
 import { registerRotaRespostas } from './rota-respostas';
+import { registerEnvioTexto, enviarTexto } from './envio-texto';
 import { registerPromessaPagamento } from './promessa-pagamento';
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
@@ -762,6 +763,9 @@ export function registerChatRoutes(app: Express): void {
   catch (e: any) { console.error('[ROTA-RESPOSTAS] nao registrado:', e?.message || e); }
   try { registerPromessaPagamento(app); }
   catch (e: any) { console.error('[PROMESSA-PGTO] nao registrado:', e?.message || e); }
+  // Reenvio de mensagem que nao chegou + diagnostico de envios falhos.
+  try { registerEnvioTexto(app); }
+  catch (e: any) { console.error('[ENVIO-TEXTO] nao registrado:', e?.message || e); }
 
   // Configure multer for memory storage (will upload to Object Storage)
   const upload = multer({
@@ -4390,8 +4394,12 @@ export function registerChatRoutes(app: Express): void {
               let sendResult;
               if (messageType === 'text' && content) {
                 if (process.env.UMBLER_TALK_TOKEN) {
-                  console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler Talk para ${chatCustomer.phone}`);
-                  sendResult = await sendUmblerTalkText(chatCustomer.phone, content, (conversation as any).channelPhone);
+                  // Rota escolhida em envio-texto.ts: no canal OFICIAL (1841) texto livre so
+                  // vale dentro da janela de 24h; fora dela a Meta recusa e a mensagem some.
+                  // Nesse caso a mensagem sai pelo numero principal em vez de morrer.
+                  console.log(`📤 [SEND-WHATSAPP] Enviando texto para ${chatCustomer.phone}`);
+                  sendResult = await enviarTexto(String(conversation.id), chatCustomer.phone, content);
+                  console.log(`📤 [SEND-WHATSAPP] rota=${(sendResult as any)?.rota} via=${(sendResult as any)?.via}`);
                 } else if (process.env.UMBLER_API_KEY) {
                   console.log(`📤 [SEND-WHATSAPP] Enviando texto via Umbler para ${chatCustomer.phone}`);
                   sendResult = await sendUmblerText(chatCustomer.phone, content);
