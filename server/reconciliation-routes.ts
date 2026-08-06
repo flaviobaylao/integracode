@@ -1417,13 +1417,25 @@ export function registerReconciliation(app: Express) {
           }
         }
       }
-      await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
-      await db.execute(sql`
-        UPDATE bank_statement_items
-        SET reconciliation_status = ${ehEspelho ? 'mirror' : 'pending'},
-            matched_receivable_id = null, matched_payable_id = null, matched_at = null,
-            matched_by = ${by}, match_confidence = null, notes = null
-        WHERE id = ${id}`);
+      // TRAVA DE DESCONCILIACAO (06/ago/2026): o trigger trg_bsi_trava_desconciliar
+      // recusa qualquer UPDATE que tire um lancamento de 'reconciled' sem que a
+      // transacao declare intencao. Este e o caminho legitimo de desfazer, entao
+      // ele declara. Ver POST /api/reconciliation/trava-desconciliacao.
+      //
+      // De quebra, o par DELETE+UPDATE passa a ser ATOMICO. Antes eram dois
+      // statements soltos: se o UPDATE falhasse depois do DELETE, o vinculo sumia
+      // e o lancamento continuava 'reconciled' — exatamente o estado inconsistente
+      // que a FASE 3.5d teve que aprender a consertar.
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('integra.permitir_desconciliar', 'on', true)`);
+        await tx.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`);
+        await tx.execute(sql`
+          UPDATE bank_statement_items
+          SET reconciliation_status = ${ehEspelho ? 'mirror' : 'pending'},
+              matched_receivable_id = null, matched_payable_id = null, matched_at = null,
+              matched_by = ${by}, match_confidence = null, notes = null
+          WHERE id = ${id}`);
+      });
       await logReconAudit({ action: "undo", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: matches.map((m: any) => ({ receivable_id: m.receivable_id, payable_id: m.payable_id, amount: m.amount, settled: m.title_amount_settled })), by, details: { reverted } });
       return { ok: true, status: ehEspelho ? "mirror" : "pending", reverted };
     }
@@ -2729,6 +2741,7 @@ export function registerReconciliation(app: Express) {
               notes = 'Duplicata legada colapsada (dedup-canonical) - reversivel'
           FROM (VALUES ${sql.join(vals, sql`, `)}) AS v(id, canon)
           WHERE t.id::text = v.id AND t.mirror_of IS NULL
+            AND COALESCE(t.reconciliation_status, 'pending') <> 'reconciled'
             AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
         espelhados += Number((u as any)?.rowCount ?? 0);
       }
@@ -2741,7 +2754,7 @@ export function registerReconciliation(app: Express) {
           SET reconciliation_status = 'saldo', matched_by = ${by}, matched_at = now(),
               notes = 'Linha informativa de saldo do extrato - nao e lancamento (reversivel)'
           WHERE t.id::text IN (${inList(lote)}) AND t.mirror_of IS NULL
-            AND COALESCE(t.reconciliation_status, 'pending') <> 'saldo'
+            AND COALESCE(t.reconciliation_status, 'pending') NOT IN ('saldo', 'reconciled')
             AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
         saldoMarcadas += Number((u as any)?.rowCount ?? 0);
       }
@@ -2919,6 +2932,100 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // =========================================================================
+  // TRAVA DE DESCONCILIACAO — no BANCO, nao no codigo (06/ago/2026)
+  //
+  //   GET  /api/reconciliation/trava-desconciliacao          -> estado
+  //   POST /api/reconciliation/trava-desconciliacao {ativar}  -> liga/desliga
+  //
+  // Instala dois triggers BEFORE em bank_statement_items que RECUSAM tirar um
+  // lancamento de 'reconciled' (UPDATE) e apagar um lancamento conciliado
+  // (DELETE) quando a transacao nao declarou intencao. Declarar intencao e
+  // rodar, na MESMA transacao:
+  //
+  //     SELECT set_config('integra.permitir_desconciliar', 'on', true);
+  //
+  // So o desfazer legitimo (undoReconciliation) declara. Qualquer outro caminho
+  // — rotina de faxina, sync, backfill, codigo que ainda nao existe, SQL rodado
+  // a mao — toma erro e a transacao inteira volta.
+  //
+  // POR QUE NO BANCO: em 06/08 o POST /api/admin/sync/backfill-all, que estava
+  // SEM AUTENTICACAO, copiou o 1.0 por cima do 2.0 e sobrescreveu 14.053
+  // lancamentos com os valores vazios de la, desfazendo conciliacao sem passar
+  // por uma linha sequer deste modulo. Trava em codigo nao pegaria. Esta pega.
+  //
+  // FORA DO BOOT DE PROPOSITO: e DDL, precisa de ACCESS EXCLUSIVE na tabela, e
+  // no arranque isso derrubou a aplicacao em 06/08. Aqui roda sob demanda, com
+  // lock_timeout de 5s — falha a requisicao, nunca o processo. E desligar nao
+  // exige deploy: { "ativar": false }.
+  // =========================================================================
+  const SQL_TRAVA_FUNC = `
+    CREATE OR REPLACE FUNCTION trava_desconciliar_bsi() RETURNS trigger AS $fn$
+    BEGIN
+      IF COALESCE(current_setting('integra.permitir_desconciliar', true), 'off') = 'on' THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+      END IF;
+      IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'TRAVA DE CONCILIACAO: o lancamento % esta conciliado e nao pode ser apagado.', OLD.id
+          USING HINT = 'Desfaca a conciliacao pelo endpoint proprio. Se a operacao for legitima, rode set_config(''integra.permitir_desconciliar'',''on'',true) na mesma transacao.';
+      END IF;
+      RAISE EXCEPTION 'TRAVA DE CONCILIACAO: o lancamento % esta conciliado e esta atualizacao tirou o status para %.', OLD.id, COALESCE(NEW.reconciliation_status::text, '(nulo)')
+        USING HINT = 'Desfaca a conciliacao pelo endpoint proprio. Se a operacao for legitima, rode set_config(''integra.permitir_desconciliar'',''on'',true) na mesma transacao.';
+    END;
+    $fn$ LANGUAGE plpgsql;`;
+  const SQL_TRAVA_UPDATE = `
+    CREATE TRIGGER trg_bsi_trava_desconciliar BEFORE UPDATE ON bank_statement_items
+    FOR EACH ROW WHEN (OLD.reconciliation_status = 'reconciled' AND NEW.reconciliation_status IS DISTINCT FROM OLD.reconciliation_status)
+    EXECUTE FUNCTION trava_desconciliar_bsi()`;
+  const SQL_TRAVA_DELETE = `
+    CREATE TRIGGER trg_bsi_trava_delete BEFORE DELETE ON bank_statement_items
+    FOR EACH ROW WHEN (OLD.reconciliation_status = 'reconciled')
+    EXECUTE FUNCTION trava_desconciliar_bsi()`;
+
+  async function estadoDaTrava() {
+    return rowsOf(await db.execute(sql`
+      SELECT tgname AS trigger, (tgenabled <> 'D') AS habilitado
+      FROM pg_trigger
+      WHERE NOT tgisinternal AND tgrelid = 'bank_statement_items'::regclass
+        AND tgname IN ('trg_bsi_trava_desconciliar', 'trg_bsi_trava_delete')
+      ORDER BY tgname`));
+  }
+
+  app.get("/api/reconciliation/trava-desconciliacao", authenticateUser, requireRole(FIN_ROLES), async (_req, res) => {
+    try {
+      const t = await estadoDaTrava();
+      res.json({
+        ativa: t.length === 2 && t.every((x: any) => x.habilitado),
+        triggers: t,
+        oQueBloqueia: "UPDATE que tira um lancamento de 'reconciled' e DELETE de lancamento conciliado",
+        comoDeclararIntencao: "SELECT set_config('integra.permitir_desconciliar','on',true) na MESMA transacao",
+        quemDeclara: "apenas undoReconciliation (botao Desfazer e fix-baixa-dupla)",
+      });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  app.post("/api/reconciliation/trava-desconciliacao", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    const ativar = req.body?.ativar !== false;
+    try {
+      await db.transaction(async (tx) => {
+        // lock_timeout: DDL nesta tabela precisa de ACCESS EXCLUSIVE. Se alguem
+        // estiver segurando lock, a requisicao falha em 5s em vez de pendurar.
+        await tx.execute(sql`SELECT set_config('lock_timeout', '5s', true)`);
+        await tx.execute(sql.raw("DROP TRIGGER IF EXISTS trg_bsi_trava_desconciliar ON bank_statement_items"));
+        await tx.execute(sql.raw("DROP TRIGGER IF EXISTS trg_bsi_trava_delete ON bank_statement_items"));
+        if (ativar) {
+          await tx.execute(sql.raw(SQL_TRAVA_FUNC));
+          await tx.execute(sql.raw(SQL_TRAVA_UPDATE));
+          await tx.execute(sql.raw(SQL_TRAVA_DELETE));
+        }
+      });
+      const t = await estadoDaTrava();
+      res.json({ ok: true, ativa: t.length === 2, triggers: t, por: (req as any)?.user?.email || "?" });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
   // ---- Remover extrato importado (trava: recusa se houver item conciliado) -
   app.post("/api/reconciliation/statements/:id/delete", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
@@ -2926,8 +3033,22 @@ export function registerReconciliation(app: Express) {
       const by = (req.body?.by || "conciliacao-2.0").toString();
       const st = rowsOf(await db.execute(sql`SELECT id, file_name FROM bank_statements WHERE id = ${id}`))[0];
       if (!st) return res.status(404).json({ error: "extrato nao encontrado" });
-      const rec = rowsOf(await db.execute(sql`SELECT count(*)::int AS n FROM bank_statement_items WHERE statement_id = ${id} AND reconciliation_status = 'reconciled'`))[0];
-      if (Number(rec?.n || 0) > 0) return res.status(409).json({ error: `extrato tem ${rec.n} item(ns) conciliado(s); desfaca as conciliacoes antes de remover`, reconciled: rec.n });
+      // A trava olhava SO o flag reconciliation_status. Lancamento com VINCULO
+      // ativo e status 'pending'/'mirror' (o estado inconsistente que a FASE 3.5d
+      // admite existir) passava e era apagado junto com o vinculo — o titulo
+      // ficava baixado e o rastro sumia. Pior: DELETE nao aparece no trigger de
+      // log, que e AFTER UPDATE, nem no reconciliation_audit_log. Agora recusa
+      // tambem por vinculo.
+      const rec = rowsOf(await db.execute(sql`
+        SELECT count(*) FILTER (WHERE b.reconciliation_status = 'reconciled')::int AS n,
+               count(*) FILTER (WHERE EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = b.id))::int AS com_vinculo
+        FROM bank_statement_items b WHERE b.statement_id = ${id}`))[0];
+      if (Number(rec?.n || 0) > 0 || Number(rec?.com_vinculo || 0) > 0) {
+        return res.status(409).json({
+          error: `extrato tem ${rec.n} item(ns) conciliado(s) e ${rec.com_vinculo} com vinculo de titulo; desfaca as conciliacoes antes de remover`,
+          reconciled: rec.n, comVinculo: rec.com_vinculo,
+        });
+      }
       await db.execute(sql`DELETE FROM bank_statement_item_matches WHERE bank_statement_item_id IN (SELECT id FROM bank_statement_items WHERE statement_id = ${id})`);
       const delItems = rowsOf(await db.execute(sql`DELETE FROM bank_statement_items WHERE statement_id = ${id} RETURNING id`));
       await db.execute(sql`DELETE FROM bank_statements WHERE id = ${id}`);
