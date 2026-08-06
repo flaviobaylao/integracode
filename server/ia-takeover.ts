@@ -71,23 +71,8 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
 // A IA vai mesmo atender esta conversa agora? Usado pelo webhook para decidir se
 // pula a distribuicao. Se qualquer gate estiver fechado, a fila humana funciona
 // exatamente como hoje — nenhuma conversa fica orfa.
-// A conversa e com um USUARIO do Integra (funcionario/vendedor/admin/etc.)? A IA NUNCA captura nem
-// responde os proprios usuarios — so clientes externos. Casa pelos 8 digitos finais do telefone.
-async function ehUsuarioDoIntegra(phone: string): Promise<boolean> {
-  try {
-    const ph = String(phone || '').replace(/[^0-9]/g, '');
-    if (ph.length < 8) return false;
-    const last8 = ph.slice(-8);
-    const r: any = await db.execute(sql`SELECT 1 FROM users
-      WHERE coalesce(is_active, true) = true AND phone IS NOT NULL
-        AND right(regexp_replace(phone, '[^0-9]', '', 'g'), 8) = ${last8} LIMIT 1`);
-    return !!r.rows?.[0];
-  } catch { return false; }
-}
-
 export async function iaAssumeSozinha(conversationId: string, phone: string): Promise<boolean> {
   try {
-    if (await ehUsuarioDoIntegra(phone)) return false; // nunca captura conversa de usuario do Integra
     if ((await getSetting('ia_front_line', 'off')) !== 'on') return false;
     const mode = await getSetting('agents_runtime_mode', 'off');
     if (mode === 'off') return false;
@@ -239,14 +224,45 @@ async function encerrarPeloBotao(conversationId: string, phone: string, texto: s
 // O porteiro shouldRespondNow aplica a regra de takeover: se ligada e a IA ainda não assumiu,
 // espera o humano (o sweep assume em X min); se a IA já assumiu, responde na hora.
 // maybeRunAgent reaplica canal/modo/allowlist/paused — cliente real protegido em modo test.
+
+// ---------------------------------------------------------------------------
+// TRILHA DA IA — o log que faltava.
+// Quando a IA "nao responde", o codigo nao diz onde ela parou: cada porta faz um `return`
+// silencioso e o console do Railway rola embora. Aqui cada mensagem que entra deixa uma
+// linha no banco com a porta exata em que morreu — e o painel le isso depois, com calma.
+// ---------------------------------------------------------------------------
+let _trilhaPronta = false;
+export async function trilha(conversationId: string, phone: string, texto: string, porta: string, detalhe?: string): Promise<void> {
+  try {
+    if (!_trilhaPronta) {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS ia_trilha (
+        id serial PRIMARY KEY,
+        conversation_id varchar(64),
+        telefone varchar(20),
+        texto varchar(200),
+        porta varchar(60),
+        detalhe varchar(300),
+        criado_at timestamptz DEFAULT now())`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_trilha_at ON ia_trilha (criado_at DESC)`);
+      _trilhaPronta = true;
+    }
+    await db.execute(sql`INSERT INTO ia_trilha (conversation_id, telefone, texto, porta, detalhe)
+      VALUES (${conversationId}, ${String(phone || '').replace(/\D/g, '')},
+              ${String(texto || '').slice(0, 200)}, ${porta}, ${detalhe ? String(detalhe).slice(0, 300) : null})`);
+    // Sem histerese: a trilha guarda os ultimos dias, nao a vida toda.
+    if (Math.random() < 0.02) await db.execute(sql`DELETE FROM ia_trilha WHERE criado_at < now() - interval '7 days'`);
+  } catch { /* trilha e melhor esforco: nunca pode derrubar o atendimento */ }
+}
+
 export async function reactiveInbound(conversationId: string, phone: string, incomingText: string): Promise<void> {
   try {
-    if (!incomingText || !incomingText.trim()) return;
-    if (await ehUsuarioDoIntegra(phone)) return; // usuario do Integra: a IA nao responde
-    if (!(await canalLiberaIA(conversationId, phone))) return; // liga/desliga por número (2630/1841)
+    if (!incomingText || !incomingText.trim()) { await trilha(conversationId, phone, incomingText, 'texto_vazio'); return; }
+    await trilha(conversationId, phone, incomingText, 'entrou');
+    if (!(await canalLiberaIA(conversationId, phone))) { await trilha(conversationId, phone, incomingText, 'canal_ou_horario'); return; }
     // Atendente atuando: a IA nao responde NADA aqui — nem as respostas prontas de
     // cobranca/rota/botao. Quem conduz e a pessoa.
     if ((await getSetting('ia_respeita_atendente', 'on')) === 'on' && (await atendenteAtuando(conversationId))) {
+      await trilha(conversationId, phone, incomingText, 'atendente_atuando');
       console.log(`[IA-REACTIVE] ${conversationId}: atendente atuando — IA nao responde`);
       return;
     }
@@ -255,6 +271,7 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       const { respostaDeCobranca } = await import('./promessa-pagamento');
       const rc = await respostaDeCobranca(phone, incomingText);
       if (rc) {
+        await trilha(conversationId, phone, incomingText, 'previsao_pagamento');
         await replyVia(conversationId, phone, rc);
         try {
           await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
@@ -273,6 +290,7 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       const { respostaDeRobo } = await import('./robo-detector');
       const rb = await respostaDeRobo(conversationId, incomingText);
       if (rb !== null) {
+        await trilha(conversationId, phone, incomingText, 'detector_robo', rb ? 'avisou' : 'silencio (ja avisado)');
         if (rb) {
           await replyVia(conversationId, phone, rb);
           try {
@@ -290,6 +308,7 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       const { respostaDaRota } = await import('./rota-respostas');
       const rr = await respostaDaRota(phone, incomingText);
       if (rr) {
+        await trilha(conversationId, phone, incomingText, 'resposta_rota');
         await replyVia(conversationId, phone, rr);
         try {
           await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
@@ -299,8 +318,9 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       }
     } catch (e: any) { console.error('[ROTA-RESPOSTA]', e?.message || e); }
 
-    if (await encerrarPeloBotao(conversationId, phone, incomingText)) return;
-    if (!(await shouldRespondNow(conversationId))) return;
+    if (await encerrarPeloBotao(conversationId, phone, incomingText)) { await trilha(conversationId, phone, incomingText, 'botao_encerramento'); return; }
+    if (!(await shouldRespondNow(conversationId))) { await trilha(conversationId, phone, incomingText, 'should_respond_now'); return; }
+    await trilha(conversationId, phone, incomingText, 'chamou_a_ia');
     const { maybeRunAgent } = await import('./agent-runtime');
     await maybeRunAgent({
       phone,
@@ -310,7 +330,10 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       sendImage: (url: string) => replyImageVia(conversationId, phone, url),
       channel: 'whatsapp',
     });
-  } catch (e: any) { console.error('[IA-REACTIVE]', e?.message || e); }
+  } catch (e: any) {
+    await trilha(conversationId, phone, incomingText, 'excecao', e?.message || String(e));
+    console.error('[IA-REACTIVE]', e?.message || e);
+  }
 }
 
 // Candidatos ao takeover: conversa de WhatsApp cuja ÚLTIMA mensagem é do cliente, sem resposta
@@ -333,9 +356,6 @@ async function selectTakeover(mins: number, teto: number, limit: number): Promis
       -- Conversa ABERTA PELO ATENDENTE nunca entra no takeover: a IA nao captura conversa
       -- iniciada por gente. Ela so assume o que entrou pelo cliente. (regra do Flavio, 05/08)
       AND coalesce(c.initiated_by::text, 'customer') <> 'user'
-      -- Telefone que pertence a um USUARIO do Integra nunca entra no takeover (so clientes externos).
-      AND NOT EXISTS (SELECT 1 FROM users u WHERE coalesce(u.is_active, true) = true AND u.phone IS NOT NULL
-        AND right(regexp_replace(u.phone, '[^0-9]', '', 'g'), 8) = right(regexp_replace(c.customer_phone, '[^0-9]', '', 'g'), 8))
       AND NOT EXISTS (SELECT 1 FROM system_settings s2 WHERE s2.key = 'ia_transferida:' || c.id)
       AND m.sender_type = 'customer'
       AND m.created_at < now() - make_interval(mins => ${mins})

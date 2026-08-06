@@ -255,5 +255,25 @@ export function registerIaDiag(app: any) {
     }
   });
 
-  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta)');
+
+  // A trilha crua: o que aconteceu com CADA mensagem que entrou de verdade.
+  app.get('/api/admin/ia-atendimento/trilha', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try {
+      const fone = String(req.query.phone || '').replace(/\D/g, '');
+      const n = Math.min(200, Math.max(5, parseInt(String(req.query.n || '60'), 10) || 60));
+      const r: any = await db.execute(sql`SELECT
+          to_char(criado_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS quando,
+          telefone, porta, detalhe, LEFT(texto, 80) AS texto, conversation_id AS conv
+        FROM ia_trilha
+        WHERE (${fone} = '' OR right(telefone, 8) = right(${fone}, 8))
+        ORDER BY criado_at DESC LIMIT ${n}`);
+      const linhas = r.rows || [];
+      const porPorta: Record<string, number> = {};
+      for (const l of linhas as any[]) porPorta[l.porta] = (porPorta[l.porta] || 0) + 1;
+      res.json({ total: linhas.length, porPorta, linhas });
+    } catch (e: any) { res.json({ erro: e?.message || String(e), nota: 'a tabela ia_trilha nasce na primeira mensagem apos o deploy' }); }
+  });
+
+  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta + trilha)');
 }

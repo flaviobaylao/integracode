@@ -923,8 +923,12 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     const channel = (opts.channel || 'whatsapp').toLowerCase();
     const isIG = channel === 'instagram';
     const mode = await getSetting(isIG ? 'agents_ig_mode' : 'agents_runtime_mode', 'off');
-    if (mode === 'off') return;
-    if (!process.env.ANTHROPIC_API_KEY) return;
+    // Trilha: cada porta daqui tambem deixa registro. Ver server/ia-takeover.ts (trilha()).
+    const _t = async (porta: string, det?: string) => {
+      try { const { trilha } = await import('./ia-takeover'); await trilha(opts.conversationId, opts.phone, opts.incomingText, porta, det); } catch {}
+    };
+    if (mode === 'off') { await _t('agente:modo_off'); return; }
+    if (!process.env.ANTHROPIC_API_KEY) { await _t('agente:sem_chave'); return; }
     const phone = onlyDigits(opts.phone);
     const handle = (opts.username || '').replace(/^@/, '').trim().toLowerCase();
     if (mode === 'test') {
@@ -935,7 +939,7 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
         // Compara por DDD + 8 finais: o mesmo celular chega com 13 digitos (com o 9)
         // ou 12 (sem o 9), e a comparacao literal deixava a IA muda em modo teste.
         const { telefoneNaLista } = await import('./ia-fila');
-        if (!telefoneNaLista(phone, await getSetting('agents_test_numbers', '5562995782812'))) return;
+        if (!telefoneNaLista(phone, await getSetting('agents_test_numbers', '5562995782812'))) { await _t('agente:fora_da_lista_de_teste'); return; }
       }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
@@ -946,7 +950,7 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     // NENHUMA resposta. A excecao so vale se nenhum humano falou aqui nos ultimos minutos,
     // para nao atropelar atendente que esta no meio do atendimento.
     if (await iaPausada(opts.conversationId)) {
-      if (!(await respostaADisparo(opts.conversationId, phone))) return;
+      if (!(await respostaADisparo(opts.conversationId, phone))) { await _t('agente:ia_pausada'); return; }
       console.log(`[AGENT] pausa ignorada em ${opts.conversationId}: resposta a disparo recente`);
     }
     const defId = await getSetting(isIG ? 'agents_ig_default' : 'agents_default', isIG ? 'instagram' : 'sdr');
@@ -973,8 +977,15 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
       }
     } catch {}
     const gen = await generateAgentReply(chosenId, hist, ctx);
-    if (!gen.ok || !gen.reply) return;
-    const sent = await opts.sendText(opts.phone, gen.reply);
+    if (!gen.ok || !gen.reply) { await _t('agente:modelo_sem_resposta', gen.error || 'resposta vazia'); return; }
+    // O envio vem ANTES do registro da mensagem: se falhar, sem a trilha nao sobra rastro.
+    let sent: any = null;
+    try { sent = await opts.sendText(opts.phone, gen.reply); }
+    catch (se: any) { await _t('agente:falha_no_envio', se?.message || String(se)); return; }
+    await _t('agente:respondeu', 'via ' + JSON.stringify(sent || {}).slice(0, 120));
     try { const { storage } = await import('./storage'); await storage.createChatMessage({ conversationId: opts.conversationId, senderId: 'agent:' + chosenId, senderType: 'system', content: gen.reply, messageType: 'text', metadata: { agent: chosenId, auto: true, tools: gen.usedTools, delivery: sent } as any }); } catch {}
-  } catch (e: any) { console.error('[AGENT-RUNTIME]', e?.message || e); }
+  } catch (e: any) {
+    try { const { trilha } = await import('./ia-takeover'); await trilha(opts.conversationId, opts.phone, opts.incomingText, 'agente:excecao', e?.message || String(e)); } catch {}
+    console.error('[AGENT-RUNTIME]', e?.message || e);
+  }
 }
