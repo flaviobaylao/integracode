@@ -18,7 +18,7 @@ export function registerVisitSummary(app: Express) {
       // Clientes ativos "de rota" (com dia de visita), vendedor resolvido via users
       const clients = await q(`
         SELECT c.id AS customer_id, c.name AS customer_name, c.city, c.neighborhood,
-               c.visit_periodicity AS periodicity, c.weekdays,
+               c.visit_periodicity AS periodicity, c.weekdays, c.segmento_principal AS segmento,
                TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name
         FROM customers c
         LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', '') OR u.id = c.seller_id)
@@ -86,7 +86,7 @@ export function registerVisitSummary(app: Express) {
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
         const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
-        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', cycles, visits };
+        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', cycles, visits };
       });
 
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
