@@ -2291,7 +2291,7 @@ function ChatCenterInner() {
                                           </button>
                                         </span>
                                       );
-                                      if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-500" data-testid="ack-read">✓✓</span>;
+                                      if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-700 font-bold" data-testid="ack-read">✓✓</span>;
                                       if (ackv >= 2) return <span title="Entregue no WhatsApp" className="text-gray-500" data-testid="ack-delivered">✓✓</span>;
                                       if (ackv >= 1) return <span title="Enviada" className="text-gray-400" data-testid="ack-sent">✓</span>;
                                       return <span title="Enviando…" className="text-gray-400" data-testid="ack-pending">🕓</span>;
