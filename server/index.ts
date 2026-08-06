@@ -2934,27 +2934,38 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   )`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_status_log_item ON bank_statement_item_status_log (bank_statement_item_id)`).catch(() => {});
   db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_status_log_at ON bank_statement_item_status_log (changed_at DESC)`).catch(() => {});
-  db.execute(sql.raw(`
-    CREATE OR REPLACE FUNCTION log_bsi_status_change() RETURNS trigger AS $fn$
-    BEGIN
-      IF NEW.reconciliation_status IS DISTINCT FROM OLD.reconciliation_status
-         OR NEW.mirror_of IS DISTINCT FROM OLD.mirror_of THEN
-        INSERT INTO bank_statement_item_status_log
-          (bank_statement_item_id, status_de, status_para, matched_by_de, matched_by_para,
-           mirror_de, mirror_para, changed_at, db_user, app_name, client_addr)
-        VALUES
-          (OLD.id, OLD.reconciliation_status, NEW.reconciliation_status,
-           OLD.matched_by, NEW.matched_by, OLD.mirror_of, NEW.mirror_of, now(),
-           current_user, current_setting('application_name', true),
-           COALESCE(host(inet_client_addr()), 'local'));
-      END IF;
-      RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;`)).catch((e: any) => console.warn('[instrumentacao] funcao:', e?.message));
-  db.execute(sql.raw(`DROP TRIGGER IF EXISTS trg_bsi_status_change ON bank_statement_items`)).catch(() => {});
-  db.execute(sql.raw(`
-    CREATE TRIGGER trg_bsi_status_change AFTER UPDATE ON bank_statement_items
-    FOR EACH ROW EXECUTE FUNCTION log_bsi_status_change()`)).catch((e: any) => console.warn('[instrumentacao] trigger:', e?.message));
+  // Em SEQUENCIA, e nao em paralelo: no primeiro deploy o CREATE TRIGGER correu
+  // antes de a funcao existir (as chamadas do boot nao sao aguardadas), falhou, e
+  // o .catch engoliu — a funcao ficou criada e o trigger nao. Encadeado com await,
+  // a ordem fica garantida.
+  void (async () => {
+    try {
+      await db.execute(sql.raw(`
+        CREATE OR REPLACE FUNCTION log_bsi_status_change() RETURNS trigger AS $fn$
+        BEGIN
+          IF NEW.reconciliation_status IS DISTINCT FROM OLD.reconciliation_status
+             OR NEW.mirror_of IS DISTINCT FROM OLD.mirror_of THEN
+            INSERT INTO bank_statement_item_status_log
+              (bank_statement_item_id, status_de, status_para, matched_by_de, matched_by_para,
+               mirror_de, mirror_para, changed_at, db_user, app_name, client_addr)
+            VALUES
+              (OLD.id, OLD.reconciliation_status, NEW.reconciliation_status,
+               OLD.matched_by, NEW.matched_by, OLD.mirror_of, NEW.mirror_of, now(),
+               current_user, current_setting('application_name', true),
+               COALESCE(host(inet_client_addr()), 'local'));
+          END IF;
+          RETURN NEW;
+        END;
+        $fn$ LANGUAGE plpgsql;`));
+      await db.execute(sql.raw(`DROP TRIGGER IF EXISTS trg_bsi_status_change ON bank_statement_items`));
+      await db.execute(sql.raw(`
+        CREATE TRIGGER trg_bsi_status_change AFTER UPDATE ON bank_statement_items
+        FOR EACH ROW EXECUTE FUNCTION log_bsi_status_change()`));
+      console.log('[instrumentacao] trigger de status do lancamento ativo');
+    } catch (e: any) {
+      console.error('[instrumentacao] falhou ao criar o trigger:', e?.message || e);
+    }
+  })();
 
   // created_at das tabelas de extrato parou de ser gravado em 21/07/2026: dos
   // 24.081 lancamentos, so 14.053 tem data. O INSERT da ingestao monta as colunas
