@@ -6516,6 +6516,32 @@ export function registerChatRoutes(app: Express): void {
     try { res.json(await pollUmblerDeliveryStatus()); } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // Diagnostico (read-only): estado de atribuicao de uma conversa por nome/telefone.
+  app.get("/api/chat/admin/conv-debug", async (req: any, res: any) => {
+    try {
+      const qraw = String(req.query.q || '').trim();
+      if (!qraw) return res.json({ error: 'informe ?q=nome ou telefone' });
+      const like = '%' + qraw.toLowerCase() + '%';
+      const qd = qraw.replace(/[^0-9]/g, '');
+      const convs: any = await db.execute(sql`
+        SELECT c.id, c.customer_name, c.customer_phone, c.status, c.initiated_by,
+               c.assigned_agent_id, c.last_attended_at, c.updated_at,
+               a.name AS assigned_agent_name, a.status AS assigned_agent_status, a.user_id AS assigned_user_id
+        FROM chat_conversations c
+        LEFT JOIN chat_agents a ON a.id = c.assigned_agent_id
+        WHERE lower(coalesce(c.customer_name,'')) LIKE ${like}
+           OR (${qd} <> '' AND regexp_replace(coalesce(c.customer_phone,''), '[^0-9]', '', 'g') LIKE ${'%' + qd + '%'})
+        ORDER BY c.updated_at DESC LIMIT 5`);
+      const out: any[] = [];
+      for (const c of (convs.rows || [])) {
+        const hist: any = await db.execute(sql`SELECT assigned_agent_name, assigned_by_user_name, reason, created_at FROM chat_assignment_history WHERE conversation_id = ${c.id} ORDER BY created_at DESC LIMIT 12`);
+        out.push(Object.assign({}, c, { history: hist.rows || [] }));
+      }
+      const online: any = await db.execute(sql`SELECT name FROM chat_agents WHERE status = 'online' AND coalesce(is_active,true) = true`);
+      res.json({ conversas: out, agentesOnline: (online.rows || []).map((r: any) => r.name) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // Reenvio protegido por login (admin/coordenador): mensagens de TEXTO enviadas pela Central com
   // UM flag so (ack=1) nos ultimos N min. Sem ?confirm=1 -> so LISTA (dry-run). Com ?confirm=1 -> reenvia.
   app.get("/api/chat/admin/resend-one-flag", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res: any) => {
