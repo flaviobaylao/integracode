@@ -6516,6 +6516,46 @@ export function registerChatRoutes(app: Express): void {
     try { res.json(await pollUmblerDeliveryStatus()); } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // Reenvio protegido por login (admin/coordenador): mensagens de TEXTO enviadas pela Central com
+  // UM flag so (ack=1) nos ultimos N min. Sem ?confirm=1 -> so LISTA (dry-run). Com ?confirm=1 -> reenvia.
+  app.get("/api/chat/admin/resend-one-flag", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res: any) => {
+    try {
+      const mins = Math.min(120, Math.max(1, parseInt(String(req.query.mins || '15'), 10) || 15));
+      const doSend = String(req.query.confirm || '') === '1';
+      const onlyFailed = String(req.query.onlyFailed || '') === '1';
+      const q: any = await db.execute(sql`
+        SELECT m.id, m.content, m.created_at, m.metadata->'delivery'->>'state' AS state,
+               c.channel_phone, coalesce(cu.phone, c.customer_phone) AS phone
+        FROM chat_messages m
+        JOIN chat_conversations c ON c.id = m.conversation_id
+        LEFT JOIN chat_customers cu ON cu.id = c.customer_id
+        WHERE m.sender_type IN ('agent','system')
+          AND coalesce(m.ack,0) = 1
+          AND m.message_type = 'text'
+          AND m.created_at > now() - make_interval(mins => ${mins})
+          AND c.customer_phone IS NOT NULL
+          AND c.customer_phone NOT LIKE 'ig:%'
+          AND c.customer_phone NOT LIKE '%@g.us%'
+          AND (${onlyFailed} = false OR lower(coalesce(m.metadata->'delivery'->>'state','')) = 'failed')
+        ORDER BY m.created_at ASC LIMIT 300`);
+      const cands = (q.rows || []) as any[];
+      if (!doSend) {
+        return res.json({ dryRun: true, mins, onlyFailed, total: cands.length, dica: 'para reenviar, adicione &confirm=1 na URL (ou &onlyFailed=1 para so as que falharam)', itens: cands.map((r: any) => ({ phone: r.phone, state: r.state, preview: String(r.content || '').slice(0, 70) })) });
+      }
+      let sent = 0, fail = 0; const detalhes: any[] = [];
+      for (const r of cands) {
+        const phone = String(r.phone || '').replace(/\D/g, '');
+        if (!phone) { fail++; continue; }
+        try {
+          const rr = await sendUmblerTalkText(phone, String(r.content || ''), r.channel_phone || undefined);
+          if (rr.success) sent++; else fail++;
+          detalhes.push({ phone, ok: rr.success, err: rr.error || null });
+        } catch (e: any) { fail++; detalhes.push({ phone, ok: false, err: String(e?.message || e) }); }
+      }
+      res.json({ reenviadas: sent, falhas: fail, total: cands.length, detalhes: detalhes.slice(0, 50) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   console.log("✅ Chat routes registered successfully");
 
   // 📶 Polling de status de entrega/leitura das mensagens enviadas (a cada 90s).
