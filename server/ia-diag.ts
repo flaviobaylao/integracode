@@ -214,8 +214,41 @@ export function registerIaDiag(app: any) {
       passos.push({ passo: 'modelo', ok: !!gen.ok, ms: Date.now() - t0,
         detalhe: { erro: gen.error || null, modelo: gen.model || null, tools: gen.usedTools || [], resposta: (gen.reply || '').slice(0, 400) } });
 
+      // O ULTIMO trecho que faltava: o envio. maybeRunAgent so grava a mensagem da IA
+      // DEPOIS de mandar; se o transporte falha, nao sobra nem log nem mensagem — parece
+      // "a IA nao respondeu". Aqui o transporte e testado de verdade, e so para os numeros
+      // de teste (agents_test_numbers): nenhum cliente recebe nada.
+      let envio: any = { testado: false };
+      if (String(req.query.enviar || '') === '1') {
+        const permitidos = (await _get('agents_test_numbers', '')).split(/[,;\s]+/).map(x => x.replace(/\D/g, '')).filter(Boolean);
+        const { telefoneNaLista } = await import('./ia-fila');
+        if (!telefoneNaLista(fone, permitidos.join(','))) {
+          envio = { testado: false, motivo: 'numero fora de agents_test_numbers — envio de teste bloqueado' };
+        } else {
+          const w: any = await db.execute(sql`SELECT last_inbound_channel, channel_phone,
+              to_char(window_open_until AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS janela,
+              (window_open_until > now()) AS janela_aberta
+            FROM chat_conversations WHERE id = ${conv.id} LIMIT 1`);
+          const rota = w.rows?.[0] || {};
+          let r: any = null, erro: string | null = null;
+          try {
+            if (rota.last_inbound_channel === 'oficial_1841' && rota.janela_aberta) {
+              const { sendOfficialText } = await import('./official-dispatch');
+              r = await sendOfficialText(fone, '[teste INTEGRA] ' + (gen.reply || 'ping'));
+              r = { via: '1841', ...(r || {}) };
+            } else {
+              const { sendUmblerTalkText } = await import('./chat-routes');
+              r = await sendUmblerTalkText(fone, '[teste INTEGRA] ' + (gen.reply || 'ping'), rota.channel_phone || undefined);
+              r = { via: '2630/umbler', ...(r || {}) };
+            }
+          } catch (e: any) { erro = e?.message || String(e); }
+          envio = { testado: true, rota, resultado: r, erro };
+          passos.push({ passo: 'envio', ok: !!(r && r.success), detalhe: envio });
+        }
+      }
+
       const parou = passos.find(p => p.ok === false);
-      res.json({ enviou: false, veredito: parou ? ('parou em: ' + parou.passo) : 'todas as portas abertas — a IA responderia', passos });
+      res.json({ enviou: !!envio.testado, veredito: parou ? ('parou em: ' + parou.passo) : 'todas as portas abertas — a IA responderia', envio, passos });
     } catch (e: any) {
       passos.push({ passo: 'excecao', ok: false, detalhe: e?.message || String(e) });
       res.status(500).json({ error: e?.message || String(e), passos });
