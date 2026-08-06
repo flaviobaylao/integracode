@@ -739,10 +739,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const activeGroup = findGroupForActiveView();
 
   const renderSectionCards = (group: MenuGroup) => {
+    // Cards estáticos, sempre em ordem alfabética (não reordena por uso).
     const items = [...roleFilterItems(group.items)]
-      .map((it, i) => ({ it, i }))
-      .sort((a, b) => ((menuCounts[b.it.id] || 0) - (menuCounts[a.it.id] || 0)) || (a.i - b.i))
-      .map((x) => x.it);
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }));
     return (
       <div className="p-4 md:p-6">
         <div className="mb-6">
