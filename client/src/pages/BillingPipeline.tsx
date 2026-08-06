@@ -144,6 +144,11 @@ function instanceBadgeClass(name: string | null): string {
   return 'bg-gray-200 text-gray-700 border-gray-300';
 }
 
+// Etapas em que a INSTÂNCIA (empresa emissora) ainda pode ser trocada. Depois de faturado a NF já
+// foi emitida no CNPJ antigo e o financeiro já nasceu na conta daquela instância — trocar ali só
+// geraria divergência, por isso a troca é liberada apenas antes do faturamento.
+const STAGES_INSTANCIA_EDITAVEL = new Set(['bloqueado', 'agendado', 'pedido', 'a_faturar']);
+
 // Normaliza um nome para comparação (minúsculas, sem acentos, sem pontuação, espaços colapsados)
 function normName(s: string): string {
   return (s || '')
@@ -232,6 +237,8 @@ export default function BillingPipeline() {
   const { data: sellersList = [] } = useQuery<any[]>({ queryKey: ['/api/sellers/active'] });
   const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
   const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
+  // Instâncias Omie (empresa emissora) — pick-list da edição do pedido no modal de detalhes.
+  const { data: omieInstancesList = [] } = useQuery<any[]>({ queryKey: ['/api/omie/instances/public'], staleTime: 5 * 60 * 1000 });
   const [prodSearch, setProdSearch] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -404,6 +411,8 @@ export default function BillingPipeline() {
       sellerId: detailItem.sellerId ?? '',
       sellerName: detailItem.sellerName ?? '',
       invoiceNumber: detailItem.invoiceNumber ?? '',
+      omieInstanceId: (detailItem as any).omieInstanceId ?? '',
+      omieInstanceName: (detailItem as any).omieInstanceName ?? '',
       scheduledBillingDate: detailItem.scheduledBillingDate ? String(detailItem.scheduledBillingDate).slice(0, 10) : '',
       notes: detailItem.notes ?? '',
       products: (detailItem.products || []).map((pp: any) => ({ ...pp })),
@@ -1290,6 +1299,32 @@ export default function BillingPipeline() {
                         {Object.entries(OPERATION_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
                       </select>
                     ) : (<p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>)}
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância</label>
+                    {editMode && canEdit && STAGES_INSTANCIA_EDITAVEL.has(String(detailItem.stage)) ? (
+                      <select
+                        value={editData?.omieInstanceId ?? ''}
+                        onChange={(e) => {
+                          const inst = (omieInstancesList as any[]).find((x: any) => x.id === e.target.value);
+                          setEditData((d: any) => ({ ...d, omieInstanceId: e.target.value, omieInstanceName: inst ? (inst.displayName || inst.name) : '' }));
+                        }}
+                        className="w-full border rounded px-2 py-1 text-sm"
+                        title="Empresa emissora da NF-e e da cobrança deste pedido (GYN, BSB, IND, SERV)."
+                        data-testid="select-instance-order"
+                      >
+                        <option value="">Não definida</option>
+                        {(omieInstancesList as any[]).filter((i: any) => i.isActive !== false).map((i: any) => (
+                          <option key={i.id} value={i.id}>{i.displayName || i.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm">
+                        <span className={`inline-block px-1.5 py-0.5 rounded border text-[10px] font-semibold ${instanceBadgeClass(detailItem.omieInstanceName)}`}>
+                          {detailItem.omieInstanceName || 'Não definida'}
+                        </span>
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
