@@ -267,6 +267,28 @@ run();
   });
   try { registerRepescagemRoutes(app, { authenticateUser, requireRole }); } catch (e) { console.error('[repescagem routes]', e); }
 
+  // ==========================================================================
+  // TRAVA DE ACESSO DAS ROTAS DE SYNC (06/ago/2026)
+  //
+  // As ~33 rotas /api/admin/sync/* estavam TODAS sem autenticacao, expostas na
+  // internet. A pior, POST /api/admin/sync/backfill-all, copia o banco do 1.0
+  // por cima do 2.0 com ON CONFLICT (id) DO UPDATE SET <todas as colunas> =
+  // EXCLUDED, e nao excluia nenhuma tabela financeira. Em 06/08 as 10:43 UTC
+  // ela sobrescreveu 14.053 bank_statement_items, 1.207 matches, 2.837
+  // receivable_payments e as 5 financial_accounts — revertendo o fechamento de
+  // saldo da auditoria (BB-MATRIZ fechara em R$ 5.059,87 com divergencia zero e
+  // voltou a divergir R$ 60.055,43 do razao de account_movements).
+  //
+  // E a causa-raiz que reconciliation-routes.ts:640 ja descrevia como
+  // "corrigida em 26/jul": corrigiram criando o endpoint de reparo, mas o
+  // caminho de dano continuou aberto.
+  //
+  // A trava e no PREFIXO, de proposito: cobre as rotas que existem hoje e as
+  // que forem criadas depois, sem depender de alguem lembrar do middleware.
+  // ==========================================================================
+  app.use('/api/admin/sync', authenticateUser, requireRole(['admin']));
+  app.use('/api/synced-table', authenticateUser, requireRole(['admin']));
+
   app.post('/api/admin/sync/customer-ie', async (req, res) => {
     const apply = !!(req.body && req.body.apply === true);
     res.json({ started: true, apply });
@@ -4467,6 +4489,13 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
   // -- Backfill genérico: sincroniza TODAS as tabelas comuns neondb->Railway (full upsert por id) --
   app.post('/api/admin/sync/backfill-all', async (req: Request, res: Response) => {
+    // Confirmacao explicita: um POST vazio disparava a copia de 333 mil linhas
+    // por cima do banco de producao, em background, respondendo {started:true}
+    // antes de comecar — quem chamava nunca via o estrago.
+    if (String((req.body as any)?.confirmo || '') !== 'SIM') {
+      res.status(400).json({ error: 'Operacao destrutiva: sobrescreve o 2.0 com os dados do 1.0. Reenvie com {"confirmo":"SIM"}.', tabelasProtegidas: 'extrato, conciliacao e financeiro estao bloqueados e nao sao tocados' });
+      return;
+    }
     res.json({ started: true, note: 'backfill rodando em background; ver /api/admin/sync/backfill-status' });
     (async () => {
       const pgMod = await import('pg');
@@ -4475,7 +4504,17 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const summary: any[] = [];
       try {
         await src.connect(); await tgt.connect();
-        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers','coupons','coupon_redemptions']);
+        // NUNCA copiar do 1.0: extrato, conciliacao e financeiro sao verdade
+        // exclusiva do 2.0 — o sync dessas tabelas ja tinha sido desligado em
+        // 08/jul no sync-1.0.ts por reverter baixa, mas o backfill nao usa
+        // SYNC_TABLES: ele introspecta o information_schema e pega tudo.
+        // Como o upsert abaixo escreve TODAS as colunas, incluir estas tabelas
+        // apagava conciliacao, baixa e saldo com os valores vazios do 1.0.
+        const block = new Set(['sessions','sync_status','sync_states','omie_sync_attempts','webhook_debug_log','omie_stage_logs','billing_pipeline','suppliers','coupons','coupon_redemptions',
+          'bank_statements','bank_statement_items','bank_statement_item_matches','bank_statement_item_status_log','reconciliation_audit_log','reconciliation_patterns',
+          'financial_accounts','account_movements','financial_audit_log','financial_sync_log',
+          'receivables','receivable_payments','receivable_events','payables','payable_payments',
+          'boleto_charges','boleto_charge_receivables','pix_charges','payment_links']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
