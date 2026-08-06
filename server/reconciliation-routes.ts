@@ -2427,6 +2427,88 @@ export function registerReconciliation(app: Express) {
   // A linha mantida e a que TEM match; sem match, a conciliada; senao a de menor id.
   // dryRun por padrao. Reversivel (basta limpar mirror_of).
   // =========================================================================
+  // REPARAR STATUS DE LANCAMENTO CONCILIADO QUE VOLTOU A "PENDENTE"
+  // POST /api/reconciliation/reparar-status-conciliado { dryRun }
+  //
+  // Lancamento que aparece como PENDENTE mas cuja conciliacao esta inteira: o
+  // VINCULO existe (bank_statement_item_matches) e o TITULO esta baixado no valor
+  // do vinculo. Nesse estado nao ha nada a decidir — a conciliacao foi feita, o
+  // dinheiro foi conferido, e o que ficou errado e so o status do item do extrato.
+  // O efeito pratico do defeito e cruel: o lancamento volta para a fila e o
+  // operador reconcilia de novo, gerando baixa em duplicidade.
+  //
+  // SEGURANCA: so repara quando TODOS os vinculos do lancamento tem a baixa
+  // intacta no titulo (amount_paid >= valor baixado). Se um dos vinculos nao tem
+  // lastro, o caso e ambiguo e fica de fora, para conferencia manual — nunca se
+  // "conserta" marcando como conciliado algo que nao foi pago.
+  // Nao cria vinculo, nao da baixa, nao muda valor. Reversivel pelo Desfazer.
+  // dryRun por padrao.
+  // =========================================================================
+  app.post("/api/reconciliation/reparar-status-conciliado", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "reparo-status-conciliado").toString();
+
+      // Um lancamento por linha, com quantos vinculos tem e quantos tem lastro.
+      const CAND = sql`
+        SELECT i.id,
+               to_char(i.transaction_date, 'YYYY-MM-DD') AS data,
+               round(i.amount::numeric, 2)::text AS valor, i.type AS tipo,
+               left(COALESCE(i.description, ''), 60) AS historico,
+               count(m.id)::int AS vinculos,
+               count(*) FILTER (
+                 WHERE (r.id IS NOT NULL AND COALESCE(r.amount_paid, 0)::numeric >= COALESCE(m.title_amount_settled, m.amount)::numeric - 0.005)
+                    OR (p.id IS NOT NULL AND COALESCE(p.amount_paid, 0)::numeric >= COALESCE(m.title_amount_settled, m.amount)::numeric - 0.005)
+               )::int AS com_lastro
+        FROM bank_statement_items i
+        JOIN bank_statement_item_matches m ON m.bank_statement_item_id = i.id
+        LEFT JOIN receivables r ON r.id = m.receivable_id
+        LEFT JOIN payables p ON p.id = m.payable_id
+        WHERE i.mirror_of IS NULL
+          AND (i.reconciliation_status IS NULL OR i.reconciliation_status = 'pending')
+        GROUP BY i.id, i.transaction_date, i.amount, i.type, i.description`;
+
+      const todos = rowsOf(await db.execute(sql`SELECT * FROM (${CAND}) q ORDER BY q.valor::numeric DESC`));
+      const reparaveis = todos.filter((x: any) => Number(x.vinculos) > 0 && Number(x.com_lastro) === Number(x.vinculos));
+      const ambiguos = todos.filter((x: any) => Number(x.com_lastro) !== Number(x.vinculos));
+      const soma = (xs: any[]) => Number(xs.reduce((t, x) => t + Number(x.valor || 0), 0).toFixed(2));
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          pendentesComVinculo: todos.length,
+          reparaveis: reparaveis.length, valorReparavel: soma(reparaveis),
+          ambiguosParaConferir: ambiguos.length, valorAmbiguo: soma(ambiguos),
+          amostraReparavel: reparaveis.slice(0, 20),
+          amostraAmbigua: ambiguos.slice(0, 20),
+        });
+      }
+
+      let reparados = 0;
+      const ids = reparaveis.map((x: any) => String(x.id));
+      for (let i = 0; i < ids.length; i += 200) {
+        const lote = ids.slice(i, i + 200);
+        const u: any = await db.execute(sql`
+          UPDATE bank_statement_items t
+          SET reconciliation_status = 'reconciled', matched_at = now(), matched_by = ${by},
+              match_confidence = 100,
+              notes = COALESCE(NULLIF(t.notes, ''), 'Status reparado: conciliacao estava inteira (vinculo + baixa) e o lancamento constava pendente')
+          WHERE t.id::text IN (${inList(lote)})
+            AND t.mirror_of IS NULL
+            AND (t.reconciliation_status IS NULL OR t.reconciliation_status = 'pending')
+            AND EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
+        reparados += Number((u as any)?.rowCount ?? 0);
+      }
+      try {
+        await logReconAudit({ action: "repair", itemId: null, by,
+          details: { rotina: "reparar-status-conciliado", reparados, ambiguos: ambiguos.length } });
+      } catch (e: any) { /* trilha e observabilidade */ }
+      res.json({ dryRun: false, reparados, ambiguosParaConferir: ambiguos.length, amostraAmbigua: ambiguos.slice(0, 20) });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // =========================================================================
   // NORMALIZAR ESPELHO COM STATUS ERRADO
   // POST /api/reconciliation/normalizar-espelhos { dryRun }
   //
