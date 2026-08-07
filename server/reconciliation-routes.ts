@@ -1,7 +1,7 @@
 // Redeploy manual: o deploy do commit anterior falhou no Railway (o build passa
 // localmente com `npm run build`). Sem mudanca de comportamento.
 import type { Express } from "express";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { settleBoletoCharge } from "./bb-boleto-service";
@@ -1681,11 +1681,58 @@ export function registerReconciliation(app: Express) {
     name?: string | null; document?: string | null; fitid?: string | null;
     originDocument?: string | null; raw?: any;
   };
-  async function ingestTransactions(o: {
+  type IngestArgs = {
     accountId: string; fileName: string; source: string;
     dtStart: string | null; dtEnd: string | null; bankAccount: string | null;
     instanceId: string | null; transactions: IngestTxn[]; by: string;
-  }) {
+  };
+
+  // =========================================================================
+  // EXCLUSAO MUTUA DA IMPORTACAO, POR CONTA (06/ago/2026)
+  //
+  // A ingestao LE todo o estado da conta para montar as chaves de dedup e SO
+  // DEPOIS insere. Sem exclusao mutua, duas importacoes simultaneas da mesma
+  // conta leem a MESMA foto do banco, ambas concluem "isto e novo" e ambas
+  // inserem.
+  //
+  // Foi exatamente o que aconteceu com "Extrato conta corrente - 082026.ofx":
+  // o arquivo entrou 4 vezes e DOIS dos extratos ficaram com precisamente
+  // 14 canonicos e 45 espelhos cada — a assinatura de duas execucoes que
+  // enxergaram o mesmo "antes". Dai os 14 lancamentos em duplicidade de
+  // 03-06/08 (PROSPER FOMENTO, COBRANCA, TAR AGRUPADA, IOF...). As outras duas
+  // importacoes espelharam tudo certo, o que mostra que o dedup funciona: o
+  // defeito e de concorrencia, nao de regra.
+  //
+  // Indice unico NAO resolve: o FITID do BB se repete de proposito (o id
+  // 1.703.612.017.019 aparece 54 vezes no OFX de julho/2026). A saida e
+  // serializar por conta.
+  //
+  // O lock e de SESSAO e fica num cliente DEDICADO do pool: tem que ser o
+  // mesmo cliente que trava e destrava, senao o unlock cai em outra conexao do
+  // pool e o lock vaza para sempre. `lock_timeout` nao vale para advisory lock,
+  // por isso a espera e por tentativa, com teto — nunca pendura.
+  // =========================================================================
+  async function ingestTransactions(o: IngestArgs) {
+    const chave = `ingest:${o.accountId}`;
+    const client = await pool.connect();
+    let travado = false;
+    try {
+      for (let i = 0; i < 20 && !travado; i++) {
+        const r: any = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', [chave]);
+        travado = r?.rows?.[0]?.ok === true;
+        if (!travado) await new Promise((s2) => setTimeout(s2, 1000));
+      }
+      if (!travado) {
+        throw new Error('Ja existe uma importacao em andamento para esta conta. Aguarde ela terminar e tente de novo.');
+      }
+      return await ingestTransactionsSerial(o);
+    } finally {
+      if (travado) { try { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [chave]); } catch { /* o release derruba a sessao e o lock cai junto */ } }
+      client.release();
+    }
+  }
+
+  async function ingestTransactionsSerial(o: IngestArgs) {
     await ensureMirrorColumn();
     await ensureFitidColumn();
     await ensureRawColumn();
@@ -1906,7 +1953,18 @@ export function registerReconciliation(app: Express) {
         }
       } catch { /* enriquecimento e best-effort */ }
     }
-    return { statementId: String(stmtId), inserted, espelhados, enriquecidos, skipped, linhasDeSaldo, repassesCobranca, totalC, totalD };
+    // O MESMO arquivo ja tinha entrado nesta conta? Nao e erro (reimportar e
+    // legitimo e agora vira espelho), mas ate hoje isso acontecia em silencio —
+    // o "Extrato conta corrente - 082026.ofx" entrou 4 vezes sem um aviso.
+    let importadoAntes = 0;
+    try {
+      importadoAntes = Number(rowsOf(await db.execute(sql`
+        SELECT count(1)::int AS n FROM bank_statements
+         WHERE financial_account_id = ${o.accountId} AND file_name = ${o.fileName} AND id <> ${stmtId}`))[0]?.n || 0);
+    } catch { /* aviso e best-effort */ }
+    return { statementId: String(stmtId), inserted, espelhados, enriquecidos, skipped, linhasDeSaldo, repassesCobranca, totalC, totalD,
+             importadoAntes,
+             aviso: importadoAntes > 0 ? `Este arquivo ja tinha sido importado ${importadoAntes}x nesta conta; os lancamentos repetidos entraram como espelho.` : undefined };
   }
 
   app.post("/api/reconciliation/import-ofx", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
