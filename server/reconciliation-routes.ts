@@ -2893,6 +2893,122 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // =========================================================================
+  // REPARAR O "PAGO" DO TITULO (07/ago/2026)
+  //
+  // POST /api/reconciliation/reparar-pago-do-titulo { dryRun?: true }
+  //
+  // SINTOMA: o operador tenta conciliar e leva
+  //   "duplicate key value violates unique constraint ux_receivable_payments_ref".
+  //
+  // DIAGNOSTICO: a conciliacao JA EXISTE. O backfill de 06/08 as 10:43 UTC (o
+  // POST /api/admin/sync/backfill-all que estava sem autenticacao) sobrescreveu
+  // `receivables`/`payables` e `bank_statement_items` com os valores vazios do
+  // 1.0 e NAO tocou em `receivable_payments`/`payable_payments` nem nos vinculos.
+  // Sobrou este estado:
+  //
+  //   vinculo (bank_statement_item_matches) ....... intacto
+  //   pagamento (…_payments, conciliacao-bancaria)  intacto
+  //   titulo.amount_paid .......................... ZERADO
+  //   lancamento.reconciliation_status ............ voltou a 'pending'
+  //
+  // A tela mostra tudo em aberto, o operador reconcilia de novo, e o indice unico
+  // barra — CORRETAMENTE: ele impediu uma baixa em duplicidade.
+  //
+  // O QUE ESTA ROTINA FAZ: devolve `amount_paid` = soma dos pagamentos VIVOS e
+  // recalcula o status. Nao cria pagamento, nao cria vinculo, nao move dinheiro.
+  //
+  // ESCOPO APERTADO, de proposito. So entra o titulo que tem, ao mesmo tempo:
+  //   1. pagamento VIVO com reference 'conciliacao-bancaria';
+  //   2. vinculo em bank_statement_item_matches (prova de que veio do extrato);
+  //   3. amount_paid MENOR que a soma dos pagamentos vivos;
+  //   4. soma dos pagamentos vivos NAO maior que o valor do titulo.
+  //
+  // NAO e o antigo `repair-baixas` (removido, 410). Aquele reescrevia amount_paid
+  // de TODO MUNDO e consolidava duplicatas. Existem hoje 1.413 titulos com
+  // amount_paid abaixo da soma dos pagamentos, R$ 578.263,50 — quase todos
+  // CANCELADOS, com pagamento legado do Omie e ZERO vinculo no extrato. Um
+  // "recalcula tudo" ressuscitaria meio milhao em baixas erradas. O criterio
+  // aqui e o VINCULO, nao o valor.
+  //
+  // dryRun por padrao.
+  // =========================================================================
+  app.post("/api/reconciliation/reparar-pago-do-titulo", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const hojeBR = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const venceu = (d: any) => !!d && new Date(d).toLocaleDateString("en-CA", { timeZone: "UTC" }) < hojeBR();
+
+      const alvos = async (tipo: "receivable" | "payable") => {
+        const eh = tipo === "receivable";
+        return rowsOf(await db.execute(eh ? sql`
+          WITH v AS (SELECT p.receivable_id AS tid, SUM(p.amount::numeric) AS pago
+                       FROM receivable_payments p WHERE p.deleted_at IS NULL GROUP BY 1)
+          SELECT t.id, t.title_number AS titulo, t.customer_name AS parte, t.status::text AS st,
+                 t.amount::numeric AS valor, t.amount_paid::numeric AS pago_atual, v.pago AS pago_real, t.due_date
+            FROM receivables t JOIN v ON v.tid = t.id
+           WHERE t.amount_paid::numeric < v.pago - 0.005
+             AND v.pago <= t.amount::numeric + 0.005
+             AND EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = t.id)
+             AND EXISTS (SELECT 1 FROM receivable_payments p2 WHERE p2.receivable_id = t.id
+                          AND p2.deleted_at IS NULL AND p2.reference = 'conciliacao-bancaria')
+           ORDER BY v.pago DESC` : sql`
+          WITH v AS (SELECT p.payable_id AS tid, SUM(p.amount::numeric) AS pago
+                       FROM payable_payments p WHERE p.deleted_at IS NULL GROUP BY 1)
+          SELECT t.id, t.title_number AS titulo, t.supplier_name AS parte, t.status::text AS st,
+                 t.amount::numeric AS valor, t.amount_paid::numeric AS pago_atual, v.pago AS pago_real, t.due_date
+            FROM payables t JOIN v ON v.tid = t.id
+           WHERE t.amount_paid::numeric < v.pago - 0.005
+             AND v.pago <= t.amount::numeric + 0.005
+             AND EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = t.id)
+             AND EXISTS (SELECT 1 FROM payable_payments p2 WHERE p2.payable_id = t.id
+                          AND p2.deleted_at IS NULL AND p2.reference = 'conciliacao-bancaria')
+           ORDER BY v.pago DESC`));
+      };
+
+      const rec = await alvos("receivable");
+      const pag = await alvos("payable");
+      const novoStatus = (t: any, eh: boolean) => {
+        const quitado = Number(t.pago_real) >= Number(t.valor) - 0.005;
+        return quitado ? (eh ? "recebida" : "paga") : (venceu(t.due_date) ? "vencida" : "a_vencer");
+      };
+      const mapa = (arr: any[], eh: boolean) => arr.map((t) => ({
+        titulo: t.titulo, parte: String(t.parte || "").slice(0, 28), valor: Number(t.valor),
+        pagoAtual: Number(t.pago_atual), pagoCorreto: Number(t.pago_real),
+        statusAtual: t.st, statusNovo: novoStatus(t, eh),
+      }));
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          receber: { n: rec.length, itens: mapa(rec, true) },
+          pagar: { n: pag.length, itens: mapa(pag, false) },
+          oQueFaz: "amount_paid = soma dos pagamentos VIVOS + recalculo do status. Nao cria pagamento nem vinculo.",
+          depois: "rodar POST /api/reconciliation/reparar-status-conciliado para os lancamentos do extrato voltarem a 'reconciled'.",
+        });
+      }
+
+      let reparados = 0; const falhas: any[] = [];
+      for (const [arr, eh] of [[rec, true], [pag, false]] as Array<[any[], boolean]>) {
+        for (const t of arr) {
+          const st = novoStatus(t, eh);
+          const pago = Number(t.pago_real).toFixed(2);
+          try {
+            if (eh) await db.execute(sql`UPDATE receivables SET amount_paid = ${pago}, status = ${st} WHERE id = ${t.id}`);
+            else await db.execute(sql`UPDATE payables SET amount_paid = ${pago}, status = ${st} WHERE id = ${t.id}`);
+            reparados++;
+            await logReconAudit({ action: "repair", itemId: null, amount: pago, description: `pago do titulo ${t.titulo} restaurado`, by,
+              titles: [{ kind: eh ? "receivable" : "payable", id: t.id, titulo: t.titulo }],
+              details: { repararPagoDoTitulo: true, de: Number(t.pago_atual), para: Number(t.pago_real), statusDe: t.st, statusPara: st } });
+          } catch (e: any) { falhas.push({ titulo: t.titulo, erro: String(e?.message || e).slice(0, 160) }); }
+        }
+      }
+      res.json({ dryRun: false, reparados, receber: rec.length, pagar: pag.length, falhas,
+        proximoPasso: "POST /api/reconciliation/reparar-status-conciliado { dryRun: true }" });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // ---- BAIXA DUPLA: desconciliar as sobras e deixar UM lancamento -----------
   // FASE 3.4s. Alvo: os grupos que o `dedup-canonical` RECUSA colapsar porque tem
   // 2+ linhas com BAIXA DE VERDADE (linha em bank_statement_item_matches) — a mesma
