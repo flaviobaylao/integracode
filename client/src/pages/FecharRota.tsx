@@ -11,8 +11,10 @@
 //   Repescagem: check_in OU atendimento OU pedido no dia
 // Regra geral: cliente com pedido/faturamento registrado no dia conta como atendido
 // (mesmo sem check-in) e NAO entra na lista de justificativas.
+// Excecao (debito): cliente com debito vencido em aberto SEMPRE entra na lista para
+// justificar o debito (motivo "Debito"). A observacao pode ser ditada por audio (transcricao).
 // ============================================================================
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
@@ -23,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
-type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo };
+type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number };
 
 // Vendedores/TMK cujo fechamento também exige justificar a REPESCAGEM (além de presencial/virtual/lead).
 // Maria E. (omie-vendor-4323360115) e Natalia B. (omie-vendor-4317814615) — telemarketing.
@@ -36,6 +38,7 @@ const MOTIVOS: [string, string][] = [
   ["rota_inviavel", "Rota/distância inviável hoje"],
   ["imprevisto", "Imprevisto (veículo/pessoal)"],
   ["cancelou", "Cliente cancelou fornecimento"],
+  ["debito", "Débito (informar na caixa de texto)"],
   ["outro", "Outro"],
 ];
 const MOTIVO_LABEL: Record<string, string> = Object.fromEntries(MOTIVOS);
@@ -47,11 +50,13 @@ const TIPO_CLS: Record<Tipo, string> = {
   repescagem: "bg-rose-50 text-rose-700",
 };
 
-function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false): NaoVisitado[] {
+function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false): NaoVisitado[] {
   const checkedIn = new Set<string>();
   (route?.checkpoints || []).forEach((cp: any) => { if (cp?.checkpointType === "check_in" && cp?.customerId) checkedIn.add(String(cp.customerId)); });
   const attended = new Set<string>(((serviceCounts?.attendedCustomerIds) || []).map(String));
   const hasOrder = (cid?: string | null) => !!(cid && orders[String(cid)] && orders[String(cid)].length > 0);
+  // Débito vencido em aberto: cliente entra na lista para justificar o débito (mesmo se atendido/com pedido).
+  const debtOf = (cid?: string | null) => { const n = cid ? Number(debts[String(cid)] || 0) : 0; return n > 0 ? n : 0; };
   const repIds = new Set<string>((Array.isArray(overlay) ? overlay : []).map((r: any) => r?.customerId).filter(Boolean).map(String));
   const out: NaoVisitado[] = [];
   for (const v of (route?.visits || [])) {
@@ -74,10 +79,11 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       const cid = v?.customerId ? String(v.customerId) : "";
       done = !!cid && (checkedIn.has(cid) || hasOrder(cid));
     }
-    if (done) continue;
+    const debito = debtOf(v?.customerId);
+    if (done && !debito) continue;
     const customerId = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
     if (!customerId) continue;
-    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo });
+    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined });
   }
   // Repescagem (somente para vendedores habilitados): cada cliente da repescagem não atendido também precisa de justificativa.
   if (includeRepescagem) {
@@ -85,8 +91,9 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       const cid = r?.customerId ? String(r.customerId) : "";
       if (!cid || out.some((o) => o.customerId === cid)) continue;
       const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
-      if (done) continue;
-      out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem" });
+      const debito = debtOf(cid);
+      if (done && !debito) continue;
+      out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined });
     }
   }
   return out;
@@ -126,7 +133,8 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const cfg = statusData?.config || { travaObrigatoria: true, tipos: ["presencial", "virtual", "lead"] };
   const allowed = new Set<Tipo>((cfg.tipos || ["presencial", "virtual", "lead"]) as Tipo[]);
   const orders = infoData?.orders || {};
-  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, allowed, today, incluiRepescagem) : [], [route, svcData, overlay, orders, statusData, incluiRepescagem]);
+  const debts = infoData?.debts || {};
+  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem]);
 
   const totalStops = useMemo(() => {
     let n = 0;
@@ -146,6 +154,25 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const [openId, setOpenId] = useState<string | null>(null);
   const [draftReason, setDraftReason] = useState<string>("");
   const [draftNote, setDraftNote] = useState<string>("");
+
+  // Gravação de áudio -> transcrição na caixa de texto (Web Speech API do navegador, pt-BR).
+  const [gravando, setGravando] = useState<boolean>(false);
+  const recRef = useRef<any>(null);
+  const noteBaseRef = useRef<string>("");
+  function toggleGravacao() {
+    const SR = (typeof window !== "undefined") ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SR) { toast({ title: "Gravação de áudio não suportada neste navegador", description: "Abra pelo Chrome do celular para usar a transcrição.", variant: "destructive" }); return; }
+    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} return; }
+    try {
+      const r = new SR();
+      r.lang = "pt-BR"; r.interimResults = true; r.continuous = true;
+      noteBaseRef.current = draftNote ? draftNote.trim() + " " : "";
+      r.onresult = (e: any) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setDraftNote(noteBaseRef.current + t); };
+      r.onerror = () => { setGravando(false); recRef.current = null; };
+      r.onend = () => { setGravando(false); recRef.current = null; };
+      recRef.current = r; r.start(); setGravando(true);
+    } catch { setGravando(false); recRef.current = null; toast({ title: "Não foi possível iniciar a gravação", variant: "destructive" }); }
+  }
 
   const pendentes = naoVisitados.filter((c) => !justified[c.customerId]);
   const closed = !!statusData?.closed;
@@ -168,7 +195,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     onError: (e: any) => toast({ title: "Não foi possível fechar", description: e?.message || "Verifique as pendências.", variant: "destructive" }),
   });
 
-  const canSave = !!draftReason && (draftReason !== "outro" || !!draftNote.trim());
+  const canSave = !!draftReason && ((draftReason !== "outro" && draftReason !== "debito") || !!draftNote.trim());
 
   return (
     <div className={embedded ? "" : "p-4 md:p-6 max-w-3xl mx-auto"}>
@@ -222,7 +249,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                 return (
                   <Card key={c.id} className="border-l-4 border-l-green-500"><CardContent className="py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span></div></div>
+                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
                       <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full">✓ Justificado</span>
                     </div>
                     <div className="mt-2 text-xs bg-green-50 border border-green-100 rounded-lg px-3 py-2">📝 {MOTIVO_LABEL[j.reason] || j.reason}{j.note ? <span className="text-muted-foreground"> — "{j.note}"</span> : null}</div>
@@ -233,7 +260,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
               return (
                 <Card key={c.id} className="border-l-4 border-l-red-500"><CardContent className="py-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span></div></div>
+                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
                     <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full">● Não visitado</span>
                   </div>
                   {!open ? (
@@ -246,7 +273,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                           <button key={id} onClick={() => setDraftReason(id)} className={`px-3 py-2 rounded-full text-xs font-semibold border ${draftReason === id ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-200 text-gray-600"}`}>{label}</button>
                         ))}
                       </div>
-                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Observação {draftReason === "outro" ? "(obrigatória)" : "(opcional)"}</div><span className="text-[11px] text-muted-foreground flex items-center gap-1"><Mic className="w-3 h-3" /> áudio (em breve)</span></div>
+                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Observação {(draftReason === "outro" || draftReason === "debito") ? "(obrigatória)" : "(opcional)"}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
                       <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Ex.: passei 17h e estava fechado" value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
                       <div className="flex gap-2 mt-2">
                         <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpenId(null)}>Cancelar</button>
