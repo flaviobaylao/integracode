@@ -585,22 +585,30 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                 </div>
               )}
 
-              {/* Equilíbrio de carga */}
+              {/* Ocupação por veículo — a métrica é QUANTIDADE (entregas/cota).
+                  Não há balanceamento de carga: minutos são só viabilidade da jornada. */}
               {!!ai?.cargaPorVeiculo?.length && (
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-sm font-semibold"><Gauge className="h-4 w-4 text-gray-500" />Carga por veículo</div>
-                  {ai.cargaPorVeiculo.filter((c: any) => c.entregas > 0).map((c: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <span className="w-52 truncate">{c.motorista || c.veiculo}</span>
-                      <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden">
-                        <div className={`h-full ${c.utilizacaoPct > 95 ? 'bg-red-500' : c.utilizacaoPct > 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${Math.min(100, c.utilizacaoPct)}%` }} />
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Gauge className="h-4 w-4 text-gray-500" />Paradas por veículo
+                    <span className="font-normal text-[11px] text-gray-400">(cota de quantidade — sem equilíbrio de carga)</span>
+                  </div>
+                  {ai.cargaPorVeiculo.filter((c: any) => c.entregas > 0).map((c: any, i: number) => {
+                    const cota = c.cota ?? c.entregas;
+                    const pct = cota > 0 ? (c.entregas / cota) * 100 : 0;
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="w-52 truncate">{c.motorista || c.veiculo}</span>
+                        <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden">
+                          <div className={`h-full ${pct > 100 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                            style={{ width: `${Math.min(100, pct)}%` }} />
+                        </div>
+                        <span className="w-52 text-right text-gray-500">
+                          {c.entregas}/{cota} paradas{c.cotaCadastrada ? ' (cap.)' : ''} · {c.minutosEstimados}/{c.minutosDisponiveis} min
+                        </span>
                       </div>
-                      <span className="w-40 text-right text-gray-500">
-                        {c.entregas} entregas · {c.minutosEstimados}/{c.minutosDisponiveis} min ({c.utilizacaoPct}%)
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
