@@ -27,7 +27,9 @@ import MissingCoordinatesModal from "@/components/MissingCoordinatesModal";
 import {
   Truck, Bot, Loader2, MapPin, Clock, AlertTriangle, CheckCircle2,
   Wand2, ArrowLeft, Save, Users, Gauge, Info, Map as MapIcon, Eye, EyeOff,
+  Printer, FileText,
 } from "lucide-react";
+import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaDoPlano } from "@/lib/route-print";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -208,6 +210,9 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   // Mapa: quais rotas estão visíveis no panorama e quais têm mapa individual aberto
   const [rotasNoMapa, setRotasNoMapa] = useState<Set<number>>(new Set());
   const [mapaDaRota, setMapaDaRota] = useState<Record<number, boolean>>({});
+  // Salvamento: o pop-up NÃO se fecha sozinho — fica aberto para a impressão.
+  const [savedInfo, setSavedInfo] = useState<{ rotas: number } | null>(null);
+  const [imprimindo, setImprimindo] = useState<null | 'completo' | 'rosto'>(null);
 
   const { data: fleet, isLoading: loadingFleet } = useQuery<{ drivers: FleetDriver[]; hasAiKey: boolean }>({
     queryKey: ['/api/delivery-routes/fleet', routeDate],
@@ -227,8 +232,17 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       setMissingCoords(null);
       setRotasNoMapa(new Set());
       setMapaDaRota({});
+      setSavedInfo(null);
+      setImprimindo(null);
     }
   }, [open]);
+
+  // Fechar o pop-up é o momento de devolver o controle ao Kanban: só aí a seleção
+  // é limpa (se limpássemos no salvamento, o pop-up ficaria aberto com "0 pedidos").
+  const fecharDialog = (v: boolean) => {
+    if (!v && savedInfo) onSaved?.();
+    onOpenChange(v);
+  };
 
   const toggleDriver = (d: FleetDriver, on: boolean) => {
     setVehicles(prev => {
@@ -339,24 +353,60 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      // ⚠️ NÃO fecha o pop-up: o operador ainda precisa imprimir os pedidos e as
+      // folhas de rosto. O fechamento (e a limpeza da seleção) é sempre manual.
+      setSavedInfo({ rotas: data?.routes?.length || 0 });
       toast({
         title: 'Rotas salvas e enviadas',
-        description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota" e já aparecem na Gestão de Entregas.`,
+        description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota". Imprima os pedidos aqui ou depois, em Rotas de Entrega.`,
       });
-      onOpenChange(false);
-      onSaved?.();
     },
     onError: (error: any) => {
       toast({ title: 'Erro ao salvar as rotas', description: error?.message || 'Erro desconhecido', variant: 'destructive' });
     },
   });
 
+  // ── Impressão (mesmo pacote do Pipeline de Faturamento + folha de rosto) ────
+  // Imprime as rotas MARCADAS na lista abaixo, na ordem das paradas.
+  const rotasParaImprimir = () =>
+    (plan?.routes || [])
+      .map((r: any, i: number) => ({ r, i }))
+      .filter(({ i }: any) => selectedRoutes.has(i))
+      .map(({ r }: any) => {
+        const v = selectedVehicles.find(x => x.driverId === r.driverId);
+        return rotaDoPlano(r, routeDate, { inicio: v?.timeWindowStart, fim: v?.timeWindowEnd });
+      });
+
+  const handleImprimirCompleto = async () => {
+    const rotas = rotasParaImprimir();
+    if (!rotas.length) { toast({ title: 'Marque ao menos uma rota', variant: 'destructive' }); return; }
+    setImprimindo('completo');
+    try {
+      const r = await imprimirRotasCompleto(rotas);
+      toast({ title: `${r.pedidos} pedido(s) impresso(s)`, description: `${r.rotas} folha(s) de rosto + pedido, DANFE e cobrança de cada entrega.` });
+    } catch (e: any) {
+      toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally { setImprimindo(null); }
+  };
+
+  const handleImprimirRosto = async () => {
+    const rotas = rotasParaImprimir();
+    if (!rotas.length) { toast({ title: 'Marque ao menos uma rota', variant: 'destructive' }); return; }
+    setImprimindo('rosto');
+    try {
+      const n = await imprimirFolhasDeRosto(rotas);
+      toast({ title: `${n} folha(s) de rosto gerada(s)` });
+    } catch (e: any) {
+      toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally { setImprimindo(null); }
+  };
+
   const ai = plan?.ai;
   const podeGerar = orderIds.length > 0 && selectedVehicles.length > 0 && selectedVehicles.every(v => !!v.driverId);
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={fecharDialog}>
         <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -477,7 +527,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t">
-                <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+                <Button variant="outline" onClick={() => fecharDialog(false)}>Cancelar</Button>
                 <Button
                   className="bg-purple-600 hover:bg-purple-700 text-white"
                   disabled={!podeGerar || planMutation.isPending}
@@ -720,20 +770,60 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                 </CardContent></Card>
               )}
 
-              <div className="flex justify-between gap-2 pt-2 border-t">
+              {/* Confirmação do salvamento — o pop-up continua aberto de propósito */}
+              {savedInfo && (
+                <Card className="border-emerald-300 bg-emerald-50/70 dark:bg-emerald-900/10"><CardContent className="p-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span className="font-semibold text-emerald-800 dark:text-emerald-300">
+                      {savedInfo.rotas} rota(s) salva(s) e enviada(s) aos motoristas.
+                    </span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      Imprima agora ou depois, na tela <b>Rotas de Entrega</b>.
+                    </span>
+                  </div>
+                </CardContent></Card>
+              )}
+
+              <div className="flex justify-between gap-2 pt-2 border-t flex-wrap">
                 <Button variant="outline" onClick={() => setStep('frota')}>
                   <ArrowLeft className="h-4 w-4 mr-1" /> Ajustar frota
                 </Button>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar sem salvar</Button>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                    disabled={selectedRoutes.size === 0 || !!imprimindo}
+                    onClick={handleImprimirRosto}
+                    title="Uma folha de rosto por motorista, com as entregas e as distâncias ponto a ponto"
+                  >
+                    {imprimindo === 'rosto'
+                      ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando…</>
+                      : <><FileText className="h-4 w-4 mr-2" /> Folha de rosto ({selectedRoutes.size})</>}
+                  </Button>
+                  <Button
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                    disabled={selectedRoutes.size === 0 || !!imprimindo}
+                    onClick={handleImprimirCompleto}
+                    title="Folha de rosto + pedido, DANFE e cobrança de cada entrega, na ordem da rota"
+                  >
+                    {imprimindo === 'completo'
+                      ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando…</>
+                      : <><Printer className="h-4 w-4 mr-2" /> Imprimir Completo ({selectedRoutes.size})</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => fecharDialog(false)}>
+                    {savedInfo ? 'Fechar' : 'Fechar sem salvar'}
+                  </Button>
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    disabled={selectedRoutes.size === 0 || saveMutation.isPending}
+                    disabled={selectedRoutes.size === 0 || saveMutation.isPending || !!savedInfo}
                     onClick={() => saveMutation.mutate()}
                   >
                     {saveMutation.isPending
                       ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</>
-                      : <><Save className="h-4 w-4 mr-2" /> Salvar e enviar ({selectedRoutes.size})</>}
+                      : savedInfo
+                        ? <><CheckCircle2 className="h-4 w-4 mr-2" /> Rotas salvas</>
+                        : <><Save className="h-4 w-4 mr-2" /> Salvar e enviar ({selectedRoutes.size})</>}
                   </Button>
                 </div>
               </div>
