@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Truck, Calendar, MapPin, X, Trash2, Eye, Package, Clock } from "lucide-react";
+import { Truck, Calendar, MapPin, X, Trash2, Eye, Package, Clock, Printer, FileText, Loader2, User } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaSalva } from "@/lib/route-print";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -29,15 +30,25 @@ interface DeliveryRouteStop {
   stopOrder: number;
   status: string;
   invoiceNumber?: string;
+  billingId?: string | null;
+  orderNumber?: string | null;
+  estimatedArrival?: string | null;
+  distanceFromPrevious?: string | number | null;
+  isPriority?: boolean;
 }
 
 interface DeliveryRoute {
   id: string;
+  routeName?: string;
   routeDate: string;
   vehicleType: string;
   driverId: string | null;
+  driverName?: string | null;
   totalDistance: string;
+  totalDuration?: number | null;
   totalDeliveries: number;
+  timeWindowStart?: string | null;
+  timeWindowEnd?: string | null;
   status: string;
   startAddress: string;
   createdAt: string;
@@ -141,14 +152,83 @@ export default function DeliveryRoutesList() {
     }
   };
 
+  // ── IMPRESSÃO DA ROTA (reimpressão a qualquer momento) ─────────────────────
+  // Mesmo pacote gerado no pop-up de roteirização: folha de rosto do motorista
+  // (com as distâncias ponto a ponto) e, no "Completo", a folha de pedido de
+  // cada entrega — já com o motorista e o nº da ordem — mais DANFE e cobrança.
+  const [imprimindo, setImprimindo] = useState<string | null>(null);
+
+  const paradasDaRota = async (route: DeliveryRoute): Promise<DeliveryRouteStop[]> => {
+    if (route.stops && route.stops.length > 0) return route.stops;
+    const r = await fetch(`/api/delivery-routes/${route.id}/stops`, { credentials: 'include' });
+    if (!r.ok) throw new Error('Não foi possível carregar as paradas desta rota');
+    return await r.json();
+  };
+
+  const imprimir = async (alvo: DeliveryRoute[], tipo: 'completo' | 'rosto', chave: string) => {
+    if (alvo.length === 0) { toast({ title: 'Nenhuma rota para imprimir', variant: 'destructive' }); return; }
+    setImprimindo(chave);
+    try {
+      const rotas = await Promise.all(alvo.map(async (r) => rotaSalva(r, await paradasDaRota(r))));
+      const comParadas = rotas.filter(r => r.stops.length > 0);
+      if (comParadas.length === 0) { toast({ title: 'Rota sem paradas', variant: 'destructive' }); return; }
+      if (tipo === 'rosto') {
+        const n = await imprimirFolhasDeRosto(comParadas);
+        toast({ title: `${n} folha(s) de rosto gerada(s)` });
+      } else {
+        const res = await imprimirRotasCompleto(comParadas);
+        toast({ title: `${res.pedidos} pedido(s) impresso(s)`, description: `${res.rotas} rota(s) no PDF.` });
+      }
+    } catch (e: any) {
+      toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setImprimindo(null);
+    }
+  };
+
+  const rotasImprimiveis = routes.filter(r => !['cancelled', 'cancelada'].includes(String(r.status)));
+
   return (
     <div className="container mx-auto py-6 px-4">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold mb-2" data-testid="page-title">Rotas de Entrega</h1>
-          <p className="text-muted-foreground">Visualize e gerencie todas as rotas de entrega planejadas</p>
+          <p className="text-muted-foreground">Visualize, gerencie e reimprima todas as rotas de entrega planejadas</p>
         </div>
-        <BackToDashboardButton />
+        <div className="flex items-center gap-2">
+          {rotasImprimiveis.length > 0 && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                disabled={!!imprimindo}
+                onClick={() => imprimir(rotasImprimiveis, 'rosto', 'todas-rosto')}
+                title="Uma folha de rosto por motorista, com as entregas e as distâncias ponto a ponto"
+                data-testid="print-all-cover"
+              >
+                {imprimindo === 'todas-rosto'
+                  ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  : <FileText className="h-4 w-4 mr-1" />}
+                Folhas de rosto ({rotasImprimiveis.length})
+              </Button>
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={!!imprimindo}
+                onClick={() => imprimir(rotasImprimiveis, 'completo', 'todas-completo')}
+                title="Folha de rosto + pedido, DANFE e cobrança de cada entrega"
+                data-testid="print-all-complete"
+              >
+                {imprimindo === 'todas-completo'
+                  ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  : <Printer className="h-4 w-4 mr-1" />}
+                Imprimir Completo ({rotasImprimiveis.length})
+              </Button>
+            </>
+          )}
+          <BackToDashboardButton />
+        </div>
       </div>
 
       {/* Filtros */}
@@ -233,6 +313,12 @@ export default function DeliveryRoutesList() {
                       </Badge>
                     </div>
                     <CardDescription className="space-y-1">
+                      {route.driverName && (
+                        <div className="flex items-center gap-2 font-medium text-foreground">
+                          <User className="h-4 w-4" />
+                          <span>{route.driverName}</span>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4" />
                         <span>
@@ -245,7 +331,7 @@ export default function DeliveryRoutesList() {
                       </div>
                     </CardDescription>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap justify-end">
                     <Button
                       variant="outline"
                       size="sm"
@@ -254,6 +340,33 @@ export default function DeliveryRoutesList() {
                     >
                       <Eye className="h-4 w-4 mr-1" />
                       {expandedRoute === route.id ? 'Ocultar' : 'Ver'} Paradas
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                      disabled={!!imprimindo}
+                      onClick={() => imprimir([route], 'rosto', `rosto-${route.id}`)}
+                      title="Folha de rosto do motorista, com as distâncias ponto a ponto"
+                      data-testid={`print-cover-${route.id}`}
+                    >
+                      {imprimindo === `rosto-${route.id}`
+                        ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        : <FileText className="h-4 w-4 mr-1" />}
+                      Folha de rosto
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                      disabled={!!imprimindo}
+                      onClick={() => imprimir([route], 'completo', `completo-${route.id}`)}
+                      title="Folha de rosto + pedido, DANFE e cobrança de cada entrega desta rota"
+                      data-testid={`print-complete-${route.id}`}
+                    >
+                      {imprimindo === `completo-${route.id}`
+                        ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        : <Printer className="h-4 w-4 mr-1" />}
+                      Imprimir Completo
                     </Button>
                     {route.status === 'planned' && (
                       <>
