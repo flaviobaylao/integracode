@@ -2689,6 +2689,53 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  // =========================================================================
+  // DOCUMENTO DO PAGADOR NO TEXTO DO LANCAMENTO (CPF 11 / CNPJ 14)
+  //
+  // Existe para NAO tratar como duplicata duas transacoes DISTINTAS que apenas
+  // coincidem em conta|data|valor|tipo|minuto. Foi o que aconteceu em 07/08:
+  // dois PIX de R$ 9.000 em 28/07 as 18:57, um do CPF 00776212125 (FLAVIO
+  // EVANGELISTA) e outro do 81961723115 (ELBBER ANTONIO). A chave por carimbo
+  // de horario juntou os dois; o fix-baixa-dupla desfez as DUAS baixas legitimas
+  // e ainda colapsou um lancamento real em espelho — R$ 9.000 de entrada
+  // sumiram do livro da conta.
+  //
+  // Regra: pagadores diferentes = transacoes diferentes. Na duvida NAO age e
+  // devolve o grupo para conferencia manual.
+  // =========================================================================
+  const docDoTexto = (desc: any): string => {
+    for (const tok of String(desc || "").split(/[\s,;]+/)) {
+      const limpo = tok.replace(/[.\-\/]/g, "");
+      if (/^\d{11}$/.test(limpo) || /^\d{14}$/.test(limpo)) return limpo;
+    }
+    return "";
+  };
+  const docsDistintos = (g: any[]): string[] => [...new Set(g.map((x: any) => docDoTexto(x.description)).filter(Boolean))];
+
+  // ---- Desfazer ESPELHO indevido (restaura o lancamento como proprio) ------
+  // Quando o dedup ou o fix-baixa-dupla colapsam por engano, nao havia como
+  // reverter pela aplicacao — so SQL na mao no banco. Agora tem, com trilha.
+  app.post("/api/reconciliation/items/:id/desespelhar", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const motivo = String(req.body?.motivo || "").slice(0, 300);
+      const item = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_items WHERE id = ${id}`))[0];
+      if (!item) return res.status(404).json({ error: "lancamento nao encontrado" });
+      if (!item.mirror_of) return res.status(409).json({ error: "este lancamento nao e espelho", id });
+      const eraEspelhoDe = String(item.mirror_of);
+      const nota = `Restaurado como lancamento proprio (era espelho de ${eraEspelhoDe.slice(0, 8)})` + (motivo ? ` - ${motivo}` : "");
+      await db.execute(sql`
+        UPDATE bank_statement_items
+           SET mirror_of = NULL, reconciliation_status = 'pending', matched_by = ${by}, notes = ${nota}
+         WHERE id = ${id}`);
+      await logReconAudit({ action: "repair", itemId: id, statementId: item.statement_id || null,
+        amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null,
+        description: item.description || "", titles: [], by, details: { desespelhar: true, eraEspelhoDe, motivo } });
+      res.json({ ok: true, id, eraEspelhoDe, status: "pending", nota });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   app.post("/api/reconciliation/dedup-canonical", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       const dryRun = req.body?.dryRun !== false;
@@ -2705,7 +2752,7 @@ export function registerReconciliation(app: Express) {
                round(i.amount::numeric, 2)::text AS amt, i.type AS type,
                regexp_replace(lower(COALESCE(i.description, '')), '[^a-z0-9]', '', 'g') AS nd,
                substring(COALESCE(i.description, '') from '[0-9]{1,2}/[0-9]{1,2} [0-9]{1,2}:[0-9]{2}') AS stamp,
-               i.reconciliation_status AS st,
+               i.description, i.reconciliation_status AS st,
                (EXISTS (SELECT 1 FROM bank_statement_item_matches m
                          WHERE m.bank_statement_item_id = i.id)) AS tem_baixa
         FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
@@ -2764,11 +2811,24 @@ export function registerReconciliation(app: Express) {
       for (const r of rows) (groups[find(String(r.id))] ||= []).push(r);
 
       const toMirror: Array<{ id: string; canonical: string }> = [];
-      let gruposDup = 0, comBaixaDupla = 0;
+      let gruposDup = 0, comBaixaDupla = 0, gruposPagadorDiferente = 0;
       const gruposComBaixaDupla: any[] = [];
+      const amostraPagadorDiferente: any[] = [];
       for (const g of Object.values(groups)) {
         if (g.length < 2) continue;
         gruposDup++;
+        // PAGADORES DIFERENTES: nao e duplicata, sao transacoes distintas que so
+        // coincidem em conta|data|valor|tipo (e as vezes no minuto). Nao colapsa.
+        const docsG = docsDistintos(g);
+        if (docsG.length > 1) {
+          gruposPagadorDiferente++;
+          if (amostraPagadorDiferente.length < 50) amostraPagadorDiferente.push({
+            conta: g[0].acc, data: g[0].d, valor: g[0].amt, tipo: g[0].type,
+            documentos: docsG.slice(0, 6), linhas: g.length,
+            ids: g.map((x: any) => String(x.id)).slice(0, 10),
+          });
+          continue;
+        }
         const comBaixa = g.filter((x) => x.tem_baixa === true);
         if (comBaixa.length > 1) { // NAO colapsa: possivel baixa dupla de verdade
           comBaixaDupla++;
@@ -2788,7 +2848,7 @@ export function registerReconciliation(app: Express) {
         const keep = comBaixa[0] || (reconc.length ? menorId(reconc) : (ignor.length ? menorId(ignor) : menorId(g)));
         for (const x of g) { if (String(x.id) !== String(keep.id)) toMirror.push({ id: String(x.id), canonical: String(keep.id) }); }
       }
-      if (dryRun) return res.json({ repassesCobranca: idsRepasse.length, dryRun: true, porHorario, porTexto, gruposDuplicados: gruposDup, linhasParaEspelhar: toMirror.length, linhasDeSaldo: idsSaldo.length, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla });
+      if (dryRun) return res.json({ repassesCobranca: idsRepasse.length, dryRun: true, porHorario, porTexto, gruposDuplicados: gruposDup, linhasParaEspelhar: toMirror.length, linhasDeSaldo: idsSaldo.length, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, gruposPagadorDiferente, amostraPagadorDiferente });
       let espelhados = 0;
       for (let i = 0; i < toMirror.length; i += 300) {
         const lote = toMirror.slice(i, i + 300);
@@ -2829,7 +2889,7 @@ export function registerReconciliation(app: Express) {
             AND NOT EXISTS (SELECT 1 FROM bank_statement_item_matches m WHERE m.bank_statement_item_id = t.id)`);
         repassesIgnorados += Number((u as any)?.rowCount ?? 0);
       }
-      res.json({ repassesCobranca: repassesIgnorados, dryRun: false, porHorario, porTexto, gruposDuplicados: gruposDup, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, espelhados, linhasDeSaldo: saldoMarcadas });
+      res.json({ repassesCobranca: repassesIgnorados, dryRun: false, porHorario, porTexto, gruposDuplicados: gruposDup, gruposComBaixaDupla: comBaixaDupla, amostraBaixaDupla: gruposComBaixaDupla, espelhados, linhasDeSaldo: saldoMarcadas, gruposPagadorDiferente, amostraPagadorDiferente });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -2908,9 +2968,23 @@ export function registerReconciliation(app: Express) {
       });
 
       const plano: any[] = [];
+      const pagadoresDiferentes: any[] = [];
       for (const g of Object.values(groups)) {
         const comBaixa = g.filter((x) => Number(x.n_match) > 0);
         if (comBaixa.length < 2) continue;
+        // PAGADORES DIFERENTES: nao e baixa dupla — sao duas transacoes reais que
+        // coincidem em conta|data|valor|tipo|minuto. Desfazer aqui destroi baixa
+        // legitima (e foi o que aconteceu com os dois PIX de R$ 9.000 de 28/07).
+        // Sai do plano e vai para conferencia manual.
+        const docsG = docsDistintos(g);
+        if (docsG.length > 1) {
+          pagadoresDiferentes.push({
+            conta: g[0].conta || g[0].acc, data: g[0].d, valor: g[0].amt, tipo: g[0].type,
+            documentos: docsG.slice(0, 6),
+            linhas: g.map((x: any) => ({ id: String(x.id), descricao: String(x.description || "").slice(0, 90), titulo: x.titulo, parte: x.parte, matches: Number(x.n_match) })).slice(0, 10),
+          });
+          continue;
+        }
         const titulos = new Set<string>();
         for (const x of comBaixa) for (const t of String(x.titulo_keys || "").split(",")) if (t) titulos.add(t);
         const mesmoTitulo = titulos.size === 1;
@@ -2933,8 +3007,10 @@ export function registerReconciliation(app: Express) {
         gruposMesmoTitulo: plano.filter((p) => p.mesmoTitulo).length,
         gruposTitulosDiferentes: plano.filter((p) => !p.mesmoTitulo).length,
         conciliacoesADesfazer: plano.reduce((a, p) => a + p.desfeitas.length, 0),
+        // Grupos recusados por terem pagadores diferentes: NAO sao baixa dupla.
+        gruposPagadorDiferente: pagadoresDiferentes.length,
       };
-      if (dryRun) return res.json({ dryRun: true, ...resumo, plano: plano.map(({ _grupo, _manterId, ...p }) => p) });
+      if (dryRun) return res.json({ dryRun: true, ...resumo, plano: plano.map(({ _grupo, _manterId, ...p }) => p), pagadoresDiferentes });
 
       let desfeitas = 0, falhas: any[] = [], titulosTocados: any[] = [], espelhados = 0;
       for (const p of plano) {
@@ -2959,7 +3035,7 @@ export function registerReconciliation(app: Express) {
           espelhados += Number((u as any)?.rowCount ?? 0);
         }
       }
-      res.json({ dryRun: false, ...resumo, desfeitas, espelhados, falhas, titulosTocados });
+      res.json({ dryRun: false, ...resumo, desfeitas, espelhados, falhas, titulosTocados, pagadoresDiferentes });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
