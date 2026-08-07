@@ -5,9 +5,12 @@
 // ele justifica cada um (reaproveita /api/vendedor/justificativas) e fecha o dia.
 // A trava (config do admin) impede fechar com pendencia.
 // Regras de "atendido" espelham a Rota do Dia:
-//   Presencial: existe checkpoint check_in do customerId
+//   Presencial: existe checkpoint check_in do customerId OU pedido no dia
 //   Virtual:    atendimento virtual registrado OU pedido no dia
-//   Lead:       leadStatus convertido/descartado/(agendado p/ data futura)
+//   Lead:       leadStatus convertido/descartado/(agendado p/ data futura) OU pedido no dia
+//   Repescagem: check_in OU atendimento OU pedido no dia
+// Regra geral: cliente com pedido/faturamento registrado no dia conta como atendido
+// (mesmo sem check-in) e NAO entra na lista de justificativas.
 // ============================================================================
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -60,15 +63,16 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (cidExcl && repIds.has(cidExcl)) continue;
     let done = false;
     if (isLead) {
+      const lcid = String(v?.customerId || v?.entityId || v?.leadId || "");
       const st = v?.leadStatus;
       const nd = v?.leadNextContactDate ? String(v.leadNextContactDate).slice(0, 10) : null;
-      done = st === "converted" || st === "discarded" || (st === "scheduled" && !!nd && !!today && nd > today);
+      done = hasOrder(lcid) || st === "converted" || st === "discarded" || (st === "scheduled" && !!nd && !!today && nd > today);
     } else if (isVirtual) {
       const cid = v?.customerId ? String(v.customerId) : "";
       done = !!cid && (attended.has(cid) || hasOrder(cid));
     } else {
       const cid = v?.customerId ? String(v.customerId) : "";
-      done = !!cid && checkedIn.has(cid);
+      done = !!cid && (checkedIn.has(cid) || hasOrder(cid));
     }
     if (done) continue;
     const customerId = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
