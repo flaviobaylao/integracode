@@ -2169,7 +2169,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // FECHAMENTO (Fase 5): painel mensal — agregados de justificativas e fechamentos do mes.
   app.get('/api/admin/fechamento/mensal', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
     try {
-      await ensureJustifTable(); await ensureRouteClosures();
+      await ensureJustifTable(); await ensureRouteClosures(); await ensureJustifSuspensions();
       let mes = String(req.query.mes || '').replace(/[^0-9-]/g, '');
       if (!/^\d{4}-\d{2}$/.test(mes)) { mes = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7); }
       const sid = String(req.query.sellerId || '').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -2178,12 +2178,83 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const rm: any = await db.execute(sql`SELECT reason AS motivo, COUNT(*)::int AS n FROM visit_justifications vj WHERE to_char(vj.visit_date, 'YYYY-MM') = ${mes} AND vj.reason <> 'removido'${sql.raw(fVJ)} GROUP BY reason ORDER BY n DESC`);
       const porMotivo = ((rm.rows || rm) as any[]).map((x: any) => ({ motivo: x.motivo, n: Number(x.n) }));
       const rc: any = await db.execute(sql.raw("SELECT vj.customer_id AS cid, vj.seller_id AS sid, MAX(c.name) AS nome, MAX(c.city) AS cidade, COUNT(*)::int AS n, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor, (array_agg(vj.reason ORDER BY vj.visit_date DESC))[1] AS motivo, (array_agg(vj.notes ORDER BY vj.visit_date DESC))[1] AS obs FROM visit_justifications vj LEFT JOIN customers c ON c.id = vj.customer_id WHERE to_char(vj.visit_date,'YYYY-MM') = '" + mes + "' AND vj.reason <> 'removido'" + fVJ + " GROUP BY vj.customer_id, vj.seller_id ORDER BY n DESC, nome LIMIT 200"));
-      const clientes = ((rc.rows || rc) as any[]).map((x: any) => ({ customerId: String(x.cid), sellerId: String(x.sid || ''), nome: x.nome || x.cid, cidade: x.cidade || '', vendedor: x.vendedor || '', n: Number(x.n), motivo: x.motivo, obs: String(x.obs || '').trim() }));
+      // Suspensoes de justificativa (gestao admin) do mes: mapa por customer_id { visita, debito }.
+      const rsp: any = await db.execute(sql`SELECT customer_id AS cid, tipo FROM justif_suspensions WHERE mes = ${mes}`);
+      const suspV = new Set<string>(); const suspD = new Set<string>();
+      for (const s of ((rsp.rows || rsp) as any[])) { if (s.tipo === 'debito') suspD.add(String(s.cid)); else suspV.add(String(s.cid)); }
+      const clientes = ((rc.rows || rc) as any[]).map((x: any) => ({ customerId: String(x.cid), sellerId: String(x.sid || ''), nome: x.nome || x.cid, cidade: x.cidade || '', vendedor: x.vendedor || '', n: Number(x.n), motivo: x.motivo, obs: String(x.obs || '').trim(), flagVisita: suspV.has(String(x.cid)), flagDebito: suspD.has(String(x.cid)) }));
       const rv: any = await db.execute(sql.raw("SELECT rc.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = rc.seller_id OR u.omie_vendor_code = replace(COALESCE(rc.seller_id,''),'omie-vendor-','') OR u.id = rc.seller_id LIMIT 1) AS vendedor, COUNT(*)::int AS dias, COALESCE(SUM(rc.nao_visitados),0)::int AS nv, COALESCE(SUM(rc.justificados),0)::int AS just, COALESCE(SUM(rc.pendentes),0)::int AS pend FROM route_closures rc WHERE to_char(rc.close_date,'YYYY-MM') = '" + mes + "'" + fRC + " GROUP BY rc.seller_id ORDER BY nv DESC"));
       const porVendedor = ((rv.rows || rv) as any[]).map((x: any) => ({ sellerId: String(x.sid), vendedor: x.vendedor || x.sid, dias: Number(x.dias), naoVisitados: Number(x.nv), justificados: Number(x.just), pendentes: Number(x.pend) }));
       const rvd: any = await db.execute(sql.raw("SELECT vj.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor FROM visit_justifications vj WHERE to_char(vj.visit_date,'YYYY-MM') = '" + mes + "' AND vj.reason <> 'removido' GROUP BY vj.seller_id ORDER BY vendedor"));
       const vendedores = ((rvd.rows || rvd) as any[]).map((x: any) => ({ sellerId: String(x.sid || ''), vendedor: x.vendedor || x.sid })).filter((v: any) => v.sellerId);
       res.json({ ok: true, mes, sellerId: sid || null, totalNaoVisitados: porMotivo.reduce((s: number, x: any) => s + x.n, 0), porMotivo, clientes, porVendedor, vendedores });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // FECHAMENTO — SUSPENSAO DE JUSTIFICATIVA (gestao admin, por mes vigente).
+  // O admin marca "Visita" e/ou "Debito" para um cliente: enquanto marcado, aquele
+  // motivo NAO precisa ser justificado pelo vendedor naquele mes (o cliente sai da
+  // lista de justificativas do Fechar Rota). Chave: (mes, customer_id, tipo).
+  async function ensureJustifSuspensions() {
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS justif_suspensions (mes text NOT NULL, customer_id text NOT NULL, tipo text NOT NULL, created_at timestamptz DEFAULT now(), created_by varchar, PRIMARY KEY (mes, customer_id, tipo))"));
+  }
+  const SUSP_TIPOS = new Set(['visita', 'debito']);
+  function mesAtualBRT() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7); }
+
+  // GET suspensoes do mes (usado pelo Fechar Rota do vendedor). Retorna listas de customerIds.
+  app.get('/api/fechamento/suspensoes', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifSuspensions();
+      let mes = String(req.query.mes || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}$/.test(mes)) mes = mesAtualBRT();
+      const r: any = await db.execute(sql`SELECT customer_id AS cid, tipo FROM justif_suspensions WHERE mes = ${mes}`);
+      const visita: string[] = []; const debito: string[] = [];
+      for (const s of ((r.rows || r) as any[])) { if (s.tipo === 'debito') debito.push(String(s.cid)); else visita.push(String(s.cid)); }
+      res.json({ ok: true, mes, visita, debito });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // POST marca/desmarca UMA suspensao. body: { mes, customerId, tipo:'visita'|'debito', value:bool }
+  app.post('/api/admin/fechamento/suspensao', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureJustifSuspensions();
+      const b = req.body || {};
+      let mes = String(b.mes || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}$/.test(mes)) mes = mesAtualBRT();
+      const customerId = String(b.customerId || '');
+      const tipo = String(b.tipo || '');
+      const value = !!b.value;
+      if (!customerId || !SUSP_TIPOS.has(tipo)) return res.status(400).json({ error: 'customerId e tipo (visita|debito) obrigatorios' });
+      const uid = (req as any).currentUser?.id || null;
+      if (value) {
+        await db.execute(sql`INSERT INTO justif_suspensions (mes, customer_id, tipo, created_by) VALUES (${mes}, ${customerId}, ${tipo}, ${uid}) ON CONFLICT (mes, customer_id, tipo) DO NOTHING`);
+      } else {
+        await db.execute(sql`DELETE FROM justif_suspensions WHERE mes = ${mes} AND customer_id = ${customerId} AND tipo = ${tipo}`);
+      }
+      res.json({ ok: true, mes, customerId, tipo, value });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
+  // POST bulk: marcar tudo / limpar tudo de UMA coluna. body: { mes, tipo, value, customerIds:[] }
+  app.post('/api/admin/fechamento/suspensao/bulk', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureJustifSuspensions();
+      const b = req.body || {};
+      let mes = String(b.mes || '').replace(/[^0-9-]/g, '');
+      if (!/^\d{4}-\d{2}$/.test(mes)) mes = mesAtualBRT();
+      const tipo = String(b.tipo || '');
+      const value = !!b.value;
+      if (!SUSP_TIPOS.has(tipo)) return res.status(400).json({ error: 'tipo (visita|debito) obrigatorio' });
+      const ids = Array.isArray(b.customerIds) ? b.customerIds.map((x: any) => String(x)).filter(Boolean) : [];
+      const uid = (req as any).currentUser?.id || null;
+      if (value) {
+        for (const cid of ids) {
+          await db.execute(sql`INSERT INTO justif_suspensions (mes, customer_id, tipo, created_by) VALUES (${mes}, ${cid}, ${tipo}, ${uid}) ON CONFLICT (mes, customer_id, tipo) DO NOTHING`);
+        }
+      } else if (ids.length > 0) {
+        await db.execute(sql`DELETE FROM justif_suspensions WHERE mes = ${mes} AND tipo = ${tipo} AND customer_id = ANY(${ids})`);
+      }
+      res.json({ ok: true, mes, tipo, value, afetados: ids.length });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
