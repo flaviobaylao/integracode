@@ -13,6 +13,39 @@ export interface CobrancaData {
   boleto?: any | null;
   pix?: any | null;
   danfe?: DanfeInvoice | null;
+  // ▼ Dados da ROTA — preenchidos quando a impressão sai da roteirização.
+  // Aparecem numa faixa logo ACIMA do rodapé da folha de pedido.
+  driverName?: string | null;
+  vehicleType?: string | null;
+  stopOrder?: number | null;   // nº da ordem desta entrega dentro da rota
+  stopCount?: number | null;   // total de paradas da rota (ex.: "3 de 14")
+  routeDate?: string | null;   // YYYY-MM-DD
+}
+
+/** Uma rota (motorista) pronta para impressão — usada na folha de rosto. */
+export interface RotaImpressao {
+  routeId?: string;
+  driverName?: string | null;
+  vehicleType?: string | null;
+  licensePlate?: string | null;
+  routeDate?: string | null;
+  startAddress?: string | null;
+  totalDistance?: number | string | null;
+  totalDuration?: number | string | null;
+  timeWindowStart?: string | null;
+  timeWindowEnd?: string | null;
+  stops: Array<{
+    stopOrder?: number | null;
+    billingId?: string | null;
+    customerName?: string | null;
+    customerAddress?: string | null;
+    orderNumber?: string | null;
+    invoiceNumber?: string | null;
+    saleValue?: number | string | null;
+    estimatedArrival?: string | null;
+    distanceFromPrevious?: number | string | null;
+    isPriority?: boolean | null;
+  }>;
 }
 
 const COMPANY = 'PURO INDUSTRIA E COMERCIO DE PRODUTOS NATURAIS LTDA';
@@ -161,8 +194,48 @@ function renderPedido(doc: jsPDF, c: CobrancaData, logo: string | null) {
   const pageH = (doc as any).internal.pageSize.getHeight ? (doc as any).internal.pageSize.getHeight() : 297;
   const addrLines = doc.splitTextToSize(fullAddr || '-', 186);
   const obsLines = doc.splitTextToSize(obsText, 186);
-  const footerBlockH = 10 + addrLines.length * 4 + obsLines.length * 4;
+
+  // ── Faixa da ENTREGA (motorista + ordem da parada) — fica ACIMA do rodapé ──
+  // Só aparece quando a folha é impressa a partir de uma rota; na impressão
+  // avulsa do Pipeline de Faturamento o bloco é omitido (layout inalterado).
+  const temRota = !!(c.driverName || (c.stopOrder != null && c.stopOrder > 0));
+  const rotaBlockH = temRota ? 15 : 0;
+
+  const footerBlockH = rotaBlockH + 10 + addrLines.length * 4 + obsLines.length * 4;
   let footY = Math.max(fy + 18, pageH - 12 - footerBlockH);
+
+  if (temRota) {
+    const bh = 12;
+    doc.setFillColor(235, 245, 238); doc.rect(12, footY, 186, bh, 'F');
+    doc.setDrawColor(...GREEN); doc.setLineWidth(0.4); doc.rect(12, footY, 186, bh);
+    doc.line(122, footY, 122, footY + bh); doc.line(160, footY, 160, footY + bh);
+    doc.setLineWidth(0.2); doc.setDrawColor(0);
+
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+    doc.text('MOTORISTA / ENTREGADOR', 15, footY + 4);
+    doc.text('ORDEM DE ENTREGA', 125, footY + 4);
+    doc.text('DATA DA ROTA', 163, footY + 4);
+
+    doc.setTextColor(0); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    const motorista = String(c.driverName || '-').toUpperCase().slice(0, 42);
+    doc.text(motorista, 15, footY + 9.5);
+    if (c.vehicleType) {
+      // largura medida AINDA no tamanho 11 (o do nome) — senão o veículo sobrepõe
+      const xVeic = 15 + Math.min(doc.getTextWidth(motorista), 82) + 3;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(90);
+      doc.text('(' + String(c.vehicleType).toUpperCase() + ')', xVeic, footY + 9.5);
+      doc.setTextColor(0);
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    const ordem = c.stopOrder != null && c.stopOrder > 0
+      ? String(c.stopOrder) + (c.stopCount ? ' / ' + c.stopCount : '')
+      : '-';
+    doc.text(ordem, 141, footY + 9.7, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text(c.routeDate ? fmtDate(c.routeDate + 'T12:00:00') : today(), 179, footY + 9.5, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    footY += rotaBlockH;
+  }
 
   doc.setDrawColor(...GREEN); doc.setLineWidth(0.5); doc.line(12, footY, 198, footY);
   doc.setLineWidth(0.2); doc.setDrawColor(0);
@@ -266,6 +339,195 @@ function renderPix(doc: jsPDF, c: CobrancaData, logo: string | null) {
   const qr = p.qr_code_base64;
   if (qr) { try { doc.addImage(String(qr).startsWith('data:') ? String(qr) : 'data:image/png;base64,' + qr, 'PNG', 12, y, 45, 45); } catch (e) {} }
   if (p.pix_copia_e_cola) { doc.setFont('helvetica', 'bold'); doc.text('PIX copia e cola:', 64, y + 4); doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.text(String(p.pix_copia_e_cola), 64, y + 9, { maxWidth: 132 }); doc.setFontSize(10); }
+}
+
+// ── FOLHA DE ROSTO DO MOTORISTA (romaneio da rota) ──────────────────────────
+// Uma capa por motorista: cabeçalho com o nome dele, a lista das entregas na
+// ordem em que serão feitas e a distância ponto a ponto (trecho + acumulado).
+function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) {
+  brandHeader(doc, logo, 'ROMANEIO');
+
+  const stops = [...(rota.stops || [])].sort(
+    (a, b) => (Number(a.stopOrder) || 0) - (Number(b.stopOrder) || 0)
+  );
+
+  // Faixa de destaque: motorista / veículo / data
+  doc.setFillColor(...GREEN); doc.rect(12, 28, 186, 14, 'F');
+  doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(7);
+  doc.text('MOTORISTA / ENTREGADOR', 15, 32.5);
+  doc.text('VEÍCULO', 122, 32.5);
+  doc.text('DATA DA ROTA', 160, 32.5);
+  doc.setFontSize(13);
+  doc.text(String(rota.driverName || '-').toUpperCase().slice(0, 40), 15, 39);
+  doc.setFontSize(11);
+  doc.text(String(rota.vehicleType || '-').toUpperCase().slice(0, 14) + (rota.licensePlate ? ' · ' + rota.licensePlate : ''), 122, 39);
+  doc.text(rota.routeDate ? fmtDate(String(rota.routeDate).slice(0, 10) + 'T12:00:00') : today(), 160, 39);
+  doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+
+  // Resumo da rota
+  const totalKm = Number(rota.totalDistance) || stops.reduce((s, x) => s + (Number(x.distanceFromPrevious) || 0), 0);
+  const totalMin = Math.round(Number(rota.totalDuration) || 0);
+  const totalVal = stops.reduce((s, x) => s + (Number(x.saleValue) || 0), 0);
+  let y = 48; doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold'); doc.text('Saída / retorno:', 12, y);
+  doc.setFont('helvetica', 'normal'); doc.text(String(rota.startAddress || '-').slice(0, 60), 40, y);
+  doc.setFont('helvetica', 'bold'); doc.text('Janela:', 140, y);
+  doc.setFont('helvetica', 'normal'); doc.text((rota.timeWindowStart || '--:--') + ' às ' + (rota.timeWindowEnd || '--:--'), 156, y);
+  y += 6;
+
+  const resumo: Array<[string, string]> = [
+    ['Entregas', String(stops.length)],
+    ['Distância total', totalKm.toFixed(1) + ' km'],
+    ['Tempo estimado', totalMin > 0 ? (Math.floor(totalMin / 60) + 'h' + String(totalMin % 60).padStart(2, '0')) : '-'],
+    ['Valor total', BRL(totalVal)],
+  ];
+  const boxW = 186 / resumo.length;
+  resumo.forEach(([label, val], i) => {
+    const x = 12 + i * boxW;
+    doc.setDrawColor(...GREEN); doc.setLineWidth(0.3); doc.rect(x, y, boxW, 12);
+    doc.setFontSize(6.5); doc.setTextColor(110); doc.setFont('helvetica', 'normal');
+    doc.text(label.toUpperCase(), x + 2, y + 4);
+    doc.setFontSize(11); doc.setTextColor(0); doc.setFont('helvetica', 'bold');
+    doc.text(val, x + 2, y + 9.5);
+  });
+  doc.setLineWidth(0.2); doc.setDrawColor(0); doc.setFont('helvetica', 'normal');
+  y += 17;
+
+  // Tabela das paradas, com distância do trecho e acumulada
+  let acum = 0;
+  const body = stops.map((s, i) => {
+    const trecho = Number(s.distanceFromPrevious) || 0;
+    acum += trecho;
+    const nf = (s.invoiceNumber || '').toString().trim();
+    const ped = (s.orderNumber || '').toString().trim();
+    return [
+      String(s.stopOrder ?? i + 1) + (s.isPriority ? ' *' : ''),
+      String(s.customerName || '-').slice(0, 38),
+      String(s.customerAddress || '-').slice(0, 52),
+      [nf, ped].filter(Boolean).join(' / ') || '-',
+      s.estimatedArrival || '-',
+      trecho.toFixed(1),
+      acum.toFixed(1),
+      BRL(s.saleValue),
+    ];
+  });
+
+  autoTable(doc, {
+    startY: y,
+    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Chegada', 'Trecho (km)', 'Acum. (km)', 'Valor']],
+    body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '']],
+    foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', totalKm.toFixed(1), '', BRL(totalVal)]],
+    theme: 'grid',
+    // uma parada NUNCA é partida entre duas páginas (o motorista perderia a linha)
+    rowPageBreak: 'avoid',
+    styles: { fontSize: 7.5, cellPadding: 1.3, overflow: 'linebreak' },
+    headStyles: { fillColor: GREEN, textColor: 255, halign: 'center', fontStyle: 'bold', fontSize: 7 },
+    footStyles: { fillColor: [235, 245, 238], textColor: 0, fontStyle: 'bold' },
+    // Continuação: identifica o motorista no topo das páginas seguintes.
+    didDrawPage: (d: any) => {
+      if (d.pageNumber > 1) {
+        doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+        doc.text(
+          'ROMANEIO · ' + String(rota.driverName || '-').toUpperCase() +
+          ' · ' + (rota.routeDate ? fmtDate(String(rota.routeDate).slice(0, 10) + 'T12:00:00') : today()) +
+          ' (continuação)',
+          12, 10,
+        );
+        doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+      }
+    },
+    columnStyles: {
+      0: { halign: 'center', cellWidth: 9 },
+      1: { cellWidth: 40 },
+      2: { cellWidth: 51 },
+      3: { cellWidth: 24, halign: 'center' },
+      4: { cellWidth: 15, halign: 'center' },
+      5: { cellWidth: 15, halign: 'right' },
+      6: { cellWidth: 15, halign: 'right' },
+      7: { cellWidth: 17, halign: 'right' },
+    },
+    margin: { left: 12, right: 12, top: 14 },
+  });
+
+  let fy = (doc as any).lastAutoTable?.finalY || y + 20;
+  const pageH = (doc as any).internal.pageSize.getHeight ? (doc as any).internal.pageSize.getHeight() : 297;
+  if (stops.some(s => s.isPriority)) {
+    doc.setFontSize(7); doc.setTextColor(120);
+    doc.text('* entrega prioritária', 12, fy + 4); doc.setTextColor(0);
+    fy += 4;
+  }
+
+  // Assinaturas (conferência da carga e recebimento pelo motorista)
+  if (fy + 26 > pageH - 10) { doc.addPage(); fy = 24; }
+  const sigY = Math.max(fy + 16, pageH - 30);
+  doc.setDrawColor(0); doc.setLineWidth(0.3);
+  doc.line(14, sigY, 90, sigY); doc.line(120, sigY, 196, sigY);
+  doc.setFontSize(7.5); doc.setTextColor(90);
+  doc.text('Conferente / Expedição', 52, sigY + 4, { align: 'center' });
+  doc.text('Motorista — recebi os pedidos acima', 158, sigY + 4, { align: 'center' });
+  doc.setTextColor(0);
+}
+
+/** Só as folhas de rosto (romaneio) — uma página por motorista. */
+export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[]): Promise<number> {
+  const validas = (rotas || []).filter(r => r && (r.stops || []).length > 0);
+  if (validas.length === 0) return 0;
+  const logo = await loadLogo();
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  validas.forEach((r, i) => { if (i > 0) doc.addPage(); renderFolhaRosto(doc, r, logo); });
+  doc.save('romaneio_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  return validas.length;
+}
+
+/**
+ * Impressão COMPLETA da roteirização: para cada motorista, a folha de rosto e,
+ * na sequência, o pacote de cada entrega na ordem da rota
+ * (folha de pedido → DANFE → boleto/PIX).
+ */
+export async function generateRotasCompletoPdf(
+  rotas: RotaImpressao[],
+  pedidos: CobrancaData[],
+): Promise<{ rotas: number; pedidos: number }> {
+  const validas = (rotas || []).filter(r => r && (r.stops || []).length > 0);
+  if (validas.length === 0) return { rotas: 0, pedidos: 0 };
+  const porId = new Map<string, CobrancaData>();
+  for (const p of pedidos || []) if (p?.itemId) porId.set(String(p.itemId), p);
+
+  const logo = await loadLogo();
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  let primeira = true;
+  let impressos = 0;
+
+  for (const rota of validas) {
+    if (!primeira) doc.addPage(); primeira = false;
+    renderFolhaRosto(doc, rota, logo);
+
+    const stops = [...rota.stops].sort((a, b) => (Number(a.stopOrder) || 0) - (Number(b.stopOrder) || 0));
+    stops.forEach((s, i) => {
+      const base = porId.get(String(s.billingId || '')) || {
+        itemId: String(s.billingId || ''),
+        customerName: s.customerName || undefined,
+        invoiceNumber: s.invoiceNumber || undefined,
+        saleValue: s.saleValue ?? undefined,
+      } as CobrancaData;
+      const c: CobrancaData = {
+        ...base,
+        driverName: rota.driverName,
+        vehicleType: rota.vehicleType,
+        stopOrder: Number(s.stopOrder) || i + 1,
+        stopCount: stops.length,
+        routeDate: rota.routeDate ? String(rota.routeDate).slice(0, 10) : null,
+      };
+      doc.addPage(); renderPedido(doc, c, logo);
+      if (c.danfe) { doc.addPage(); try { renderDanfeToDoc(doc, c.danfe, logo); } catch (e) {} }
+      if (c.boleto) { doc.addPage(); renderBoleto(doc, c, logo); }
+      else if (c.pix) { doc.addPage(); renderPix(doc, c, logo); }
+      impressos++;
+    });
+  }
+
+  doc.save('rotas_completo_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  return { rotas: validas.length, pedidos: impressos };
 }
 
 export async function generateMultiCobrancaPdf(list: CobrancaData[]): Promise<number> {
