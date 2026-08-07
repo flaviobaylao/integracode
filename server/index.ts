@@ -3721,6 +3721,36 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     }
   });
 
+  // ===== ITENS DO PIPELINE POR ID — impressão a partir das ROTAS DE ENTREGA =====
+  // A folha de pedido precisa de produtos/vendedor/valor/observação. Quem imprime
+  // pela roteirização (pop-up de rotas ou tela "Rotas de Entrega") só tem em mãos o
+  // `billing_id` da parada, e não o card do Kanban — daí este read-only por ids.
+  app.post("/api/billing-pipeline/items-by-ids", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+      const valid = ids.filter((x: any) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));
+      if (valid.length === 0) return res.json([]);
+      const inList = valid.map((x: string) => "'" + x + "'").join(",");
+      const text =
+        "SELECT id, customer_name, seller_name, order_number, invoice_number, " +
+        "sale_value, products, notes, stage FROM billing_pipeline WHERE id IN (" + inList + ")";
+      const rows = (await db.execute(sql.raw(text))).rows as any[];
+      res.json(rows.map((r: any) => ({
+        id: r.id,
+        customerName: r.customer_name,
+        sellerName: r.seller_name,
+        orderNumber: r.order_number,
+        invoiceNumber: r.invoice_number,
+        saleValue: r.sale_value,
+        products: r.products,
+        notes: r.notes,
+        stage: r.stage,
+      })));
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+
   // Resolve as DANFEs dos itens do pipeline pelo VÍNCULO REAL da nota (sales_card_id),
   // NÃO só pelo invoice_number do card. Muitos itens ficam "faturado" com invoice_number
   // NULO (a NF-e é autorizada de forma assíncrona pela SEFAZ e o número não é gravado de
