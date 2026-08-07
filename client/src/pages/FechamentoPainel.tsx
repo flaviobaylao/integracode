@@ -11,7 +11,7 @@ import { useQuery } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3, Ban, CheckCircle2, ClipboardList, FileDown, Copy, Check } from "lucide-react";
+import { BarChart3, Ban, CheckCircle2, ClipboardList, FileDown, Copy, Check, Info } from "lucide-react";
 
 const MOTIVO_LABEL: Record<string, string> = {
   sem_tempo: "Não deu tempo / rota grande",
@@ -239,14 +239,14 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
             {/* Cabeçalho das colunas de suspensão + marcar/limpar tudo */}
             <div className="flex items-center justify-end gap-2 mb-2 text-[10px]">
               <div className="flex flex-col items-center gap-0.5">
-                <span className="font-bold text-emerald-700 uppercase tracking-wide">Visita</span>
+                <span className="font-bold text-emerald-700 uppercase tracking-wide inline-flex items-center gap-0.5">Visita<Info className="w-3 h-3 text-emerald-600 cursor-help" title="Suspende a justificativa de VISITA no mês vigente: o cliente não visitado deixa de aparecer para o vendedor justificar no Fechar Rota (não afeta o débito)." /></span>
                 <div className="flex gap-1">
                   <button disabled={salvando || clientes.length === 0} onClick={() => bulkSusp("visita", true)} className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50">marcar tudo</button>
                   <button disabled={salvando || clientes.length === 0} onClick={() => bulkSusp("visita", false)} className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-600 border hover:bg-gray-100 disabled:opacity-50">limpar</button>
                 </div>
               </div>
               <div className="flex flex-col items-center gap-0.5">
-                <span className="font-bold text-red-700 uppercase tracking-wide">Débito</span>
+                <span className="font-bold text-red-700 uppercase tracking-wide inline-flex items-center gap-0.5">Débito<Info className="w-3 h-3 text-red-600 cursor-help" title="Suspende a justificativa de DÉBITO no mês vigente: o cliente com débito deixa de precisar justificar o débito no Fechar Rota (não afeta a visita)." /></span>
                 <div className="flex gap-1">
                   <button disabled={salvando || clientes.length === 0} onClick={() => bulkSusp("debito", true)} className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50">marcar tudo</button>
                   <button disabled={salvando || clientes.length === 0} onClick={() => bulkSusp("debito", false)} className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-600 border hover:bg-gray-100 disabled:opacity-50">limpar</button>
