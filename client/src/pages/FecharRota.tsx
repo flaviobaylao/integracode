@@ -23,6 +23,7 @@ import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react";
+import { useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
 type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number };
@@ -50,7 +51,7 @@ const TIPO_CLS: Record<Tipo, string> = {
   repescagem: "bg-rose-50 text-rose-700",
 };
 
-function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false): NaoVisitado[] {
+function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false, suspVisita: Set<string> = new Set(), suspDebito: Set<string> = new Set(), crEfet: Set<string> = new Set()): NaoVisitado[] {
   const checkedIn = new Set<string>();
   (route?.checkpoints || []).forEach((cp: any) => { if (cp?.checkpointType === "check_in" && cp?.customerId) checkedIn.add(String(cp.customerId)); });
   const attended = new Set<string>(((serviceCounts?.attendedCustomerIds) || []).map(String));
@@ -79,10 +80,14 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       const cid = v?.customerId ? String(v.customerId) : "";
       done = !!cid && (checkedIn.has(cid) || hasOrder(cid));
     }
-    const debito = debtOf(v?.customerId);
-    if (done && !debito) continue;
     const customerId = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
     if (!customerId) continue;
+    // Solicitação de Alteração Efetuada: cliente sai da lista de justificativas.
+    if (crEfet.has(customerId)) continue;
+    // Suspensão (gestão admin, mês vigente): Visita libera a visita; Débito libera o débito.
+    const debito = suspDebito.has(customerId) ? 0 : debtOf(v?.customerId);
+    const visitOk = done || suspVisita.has(customerId);
+    if (visitOk && !debito) continue;
     out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined });
   }
   // Repescagem (somente para vendedores habilitados): cada cliente da repescagem não atendido também precisa de justificativa.
@@ -90,9 +95,11 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     for (const r of (Array.isArray(overlay) ? overlay : [])) {
       const cid = r?.customerId ? String(r.customerId) : "";
       if (!cid || out.some((o) => o.customerId === cid)) continue;
+      if (crEfet.has(cid)) continue;
       const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
-      const debito = debtOf(cid);
-      if (done && !debito) continue;
+      const debito = suspDebito.has(cid) ? 0 : debtOf(cid);
+      const visitOk = done || suspVisita.has(cid);
+      if (visitOk && !debito) continue;
       out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined });
     }
   }
@@ -134,7 +141,41 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const allowed = new Set<Tipo>((cfg.tipos || ["presencial", "virtual", "lead"]) as Tipo[]);
   const orders = infoData?.orders || {};
   const debts = infoData?.debts || {};
-  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem]);
+
+  // Suspensões de justificativa (gestão admin) do mês vigente — cliente marcado não precisa justificar.
+  const mesVigente = today.slice(0, 7);
+  const { data: suspData } = useQuery<any>({ queryKey: ["/api/fechamento/suspensoes", mesVigente], enabled: !!today, queryFn: () => apiRequest("GET", `/api/fechamento/suspensoes?mes=${mesVigente}`) });
+  const suspVisita = useMemo(() => new Set<string>((suspData?.visita || []).map(String)), [suspData]);
+  const suspDebito = useMemo(() => new Set<string>((suspData?.debito || []).map(String)), [suspData]);
+
+  // Solicitações de Alteração Efetuadas — cliente sai da lista de justificativas.
+  const crKeys = useMemo(() => {
+    const ks: string[] = [];
+    (route?.visits || []).forEach((v: any) => {
+      const isLead = v?.visitType === "lead";
+      const id = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
+      if (id) ks.push(crKey(isLead ? "lead" : "customer", id));
+    });
+    (Array.isArray(overlay) ? overlay : []).forEach((r: any) => { if (r?.assignmentId) ks.push(crKey("repescagem", String(r.assignmentId))); });
+    return ks;
+  }, [route, overlay]);
+  const crStates = useChangeRequestStates(crKeys);
+  const crEfet = useMemo(() => {
+    const s = new Set<string>();
+    const efet = (st: any) => st?.status === "efetuadas" && !isModalidadeOnlyRequest(st);
+    (route?.visits || []).forEach((v: any) => {
+      const isLead = v?.visitType === "lead";
+      const id = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
+      if (id && efet(crStates[crKey(isLead ? "lead" : "customer", id)])) s.add(id);
+    });
+    (Array.isArray(overlay) ? overlay : []).forEach((r: any) => {
+      const cid = r?.customerId ? String(r.customerId) : "";
+      if (cid && efet(crStates[crKey("repescagem", String(r.assignmentId || ""))])) s.add(cid);
+    });
+    return s;
+  }, [route, overlay, crStates]);
+
+  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem, suspVisita, suspDebito, crEfet) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem, suspVisita, suspDebito, crEfet]);
 
   const totalStops = useMemo(() => {
     let n = 0;
