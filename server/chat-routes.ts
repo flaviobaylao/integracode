@@ -4958,9 +4958,10 @@ export function registerChatRoutes(app: Express): void {
     // 🔄 Rota para reconfigurar webhook (SEMPRE para PRODUÇÃO - fix critical issue)
   app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
-      // SEMPRE usar o domínio de produção estável - NUNCA o domínio de dev
-      const prodDomain = 'integrahonest.replit.app';
-      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      // SEMPRE usar o dominio de producao estavel (Railway) — mesma fonte do APP_URL dos links de pagamento.
+      // Antes estava fixo em 'integrahonest.replit.app' (dominio Replit ANTIGO/morto), o que quebrava o webhook.
+      const baseUrl = (process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
+      const webhookUrl = `${baseUrl}/api/chat/webhook/messages`;
       
       console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook SEMPRE para PRODUÇÃO: ${webhookUrl}`);
       
