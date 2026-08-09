@@ -1030,7 +1030,7 @@ export default function RotaDoDia() {
     for (const r of (filteredRepescagem || [])) { if ((r as any).assignmentId) ks.push(crKey('repescagem', String((r as any).assignmentId))); }
     return ks;
   }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
-  const changeRequestStates = useChangeRequestStates(changeRequestKeys);
+  const changeRequestStates = useChangeRequestStates(changeRequestKeys, selectedDate);
 
   // 📋 Solicitar Alteração — regras de UI:
   //  - Efetuadas: card cinza/inativo, não clicável e FORA da contagem de clientes da rota (mas visível).
