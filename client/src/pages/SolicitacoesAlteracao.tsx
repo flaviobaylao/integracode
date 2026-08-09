@@ -87,12 +87,28 @@ function Detalhes({ details }: { details: any }) {
 function PendingCard({ r }: { r: any }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
+  // Item 4: ao retornar "Efetuadas", a rota do dia do vendedor é reotimizada automaticamente.
+  // Para "Parcial"/"Rejeitadas" não há otimização automática.
+  async function otimizarRotaAposEfetuada() {
+    try {
+      const sellerId = r.sellerId;
+      if (!sellerId) return;
+      const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+      const rd: any = await apiRequest("GET", `/api/daily-routes/${encodeURIComponent(sellerId)}/date/${hoje}`);
+      const routeId = rd?.route?.id || rd?.id;
+      if (!routeId) return;
+      await apiRequest("POST", `/api/daily-routes/${routeId}/optimize`);
+      queryClient.invalidateQueries({ queryKey: ["/api/daily-routes"] });
+      toast({ title: "Rota otimizada", description: "A rota do vendedor foi reotimizada após a alteração efetuada." });
+    } catch { /* silencioso: otimização é um efeito colateral opcional */ }
+  }
   const resolveMut = useMutation({
     mutationFn: async (status: string) => apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status, note: note.trim() || undefined }),
-    onSuccess: () => {
+    onSuccess: (_data, status) => {
       toast({ title: "Solicitação fechada", description: "O resultado já aparece no card." });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      if (status === "efetuadas") otimizarRotaAposEfetuada();
     },
     onError: (e: any) => toast({ title: "Erro ao resolver", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
