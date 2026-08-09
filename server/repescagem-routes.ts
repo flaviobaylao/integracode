@@ -1105,6 +1105,11 @@ async function maybeAutoDraw(): Promise<void> {
 let __closeRunning = false;
 let __lastCloseCheckMs = 0;
 
+// Histórico simples de migrações de carteira (data/hora + ocorrência) — item 1.
+async function ensureCarteiraMigrations(): Promise<void> {
+  await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS carteira_migrations (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar NOT NULL, from_seller_id varchar, to_seller_id varchar NOT NULL, ocorrencia text, occurred_at timestamptz DEFAULT now())"));
+}
+
 async function closeAndExpireRepescagem(date: string): Promise<any> {
   const inRoute = await db.select().from(repescagemAssignments)
     .where(and(eq(repescagemAssignments.drawDate, date), eq(repescagemAssignments.status, 'in_route')));
@@ -1148,6 +1153,22 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
+      // Item 1: se o MESMO vendedor concluiu venda em repescagem 2x ao mesmo cliente,
+      // o cliente migra automaticamente para a carteira desse vendedor (com registro em histórico).
+      const migSeller = a.assignedUserId;
+      if (migSeller) {
+        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller} AND status = 'completed'`);
+        const nDone = Number(((cnt.rows || cnt)[0] as any)?.n || 0);
+        if (nDone >= 2) {
+          const cur: any = await db.execute(sql`SELECT seller_id FROM customers WHERE id = ${a.customerId} LIMIT 1`);
+          const curSeller = ((cur.rows || cur)[0] as any)?.seller_id || null;
+          if (curSeller !== migSeller) {
+            await ensureCarteiraMigrations();
+            await db.update(customers).set({ sellerId: migSeller }).where(eq(customers.id, a.customerId));
+            await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia) VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${'Migracao automatica de carteira: 2a venda em repescagem pelo mesmo vendedor'})`);
+          }
+        }
+      }
       completed++;
     }
   }
