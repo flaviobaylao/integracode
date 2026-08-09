@@ -51,7 +51,7 @@ const TIPO_CLS: Record<Tipo, string> = {
   repescagem: "bg-rose-50 text-rose-700",
 };
 
-function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false, suspVisita: Set<string> = new Set(), suspDebito: Set<string> = new Set(), crEfet: Set<string> = new Set()): NaoVisitado[] {
+function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false, suspVisita: Set<string> = new Set(), suspDebito: Set<string> = new Set(), crEfet: Set<string> = new Set(), exigirDebito: boolean = true): NaoVisitado[] {
   const checkedIn = new Set<string>();
   (route?.checkpoints || []).forEach((cp: any) => { if (cp?.checkpointType === "check_in" && cp?.customerId) checkedIn.add(String(cp.customerId)); });
   const attended = new Set<string>(((serviceCounts?.attendedCustomerIds) || []).map(String));
@@ -84,8 +84,8 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (!customerId) continue;
     // Solicitação de Alteração Efetuada: cliente sai da lista de justificativas.
     if (crEfet.has(customerId)) continue;
-    // Suspensão (gestão admin, mês vigente): Visita libera a visita; Débito libera o débito.
-    const debito = suspDebito.has(customerId) ? 0 : debtOf(v?.customerId);
+    // Suspensão de débito: global (exigirDebito=false, até segunda ordem) OU por cliente/mês (gestão admin).
+    const debito = (!exigirDebito || suspDebito.has(customerId)) ? 0 : debtOf(v?.customerId);
     const visitOk = done || suspVisita.has(customerId);
     if (visitOk && !debito) continue;
     out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined });
@@ -97,7 +97,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       if (!cid || out.some((o) => o.customerId === cid)) continue;
       if (crEfet.has(cid)) continue;
       const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
-      const debito = suspDebito.has(cid) ? 0 : debtOf(cid);
+      const debito = (!exigirDebito || suspDebito.has(cid)) ? 0 : debtOf(cid);
       const visitOk = done || suspVisita.has(cid);
       if (visitOk && !debito) continue;
       out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined });
@@ -139,6 +139,9 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
 
   const cfg = statusData?.config || { travaObrigatoria: true, tipos: ["presencial", "virtual", "lead"] };
   const allowed = new Set<Tipo>((cfg.tipos || ["presencial", "virtual", "lead"]) as Tipo[]);
+  // Débito no fechamento suspenso globalmente por padrão (até segunda ordem). O fechamento segue só com as não-visitas.
+  const exigirDebito = !!cfg.exigirDebito;
+  const motivosDisponiveis = exigirDebito ? MOTIVOS : MOTIVOS.filter(([id]) => id !== "debito");
   const orders = infoData?.orders || {};
   const debts = infoData?.debts || {};
 
@@ -175,7 +178,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     return s;
   }, [route, overlay, crStates]);
 
-  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem, suspVisita, suspDebito, crEfet) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem, suspVisita, suspDebito, crEfet]);
+  const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito]);
 
   const totalStops = useMemo(() => {
     let n = 0;
@@ -310,7 +313,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                     <div className="mt-3 border-t border-dashed pt-3">
                       <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">Motivo</div>
                       <div className="flex flex-wrap gap-2">
-                        {MOTIVOS.map(([id, label]) => (
+                        {motivosDisponiveis.map(([id, label]) => (
                           <button key={id} onClick={() => setDraftReason(id)} className={`px-3 py-2 rounded-full text-xs font-semibold border ${draftReason === id ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-200 text-gray-600"}`}>{label}</button>
                         ))}
                       </div>
