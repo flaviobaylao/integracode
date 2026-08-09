@@ -570,7 +570,9 @@ function ChatCenterInner() {
     try { localStorage.setItem('chatSoundConvs', JSON.stringify(next)); } catch {}
     return next;
   });
+  const [replyAlerts, setReplyAlerts] = useState<Array<{ key: string; convId: string; name: string }>>([]);
   const audioCtxRef = useRef<any>(null);
+  // 🔔 Campainha: 'ding-dong' repetido 2x, mais alto, timbre de sino (mais alarmante).
   const playBeep = () => {
     try {
       const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -578,10 +580,18 @@ function ChatCenterInner() {
       if (!audioCtxRef.current) audioCtxRef.current = new AC();
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') ctx.resume();
-      const o = ctx.createOscillator(); const g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.06;
-      o.connect(g); g.connect(ctx.destination);
-      o.start(); o.stop(ctx.currentTime + 0.18);
+      const bell = (freq: number, t0: number, dur: number) => {
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.type = 'triangle'; o.frequency.value = freq;
+        o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.42, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.start(t0); o.stop(t0 + dur + 0.03);
+      };
+      const t = ctx.currentTime;
+      bell(880, t, 0.5); bell(659, t + 0.28, 0.6);
+      bell(880, t + 0.95, 0.5); bell(659, t + 1.23, 0.6);
     } catch {}
   };
   const prevUnreadRef = useRef<Record<string, number>>({});
@@ -590,14 +600,26 @@ function ChatCenterInner() {
     const prev = prevUnreadRef.current;
     const cur: Record<string, number> = {};
     let beep = false;
+    // Som e bandeira SOMENTE para o dono da conversa (ou quem recebeu por transferencia).
+    const myAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
+    const novos: Array<{ key: string; convId: string; name: string }> = [];
     for (const c of conversations as any[]) {
       const u = (c.unreadCount as number) || 0;
       cur[c.id] = u;
-      if (soundBaselineRef.current && u > (prev[c.id] ?? 0) && isSoundOn(c.id)) beep = true;
+      const minha = !!myAgentId && (c as any).assignedAgentId === myAgentId;
+      if (soundBaselineRef.current && u > (prev[c.id] ?? 0) && minha) {
+        if (isSoundOn(c.id)) beep = true;
+        novos.push({ key: c.id + ':' + Date.now(), convId: c.id, name: (c as any).customerName || (c as any).customerPhone || 'Cliente' });
+      }
     }
     prevUnreadRef.current = cur;
     soundBaselineRef.current = true;
     if (beep) playBeep();
+    if (novos.length) {
+      setReplyAlerts((prevA) => [...prevA.slice(-4), ...novos]);
+      const keys = novos.map((n) => n.key);
+      setTimeout(() => setReplyAlerts((prevA) => prevA.filter((a) => !keys.includes(a.key))), 8000);
+    }
   }, [conversations, soundConvs]);
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
@@ -2156,7 +2178,7 @@ function ChatCenterInner() {
                 </Card>
 
                 {/* Área de Chat + Input de Mensagem - Tudo junto */}
-                <Card className="flex flex-col" style={{ height: 'calc(100vh - 300px)', minHeight: '400px' }}>
+                <Card className="flex flex-col" style={{ height: 'calc(100vh - 215px)', minHeight: '400px' }}>
                   <CardContent className="flex-1 overflow-hidden p-4 flex flex-col">
                     <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
                       <div className="space-y-4">
@@ -2746,6 +2768,18 @@ function ChatCenterInner() {
           </div>
         )}
       </div>
+      {replyAlerts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[80] flex flex-col gap-2 max-w-xs" data-testid="reply-alerts">
+          {replyAlerts.map((a) => (
+            <div key={a.key} onClick={() => { setSelectedConversation(a.convId); setReplyAlerts((prev) => prev.filter((x) => x.key !== a.key)); }}
+              className="cursor-pointer bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-2xl px-4 py-3 flex items-center gap-2 animate-bounce">
+              <span className="text-xl">🔔</span>
+              <div className="text-sm leading-tight flex-1"><b>{a.name}</b> respondeu<br /><span className="opacity-90 text-xs">clique para abrir</span></div>
+              <button onClick={(e) => { e.stopPropagation(); setReplyAlerts((prev) => prev.filter((x) => x.key !== a.key)); }} className="ml-1 text-white/80 hover:text-white text-sm">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
