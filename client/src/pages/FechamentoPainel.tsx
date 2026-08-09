@@ -56,7 +56,12 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   });
 
   const porMotivo = (data?.porMotivo || []) as any[];
-  const clientes = (data?.clientes || []) as any[];
+  const clientesAll = (data?.clientes || []) as any[];
+  const [buscaCliente, setBuscaCliente] = useState<string>("");
+  const perLabel = (p: string) => (p === "semanal" ? "Semanal" : p === "quinzenal" ? "Quinzenal" : p === "mensal" ? "Mensal" : "");
+  const clientes = buscaCliente.trim()
+    ? clientesAll.filter((c) => `${c.nome} ${c.cidade || ""} ${c.vendedor || ""}`.toLowerCase().includes(buscaCliente.trim().toLowerCase()))
+    : clientesAll;
   const porVendedor = (data?.porVendedor || []) as any[];
   const vendedores = (data?.vendedores || []) as any[];
   const totalNV = data?.totalNaoVisitados || 0;
@@ -236,6 +241,11 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
             <div className="text-[11px] text-muted-foreground mb-2">
               <span className="font-semibold">Suspender justificativa</span> (mês vigente): marcada uma das caixas, o vendedor não precisa justificar aquele motivo no Fechar Rota.
             </div>
+            {/* Busca por cliente */}
+            <div className="relative mb-2">
+              <input value={buscaCliente} onChange={(e) => setBuscaCliente(e.target.value)} placeholder="Buscar cliente…" className="w-full border rounded-lg pl-3 pr-8 py-2 text-sm" />
+              {buscaCliente ? <button onClick={() => setBuscaCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">✕</button> : null}
+            </div>
             {/* Cabeçalho das colunas de suspensão + marcar/limpar tudo */}
             <div className="flex items-center justify-end gap-2 mb-2 text-[10px]">
               <div className="flex flex-col items-center gap-0.5">
@@ -263,6 +273,7 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
                         {copiado === c.nome ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
                       {c.cidade ? <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">{c.cidade}</span> : null}
+                      {perLabel(c.periodicidade) ? <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">{perLabel(c.periodicidade)}</span> : null}
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${streakCls(c.n)}`}>{c.n}x</span>
                     </div>
                     <div className="text-[11px] text-muted-foreground">{c.vendedor || "—"} · último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div>
