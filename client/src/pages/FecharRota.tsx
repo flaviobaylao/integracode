@@ -162,7 +162,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     (Array.isArray(overlay) ? overlay : []).forEach((r: any) => { if (r?.assignmentId) ks.push(crKey("repescagem", String(r.assignmentId))); });
     return ks;
   }, [route, overlay]);
-  const crStates = useChangeRequestStates(crKeys);
+  const crStates = useChangeRequestStates(crKeys, today);
   const crEfet = useMemo(() => {
     const s = new Set<string>();
     const efet = (st: any) => st?.status === "efetuadas" && !isModalidadeOnlyRequest(st);
