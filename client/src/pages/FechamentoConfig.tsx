@@ -25,8 +25,9 @@ type Cfg = {
   fechoAutomatico: boolean;
   fechoHorario: string;
   tipos: string[];
+  exigirDebito: boolean;
 };
-const DEFAULTS: Cfg = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: "19:00", tipos: ["presencial", "virtual", "lead"] };
+const DEFAULTS: Cfg = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: "19:00", tipos: ["presencial", "virtual", "lead"], exigirDebito: false };
 const TIPOS: [string, string][] = [["presencial", "Presencial"], ["virtual", "Virtual"], ["lead", "Lead"]];
 
 function RuleRow(props: { title: string; desc: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -105,6 +106,13 @@ function RegrasTab() {
             desc="Se o vendedor esquecer de fechar, a rota do próximo dia abre bloqueada e só libera ao fechar a anterior — ou com liberação do admin."
             checked={cfg.bloqueioDiaSeguinte}
             onChange={(v) => salvar.mutate({ bloqueioDiaSeguinte: v })}
+            disabled={salvar.isPending}
+          />
+          <RuleRow
+            title="Exigir explicação de débito no fechamento"
+            desc="Quando LIGADO, clientes com débito vencido entram na lista para o vendedor explicar a cobrança. Atualmente DESLIGADO (suspenso até segunda ordem): o fechamento segue somente com as justificativas das não-visitas."
+            checked={cfg.exigirDebito}
+            onChange={(v) => salvar.mutate({ exigirDebito: v })}
             disabled={salvar.isPending}
           />
           <RuleRow
