@@ -652,6 +652,18 @@ export async function pollUmblerDeliveryStatus(): Promise<{ checked: number; upd
   _umblerPollBusy = true;
   let checked = 0, updated = 0;
   try {
+    // 📶 Heuristica: se o cliente RESPONDEU depois de uma mensagem nossa, ela FOI entregue.
+    // Marca como entregue (ack=2) qualquer msg de saida com flag menor anterior a uma resposta do cliente.
+    try {
+      await db.execute(sql`
+        UPDATE chat_messages m
+        SET ack = GREATEST(coalesce(m.ack,0), 2),
+            metadata = jsonb_set(jsonb_set(jsonb_set(coalesce(m.metadata,'{}'::jsonb), '{delivery}', coalesce(m.metadata->'delivery','{}'::jsonb), true), '{delivery,state}', '"received"'::jsonb, true), '{delivery,success}', 'true'::jsonb, true)
+        WHERE m.sender_type IN ('agent','system')
+          AND (coalesce(m.ack,0) < 2 OR coalesce(m.metadata->'delivery'->>'success','') = 'false')
+          AND m.created_at > now() - interval '7 days'
+          AND EXISTS (SELECT 1 FROM chat_messages r WHERE r.conversation_id = m.conversation_id AND r.sender_type = 'customer' AND r.created_at > m.created_at)`);
+    } catch (e: any) { console.warn('[UMBLER-POLL] heuristica resposta->entregue:', e?.message || e); }
     const cfg = await resolveUmblerTalkConfig();
     if ('error' in cfg) return { checked, updated };
     const rows: any = await db.execute(sql`SELECT id, metadata->'delivery'->>'providerStatus' AS pid
