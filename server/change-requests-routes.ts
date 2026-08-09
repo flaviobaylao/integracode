@@ -264,9 +264,14 @@ export function registerChangeRequestsRoutes(app: Express) {
     // Linhas ordenadas por created_at DESC → a primeira vista de cada chave é a mais recente.
     const uniqIds = Array.from(new Set(ids));
     const inList = sql.join(uniqIds.map((id) => sql`${id}`), sql`, `);
+    // Escopo por dia (item 2): quando ?date=YYYY-MM-DD é enviado, só considera solicitações
+    // criadas naquele dia (BRT). Assim uma "Efetuada" de ontem não espelha na rota de hoje.
+    const dq = String(req.query.date || "").replace(/[^0-9-]/g, "");
+    const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(dq);
     const rows = rowsOf(await db.execute(sql`
       SELECT * FROM change_requests
       WHERE entity_id IN (${inList})
+      ${dateOk ? sql`AND to_char(created_at AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') = ${dq}` : sql``}
       ORDER BY created_at DESC`));
     const out: Record<string, any> = {};
     for (const r of rows) {
