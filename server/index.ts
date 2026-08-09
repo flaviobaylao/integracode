@@ -2059,7 +2059,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   async function ensureConfigGlobal() {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
   }
-  const FECHAMENTO_DEFAULTS: any = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: '19:00', tipos: ['presencial', 'virtual', 'lead'], bloqueioDesde: null };
+  const FECHAMENTO_DEFAULTS: any = { travaObrigatoria: true, bloqueioDiaSeguinte: true, fechoAutomatico: false, fechoHorario: '19:00', tipos: ['presencial', 'virtual', 'lead'], bloqueioDesde: null, exigirDebito: false };
   async function getFechamentoConfig() {
     await ensureConfigGlobal();
     const r: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'fechamento_config' LIMIT 1`);
@@ -2082,6 +2082,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       if (typeof b.fechoAutomatico === 'boolean') next.fechoAutomatico = b.fechoAutomatico;
       if (typeof b.fechoHorario === 'string' && /^\d{2}:\d{2}$/.test(b.fechoHorario)) next.fechoHorario = b.fechoHorario;
       if (Array.isArray(b.tipos)) next.tipos = b.tipos.filter((t: any) => ['presencial', 'virtual', 'lead'].includes(t));
+      if (typeof b.exigirDebito === 'boolean') next.exigirDebito = b.exigirDebito;
       if (b.bloqueioDesde === null || (typeof b.bloqueioDesde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.bloqueioDesde))) next.bloqueioDesde = b.bloqueioDesde;
       const valor = JSON.stringify(next);
       await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('fechamento_config', ${valor}, 'Regras do Fechamento de Rota') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
@@ -2101,7 +2102,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       let date = String(req.query.date || '').replace(/[^0-9-]/g, '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); }
       const cfg = await getFechamentoConfig();
-      const vendorCfg = { travaObrigatoria: !!cfg.travaObrigatoria, bloqueioDiaSeguinte: !!cfg.bloqueioDiaSeguinte, tipos: cfg.tipos };
+      const vendorCfg = { travaObrigatoria: !!cfg.travaObrigatoria, bloqueioDiaSeguinte: !!cfg.bloqueioDiaSeguinte, tipos: cfg.tipos, exigirDebito: !!cfg.exigirDebito };
       let closure: any = null;
       if (seller) {
         const r: any = await db.execute(sql`SELECT id, seller_id, close_date, closed_at, nao_visitados, justificados, pendentes FROM route_closures WHERE seller_id = ${seller} AND close_date = ${date}::date LIMIT 1`);
