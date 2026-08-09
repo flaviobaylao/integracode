@@ -124,14 +124,15 @@ export function MessageThread({ messages }: { messages?: CRMessage[] }) {
 // ---------------------------------------------------------------------------
 // Hook: 1 query por página para o mapa de estados. keys = "customer:ID" etc.
 // ---------------------------------------------------------------------------
-export function useChangeRequestStates(keys: string[]): Record<string, ChangeRequestState> {
+export function useChangeRequestStates(keys: string[], date?: string): Record<string, ChangeRequestState> {
   const uniq = useMemo(() => Array.from(new Set(keys.filter(Boolean))).sort(), [keys.join("|")]);
   const keysParam = uniq.join(",");
+  const dateParam = (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) ? date : "";
   const { data } = useQuery<Record<string, ChangeRequestState>>({
-    queryKey: ["/api/change-requests/states", keysParam],
+    queryKey: ["/api/change-requests/states", keysParam, dateParam],
     queryFn: async () => {
       if (!keysParam) return {};
-      const r = await fetch(`/api/change-requests/states?keys=${encodeURIComponent(keysParam)}`, { credentials: "include" });
+      const r = await fetch(`/api/change-requests/states?keys=${encodeURIComponent(keysParam)}${dateParam ? `&date=${dateParam}` : ""}`, { credentials: "include" });
       if (!r.ok) return {};
       return r.json();
     },
