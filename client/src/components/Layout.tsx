@@ -109,9 +109,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     });
   };
 
-  // (15/jul) Atalhos favoritos: estrela nos cards + barra de até 7 ícones no cabeçalho
+  // (15/jul) Atalhos favoritos: estrela nos cards + barra de até 10 ícones no cabeçalho
   const FAVORITES_KEY = "integra_favorites";
-  const MAX_FAVORITES = 7;
+  const MAX_FAVORITES = 10;
   const [favorites, setFavorites] = useState<string[]>([]);
   useEffect(() => {
     let local: string[] = [];
@@ -157,6 +157,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     window.addEventListener('integra:favorites', onFav as any);
     return () => window.removeEventListener('integra:favorites', onFav as any);
   }, []);
+
+  // Atalhos exibidos no cabeçalho: fixa o Inbox de Solicitações de Alteração
+  // (admin) sempre visível e limita a 10 atalhos no total.
+  const shortcutIds = (() => {
+    const favs = favorites.filter((f) => f !== 'solicitacoes-alteracao');
+    return canAccessUsers ? [...favs.slice(0, 9), 'solicitacoes-alteracao'] : favs.slice(0, 10);
+  })();
 
   // (busca global) Campo de busca no cabeçalho para localizar qualquer
   // função, módulo ou atividade do sistema — mostra um dropdown estilo menu
@@ -448,6 +455,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
+      { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: null },
       ],
     },
   ];
@@ -585,6 +593,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
+    if (itemId === 'solicitacoes-alteracao') { navigate('/admin/solicitacoes-alteracao'); return; }
 
     if (itemId === 'omie-stage-logs') {
       navigate('/admin/omie-stage-logs');
@@ -994,9 +1003,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             )}
           </div>
 
-          {/* Atalhos favoritos (até 7) */}
+          {/* Atalhos (até 10) — Inbox de Solicitações fixo p/ admin */}
           <div className="flex items-center justify-end gap-2 ml-auto">
-            {favorites.map((favId) => {
+            {shortcutIds.map((favId) => {
               const info = itemIndex.get(favId);
               if (!info) return null;
               return (
