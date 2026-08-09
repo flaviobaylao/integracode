@@ -305,7 +305,6 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
                       <button onClick={() => copiarNome(c.nome)} title="Copiar nome do cliente" className="inline-flex items-center text-gray-400 hover:text-blue-600 flex-shrink-0">
                         {copiado === c.nome ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
-                      {c.cidade ? <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">{c.cidade}</span> : null}
                       {perLabel(c.periodicidade) ? <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">{perLabel(c.periodicidade)}</span> : null}
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${streakCls(c.n)}`}>{c.n}x</span>
                     </div>
