@@ -222,13 +222,32 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
             <div className="text-xs text-muted-foreground mb-3">Motivos informados pelos vendedores em {mesLabel(mes)}.</div>
             {porMotivo.length === 0 ? <div className="text-sm text-muted-foreground">Sem justificativas neste mês.</div> : (
               <div className="flex flex-col gap-3">
-                {porMotivo.map((m) => (
-                  <div key={m.motivo} className="grid grid-cols-[150px_1fr_36px] items-center gap-3">
+                {porMotivo.map((m) => {
+                  const listaMot = clientesAll.filter((c) => (c.motivo || "") === m.motivo);
+                  return (
+                  <div key={m.motivo} className="group relative grid grid-cols-[150px_1fr_36px] items-center gap-3 cursor-help">
                     <div className="text-xs text-gray-600 font-semibold text-right truncate" title={MOTIVO_LABEL[m.motivo] || m.motivo}>{MOTIVO_LABEL[m.motivo] || m.motivo}</div>
                     <div className="bg-gray-100 rounded h-4 overflow-hidden"><div className="h-full bg-blue-600 rounded" style={{ width: `${Math.round((m.n / maxMotivo) * 100)}%` }} /></div>
                     <div className="text-xs font-bold text-gray-800 tabular-nums">{m.n}</div>
+                    {/* Tooltip: lista de clientes desse motivo (hover) */}
+                    <div className="hidden group-hover:block absolute z-30 left-[150px] top-full mt-1 w-72 max-h-64 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl p-2 text-left">
+                      <div className="text-[11px] font-bold text-gray-700 mb-1">{MOTIVO_LABEL[m.motivo] || m.motivo} · {listaMot.length} cliente(s)</div>
+                      {listaMot.length === 0 ? <div className="text-[11px] text-muted-foreground">Sem clientes.</div> : (
+                        <ul className="space-y-0.5">
+                          {listaMot.slice(0, 40).map((c, i) => (
+                            <li key={i} className="text-[11px] text-gray-700 truncate">
+                              <span className="font-semibold">{c.nome}</span>
+                              {c.cidade ? <span className="text-gray-400"> · {c.cidade}</span> : null}
+                              {c.vendedor ? <span className="text-gray-400"> · {c.vendedor}</span> : null}
+                            </li>
+                          ))}
+                          {listaMot.length > 40 ? <li className="text-[11px] text-muted-foreground">+{listaMot.length - 40} mais…</li> : null}
+                        </ul>
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
