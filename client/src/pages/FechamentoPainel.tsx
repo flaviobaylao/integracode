@@ -58,10 +58,14 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   const porMotivo = (data?.porMotivo || []) as any[];
   const clientesAll = (data?.clientes || []) as any[];
   const [buscaCliente, setBuscaCliente] = useState<string>("");
+  const [filtroMotivo, setFiltroMotivo] = useState<string>("");
   const perLabel = (p: string) => (p === "semanal" ? "Semanal" : p === "quinzenal" ? "Quinzenal" : p === "mensal" ? "Mensal" : "");
-  const clientes = buscaCliente.trim()
-    ? clientesAll.filter((c) => `${c.nome} ${c.cidade || ""} ${c.vendedor || ""}`.toLowerCase().includes(buscaCliente.trim().toLowerCase()))
-    : clientesAll;
+  const clientes = clientesAll.filter((c) => {
+    const okBusca = !buscaCliente.trim() || `${c.nome} ${c.cidade || ""} ${c.vendedor || ""}`.toLowerCase().includes(buscaCliente.trim().toLowerCase());
+    const okMotivo = !filtroMotivo || (c.motivo || "") === filtroMotivo;
+    return okBusca && okMotivo;
+  });
+  const motivosPresentes = Array.from(new Set(clientesAll.map((c) => c.motivo || ""))).filter(Boolean);
   const porVendedor = (data?.porVendedor || []) as any[];
   const vendedores = (data?.vendedores || []) as any[];
   const totalNV = data?.totalNaoVisitados || 0;
@@ -264,6 +268,16 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
             <div className="relative mb-2">
               <input value={buscaCliente} onChange={(e) => setBuscaCliente(e.target.value)} placeholder="Buscar cliente…" className="w-full border rounded-lg pl-3 pr-8 py-2 text-sm" />
               {buscaCliente ? <button onClick={() => setBuscaCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">✕</button> : null}
+            </div>
+            {/* Filtro por motivo */}
+            <div className="mb-2">
+              <select value={filtroMotivo} onChange={(e) => setFiltroMotivo(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                <option value="">Todos os motivos</option>
+                {motivosPresentes.map((mot) => {
+                  const nMot = clientesAll.filter((c) => (c.motivo || "") === mot).length;
+                  return <option key={mot} value={mot}>{(MOTIVO_LABEL[mot] || mot)} ({nMot})</option>;
+                })}
+              </select>
             </div>
             {/* Cabeçalho das colunas de suspensão + marcar/limpar tudo */}
             <div className="flex items-center justify-end gap-2 mb-2 text-[10px]">
