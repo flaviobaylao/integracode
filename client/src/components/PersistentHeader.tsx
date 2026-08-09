@@ -55,6 +55,12 @@ export default function PersistentHeader() {
   const u = user as any;
   const roleLabel = u?.role ? (ROLE_LABELS[u.role] || u.role) : "";
 
+  // Atalhos exibidos no cabeçalho: fixa o Inbox de Solicitações de Alteração
+  // (admin) sempre visível e limita a 10 atalhos no total.
+  const isAdmin = u?.role === 'admin';
+  const _favs = favorites.filter((f) => f !== 'solicitacoes-alteracao');
+  const shortcutIds = isAdmin ? [..._favs.slice(0, 9), 'solicitacoes-alteracao'] : _favs.slice(0, 10);
+
   // 🔁 "Entrar como" (impersonação de admin) — só admin REAL ativa; sempre dá para voltar.
   const realRole = u?._realRole || u?.role;
   const isRealAdmin = realRole === 'admin';
@@ -84,7 +90,7 @@ export default function PersistentHeader() {
           </button>
         </div>
       )}
-      <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 h-14 flex items-center justify-between flex-shrink-0">
+      <header className="relative bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 h-14 flex items-center justify-between flex-shrink-0">
         <Link href="/">
           <div className="flex items-center space-x-3 cursor-pointer" title="Ir para o Dashboard">
             <img src={integraLogo} alt="Honest Sucos - Sistema Integra" className="w-9 h-9" />
@@ -92,9 +98,9 @@ export default function PersistentHeader() {
           </div>
         </Link>
 
-        {/* Atalhos favoritos (até 7) — centralizados */}
-        <div className="hidden md:flex flex-1 items-center justify-center gap-2 px-4">
-          {favorites.map((favId) => {
+        {/* Atalhos (até 10) — sempre centralizados no cabeçalho */}
+        <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+          {shortcutIds.map((favId) => {
             const info = MENU_ITEM_INDEX[favId];
             if (!info) return null;
             return (
