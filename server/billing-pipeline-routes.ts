@@ -2077,10 +2077,30 @@ export function registerBillingPipelineRoutes(app: Express) {
       const emitRes: any = await sefazService.emitNfe(nf.id);
       if (emitRes?.success) return res.json({ success: true });
 
-      // Falha na re-transmissao (ex.: numero DUPLICADO / 539 por reaproveitamento apos uma
-      // emissao que falhou — o numero ja foi autorizado para OUTRA nota). Emite uma NF-e NOVA
-      // com numero atomico livre. createInvoiceFromPipelineItem tem dedup por sales_card_id e
-      // ja transmite a SEFAZ; so cria nova quando NAO ha NF (nao-cancelada) com este card
+      // 🔌 FALHA DE COMUNICACAO (ECONNRESET/timeout/SEFAZ fora do ar): a nota NAO foi
+      // rejeitada e pode ate ter sido autorizada do outro lado. NUNCA reemitir aqui —
+      // era exatamente assim que nasciam as NF-e DUPLICADAS. So devolve o aviso.
+      if (emitRes?.errorCode === 'NETWORK_ERROR') {
+        return res.status(503).json({
+          success: false,
+          network: true,
+          message: emitRes?.errorMessage || 'SEFAZ indisponivel. A NF-e NAO foi rejeitada — tente novamente em alguns minutos.',
+        });
+      }
+
+      // REEMISSAO SO PARA COLISAO DE NUMERO (rejeicao 539 / duplicidade): o numero da NF ja
+      // foi autorizado para OUTRA nota, entao a unica saida e uma NF-e NOVA com numero livre.
+      // Para qualquer OUTRA rejeicao (cadastro, CFOP, endereco, IE...) reemitir so criaria uma
+      // 2a nota rejeitada para o mesmo pedido — o certo e corrigir a causa e retentar a MESMA NF.
+      const rejCode = String(emitRes?.errorCode || '');
+      const rejMsg = String(emitRes?.errorMessage || '');
+      const ehColisaoDeNumero = rejCode === '539' || /duplicidade de nf-e|n[uú]mero j[aá] usado|colis[aã]o/i.test(rejMsg);
+      if (!ehColisaoDeNumero) {
+        return res.status(422).json({ success: false, message: rejMsg || 'Falha ao transmitir a NF-e.' });
+      }
+
+      // createInvoiceFromPipelineItem tem dedup por sales_card_id e ja transmite a SEFAZ;
+      // so cria nova quando NAO ha NF (nao-cancelada) com este card
       // (o createdNew.id !== nf.id evita reprocessar a mesma nota).
       try {
         const createdNew: any = await createInvoiceFromPipelineItem(item, user);
