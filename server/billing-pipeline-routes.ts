@@ -419,15 +419,37 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     const effectiveSellerId = registeringUser ? registeringUser.id : (salesCard.sellerId || null);
     const seller = registeringUser || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
 
-    // ROTEAMENTO POR CARTEIRA (Honest): pedido de canal digital (Instagram / Hotsite / IA) de
-    // cliente já cadastrado numa carteira REAL vai para o vendedor dono da carteira — não para
-    // 'instagram'. Se não houver carteira real, mantém o comportamento atual (Instagram/registrante).
+    // ROTEAMENTO POR CARTEIRA (Honest): SOMENTE para pedido de canal digital (Instagram /
+    // Hotsite / IA / rotinas), onde nao existe um usuario humano implantando. Nesse caso o
+    // pedido de um cliente ja cadastrado numa carteira REAL vai para o dono da carteira — e
+    // nao para 'instagram'. Quando HA um implantador (registeringUser), a carteira NAO manda:
+    // ver regra abaixo.
     let walletSellerId: string | null = null;
     let walletSellerName: string | null = null;
     if (customer && (customer as any).sellerId && !['chatgpt-ai', 'instagram', 'system'].includes(String((customer as any).sellerId))) {
       walletSellerId = String((customer as any).sellerId);
       try { const ws = await storage.getUser(walletSellerId); if (ws) walletSellerName = `${ws.firstName || ''} ${ws.lastName || ''}`.trim(); } catch {}
     }
+
+    // ── REGRA DE IMPLANTACAO (Flavio) ────────────────────────────────────────
+    // O pedido e de QUEM IMPLANTOU, mesmo que o cliente esteja na carteira de outro
+    // vendedor. Ex.: ARMAZEM DO PESCADO e da carteira da Leticia; se a Cinthia lanca o
+    // pedido, o card do pipeline e a comissao sao da Cinthia. O cadastro do cliente NAO
+    // muda de carteira — so a atribuicao deste pedido.
+    // Precedencia: 1) implantador humano  2) carteira real (canal digital)
+    //              3) 'instagram'         4) vendedor do card
+    // ATENCAO (regressao de 23/07/2026): antes esta linha era
+    //   `sellerId: walletSellerId || (... : effectiveSellerId)`
+    // e a carteira ganhava de TODO mundo, inclusive de quem tinha acabado de lancar o pedido.
+    const isInstagram = String(salesCard.source || '') === 'instagram';
+    const pedidoSellerId = registeringUser
+      ? registeringUser.id
+      : (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId));
+    const pedidoSellerName = registeringUser
+      ? `${registeringUser.firstName || ''} ${registeringUser.lastName || ''}`.trim()
+      : (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)));
+    console.log(`👤 [BILLING-PIPELINE] Vendedor do pedido: ${pedidoSellerName || pedidoSellerId} `
+      + `(implantador=${registeringUser ? registeringUser.email : 'nenhum'}; carteira=${walletSellerName || '-'})`);
 
     let omieInstanceName = '';
     if (customer?.omieInstanceId) {
@@ -452,8 +474,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       customerId: salesCard.customerId,
       customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
       customerDocument: customer?.cnpj || customer?.cpf || null,
-      sellerId: walletSellerId || (String(salesCard.source || '') === 'instagram' ? 'instagram' : effectiveSellerId),
-      sellerName: walletSellerName || (String(salesCard.source || '') === 'instagram' ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)),
+      sellerId: pedidoSellerId,
+      sellerName: pedidoSellerName,
       stage: stage,
       scheduledBillingDate: schedDate,
       orderNumber: `INT-${salesCard.id.substring(0, 8)}`,
@@ -1168,7 +1190,9 @@ export function registerBillingPipelineRoutes(app: Express) {
     try {
       const card = await storage.getSalesCard(req.params.id);
       if (!card) return res.status(404).json({ error: 'Card nao encontrado' });
-      const item = await autoSendToBillingPipeline(card as any, req.currentUser?.email || 'system');
+      // Reconciliacao administrativa: NAO usa o e-mail do admin como implantador
+      // (senao o pedido recuperado passaria a ser "do admin"). Cai na carteira/card.
+      const item = await autoSendToBillingPipeline(card as any, 'system (send-card)');
       res.json({ ok: true, created: !!item, item: item || null });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
@@ -1257,10 +1281,73 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (!card) return res.status(404).json({ ok: false, error: 'sales card nao encontrado' });
       const cardProds = (Array.isArray(card.products) && card.products.length) ? card.products : (b.products || null);
       const synthetic: any = { ...card, saleValue: String(val), products: cardProds, operationType: card.operationType || b.operation_type || 'venda', paymentMethod: card.paymentMethod || b.payment_method || null };
-      const item: any = await autoSendToBillingPipeline(synthetic, req.currentUser?.email || 'restore', { skipDebtCheck: true });
+      // Recuperacao: o admin que roda a restauracao NAO e o implantador do pedido.
+      const item: any = await autoSendToBillingPipeline(synthetic, 'system (restore-from-blocked)', { skipDebtCheck: true });
       if (!item) return res.status(422).json({ ok: false, error: 'autoSend nao criou item (verifique regras/valor)' });
       res.json({ ok: true, created: true, orderNumber: item.orderNumber, saleValue: item.saleValue, cliente: String(item.customerName || '').slice(0, 30) });
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // CORRECAO RETROATIVA da atribuicao de vendedor no pipeline.
+  // Entre 23/07/2026 e a correcao, `autoSendToBillingPipeline` gravava o dono da CARTEIRA
+  // do cliente no lugar de quem IMPLANTOU o pedido. O e-mail do implantador ficou gravado
+  // em `created_by` no formato "auto (email@dominio)", entao da para reconstruir.
+  // Body: { apply?: boolean (default false = simulacao), since?: 'YYYY-MM-DD' (default 2026-07-23) }
+  app.post('/api/admin/pipeline/fix-seller-implantador', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.body?.apply === true;
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.since || '')) ? String(req.body.since) : '2026-07-23';
+      // Candidatos: created_by = "auto (<email>)" com e-mail de usuario real e seller_id != implantador
+      const q: any = await db.execute(sql`
+        WITH cand AS (
+          SELECT bp.id, bp.order_number, bp.customer_name, bp.seller_id AS atual, bp.seller_name AS atual_nome,
+                 LOWER(TRIM(SUBSTRING(bp.created_by FROM '\\(([^)]*)\\)'))) AS email_implantador,
+                 bp.created_at, bp.sale_value
+          FROM billing_pipeline bp
+          WHERE bp.created_at >= ${since}::date
+            AND bp.stage <> 'lixeira'
+            AND bp.created_by LIKE 'auto (%'
+        )
+        SELECT c.id, c.order_number, c.customer_name, c.atual, c.atual_nome, c.email_implantador,
+               c.created_at, c.sale_value,
+               u.id AS novo, TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')) AS novo_nome
+        FROM cand c
+        JOIN users u ON LOWER(u.email) = c.email_implantador
+        WHERE c.email_implantador !~ '^(system|auto|reconcile)'
+          AND COALESCE(c.atual,'') <> u.id
+        ORDER BY c.created_at DESC
+      `);
+      const rows: any[] = q?.rows || q || [];
+      let updated = 0;
+      if (apply) {
+        for (const r of rows) {
+          await db.execute(sql`
+            UPDATE billing_pipeline
+               SET seller_id = ${r.novo}, seller_name = ${r.novo_nome}, updated_at = now()
+             WHERE id = ${r.id}
+          `);
+          updated++;
+        }
+      }
+      res.json({
+        ok: true,
+        apply,
+        since,
+        encontrados: rows.length,
+        atualizados: updated,
+        amostra: rows.slice(0, 50).map((r) => ({
+          pedido: r.order_number,
+          cliente: r.customer_name,
+          valor: r.sale_value,
+          data: r.created_at,
+          de: r.atual_nome || r.atual,
+          para: r.novo_nome,
+        })),
+      });
+    } catch (e: any) {
+      console.error('[fix-seller-implantador]', e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
   });
 
   // Forcar criacao de card 'faturado' p/ NFs ESPECIFICAS (sem dedup cliente+valor).

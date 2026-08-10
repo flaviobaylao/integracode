@@ -5117,7 +5117,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
         const cardForPipeline: any = { ...updated, saleValue: (updated as any).saleValue ?? (order as any).saleValue };
-        await autoSendToBillingPipeline(cardForPipeline, user?.email || 'system');
+        // Pedido do HOTSITE: quem clica em "finalizar" no back office nao e o implantador
+        // da venda (o pedido veio do site). Mantem o roteamento por carteira do cliente.
+        await autoSendToBillingPipeline(cardForPipeline, 'system (hotsite-finalize)');
       } catch (e: any) {
         console.error('[FINALIZE-HOTSITE-ORDER] autoSend pipeline (ignorado):', e?.message);
       }
