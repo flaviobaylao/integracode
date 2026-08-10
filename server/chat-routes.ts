@@ -2569,6 +2569,29 @@ export function registerChatRoutes(app: Express): void {
           externalId: result.messageId
         });
         console.log(`💬 [WHATSAPP-SEND] Mensagem salva`);
+
+        // 👤 Quem escreveu, assumiu. Esta rota (usada pelas mensagens prontas — "Abordagem
+        // Pessoa Fisica" e companhia) salvava a mensagem e ia embora: a conversa ficava
+        // "Atendente: Nao atribuido" e, sem dono, a tarja "IA atendendo este cliente"
+        // aparecia por cima de quem tinha acabado de falar com o cliente.
+        try {
+          const _uid = (req as any).user?.id;
+          if (_uid) {
+            const _agents = await storage.getChatAgents();
+            const _meu = _agents.find(a => a.userId === _uid);
+            const _dono = String((conversation as any).assignedAgentId || '');
+            if (_meu && (!_dono || _dono === 'chatgpt')) {
+              const { assignConversationToAgent } = await import('./chat-distribution-service');
+              await assignConversationToAgent(conversation.id, _meu.id, await getAgentColor(_meu.id), {
+                assignedByUserId: _uid, assignedByUserName: _meu.name || undefined,
+                reason: 'mensagem_pronta', agentName: _meu.name || undefined,
+              });
+              console.log(`👤 [WHATSAPP-SEND] Conversa ${conversation.id} atribuida a ${_meu.name || _meu.id}`);
+            }
+            await storage.updateChatConversation(conversation.id, { status: 'in-progress', lastAttendedAt: nowBrazil() } as any);
+            try { const { marcarAtendida } = await import('./ia-fila'); await marcarAtendida(conversation.id, _uid); } catch {}
+          }
+        } catch (e: any) { console.error('[WHATSAPP-SEND] atribuicao', e?.message || e); }
       } catch (err) {
         console.error("[CHAT] Error saving message history:", err);
         // Não falhar o envio se falhar ao salvar histórico
@@ -3599,10 +3622,31 @@ export function registerChatRoutes(app: Express): void {
         if (iaAtiva) {
           const pausadas: any = await db.execute(sql`SELECT replace(key, 'chat_ai_paused:', '') AS id FROM system_settings WHERE key LIKE 'chat_ai_paused:%'`);
           const fora = new Set((pausadas.rows || []).map((r: any) => String(r.id)));
+          // Conversas em que um HUMANO escreveu ha pouco: sao dele, nao da IA. Precisa
+          // estar aqui tambem (e nao so no podeEnviar) senao a tarja "IA atendendo este
+          // cliente" continuava aparecendo por cima de quem estava conversando.
+          const _mins = await (async () => {
+            try {
+              const x: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'ia_respeita_atendente_min' LIMIT 1`);
+              const n = parseInt(String(x.rows?.[0]?.value ?? '').replace(/^"|"$/g, ''), 10);
+              return Math.max(5, isNaN(n) ? 60 : n);
+            } catch { return 60; }
+          })();
+          const comHumano = new Set<string>();
+          try {
+            const hs: any = await db.execute(sql`SELECT DISTINCT conversation_id AS id FROM chat_messages
+              WHERE sender_type <> 'customer'
+                AND coalesce(sender_id, '') NOT LIKE 'agent:%'
+                AND coalesce(sender_id, '') <> 'system'
+                AND created_at > now() - make_interval(mins => ${_mins})`);
+            for (const r of (hs.rows || [])) comHumano.add(String(r.id));
+          } catch {}
           for (const c of filteredConversations) {
             const dono = String((c as any).assignedAgentId || '');
-            // Mesma regra do servidor (iaComAConversa): sem pausa, aberta e sem dono humano.
-            if (!fora.has(String(c.id)) && String(c.status || '') !== 'resolved' && (!dono || dono === 'chatgpt')) {
+            // Mesma regra do servidor (iaComAConversa): sem pausa, aberta, sem dono humano
+            // e sem humano falando ha pouco.
+            if (!fora.has(String(c.id)) && String(c.status || '') !== 'resolved'
+                && (!dono || dono === 'chatgpt') && !comHumano.has(String(c.id))) {
               iaConvs.add(String(c.id));
             }
           }

@@ -73,19 +73,6 @@ async function replyVia(convId: string, toPhone: string, text: string): Promise<
 // exatamente como hoje — nenhuma conversa fica orfa.
 export async function iaAssumeSozinha(conversationId: string, phone: string): Promise<boolean> {
   try {
-    // A IA NUNCA assume conversa INICIADA ou ja CONDUZIDA pelo atendente (outbound/telemarketing/reposicao).
-    try {
-      const cr: any = await db.execute(sql`SELECT initiated_by, assigned_agent_id FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
-      const crow = cr.rows?.[0];
-      if (crow) {
-        if (String(crow.initiated_by || 'customer') === 'user') return false; // iniciada pelo atendente
-        const aid = String(crow.assigned_agent_id || '');
-        if (aid && aid !== 'chatgpt') return false; // ja tem atendente humano
-      }
-      // Um atendente HUMANO ja escreveu nesta conversa? (nao IA 'agent:%', nao 'chatgpt'/'system'/'bot') -> IA nao assume.
-      const hh: any = await db.execute(sql`SELECT 1 FROM chat_messages WHERE conversation_id = ${conversationId} AND sender_type = 'agent' AND sender_id NOT LIKE 'agent:%' AND sender_id <> 'chatgpt' AND sender_id <> 'system' AND sender_id <> 'bot' LIMIT 1`);
-      if (hh.rows?.[0]) return false;
-    } catch {}
     if ((await getSetting('ia_front_line', 'off')) !== 'on') return false;
     const mode = await getSetting('agents_runtime_mode', 'off');
     if (mode === 'off') return false;
@@ -95,6 +82,8 @@ export async function iaAssumeSozinha(conversationId: string, phone: string): Pr
       if (!allow.includes(d)) return false;
     }
     if ((await getSetting('chat_ai_paused:' + conversationId, '')) !== '') return false; // ja transferida
+    // Humano falando ha pouco nesta conversa: ela e dele, vai para a fila humana.
+    if (await atendenteAtuando(conversationId)) return false;
     const { avaliarCanal } = await import('./canais-gestao');
     const av = await avaliarCanal(conversationId);
     return !!(av.ativo && av.iaAtiva && av.dentroHorario);

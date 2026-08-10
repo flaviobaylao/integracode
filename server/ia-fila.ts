@@ -517,6 +517,22 @@ async function iaComAConversa(conversationId: string): Promise<boolean> {
     if (String(row.status || '') === 'resolved') return false;
     const dono = String(row.assigned_agent_id || '');
     if (dono && dono !== 'chatgpt') return false;
+
+    // 👤 QUEM FALOU MANDA. Nem toda mensagem de atendente atribui a conversa a ele: a
+    // "Abordagem Pessoa Fisica" e as outras mensagens prontas saem sem dono, e a conversa
+    // continuava marcada como da IA — o atendente escrevia com o cliente e no lance
+    // seguinte levava "IA atendendo este cliente, ninguem pode escrever por cima dela".
+    // Regra do Flavio: a IA nao interfere no atendimento humano; ela so volta pela regra
+    // de INATIVIDADE, passados ia_respeita_atendente_min sem ninguem falar.
+    const mins = Math.max(5, parseInt(await getSetting('ia_respeita_atendente_min', '60'), 10) || 60);
+    const h: any = await db.execute(sql`SELECT 1 FROM chat_messages
+      WHERE conversation_id = ${conversationId}
+        AND sender_type <> 'customer'
+        AND coalesce(sender_id, '') NOT LIKE 'agent:%'
+        AND coalesce(sender_id, '') <> 'system'
+        AND created_at > now() - make_interval(mins => ${mins})
+      LIMIT 1`);
+    if (h.rows?.length) return false;
   } catch { return false; } // na duvida, nao trava o atendente
   return true;
 }
