@@ -2376,19 +2376,30 @@ export function registerChatRoutes(app: Express): void {
       const _audioLike = finalMessageType === 'audio'
         || /^audio\//.test(String(mediaInfo.mediaType || ''))
         || /\.(ogg|opus|mp3|m4a|wav|aac)(\?|$)/i.test(String(finalMediaUrl || ''));
-      if (_audioLike && !isFromMe && savedMsg?.id && finalMediaUrl) {
-        try {
-          const transcript = await transcribeAudioSource(finalMediaUrl as string, mediaInfo.mediaType);
-          if (transcript && transcript.trim()) {
-            finalContent = '🎤 ' + transcript.trim();
-            await storage.updateChatMessage(savedMsg.id, {
-              content: finalContent,
-              messageType: 'audio',
-              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript.trim(), transcribedAt: new Date().toISOString() },
-            } as any);
-            console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${transcript.slice(0, 60)}`);
-          }
-        } catch (e: any) { console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e)); }
+      if (_audioLike && !isFromMe && savedMsg?.id) {
+        let _transcript: string | null = null;
+        if (finalMediaUrl) {
+          try { _transcript = await transcribeAudioSource(finalMediaUrl as string, mediaInfo.mediaType); }
+          catch (e: any) { console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e)); }
+        }
+        if (_transcript && _transcript.trim()) {
+          finalContent = '🎤 ' + _transcript.trim();
+          await storage.updateChatMessage(savedMsg.id, {
+            content: finalContent,
+            messageType: 'audio',
+            metadata: { ...((savedMsg as any).metadata || {}), transcription: _transcript.trim(), transcribedAt: new Date().toISOString() },
+          } as any);
+          console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${_transcript.slice(0, 60)}`);
+        } else {
+          // Falha ao transcrever: a IA NAO deve adivinhar. Pede texto ou transfere para humano.
+          storage.updateChatMessage(savedMsg.id, {
+            content: '🎤 (áudio recebido — não foi possível transcrever)',
+            messageType: 'audio',
+            metadata: { ...((savedMsg as any).metadata || {}), transcriptionFailed: true, transcribedAt: new Date().toISOString() },
+          } as any).catch(() => {});
+          finalContent = '[SISTEMA] O cliente enviou um ÁUDIO de voz que NÃO foi possível transcrever automaticamente. NÃO tente adivinhar nem inventar o que foi dito. Responda de forma breve e educada pedindo para o cliente digitar a solicitação em texto. Se o cliente não puder digitar, insistir no áudio, ou pedir para falar com uma pessoa, chame a ferramenta transferir_humano para encaminhar a um atendente.';
+          console.log(`🎤 [TRANSCRIBE] Falha ao transcrever audio (${savedMsg.id}) — IA vai pedir texto/transferir`);
+        }
       }
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
