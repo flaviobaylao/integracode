@@ -197,6 +197,36 @@ function ResolvedCard({ r }: { r: any }) {
   );
 }
 
+// Card de SUGESTÃO DE MIGRAÇÃO DE CARTEIRA (repescagem) — decidido aqui no Inbox do admin.
+function CarteiraSugestaoCard({ s }: { s: any }) {
+  const { toast } = useToast();
+  const decidir = useMutation({
+    mutationFn: async (acao: "aprovar" | "rejeitar") => apiRequest("POST", `/api/repescagem/carteira-sugestoes/${s.id}/decidir`, { acao }),
+    onSuccess: (_d, acao) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/repescagem/carteira-sugestoes"] });
+      toast({ title: acao === "aprovar" ? "Carteira migrada" : "Sugestão rejeitada", description: acao === "aprovar" ? "O cliente foi movido para o novo vendedor." : "Nenhuma alteração foi feita." });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Falha ao decidir", variant: "destructive" }),
+  });
+  return (
+    <Card className="p-3 border-amber-300">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge className="bg-amber-500 text-[11px]">Migração de carteira</Badge>
+            <span className="text-sm font-semibold truncate">{s.customer_name || s.customer_id}</span>
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Repescagem: 2ª venda pelo mesmo vendedor · {s.from_name || s.from_seller_id || "—"} → <span className="font-semibold text-gray-700">{s.to_name || s.to_seller_id}</span></div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8" disabled={decidir.isPending} onClick={() => decidir.mutate("aprovar")}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Aprovar</Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={decidir.isPending} onClick={() => decidir.mutate("rejeitar")}><XCircle className="h-3.5 w-3.5 mr-1" />Rejeitar</Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function SolicitacoesAlteracao() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -212,6 +242,13 @@ export default function SolicitacoesAlteracao() {
     queryFn: async () => apiRequest("GET", "/api/change-requests?status=resolved"),
     enabled: isAdmin,
   });
+  // Sugestões de migração de carteira (repescagem) — entram no mesmo Inbox.
+  const { data: sugData } = useQuery<any>({
+    queryKey: ["/api/repescagem/carteira-sugestoes"],
+    queryFn: async () => apiRequest("GET", "/api/repescagem/carteira-sugestoes"),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+  });
 
   if (!isAdmin) {
     return <div className="p-6 text-sm text-muted-foreground">Acesso restrito aos administradores.</div>;
@@ -219,26 +256,34 @@ export default function SolicitacoesAlteracao() {
 
   const pending: any[] = pendingData?.requests || [];
   const resolved: any[] = resolvedData?.requests || [];
+  const sugestoes: any[] = sugData?.sugestoes || [];
+  const totalPend = pending.length + sugestoes.length;
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
       <div className="flex items-center gap-2">
         <Inbox className="h-6 w-6 text-indigo-600" />
         <h1 className="text-xl font-bold">Solicitações de Alteração</h1>
-        {pending.length > 0 && <Badge className="bg-indigo-600">{pending.length}</Badge>}
+        {totalPend > 0 && <Badge className="bg-indigo-600">{totalPend}</Badge>}
       </div>
 
       <Tabs defaultValue="pendentes">
         <TabsList>
-          <TabsTrigger value="pendentes">Pendentes {pending.length > 0 ? `(${pending.length})` : ""}</TabsTrigger>
+          <TabsTrigger value="pendentes">Pendentes {totalPend > 0 ? `(${totalPend})` : ""}</TabsTrigger>
           <TabsTrigger value="resolvidas">Resolvidas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="pendentes" className="space-y-3 mt-3">
+          {sugestoes.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Migração de carteira (repescagem)</div>
+              {sugestoes.map((s) => <CarteiraSugestaoCard key={s.id} s={s} />)}
+            </div>
+          )}
           {loadingP ? (
             <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
           ) : pending.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div>
+            sugestoes.length === 0 ? <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div> : null
           ) : (
             pending.map((r) => <PendingCard key={r.id} r={r} />)
           )}
