@@ -490,13 +490,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   const inactivateCustomerMutation = useMutation({
     mutationFn: async () => {
       if (!customer) throw new Error("Cliente não encontrado");
-      return await apiRequest('PATCH', `/api/customers/${customer.id}`, { omieStatus: 'inativo' });
+      // Inativação INTEGRA 2.0 (sem Omie): marca isActive=false e remove de Clientes Ativos,
+      // mantendo o cliente visível na Gestão com o selo "Inativo" (não some do sistema).
+      return await apiRequest('POST', `/api/customers/bulk-inactivate`, { ids: [customer.id] });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       toast({
         title: "Cliente inativado",
-        description: "O cliente foi inativado com sucesso. Ele não aparecerá mais nas rotas de visitas.",
+        description: "Cliente inativado. Continua na Gestão de Clientes com o selo Inativo e não aparece mais nas rotas de visitas.",
       });
       setShowInactivateDialog(false);
       onClose();
@@ -1712,7 +1715,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
             <div className="flex justify-between items-center">
               {/* Botão de Inativação: só ao editar cliente ATIVO e apenas para gestores.
                   Telemarketing e Vendedor editam o cadastro, mas não inativam clientes. */}
-              {customer && customer.omieStatus === 'ativo' && canInactivateCustomer ? (
+              {customer && (customer as any).isActive !== false && canInactivateCustomer ? (
                 <Button
                   type="button"
                   variant="destructive"
