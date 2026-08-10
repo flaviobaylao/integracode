@@ -2133,7 +2133,7 @@ export function registerChatRoutes(app: Express): void {
 
       const finalMessageType = mediaInfo.messageType || 'text';
       let finalMediaUrl = mediaInfo.mediaUrl || null;
-      const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
+      let finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
       
       // 🔧 MELHORADO: Se for mídia, garantir que temos a URL/base64
       // Prioridade: 1) Tentar getBase64FromMediaMessage (mais confiável), 2) Usar URL do payload se disponível
@@ -2371,20 +2371,24 @@ export function registerChatRoutes(app: Express): void {
         isRead: isFromMe
       });
 
-      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — fire-and-forget, atualiza a mensagem
-      if (finalMessageType === 'audio' && !isFromMe && savedMsg?.id) {
-        const audioSrc = finalMediaUrl;
-        const audioMime = mediaInfo.mediaType;
-        (async () => {
-          const transcript = await transcribeAudioSource(audioSrc as string, audioMime);
-          if (transcript) {
+      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — SINCRONO, ANTES do gatilho da IA,
+      // para a IA LER o conteudo do audio em vez de responder "nao consegui abrir o arquivo".
+      const _audioLike = finalMessageType === 'audio'
+        || /^audio\//.test(String(mediaInfo.mediaType || ''))
+        || /\.(ogg|opus|mp3|m4a|wav|aac)(\?|$)/i.test(String(finalMediaUrl || ''));
+      if (_audioLike && !isFromMe && savedMsg?.id && finalMediaUrl) {
+        try {
+          const transcript = await transcribeAudioSource(finalMediaUrl as string, mediaInfo.mediaType);
+          if (transcript && transcript.trim()) {
+            finalContent = '🎤 ' + transcript.trim();
             await storage.updateChatMessage(savedMsg.id, {
-              content: '🎤 ' + transcript,
-              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript, transcribedAt: new Date().toISOString() },
+              content: finalContent,
+              messageType: 'audio',
+              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript.trim(), transcribedAt: new Date().toISOString() },
             } as any);
             console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${transcript.slice(0, 60)}`);
           }
-        })().catch((e: any) => console.error('[TRANSCRIBE] fire-and-forget erro:', e && e.message ? e.message : String(e)));
+        } catch (e: any) { console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e)); }
       }
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
