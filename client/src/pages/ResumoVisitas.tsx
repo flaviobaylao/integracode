@@ -130,13 +130,16 @@ export default function ResumoVisitas() {
   }, [rows]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // Normaliza espaços repetidos: nomes vindos do Omie podem ter espaço duplo
+    // (ex.: "EMPORIO NOBRE  SETOR OESTE"), então a busca digitada com 1 espaço não casava.
+    const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const q = norm(search);
     return rows.filter((r) => {
       if (seller && r.sellerName !== seller) return false;
       if (city && r.city !== city) return false;
       if (freq && r.periodicity !== freq) return false;
       if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
-      if (q && !((r.customerName || "").toLowerCase().includes(q) || (r.city || "").toLowerCase().includes(q) || (r.neighborhood || "").toLowerCase().includes(q))) return false;
+      if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
   }, [rows, search, seller, city, freq, segmento]);
