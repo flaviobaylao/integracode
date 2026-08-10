@@ -1032,7 +1032,28 @@ export function registerReconciliation(app: Express) {
             continue;
           }
           (t as any).modo = "baixar";
-          if (t.settled > saldo + 0.005) problemas.push(`titulo ${nome}: baixa de R$ ${t.settled.toFixed(2)} maior que o saldo em aberto (R$ ${saldo.toFixed(2)})`);
+          // ---- FIX 09/08/2026: JUROS NAO ENTRA NA TRAVA DE SALDO -------------
+          // `settled` (principal + juros - desconto) e o DINHEIRO do lancamento do
+          // extrato, nao o quanto o titulo vai ser quitado. Desde 05/08 o settle ja
+          // baixa pelo `principal` e reduz o titulo pelo `desconto` (bloco "MORA E
+          // DESCONTO NA CONCILIACAO"), mas esta trava ficou para tras comparando
+          // `settled` com o saldo: titulo de R$ 4.317,50 pago com R$ 11,52 de mora
+          // (debito de R$ 4.329,02 no extrato, DOHLER 04/08) era recusado com 422 e
+          // o lancamento ficava SEM NENHUM caminho de conciliacao na tela — zerar o
+          // juros e digitar 4.329,02 no principal cai na mesma trava, e deixar o
+          // delta fora de zero cai na trava do extrato (FASE 3.4y).
+          // Regra igual a da baixa manual (Multa_e_Juros_na_Baixa, 05/08): a trava e
+          // "principal + desconto <= em aberto"; multa/juros ficam de fora DE
+          // PROPOSITO — se entrassem, titulo quitado com mora seria recusado.
+          // O teto conferido aqui e exatamente o que o settle aplica adiante:
+          // emAberto = (amount - desconto) - pago.
+          const emAberto = Number((saldo - t.discount).toFixed(2));
+          if (t.amount > emAberto + 0.005) {
+            const detalhe = (t.interest > 0 || t.discount > 0)
+              ? ` (extrato R$ ${t.settled.toFixed(2)} = principal R$ ${t.amount.toFixed(2)}${t.interest > 0 ? ` + juros R$ ${t.interest.toFixed(2)}` : ""}${t.discount > 0 ? ` - desconto R$ ${t.discount.toFixed(2)}` : ""})`
+              : "";
+            problemas.push(`titulo ${nome}: baixa de R$ ${t.amount.toFixed(2)} maior que o saldo em aberto (R$ ${emAberto.toFixed(2)})${detalhe}`);
+          }
         }
         if (problemas.length) return res.status(422).json({ error: "Conciliacao nao executada — nenhum titulo foi baixado.", problemas });
       }
