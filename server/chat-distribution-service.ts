@@ -202,29 +202,35 @@ export async function distributeNewConversation(
     return { assignedTo: "chatgpt", isChatGpt: true };
   }
   
-  // ChatGPT desativado: distribuir para atendentes humanos.
-  console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano para conversa ${conversationId}`);
-
-  // 🎯 Dono da carteira (vendedor do cliente): se estiver online, a conversa vai para ELE
-  // (nao rodizio aleatorio). Evita a conversa 'pular' para outro atendente e o dono ficar travado.
+  // 🔁 ANTES do sorteio: se esta conversa JA foi atendida por uma pessoa, ela volta para
+  // essa pessoa. Sem isto, toda vez que a conversa perdia o dono (finalizacao por
+  // inatividade, reabertura) o round-robin a entregava a outro atendente — e quem estava
+  // conversando com o cliente batia na trava "atendida por outro atendente" e tinha que se
+  // atribuir de novo a cada mensagem.
   try {
-    const convRow: any = await db.execute(sql`SELECT customer_phone FROM chat_conversations WHERE id = ${conversationId} LIMIT 1`);
-    const phone = String(convRow.rows?.[0]?.customer_phone || '');
-    if (phone && !phone.startsWith('ig:')) {
-      const { donoDaCarteira, usuarioOnline } = await import('./ia-fila');
-      const owner = await donoDaCarteira(phone);
-      if (owner && (await usuarioOnline(owner))) {
-        const ownerAgent = await db.select().from(chatAgents).where(eq(chatAgents.userId, owner)).limit(1);
-        if (ownerAgent.length) {
-          const ownerColor = await getAgentColor(ownerAgent[0].id);
-          await assignConversationToAgent(conversationId, ownerAgent[0].id, ownerColor, { reason: 'initial_customer', agentName: ownerAgent[0].name });
-          console.log(`🎯 [DISTRIBUTION] Conversa ${conversationId} -> dono da carteira ${ownerAgent[0].name}`);
-          return { assignedTo: ownerAgent[0].id, isChatGpt: false };
-        }
+    const anterior = await db
+      .select()
+      .from(chatAssignmentHistory)
+      .where(eq(chatAssignmentHistory.conversationId, conversationId))
+      .orderBy(desc(chatAssignmentHistory.createdAt))
+      .limit(10);
+    const ultimoHumano = anterior.find(h => h.assignedAgentId && h.assignedAgentId !== 'chatgpt');
+    if (ultimoHumano) {
+      const [dono] = await db.select().from(chatAgents).where(eq(chatAgents.id, ultimoHumano.assignedAgentId)).limit(1);
+      // So devolve para quem esta online: dono ausente prenderia a conversa.
+      if (dono && dono.status === 'online' && dono.isActive !== false) {
+        await assignConversationToAgent(conversationId, dono.id, await getAgentColor(dono.id), {
+          reason: 'retorno_ao_atendente',
+          agentName: dono.name || undefined
+        });
+        console.log(`🔁 [DISTRIBUTION] Conversa ${conversationId} devolvida a ${dono.name || dono.id} (ja atendia)`);
+        return { assignedTo: dono.id, isChatGpt: false };
       }
     }
-  } catch (e: any) { console.warn('[DISTRIBUTION] carteira:', e?.message || e); }
+  } catch (e: any) { console.error('[DISTRIBUTION] retorno ao atendente:', e?.message || e); }
 
+  // ChatGPT desativado: distribuir para atendentes humanos via round-robin
+  console.log(`👤 [DISTRIBUTION] ChatGPT DESATIVADO - Buscando atendente humano para conversa ${conversationId}`);
   const nextAgent = await getNextAgentRoundRobin();
   
   if (nextAgent) {
