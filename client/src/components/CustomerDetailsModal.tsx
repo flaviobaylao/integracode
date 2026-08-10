@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +51,46 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
   const { data: salesHistory } = useQuery({
     queryKey: ['/api/sales-cards', 'customer', customer?.id],
     enabled: !!customer?.id,
+  });
+
+  // Papel do usuário — o toggle de Ativo/Inativo só é HABILITADO para admin.
+  // Demais usuários apenas visualizam o status atual (somente leitura).
+  const { data: authUser } = useQuery<any>({ queryKey: ['/api/auth/user'], retry: false });
+  const isAdmin = authUser?.role === 'admin';
+
+  // Histórico de ALTERAÇÕES do cadastro (auditoria) — últimas 50.
+  const { data: changeHistory } = useQuery<any[]>({
+    queryKey: ['/api/customers', customer?.id, 'change-history?limit=50'],
+    enabled: !!customer?.id,
+  });
+  const [changeSort, setChangeSort] = useState<'recent' | 'az'>('recent');
+
+  // Status refletido localmente para o toggle atualizar na hora (o prop customer nao muda sozinho).
+  const [localActive, setLocalActive] = useState<boolean>(customer?.isActive !== false);
+  useEffect(() => { setLocalActive(customer?.isActive !== false); }, [customer?.id, customer?.isActive]);
+
+  // Formatador robusto para a data da auditoria (ex.: "2026-08-05 17:46:08.021672+00").
+  const fmtAudit = (s: any) => {
+    const d = new Date(String(s || '').replace(' ', 'T'));
+    return isNaN(d.getTime()) ? String(s || '').slice(0, 19).replace('T', ' ') : d.toLocaleString('pt-BR');
+  };
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: async (next: boolean) => {
+      const url = next ? '/api/customers/bulk-reactivate' : '/api/customers/bulk-inactivate';
+      const r: any = await apiRequest('POST', url, { ids: [customer!.id] });
+      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+    },
+    onSuccess: (_data: any, next: boolean) => {
+      setLocalActive(next);
+      toast({
+        title: next ? 'Cliente reativado' : 'Cliente inativado',
+        description: next ? 'Agora aparece em Clientes Ativos.' : 'Saiu da lista de Clientes Ativos.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+    },
+    onError: (e: any) => { toast({ title: 'Erro ao alterar status', description: e?.message || String(e), variant: 'destructive' }); },
   });
 
   const createSalesCardMutation = useMutation({
@@ -325,27 +366,6 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
             </DialogTitle>
             <div className="flex gap-2">
               <Button
-                onClick={handleSendToOmie}
-                disabled={sendToOmieMutation.isPending}
-                variant="outline"
-                className="border-purple-600 text-purple-600 hover:bg-purple-50"
-                title="Enviar/resincronizar este cliente para o Omie ERP"
-                data-testid="button-send-to-omie"
-              >
-                <Share2 className="h-4 w-4 mr-2" />
-                {sendToOmieMutation.isPending ? 'Enviando...' : 'Enviar ao Omie'}
-              </Button>
-              <Button
-                onClick={handleAddToActive}
-                disabled={addToActiveMutation.isPending}
-                variant="outline"
-                className="border-blue-600 text-blue-600 hover:bg-blue-50"
-                data-testid="button-add-to-active"
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {addToActiveMutation.isPending ? 'Adicionando...' : 'Adicionar aos Ativos'}
-              </Button>
-              <Button
                 onClick={handleCreateSalesCard}
                 disabled={createSalesCardMutation.isPending}
                 className="bg-green-600 hover:bg-green-700 text-white"
@@ -505,9 +525,23 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Status</p>
-                      <Badge className={customer.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
-                        {customer.isActive ? 'Ativo' : 'Inativo'}
-                      </Badge>
+                      {isAdmin ? (
+                        <div className="flex items-center gap-2 mt-1">
+                          <Switch
+                            checked={localActive}
+                            onCheckedChange={(v: boolean) => toggleActiveMutation.mutate(v)}
+                            disabled={toggleActiveMutation.isPending}
+                            data-testid="switch-customer-active"
+                          />
+                          <Badge className={localActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
+                            {localActive ? 'Ativo' : 'Inativo'}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <Badge className={localActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
+                          {localActive ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      )}
                     </div>
                   </div>
 
@@ -679,73 +713,44 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
                     <History className="h-5 w-5 text-orange-600" />
-                    <span>Histórico de Atendimentos</span>
+                    <span>Histórico de Alterações</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {salesHistory && salesHistory.length > 0 ? (
-                    <div className="space-y-4">
-                      {salesHistory.map((card: SalesCardWithRelations) => (
-                        <div key={card.id} className="border rounded-lg p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium text-gray-900">
-                                Card de Venda #{card.id.slice(-6)}
-                              </p>
-                              <p className="text-sm text-gray-600">
-                                {formatDateTime(card.scheduledDate)}
-                              </p>
+                  {changeHistory && changeHistory.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-end gap-2 mb-2">
+                        <span className="text-xs text-gray-500">Ordenar:</span>
+                        <Button size="sm" variant={changeSort === 'recent' ? 'default' : 'outline'} className="h-7 px-2 text-xs" onClick={() => setChangeSort('recent')}>Mais recentes</Button>
+                        <Button size="sm" variant={changeSort === 'az' ? 'default' : 'outline'} className="h-7 px-2 text-xs" onClick={() => setChangeSort('az')}>A–Z</Button>
+                      </div>
+                      {[...changeHistory]
+                        .sort((a: any, b: any) => changeSort === 'az'
+                          ? String(a.label || a.field).localeCompare(String(b.label || b.field), 'pt-BR', { sensitivity: 'base' })
+                          : String(b.created_at).localeCompare(String(a.created_at)))
+                        .slice(0, 50)
+                        .map((h: any, i: number) => (
+                          <div key={i} className="border rounded-lg p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-gray-900">{h.label || h.field}</span>
+                              <span className="text-xs text-gray-500">{fmtAudit(h.created_at)}</span>
                             </div>
-                            {getStatusBadge(card.status)}
+                            <div className="mt-1 text-gray-700">
+                              <span className="line-through text-gray-400">{h.old_value ?? '—'}</span>
+                              <span className="mx-2">→</span>
+                              <span className="font-medium text-green-700">{h.new_value ?? '—'}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">por {h.changed_by_name || 'Sistema'}</div>
                           </div>
-
-                          {card.saleValue && (
-                            <div className="flex items-center space-x-2">
-                              <DollarSign className="h-4 w-4 text-green-600" />
-                              <span className="font-semibold text-green-600">
-                                {formatCurrency(parseFloat(card.saleValue))}
-                              </span>
-                            </div>
-                          )}
-
-                          {card.rejectionReason && (
-                            <div className="bg-red-50 p-3 rounded">
-                              <p className="text-sm text-red-800">
-                                <strong>Motivo da recusa:</strong> {card.rejectionReason}
-                              </p>
-                            </div>
-                          )}
-
-                          {card.notes && (
-                            <div className="bg-gray-50 p-3 rounded">
-                              <p className="text-sm text-gray-700">
-                                <strong>Observações:</strong> {card.notes}
-                              </p>
-                            </div>
-                          )}
-
-                          {card.products && card.products.length > 0 && (
-                            <div className="border-t pt-3 mt-3">
-                              <p className="text-sm font-medium text-gray-700 mb-2">Produtos:</p>
-                              <div className="space-y-1">
-                                {card.products.map((product: any, index: number) => (
-                                  <div key={index} className="flex items-center justify-between text-sm">
-                                    <span>{product.name} (x{product.quantity})</span>
-                                    <span className="font-medium">
-                                      {formatCurrency(product.totalPrice)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      <p className="text-center text-xs text-gray-400 pt-3 mt-2 border-t">
+                        Mostrando as últimas 50 alterações. O limite é de 50 — alterações anteriores não ficam em registro.
+                      </p>
                     </div>
                   ) : (
                     <div className="text-center py-8">
                       <Package className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500">Nenhum histórico de vendas encontrado</p>
+                      <p className="text-gray-500">Nenhuma alteração registrada.</p>
                     </div>
                   )}
                 </CardContent>
