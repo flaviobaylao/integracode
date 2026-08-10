@@ -20709,6 +20709,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
 
+      // ➕ Clientes ADICIONADOS MANUALMENTE hoje (sales_card source='manual_route_addition').
+      // Calculado AQUI (antes da regra de venda recente) para que um cliente incluído
+      // manualmente na rota SEMPRE apareça, mesmo que já tenha comprado dentro do ciclo.
+      const manualCustomerIds = new Set<string>();
+      try {
+        const manualRows: any = await db.execute(sql`
+          SELECT DISTINCT customer_id
+          FROM sales_cards
+          WHERE seller_id = ${route.sellerId}
+            AND source = 'manual_route_addition'
+            AND DATE(scheduled_date) = ${date}
+        `);
+        (manualRows?.rows || []).forEach((r: any) => {
+          if (r?.customer_id) manualCustomerIds.add(r.customer_id);
+        });
+      } catch (manualErr) {
+        console.warn('⚠️ [MANUAL-ADD] Erro ao buscar visitas adicionadas manualmente (não crítico):', manualErr);
+      }
+
       // 🛒 REGRA (cadência): cliente que já comprou (VENDA real) DENTRO da sua periodicidade
       // ANTES desta data não aparece no card da rota — já foi atendido no ciclo. Mesma regra da
       // Repescagem ("não cai se comprou dentro da periodicidade"). Só afeta paradas PRESENCIAIS
@@ -20738,6 +20757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           for (let i = visits.length - 1; i >= 0; i--) {
             const v: any = visits[i];
             if (!v || v.visitType !== 'customer' || !v.customerId) continue;
+            if (manualCustomerIds.has(v.customerId)) continue; // adicionado manualmente: sempre aparece na rota
             const lv = lastVendaByCust.get(v.customerId);
             if (!lv) continue;
             const period = PERIOD_DAYS[(v.visitPeriodicity as string) || 'semanal'] || 7;
@@ -21261,21 +21281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ➕ Marcar visitas ADICIONADAS MANUALMENTE à rota (sales_card com source='manual_route_addition')
       // O front exibe "Adicionado manualmente" no rodapé do box dessas visitas.
-      const manualCustomerIds = new Set<string>();
-      try {
-        const manualRows: any = await db.execute(sql`
-          SELECT DISTINCT customer_id
-          FROM sales_cards
-          WHERE seller_id = ${route.sellerId}
-            AND source = 'manual_route_addition'
-            AND DATE(scheduled_date) = ${date}
-        `);
-        (manualRows?.rows || []).forEach((r: any) => {
-          if (r?.customer_id) manualCustomerIds.add(r.customer_id);
-        });
-      } catch (manualErr) {
-        console.warn('⚠️ [MANUAL-ADD] Erro ao buscar visitas adicionadas manualmente (não crítico):', manualErr);
-      }
+      // (manualCustomerIds já foi calculado acima, antes da regra de venda recente.)
       visits.forEach((v: any) => {
         if (v && v.customerId && manualCustomerIds.has(v.customerId)) {
           v.addedManually = true;
