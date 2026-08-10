@@ -11,6 +11,30 @@ import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
 import { sql } from 'drizzle-orm';
 
+// ============================================================================
+// FILTRO POR PERIODO (dia-calendario) - vencimento / emissao
+// ----------------------------------------------------------------------------
+// Os <input type="date"> mandam 'YYYY-MM-DD' (DATA de calendario, sem hora).
+// `new Date('2026-08-10')` = 2026-08-10T00:00:00.000Z => o limite SUPERIOR virava a
+// MEIA-NOITE do dia e o `<=` cortava TODO titulo daquele mesmo dia gravado com
+// qualquer hora > 00:00:
+//   - titulo MANUAL:  due_date = 2026-08-10 00:00:00 -> passava (por acaso)
+//   - titulo do SYNC: due_date = 2026-08-10 hh:mm:ss -> ERA CORTADO
+// Sintoma relatado: filtrando "Vencimento de 10/08/2026 ate 10/08/2026" a conta da
+// OFICINA DE COMUNICACAO (origem omie_sync, vencimento 10/08/2026) sumia da lista,
+// mas aparecia ao buscar pelo nome do fornecedor (busca feita no cliente, sem periodo).
+// A tela renderiza a data com timeZone 'UTC' (formatDate em Financial.tsx), entao o
+// periodo tem de ser lido no MESMO fuso: [dia 00:00:00.000Z .. dia 23:59:59.999Z].
+// Assim o filtro bate exatamente com a coluna "Vencimento" que o usuario ve, qualquer
+// que seja a hora gravada. Strings que ja venham com hora sao respeitadas como estao.
+const SO_DATA = /^\d{4}-\d{2}-\d{2}$/;
+function inicioDoDiaUTC(s: string): Date {
+  return new Date(SO_DATA.test(s) ? `${s}T00:00:00.000Z` : s);
+}
+function fimDoDiaUTC(s: string): Date {
+  return new Date(SO_DATA.test(s) ? `${s}T23:59:59.999Z` : s);
+}
+
 // FASE 2 - Flags para badges nas listas (DRE / Fluxo / Conciliada + origem da baixa).
 // Consultas agregadas unicas (sem N+1): ids conciliados via extrato bancario e ids
 // com baixa automatica do BB (webhook de boleto/PIX ou varredura de consulta).
@@ -2055,8 +2079,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   app.get('/api/financial/accounts/:id/movements', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const filters: any = {};
-      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
-      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
+      if (req.query.startDate) filters.startDate = inicioDoDiaUTC(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = fimDoDiaUTC(req.query.endDate as string);
       if (req.query.limit) filters.limit = parseInt(req.query.limit as string);
       if (req.query.offset) filters.offset = parseInt(req.query.offset as string);
       const movements = await storage.getAccountMovements(req.params.id, filters);
@@ -2085,8 +2109,8 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (req.query.status) filters.status = req.query.status;
       if (req.query.instanceId) filters.instanceId = req.query.instanceId;
       if (req.query.receivableId) filters.receivableId = req.query.receivableId;
-      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
-      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
+      if (req.query.startDate) filters.startDate = inicioDoDiaUTC(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = fimDoDiaUTC(req.query.endDate as string);
       const charges = await storage.getPixCharges(filters);
       res.json(charges);
     } catch (error: any) {
@@ -2513,10 +2537,10 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (req.query.customerId) filters.customerId = req.query.customerId;
       if (req.query.status) filters.status = req.query.status;
       if (req.query.instanceId) filters.instanceId = req.query.instanceId;
-      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
-      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
-      if (req.query.dueDateStart) filters.dueDateStart = new Date(req.query.dueDateStart as string);
-      if (req.query.dueDateEnd) filters.dueDateEnd = new Date(req.query.dueDateEnd as string);
+      if (req.query.startDate) filters.startDate = inicioDoDiaUTC(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = fimDoDiaUTC(req.query.endDate as string);
+      if (req.query.dueDateStart) filters.dueDateStart = inicioDoDiaUTC(req.query.dueDateStart as string);
+      if (req.query.dueDateEnd) filters.dueDateEnd = fimDoDiaUTC(req.query.dueDateEnd as string);
       if (req.query.paymentMethod) filters.paymentMethod = req.query.paymentMethod;
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
@@ -3219,10 +3243,10 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (req.query.supplierDocument) filters.supplierDocument = req.query.supplierDocument;
       if (req.query.status) filters.status = req.query.status;
       if (req.query.instanceId) filters.instanceId = req.query.instanceId;
-      if (req.query.startDate) filters.startDate = new Date(req.query.startDate as string);
-      if (req.query.endDate) filters.endDate = new Date(req.query.endDate as string);
-      if (req.query.dueDateStart) filters.dueDateStart = new Date(req.query.dueDateStart as string);
-      if (req.query.dueDateEnd) filters.dueDateEnd = new Date(req.query.dueDateEnd as string);
+      if (req.query.startDate) filters.startDate = inicioDoDiaUTC(req.query.startDate as string);
+      if (req.query.endDate) filters.endDate = fimDoDiaUTC(req.query.endDate as string);
+      if (req.query.dueDateStart) filters.dueDateStart = inicioDoDiaUTC(req.query.dueDateStart as string);
+      if (req.query.dueDateEnd) filters.dueDateEnd = fimDoDiaUTC(req.query.dueDateEnd as string);
       if (req.query.source) filters.source = req.query.source;
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
@@ -4170,10 +4194,10 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         conditions.push(eq(fiscalInvoices.status, req.query.status as string));
       }
       if (req.query.startDate) {
-        conditions.push(gte(fiscalInvoices.emissionDate, new Date(req.query.startDate as string)));
+        conditions.push(gte(fiscalInvoices.emissionDate, inicioDoDiaUTC(req.query.startDate as string)));
       }
       if (req.query.endDate) {
-        conditions.push(lte(fiscalInvoices.emissionDate, new Date(req.query.endDate as string)));
+        conditions.push(lte(fiscalInvoices.emissionDate, fimDoDiaUTC(req.query.endDate as string)));
       }
       if (req.query.customerName) {
         conditions.push(like(fiscalInvoices.customerName, `%${req.query.customerName}%`));
