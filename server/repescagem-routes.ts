@@ -19,6 +19,8 @@ import {
 } from '@shared/schema';
 import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle } from './repescagem-cycles';
 import { whatsappService } from './whatsapp-service';
+import { storage } from './storage';
+import { logCustomerChanges } from './customerAudit';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -1108,6 +1110,11 @@ let __lastCloseCheckMs = 0;
 // Histórico simples de migrações de carteira (data/hora + ocorrência) — item 1.
 async function ensureCarteiraMigrations(): Promise<void> {
   await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS carteira_migrations (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar NOT NULL, from_seller_id varchar, to_seller_id varchar NOT NULL, ocorrencia text, occurred_at timestamptz DEFAULT now())"));
+  // Fluxo de aprovação (opção 2): a migração deixou de ser automática. Cada detecção vira SUGESTÃO
+  // pendente; o admin aprova/rejeita. status: pendente | aprovada | rejeitada (NULL = histórico antigo já aplicado).
+  await db.execute(sql.raw("ALTER TABLE carteira_migrations ADD COLUMN IF NOT EXISTS status text"));
+  await db.execute(sql.raw("ALTER TABLE carteira_migrations ADD COLUMN IF NOT EXISTS decided_by varchar"));
+  await db.execute(sql.raw("ALTER TABLE carteira_migrations ADD COLUMN IF NOT EXISTS decided_at timestamptz"));
 }
 
 async function closeAndExpireRepescagem(date: string): Promise<any> {
@@ -1153,8 +1160,9 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
-      // Item 1: se o MESMO vendedor concluiu venda em repescagem 2x ao mesmo cliente,
-      // o cliente migra automaticamente para a carteira desse vendedor (com registro em histórico).
+      // Item 1 (revisado — opção 2): se o MESMO vendedor concluiu venda em repescagem 2x ao mesmo
+      // cliente, NÃO migramos mais a carteira automaticamente. Registramos uma SUGESTÃO pendente
+      // para o admin aprovar/rejeitar (nada é gravado em customers sem clique). Evita troca em massa.
       const migSeller = a.assignedUserId;
       if (migSeller) {
         const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller} AND status = 'completed'`);
@@ -1164,8 +1172,10 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
           const curSeller = ((cur.rows || cur)[0] as any)?.seller_id || null;
           if (curSeller !== migSeller) {
             await ensureCarteiraMigrations();
-            await db.update(customers).set({ sellerId: migSeller }).where(eq(customers.id, a.customerId));
-            await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia) VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${'Migracao automatica de carteira: 2a venda em repescagem pelo mesmo vendedor'})`);
+            // Cria sugestão pendente só se ainda não existir uma pendente igual (dedup).
+            await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status)
+              SELECT ${a.customerId}, ${curSeller}, ${migSeller}, ${'2a venda em repescagem pelo mesmo vendedor'}, 'pendente'
+              WHERE NOT EXISTS (SELECT 1 FROM carteira_migrations m WHERE m.customer_id = ${a.customerId} AND m.to_seller_id = ${migSeller} AND m.status = 'pendente')`);
           }
         }
       }
@@ -1245,6 +1255,55 @@ export function registerRepescagemRoutes(app: Express, opts: {
     } catch (e: any) {
       console.error('POST /api/repescagem/close', e);
       res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // 🗂️ SUGESTÕES DE MIGRAÇÃO DE CARTEIRA (opção 2): lista pendentes p/ o admin decidir.
+  // A migração NÃO é mais automática — só é aplicada quando o admin aprova aqui.
+  app.get('/api/repescagem/carteira-sugestoes', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      await ensureCarteiraMigrations();
+      const nameExpr = (col: string) => `(SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.id = ${col} OR u.omie_vendor_code = ${col} OR u.omie_vendor_code = replace(COALESCE(${col},''),'omie-vendor-','') LIMIT 1)`;
+      const q = `SELECT m.id, m.customer_id, m.from_seller_id, m.to_seller_id, m.ocorrencia, m.occurred_at,
+        (SELECT c.name FROM customers c WHERE c.id = m.customer_id LIMIT 1) AS customer_name,
+        ${nameExpr('m.from_seller_id')} AS from_name,
+        ${nameExpr('m.to_seller_id')} AS to_name
+        FROM carteira_migrations m WHERE m.status = 'pendente' ORDER BY m.occurred_at DESC`;
+      const r: any = await db.execute(sql.raw(q));
+      const rows = (r.rows || r) as any[];
+      res.json({ ok: true, total: rows.length, sugestoes: rows });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
+    }
+  });
+
+  // Aprovar/Rejeitar uma sugestão. body: { acao: 'aprovar' | 'rejeitar' }.
+  // Aprovar aplica a migração via storage.updateCustomer (auditado + propaga agenda).
+  app.post('/api/repescagem/carteira-sugestoes/:id/decidir', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      await ensureCarteiraMigrations();
+      const id = String(req.params.id);
+      const acao = String(req.body?.acao || '');
+      const r: any = await db.execute(sql`SELECT * FROM carteira_migrations WHERE id = ${id} AND status = 'pendente' LIMIT 1`);
+      const row = ((r.rows || r) as any[])[0];
+      if (!row) return res.status(404).json({ message: 'Sugestão não encontrada ou já decidida.' });
+      const u = req.currentUser || {};
+      const actor = { id: u.id, name: (`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || 'admin') };
+      if (acao === 'aprovar') {
+        const before: any = await storage.getCustomer(row.customer_id);
+        if (before && before.sellerId !== row.to_seller_id) {
+          await storage.updateCustomer(row.customer_id, { sellerId: row.to_seller_id });
+          try { await logCustomerChanges({ customerId: row.customer_id, before, changes: { sellerId: row.to_seller_id }, actor, source: 'repescagem-carteira-aprovada' }); } catch {}
+        }
+        await db.execute(sql`UPDATE carteira_migrations SET status = 'aprovada', decided_by = ${actor.id}, decided_at = now() WHERE id = ${id}`);
+        return res.json({ ok: true, status: 'aprovada' });
+      } else if (acao === 'rejeitar') {
+        await db.execute(sql`UPDATE carteira_migrations SET status = 'rejeitada', decided_by = ${actor.id}, decided_at = now() WHERE id = ${id}`);
+        return res.json({ ok: true, status: 'rejeitada' });
+      }
+      return res.status(400).json({ message: "acao inválida (use 'aprovar' ou 'rejeitar')" });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
     }
   });
 
