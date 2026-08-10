@@ -408,7 +408,19 @@ export default function ConciliacaoBancaria() {
   const post = async (url: string, body: any) => {
     const r = await fetch(url, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j?.error) throw new Error(j?.error || ("HTTP " + r.status));
+    if (!r.ok || j?.error) {
+      // FIX 09/08/2026: o 422 da conciliacao explica QUAL titulo barrou (`problemas[]`)
+      // e, quando o carrinho nao fecha, manda os numeros (`valorExtrato/totalTitulos/
+      // diferenca`). Nada disso chegava na tela: o operador so via "Conciliacao nao
+      // executada - nenhum titulo foi baixado." e nao tinha o que corrigir.
+      const problemas = Array.isArray(j?.problemas) && j.problemas.length
+        ? "\n\n- " + j.problemas.join("\n- ")
+        : "";
+      const numeros = j?.diferenca !== undefined && j?.valorExtrato !== undefined
+        ? `\n\nExtrato ${fmtMoney(j.valorExtrato)} - carrinho ${fmtMoney(j.totalTitulos)} - diferenca ${fmtMoney(j.diferenca)}.`
+        : "";
+      throw new Error((j?.error || ("HTTP " + r.status)) + problemas + numeros);
+    }
     return j;
   };
 
