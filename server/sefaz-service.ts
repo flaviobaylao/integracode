@@ -295,6 +295,39 @@ const UF_CAPITAL_IBGE: Record<string, string> = {
   'TO': '1721000', // Palmas
 };
 
+// Nome da capital por UF — fallback de xMun quando a cidade do destinatário não
+// está cadastrada. O fallback anterior era fixo "Goiania", o que gerava xMun de
+// GO com cMun de outra UF (incoerente na DANFE).
+const UF_CAPITAL_NAME: Record<string, string> = {
+  'AC': 'Rio Branco', 'AL': 'Maceio', 'AP': 'Macapa', 'AM': 'Manaus',
+  'BA': 'Salvador', 'CE': 'Fortaleza', 'DF': 'Brasilia', 'ES': 'Vitoria',
+  'GO': 'Goiania', 'MA': 'Sao Luis', 'MT': 'Cuiaba', 'MS': 'Campo Grande',
+  'MG': 'Belo Horizonte', 'PA': 'Belem', 'PB': 'Joao Pessoa', 'PR': 'Curitiba',
+  'PE': 'Recife', 'PI': 'Teresina', 'RJ': 'Rio de Janeiro', 'RN': 'Natal',
+  'RS': 'Porto Alegre', 'RO': 'Porto Velho', 'RR': 'Boa Vista',
+  'SC': 'Florianopolis', 'SP': 'Sao Paulo', 'SE': 'Aracaju', 'TO': 'Palmas',
+};
+
+// ─── Erros TRANSITÓRIOS de rede/SEFAZ ────────────────────────────────────────
+// Queda de conexão com o webservice (ECONNRESET no WSDL da SEFAZ-GO, timeout,
+// DNS, 5xx do servidor) NÃO é rejeição: a NF-e pode inclusive ter sido
+// autorizada do outro lado. Nesses casos a nota NÃO é marcada como 'rejected' e
+// NUNCA se reemite uma NF-e nova — era isso que gerava NF-e DUPLICADA.
+export const NETWORK_ERROR_CODE = 'NETWORK_ERROR';
+
+// Idade máxima da data de emissão de uma NF-e ainda NÃO autorizada antes de ela
+// ser redatada na (re)transmissão. A SEFAZ recusa com a Rejeição 228 ("Data de
+// Emissão muito atrasada") notas com dhEmi de mais de 30 dias; 12 h dá margem
+// larga e mantém o dhEmi coerente com o dia em que a nota é de fato autorizada.
+export const STALE_EMISSION_MS = 12 * 60 * 60 * 1000;
+
+export function isTransientNetworkError(err: any): boolean {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err || '');
+  if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH', 'ERR_SOCKET_CONNECTION_TIMEOUT'].includes(code)) return true;
+  return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|network timeout|Client network socket disconnected|Timeout consultando SEFAZ|failed, reason:|HTTP 5\d\d/i.test(msg);
+}
+
 const IBGE_CITY_CODES: Record<string, string> = {
   // GO
   'goiania': '5208707', 'goiânia': '5208707',
@@ -714,7 +747,15 @@ function buildDocumento(
     }
   }
 
-  if (!isNFCe && (invoice.customerAddress || invoice.customerCity)) {
+  // O grupo enderDest é OBRIGATÓRIO na NF-e (modelo 55). Antes ele só era emitido
+  // quando a nota tinha endereço OU cidade — cliente cadastrado sem nenhum dos
+  // dois saía com <dest> SEM <enderDest> e a SEFAZ recusava com a Rejeição 726
+  // ("NF-e sem a informação de endereço do destinatário"). Agora, para o modelo
+  // 55, o grupo é SEMPRE emitido usando os fallbacks já existentes (xLgr "N/I",
+  // nro "S/N", cMun/xMun da capital da UF do destinatário — a UF é garantida
+  // acima, que lança erro claro quando não há UF nem CEP no cadastro).
+  // NFC-e (modelo 65) segue SEM enderDest, exatamente como antes.
+  if (!isNFCe && dest) {
     // Parse address into logradouro + number + complement
     const fullAddr = invoice.customerAddress || '';
     const { xLgr, nro, xCompl } = parseCustomerAddress(fullAddr);
@@ -742,15 +783,23 @@ function buildDocumento(
     const rawBairro = invoice.customerBairro && invoice.customerBairro.toLowerCase() !== 'null' ? invoice.customerBairro : '';
     const xBairro = sanitizeStr(rawBairro || 'N/I', 60);
 
+    // CEP é OPCIONAL em enderDest (obrigatório só no emitente). Antes um cadastro
+    // sem CEP virava "00000000" no XML — CEP inválido é motivo de rejeição.
+    // Agora: envia só quando tem 8 dígitos e não é tudo zero; senão, omite.
+    const cepDigits = onlyDigits(invoice.customerCep || '');
+    const cepValido = cepDigits.length === 8 && !/^0+$/.test(cepDigits) ? cepDigits : null;
+
+    const xMunFallback = UF_CAPITAL_NAME[destUf] || 'Goiania';
+
     dest.enderDest = {
       xLgr: (!xLgr || xLgr.length < 2) ? 'N/I' : xLgr.replace(/\s+$/, '') || 'N/I',
       nro: nroFinal,
       ...(finalCompl ? { xCompl: finalCompl } : {}),
       xBairro,
       cMun: cityCode,
-      xMun: sanitizeStr(cleanedCity || 'Goiania', 60),
+      xMun: sanitizeStr(cleanedCity || xMunFallback, 60),
       UF: destUf,
-      CEP: onlyDigits(invoice.customerCep || '').padStart(8, '0'),
+      ...(cepValido ? { CEP: cepValido } : {}),
       cPais: '1058',
       xPais: 'BRASIL',
       ...(validPhone ? { fone: validPhone } : {}),
@@ -1858,6 +1907,41 @@ export class SefazService {
         console.warn(`[SEFAZ] ⚠️ Falha ao recalcular CFOP a partir do cadastro (segue com os dados da NF): ${cfopErr.message}`);
       }
 
+      // ── REDATA a emissão de nota antiga (Rejeição 228) ────────────────────
+      // A NF-e em rascunho/rejeitada guarda a data de emissão de QUANDO FOI
+      // CRIADA. Ao "Retentar faturamento" semanas depois, o dhEmi continuava o
+      // antigo e a SEFAZ recusava com a Rejeição 228 ("Data de Emissão muito
+      // atrasada" — limite de 30 dias) para SEMPRE: o card ficava preso no
+      // vermelho e nenhuma correção de cadastro resolvia (caso PONTO DO AÇAI,
+      // pedido de 28/04 retentado em agosto). Uma NF-e não autorizada não tem
+      // existência fiscal, então redatar na retransmissão é o correto — e
+      // mantém dhEmi coerente com a data de autorização na DANFE.
+      // A chave de acesso (AAMM) é montada depois, a partir deste mesmo campo.
+      try {
+        const emiAtual = invoice?.emissionDate ? new Date(invoice.emissionDate as any) : null;
+        const idadeMs = emiAtual && !isNaN(emiAtual.getTime()) ? Date.now() - emiAtual.getTime() : Infinity;
+        if (idadeMs > STALE_EMISSION_MS) {
+          const novaEmissao = nowBrazil();
+          await storage.updateFiscalInvoice(invoiceId, { emissionDate: novaEmissao } as any);
+          const recarregada = await storage.getFiscalInvoice(invoiceId);
+          if (recarregada) invoice = recarregada;
+          const antes = emiAtual ? emiAtual.toISOString().slice(0, 10) : 'N/D';
+          const depois = novaEmissao.toISOString().slice(0, 10);
+          console.log(`[SEFAZ] 🗓️ Data de emissão redatada na retransmissão da NF-e #${invoice?.invoiceNumber}: ${antes} → ${depois} (evita Rejeição 228)`);
+          try {
+            await storage.createFiscalInvoiceEvent({
+              invoiceId,
+              eventType: 'correcao',
+              status: 'success',
+              description: `Data de emissão atualizada para a retransmissão: ${antes} → ${depois} (nota não autorizada; evita a Rejeição 228 "Data de Emissão muito atrasada").`,
+              createdBy: invoice?.createdBy || undefined,
+            });
+          } catch { /* evento é cosmético */ }
+        }
+      } catch (dtErr: any) {
+        console.warn(`[SEFAZ] ⚠️ Falha ao redatar a emissão (segue com a data gravada): ${dtErr?.message}`);
+      }
+
       // ── Monta documento ───────────────────────────────────────────────────
       let allScenarios: any[] = [];
       try { allScenarios = await storage.getFiscalScenarios(); } catch (e) { /* ignore */ }
@@ -1988,7 +2072,32 @@ export class SefazService {
       console.log(`[SEFAZ] Emitindo NF-e ${invoiceId} em ${environment}...`);
 
       // ── Emite via node-nfe-nfce ───────────────────────────────────────────
-      const result = await emitir({ documento, configuracoes } as any);
+      // Transmissão com retentativa CURTA apenas para queda de conexão — a
+      // SEFAZ-GO derruba o socket no WSDL (read ECONNRESET) com frequência.
+      // Rejeição da SEFAZ NUNCA é repetida (só erro transitório de rede).
+      let result: any = null;
+      {
+        const TENTATIVAS = 3;
+        const ESPERAS_MS = [2000, 5000];
+        let erroRede: any = null;
+        for (let tentativa = 1; tentativa <= TENTATIVAS; tentativa++) {
+          erroRede = null;
+          try {
+            result = await emitir({ documento, configuracoes } as any);
+            if (!(result?.success === false && isTransientNetworkError(result?.mensagem))) break;
+            erroRede = new Error(String(result?.mensagem || 'falha de comunicação com a SEFAZ'));
+          } catch (e: any) {
+            if (!isTransientNetworkError(e)) throw e;
+            erroRede = e;
+          }
+          if (tentativa < TENTATIVAS) {
+            const espera = ESPERAS_MS[tentativa - 1] ?? 5000;
+            console.warn(`[SEFAZ] 🔌 Queda de conexão ao transmitir NF-e #${invoice?.invoiceNumber} (tentativa ${tentativa}/${TENTATIVAS}): ${erroRede?.message}. Nova tentativa em ${espera}ms...`);
+            await new Promise((r) => setTimeout(r, espera));
+          }
+        }
+        if (erroRede) throw erroRede;
+      }
 
       const xmlEnvioRaw: string = result?.xml_enviado || '';
       const xmlRetornoRaw: string = result?.xml_recebido || '';
@@ -2251,6 +2360,32 @@ export class SefazService {
         const errorCode = result.nfeProc?.protNFe?.infProt?.cStat || 'REJECTED';
         const errorCodeStr = String(errorCode);
 
+        // FALHA DE COMUNICAÇÃO ≠ REJEIÇÃO. Sem cStat da SEFAZ e com cara de erro
+        // de rede (ECONNRESET/timeout/5xx), não sabemos se a nota foi autorizada
+        // do outro lado: manter o status atual (draft/rejected) e devolver
+        // NETWORK_ERROR, para que o chamador NÃO reemita uma NF-e nova.
+        if (errorCodeStr === 'REJECTED' && isTransientNetworkError(errorMsg)) {
+          console.warn(`[SEFAZ] 🔌 Falha de COMUNICAÇÃO (não é rejeição) na NF-e #${invoice?.invoiceNumber}: ${errorMsg}`);
+          await storage.createFiscalInvoiceEvent({
+            invoiceId,
+            eventType: 'falha_comunicacao',
+            status: 'error',
+            errorCode: NETWORK_ERROR_CODE,
+            errorMessage: errorMsg,
+            description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${errorMsg}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
+            xmlRequest: result.xml_enviado,
+            xmlResponse: result.xml_recebido,
+            createdBy: invoice?.createdBy || undefined,
+          }).catch(() => {});
+          return {
+            success: false,
+            errorCode: NETWORK_ERROR_CODE,
+            errorMessage: `SEFAZ fora do ar ou conexão interrompida (${errorMsg}). A NF-e NÃO foi rejeitada — tente novamente em alguns minutos.`,
+            xmlEnvio: result.xml_enviado,
+            xmlRetorno: result.xml_recebido,
+          };
+        }
+
         // Rejeição 539: Duplicidade de NF-e com diferença na Chave de Acesso.
         // SEFAZ já tem uma NF-e autorizada com este nNF/série/CNPJ, porém a chave
         // que estamos enviando agora difere (cNF diferente). Tentamos extrair a
@@ -2361,6 +2496,26 @@ export class SefazService {
       }
     } catch (error: any) {
       console.error('[SEFAZ] Erro ao emitir NF-e:', error);
+
+      // Queda de conexão com a SEFAZ NÃO é rejeição: a NF-e pode ter sido
+      // autorizada do outro lado. Preserva o status atual da nota (não marca
+      // 'rejected') e sinaliza NETWORK_ERROR para o chamador não reemitir.
+      if (isTransientNetworkError(error)) {
+        console.warn(`[SEFAZ] 🔌 Falha de COMUNICAÇÃO ao emitir NF-e ${invoiceId} (status preservado): ${error?.message}`);
+        await storage.createFiscalInvoiceEvent({
+          invoiceId,
+          eventType: 'falha_comunicacao',
+          status: 'error',
+          errorCode: NETWORK_ERROR_CODE,
+          errorMessage: error?.message,
+          description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${error?.message}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
+        }).catch(() => {});
+        return {
+          success: false,
+          errorCode: NETWORK_ERROR_CODE,
+          errorMessage: `SEFAZ fora do ar ou conexão interrompida (${error?.message || 'erro de rede'}). A NF-e NÃO foi rejeitada — tente novamente em alguns minutos.`,
+        };
+      }
 
       await storage.createFiscalInvoiceEvent({
         invoiceId,
