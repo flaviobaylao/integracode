@@ -3370,26 +3370,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ✅ Reativação em massa (admin/coordenador/administrativo). Inverso da inativação:
-  // customers.isActive=true, omie_status='ativo', volta para a lista de Clientes Ativos.
-  app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
-    try {
-      const { ids } = req.body || {};
-      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
-      const result = await storage.bulkReactivateCustomers(ids.map((x: any) => String(x)));
-      // 📜 Auditoria: registra "Ativo: Não → Sim" para os que estavam inativos
-      const u = req.currentUser;
-      const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
-      for (const cid of (result.reactivatedIds || [])) {
-        try { await logCustomerChanges({ customerId: cid, before: { isActive: false }, changes: { isActive: true }, actor, source: 'bulk' }); } catch (_e) {}
-      }
-      res.json({ ok: true, ...result });
-    } catch (error: any) {
-      console.error("Error bulk reactivating customers:", error);
-      res.status(500).json({ message: "Falha na reativação em massa: " + String(error?.message || error) });
-    }
-  });
-
   // 📜 Histórico das últimas alterações de um cliente (rezoneamento, periodicidade, etc.)
   app.get('/api/customers/:id/change-history', authenticateUser, async (req: any, res) => {
     try {
@@ -12180,6 +12160,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errors.push(`${customerName}: ${error.message || 'Erro'}`);
         }
       }
+      // 📣 Liberacao tambem e ocorrencia: o cliente sabe na hora que o pedido destravou
+      // (pedido_liberado), em vez de esperar a proxima varredura.
+      if (released > 0) { try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido liberado'); } catch {} }
       res.json({ released, errors, message: `${released} pedido(s) liberado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}` });
     } catch (error: any) {
       console.error('Erro critico ao liberar pedidos bloqueados:', error?.message);
@@ -20645,37 +20628,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`✅ [DEBUG] ${visits.length} visitas montadas na ordem do optimizedOrder`);
 
-      // ➕ Clientes ADICIONADOS MANUALMENTE (sales_card source='manual_route_addition').
-      // Computado ANTES da regra de cadência para: (a) NÃO remover adição manual (decisão explícita
-      // do gestor), (b) deduplicar cliente adicionado várias vezes, (c) marcar o selo no front.
-      const manualCustomerIds = new Set<string>();
+      // 🛒 REGRA (cadência): cliente que já comprou (VENDA real) DENTRO da sua periodicidade
+      // ANTES desta data não aparece no card da rota — já foi atendido no ciclo. Mesma regra da
+      // Repescagem ("não cai se comprou dentro da periodicidade"). Só afeta paradas PRESENCIAIS
+      // de cliente (não mexe em leads nem em atendimentos virtuais).
+      // Janela: venda em (D - periodDays, D). Venda NO dia D não exclui (aparece com o selo do pedido).
       try {
-        const manualRows: any = await db.execute(sql`
-          SELECT DISTINCT customer_id FROM sales_cards
-          WHERE seller_id = ${route.sellerId} AND source = 'manual_route_addition' AND DATE(scheduled_date) = ${date}
-        `);
-        (manualRows?.rows || []).forEach((r: any) => { if (r?.customer_id) manualCustomerIds.add(r.customer_id); });
-      } catch (manualErr) {
-        console.warn('⚠️ [MANUAL-ADD] Erro ao buscar adicionados manualmente (não crítico):', manualErr);
-      }
-
-      // 🧹 DEDUP: mesmo cliente/lead não deve aparecer 2x na rota (ex.: adicionado manualmente várias vezes).
-      {
-        const seenStop = new Set<string>();
-        for (let i = 0; i < visits.length; i++) {
-          const v: any = visits[i];
-          if (!v) continue;
-          const key = v.visitType === 'lead' ? `lead:${v.entityId || v.leadId || v.id}` : `cust:${v.customerId || v.entityId}`;
-          if (seenStop.has(key)) { visits.splice(i, 1); i--; continue; }
-          seenStop.add(key);
+        const custStopIds: string[] = visits
+          .filter((v: any) => v && v.visitType === 'customer' && v.customerId)
+          .map((v: any) => v.customerId);
+        if (custStopIds.length > 0) {
+          const salesRes: any = await db.execute(sql`
+            SELECT customer_id, MAX(DATE(created_at AT TIME ZONE 'America/Sao_Paulo')) AS last_venda
+            FROM billing_pipeline
+            WHERE customer_id = ANY(string_to_array(${custStopIds.join(',')}, ','))
+              AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') <= ${date}::date
+              AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') >= (${date}::date - INTERVAL '28 days')
+              AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
+            GROUP BY customer_id
+          `);
+          const lastVendaByCust = new Map<string, string>();
+          for (const r of (salesRes.rows as any[])) {
+            if (r.customer_id && r.last_venda) lastVendaByCust.set(String(r.customer_id), String(r.last_venda).slice(0, 10));
+          }
+          const PERIOD_DAYS: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28 };
+          const dRef = new Date(`${date}T00:00:00.000Z`).getTime();
+          const removidos: string[] = [];
+          for (let i = visits.length - 1; i >= 0; i--) {
+            const v: any = visits[i];
+            if (!v || v.visitType !== 'customer' || !v.customerId) continue;
+            const lv = lastVendaByCust.get(v.customerId);
+            if (!lv) continue;
+            const period = PERIOD_DAYS[(v.visitPeriodicity as string) || 'semanal'] || 7;
+            const daysSince = Math.floor((dRef - new Date(`${lv}T00:00:00.000Z`).getTime()) / 86400000);
+            // >0 garante que venda no próprio dia D não remove; <period mantém quem já venceu o ciclo.
+            if (daysSince > 0 && daysSince < period) {
+              removidos.push(`${v.customerName || v.customerId} (comprou há ${daysSince}d, ${period}d)`);
+              visits.splice(i, 1);
+            }
+          }
+          if (removidos.length) {
+            console.log(`🛒 [ROTA] ${removidos.length} cliente(s) removido(s) por compra dentro da periodicidade: ${removidos.slice(0, 15).join(' | ')}`);
+          }
         }
+      } catch (recentSaleErr) {
+        console.warn('⚠️ [ROTA] Falha ao aplicar regra de venda recente (mantendo visitas):', recentSaleErr);
       }
-
-      // 🛒 REGRA (cadência) — DESATIVADA na agenda base (decisão do gestor):
-      // Cliente AGENDADO para o dia SEMPRE aparece na rota, mesmo tendo comprado dentro da
-      // periodicidade. Antes, quem comprou dentro do ciclo (ex.: quinzenal que comprou há <14d)
-      // era removido silenciosamente do próprio dia agendado, sumindo da rota. Agora não removemos
-      // mais nada por compra recente aqui. (A repescagem mantém a própria regra no seu overlay.)
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para esta data
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
@@ -21180,8 +21178,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         adminAdjustments = aaRows?.rows?.[0]?.admin_adjustments || {};
       } catch {}
 
-      // ➕ Marcar visitas ADICIONADAS MANUALMENTE à rota (manualCustomerIds já computado acima).
+      // ➕ Marcar visitas ADICIONADAS MANUALMENTE à rota (sales_card com source='manual_route_addition')
       // O front exibe "Adicionado manualmente" no rodapé do box dessas visitas.
+      const manualCustomerIds = new Set<string>();
+      try {
+        const manualRows: any = await db.execute(sql`
+          SELECT DISTINCT customer_id
+          FROM sales_cards
+          WHERE seller_id = ${route.sellerId}
+            AND source = 'manual_route_addition'
+            AND DATE(scheduled_date) = ${date}
+        `);
+        (manualRows?.rows || []).forEach((r: any) => {
+          if (r?.customer_id) manualCustomerIds.add(r.customer_id);
+        });
+      } catch (manualErr) {
+        console.warn('⚠️ [MANUAL-ADD] Erro ao buscar visitas adicionadas manualmente (não crítico):', manualErr);
+      }
       visits.forEach((v: any) => {
         if (v && v.customerId && manualCustomerIds.has(v.customerId)) {
           v.addedManually = true;

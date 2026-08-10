@@ -54,8 +54,14 @@ export function registerOfficialPanel(app: any) {
       FROM official_dispatches
       WHERE (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       GROUP BY template_label ORDER BY total DESC`)).rows || [];
+    // "Espera" = quanto tempo o aviso ficou na fila entre entrar e sair. Sem esta coluna
+    // nao dava para distinguir "o disparo demorou" de "o pedido chegou tarde ao sistema" —
+    // e a leitura era de que os disparos estavam agendados de hora em hora.
     const ultimos: any = (await db.execute(sql`SELECT customer_phone, template_label, status, use_case, error,
-      to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS quando
+      to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') AS quando,
+      to_char(sent_at AT TIME ZONE 'America/Sao_Paulo','HH24:MI:SS') AS enviado,
+      CASE WHEN sent_at IS NULL THEN NULL
+           ELSE round(EXTRACT(EPOCH FROM (sent_at - created_at)))::int END AS espera_s
       FROM official_dispatches ORDER BY created_at DESC LIMIT 20`)).rows || [];
     const custo: any = (await db.execute(sql`SELECT coalesce(sum(estimated_cost),0)::float c FROM official_dispatches
       WHERE status IN ('enviada','entregue','lida','resposta')
@@ -193,7 +199,7 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 
 <div class="card">
   <div style="font-weight:700;margin-bottom:8px">Últimos disparos</div>
-  <table><thead><tr><th>Quando</th><th>Telefone</th><th>Template</th><th>Caso</th><th>Status</th><th>Erro</th></tr></thead>
+  <table><thead><tr><th>Quando</th><th>Enviado</th><th>Espera</th><th>Telefone</th><th>Template</th><th>Caso</th><th>Status</th><th>Erro</th></tr></thead>
   <tbody id="rows"></tbody></table>
   <div class="foot" id="foot"></div>
 </div>
@@ -248,10 +254,14 @@ async function load(){
       '<td'+(t.falhas>0?' style="color:#f0a1ae;font-weight:600"':'')+'>'+t.falhas+'</td>'+
       '<td>'+t.total+'</td><td>R$ '+Number(t.custo||0).toFixed(2)+'</td></tr>').join('')
       : '<tr><td colspan="6" style="color:#8b98b0">Nenhum disparo hoje.</td></tr>';
+    const espera = s => { if(s===null||s===undefined) return '—';
+      const n=Number(s); const cor = n<=60?'#7ee0a1':(n<=300?'#e8c06a':'#f0a1ae');
+      const txt = n<60 ? (n+'s') : (n<3600 ? (Math.round(n/60)+' min') : ((n/3600).toFixed(1)+' h'));
+      return '<span style="color:'+cor+'">'+txt+'</span>'; };
     document.getElementById('rows').innerHTML = (d.ultimos||[]).map(m=>
-      '<tr><td>'+m.quando+'</td><td>'+m.customer_phone+'</td><td>'+(m.template_label||'')+'</td><td>'+(m.use_case||'')+
+      '<tr><td>'+m.quando+'</td><td>'+(m.enviado||'—')+'</td><td>'+espera(m.espera_s)+'</td><td>'+m.customer_phone+'</td><td>'+(m.template_label||'')+'</td><td>'+(m.use_case||'')+
       '</td><td><span class="st s-'+m.status+'">'+m.status+'</span></td><td style="color:#f0a1ae">'+(m.error||'')+'</td></tr>').join('')
-      || '<tr><td colspan="6" style="color:#8b98b0">Nenhum disparo ainda.</td></tr>';
+      || '<tr><td colspan="8" style="color:#8b98b0">Nenhum disparo ainda.</td></tr>';
     document.getElementById('foot').textContent = 'Atualizado '+new Date().toLocaleTimeString('pt-BR');
   }catch(e){ document.getElementById('foot').textContent = 'Erro ao carregar: '+e; }
 }

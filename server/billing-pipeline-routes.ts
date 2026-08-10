@@ -240,10 +240,6 @@ function todayBrazilISO(): string {
 // entram nesta regra (decisão do Flavio — só estes três).
 const NON_SALE_BLOCK_OPS = new Set(['amostra', 'troca', 'bonificacao']);
 
-// Etapas em que a INSTANCIA (empresa emissora) do pedido ainda pode ser trocada. Depois do
-// faturamento a NF ja foi emitida no CNPJ daquela instancia e o titulo ja nasceu na conta dela.
-const STAGES_INSTANCIA_EDITAVEL = new Set(['bloqueado', 'agendado', 'pedido', 'a_faturar']);
-
 // Decisão CENTRAL de bloqueio: usada em TODOS os caminhos de entrada no pipeline
 // (auto-envio, rede de segurança/reconcile). Retorna o motivo do bloqueio ou null.
 // Ordem: (1) tipo de operação (amostra/troca/bonificação) → sempre manual;
@@ -325,6 +321,9 @@ export async function insertBlockedOrderIdempotent(
     totalAmount: String(parseFloat(String(salesCard.saleValue)) || 0),
     products: (salesCard.products as any) || [],
   } as any);
+  // 📣 Pedido que nasce bloqueado tambem e ocorrencia: o cliente e avisado agora
+  // (pedido_confirmado_debito / pedido_confirmado_analise), sem esperar varredura.
+  try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido bloqueado'); } catch {}
   return true;
 }
 
@@ -491,6 +490,9 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
         sellerPhone: (seller as any)?.phone || null,
       });
     }
+    // 📣 O cliente e avisado AGORA, nao na proxima varredura. Este e o momento em que o
+    // pedido passa a existir para o faturamento — a "ocorrencia" do disparo.
+    try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido roteado ao pipeline'); } catch {}
     return item;
   } catch (error) {
     await logOrderAudit(salesCard.id, 'failed', String((error as any)?.message || error));
@@ -1661,7 +1663,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           req.body = { paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate, notes: req.body?.notes };
         }
       }
-      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate, omieInstanceId } = req.body;
+      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
       const updates: any = {};
       if (notes !== undefined) updates.notes = notes;
       if (invoiceNumber !== undefined) updates.invoiceNumber = invoiceNumber;
@@ -1688,36 +1690,6 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
       if (customerName !== undefined) updates.customerName = customerName;
       if (customerDocument !== undefined) updates.customerDocument = customerDocument;
-
-      // ======================================================================
-      // INSTANCIA (empresa emissora) DO PEDIDO
-      // O item nasce com a instancia do CADASTRO DO CLIENTE (customers.omie_instance_id) e ate
-      // aqui nao havia como corrigir um pedido que entrou na empresa errada. Agora gestores podem
-      // trocar, mas SO antes do faturamento: depois a NF ja saiu no CNPJ antigo e o titulo ja
-      // nasceu na conta daquela instancia. O NOME e resolvido no servidor (o front manda so o id)
-      // para o badge/filtro do pipeline nunca divergir do id gravado.
-      // ======================================================================
-      if (omieInstanceId !== undefined) {
-        if (!_isManager) return res.status(403).json({ message: 'Somente administracao/coordenacao pode alterar a instancia do pedido.' });
-        const _curInst = await storage.getBillingPipelineItem(req.params.id);
-        if (!_curInst) return res.status(404).json({ message: 'Pedido nao encontrado' });
-        const _stageInst = String(_curInst.stage || '');
-        if (!STAGES_INSTANCIA_EDITAVEL.has(_stageInst)) {
-          return res.status(400).json({ message: 'A instancia so pode ser alterada antes do faturamento (Bloqueados, Agendado, Pedido ou A Faturar).' });
-        }
-        if (!omieInstanceId) {
-          updates.omieInstanceId = null;
-          updates.omieInstanceName = null;
-        } else {
-          const _instRow: any = await storage.getOmieInstance(String(omieInstanceId));
-          if (!_instRow) return res.status(400).json({ message: 'Instancia nao encontrada.' });
-          updates.omieInstanceId = _instRow.id;
-          updates.omieInstanceName = _instRow.displayName || _instRow.name || null;
-        }
-        if (String(_curInst.omieInstanceId || '') !== String(updates.omieInstanceId || '')) {
-          console.log(`🏢 [BILLING-PIPELINE] Instancia do item ${req.params.id} alterada de ${_curInst.omieInstanceName || '(vazia)'} para ${updates.omieInstanceName || '(vazia)'} por ${req.currentUser?.email || 'desconhecido'}`);
-        }
-      }
 
       // "Faturar em" (scheduled_billing_date): data em que o pedido deve seguir para a etapa
       // "Pedido". Editavel no pipeline. Reavalia a etapa entre 'agendado'/'pedido':

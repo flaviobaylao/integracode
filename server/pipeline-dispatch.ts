@@ -123,6 +123,34 @@ async function avisoDeDebitoRecente(phone: string, horas: number): Promise<boole
 
 type Resumo = { confirmado: number; debito: number; analise: number; liberado: number; entrega: number; pulados: string[] };
 
+
+// ---------------------------------------------------------------------------
+// DISPARO IMEDIATO — o aviso sai quando o pedido acontece, nao na hora da varredura.
+// Os disparos sairam 18:49, 17:49, 16:49, 14:19: sempre poucos minutos depois das
+// varreduras de :15/:45. Nao era agendamento de proposito — era a varredura de 2 min
+// sendo, na pratica, o unico gatilho. Agora quem cria o pedido chama aqui na hora.
+//
+// O debounce de 3s existe porque um lote (importacao, liberacao em massa) chamaria isto
+// dezenas de vezes seguidas; uma varredura so ja cobre o lote inteiro.
+// ---------------------------------------------------------------------------
+let _pendente: NodeJS.Timeout | null = null;
+let _rodando = false;
+export function dispararAgora(motivo: string): void {
+  if (_pendente) return;                       // ja tem uma passada marcada
+  _pendente = setTimeout(async () => {
+    _pendente = null;
+    if (_rodando) return;                      // nao empilha varredura
+    _rodando = true;
+    try {
+      const r = await pipelineTick();
+      const n = (r.confirmado || 0) + (r.debito || 0) + (r.analise || 0) + (r.liberado || 0) + (r.entrega || 0);
+      if (n > 0) console.log(`[PIPELINE-DISPATCH] disparo imediato (${motivo}): ${n} aviso(s) enfileirado(s)`);
+    } catch (e: any) { console.error('[PIPELINE-DISPATCH] disparo imediato', e?.message || e); }
+    finally { _rodando = false; }
+  }, 3000);
+  if (typeof (_pendente as any)?.unref === 'function') (_pendente as any).unref();
+}
+
 export async function pipelineTick(force = false): Promise<{ ran: boolean; motivo?: string } & Partial<Resumo>> {
   const out: Resumo = { confirmado: 0, debito: 0, analise: 0, liberado: 0, entrega: 0, pulados: [] };
   try {
@@ -389,11 +417,14 @@ export function registerPipelineDispatch(app: any) {
     res.json({ ok: true, marcoZero: await getSetting('pipeline_inicio', '') });
   });
 
-  // Varredura a cada 2 min. O primeiro tick espera 3 min para nao competir com o boot.
+  // O gatilho de verdade agora e o dispararAgora(), chamado por quem cria o pedido.
+  // Esta varredura vira REDE DE SEGURANCA: pega o que entrou por algum caminho que ainda
+  // nao chama o hook (importacao, correcao manual no banco). 30s para o atraso maximo
+  // ser de meio minuto quando o hook nao pegar.
   setTimeout(() => {
     pipelineTick().catch(() => {});
-    setInterval(() => { pipelineTick().catch(() => {}); }, 120000);
+    setInterval(() => { pipelineTick().catch(() => {}); }, 30000);
   }, 180000);
 
-  console.log('[PIPELINE-DISPATCH] registrado (varredura a cada 2 min)');
+  console.log('[PIPELINE-DISPATCH] registrado (disparo imediato + rede de seguranca a cada 30s)');
 }
