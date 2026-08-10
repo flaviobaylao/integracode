@@ -611,6 +611,7 @@ export default function CustomerEditModal({
                 { value: "Qui", label: "Quinta-feira" },
                 { value: "Sex", label: "Sexta-feira" },
                 { value: "Sab", label: "Sábado" },
+                { value: "Dom", label: "Domingo" },
               ].map((day) => (
                 <div key={day.value} className="flex items-center space-x-2">
                   <Checkbox
