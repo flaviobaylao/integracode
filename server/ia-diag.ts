@@ -275,5 +275,34 @@ export function registerIaDiag(app: any) {
     } catch (e: any) { res.json({ erro: e?.message || String(e), nota: 'a tabela ia_trilha nasce na primeira mensagem apos o deploy' }); }
   });
 
-  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta + trilha)');
+
+  // ---------------------------------------------------------------------------
+  // Relogio da tabela de disparos. Existem DOIS jeitos certos de converter para
+  // Brasilia, e eles dependem do tipo da coluna:
+  //   timestamptz          -> created_at AT TIME ZONE 'America/Sao_Paulo'
+  //   timestamp (UTC cru)  -> created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'
+  // Usar o primeiro numa coluna do segundo tipo joga o horario para frente. Este endpoint
+  // mostra o tipo real e a mesma linha nas duas leituras — sem adivinhacao.
+  // ---------------------------------------------------------------------------
+  app.get('/api/admin/ia-atendimento/relogio-disparos', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try {
+      const t: any = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'official_dispatches' AND column_name IN ('created_at','sent_at')`);
+      const cfg: any = await db.execute(sql`SELECT current_setting('TimeZone') AS tz,
+        to_char(now(), 'DD/MM HH24:MI:SS') AS agora_sessao,
+        to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS agora_br`);
+      const r: any = await db.execute(sql`SELECT
+          created_at::text AS cru,
+          to_char(created_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS como_esta_no_painel,
+          to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS tratando_como_utc,
+          to_char(created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS com_cast,
+          round(EXTRACT(EPOCH FROM (now() - created_at::timestamptz))/60)::int AS minutos_atras,
+          template_label, status
+        FROM official_dispatches ORDER BY created_at DESC LIMIT 5`);
+      res.json({ tipos: t.rows || [], relogio: cfg.rows?.[0] || null, linhas: r.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta + trilha + relogio-disparos)');
 }
