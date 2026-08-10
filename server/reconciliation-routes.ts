@@ -1396,45 +1396,71 @@ export function registerReconciliation(app: Express) {
         const settled = String(m.match_kind) === "vinculo_sem_baixa" ? 0 : Number(m.title_amount_settled ?? m.amount ?? 0);
         // Vinculo sem baixa: so apaga o match e devolve o lancamento a 'pending'.
         if (settled <= 0.005) { reverted.push({ kind: m.receivable_id ? "receivable" : "payable", id: m.receivable_id || m.payable_id, via: "vinculo_sem_baixa", titulo: "intacto" }); continue; }
+        // ---- FIX 09/08/2026: ESTORNAR O PRINCIPAL, NAO O VALOR DO EXTRATO -------
+        // `title_amount_settled` guarda o DINHEIRO do lancamento (principal + juros -
+        // desconto) — e assim tem que continuar, porque o relatorio de divergencias
+        // soma essa coluna contra o valor do extrato. Mas quem baixou o titulo foi o
+        // PRINCIPAL (o settle usa `mora.principal` e o juros vai para coluna propria).
+        // Estornando `settled`:
+        //   * amount_paid caia no clamp Math.max(0, ...) e "dava certo" por acidente;
+        //   * o DELETE casava `amount = settled` e NAO achava a linha de pagamento
+        //     (gravada com o principal) — o titulo voltava a aberto e sobrava um
+        //     pagamento orfao. Ex.: DOHLER 000096985/4, baixa 4.317,50, match 4.329,02.
+        // Em match antigo (sem juros/desconto) principal == settled: nada muda.
+        const jurosMatch = Number(m.interest || 0);
+        const descMatch = Number(m.discount || 0);
+        const principal = Number(Math.max(0, settled - jurosMatch + descMatch).toFixed(2));
         if (m.receivable_id) {
           const rec: any = await storage.getReceivable(m.receivable_id);
           if (rec) {
-            const newPaid = Math.max(0, Number(rec.amountPaid || 0) - settled);
-            const amt = Number(rec.amount || 0);
+            const newPaid = Math.max(0, Number(rec.amountPaid || 0) - principal);
+            // Desconto da conciliacao REDUZIU o titulo (settle: amount = amount - desconto).
+            // Desfazer sem devolver o desconto deixava o titulo reaberto valendo menos —
+            // o dinheiro sumia do contas a receber. Devolve o desconto DESTE match.
+            const amt = Number((Number(rec.amount || 0) + descMatch).toFixed(2));
             const due = rec.dueDate ? new Date(rec.dueDate) : null;
             const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (_pastDueBR(due) ? "vencida" : "a_vencer");
-            await storage.updateReceivable(m.receivable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
+            const patchUndoR: any = { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true };
+            if (descMatch > 0) patchUndoR.amount = amt.toFixed(2);
+            await storage.updateReceivable(m.receivable_id, patchUndoR);
             // FIX: o DELETE antigo casava por (reference, amount) SEM LIMIT e nao achava
             // a baixa feita via boleto (reference = nosso numero). Agora apaga UMA linha,
             // e cobre os dois casos.
-            await db.execute(sql`
+            const delR: any = await db.execute(sql`
               DELETE FROM receivable_payments WHERE ctid IN (
                 SELECT rp.ctid FROM receivable_payments rp
                 WHERE rp.receivable_id = ${m.receivable_id}
-                  AND rp.amount = ${settled.toFixed(2)}
+                  AND rp.amount = ${principal.toFixed(2)}
                   AND rp.deleted_at IS NULL
                   AND (rp.reference = 'conciliacao-bancaria'
                        OR rp.reference IN (SELECT bc.nosso_numero FROM boleto_charges bc WHERE bc.receivable_id = ${m.receivable_id}))
                 ORDER BY rp.created_at DESC LIMIT 1)`);
-            reverted.push({ kind: "receivable", id: m.receivable_id, status });
+            // Se nao achou a linha (baixa parcial antiga, teto do settle), avisa em vez
+            // de sumir em silencio: o titulo volta a aberto mas sobra um pagamento.
+            const okR = (delR?.rowCount ?? 0) > 0;
+            reverted.push({ kind: "receivable", id: m.receivable_id, status, estornado: principal, juros: jurosMatch || undefined, descontoDevolvido: descMatch || undefined, pagamentoRemovido: okR, ...(okR ? {} : { atencao: "linha de pagamento nao encontrada para estorno" }) });
           }
         } else if (m.payable_id) {
           const pay: any = await storage.getPayable(m.payable_id);
           if (pay) {
-            const newPaid = Math.max(0, Number(pay.amountPaid || 0) - settled);
-            const amt = Number(pay.amount || 0);
+            const newPaid = Math.max(0, Number(pay.amountPaid || 0) - principal);
+            // Idem receber: devolve ao titulo o desconto que a conciliacao abateu.
+            const amt = Number((Number(pay.amount || 0) + descMatch).toFixed(2));
             const due = pay.dueDate ? new Date(pay.dueDate) : null;
             const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (_pastDueBR(due) ? "vencida" : "a_vencer");
-            await storage.updatePayable(m.payable_id, { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true } as any);
+            const patchUndoP: any = { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true };
+            if (descMatch > 0) patchUndoP.amount = amt.toFixed(2);
+            await storage.updatePayable(m.payable_id, patchUndoP);
             // FIX: sem LIMIT, desfazer UMA conciliacao apagava TODAS as parcelas iguais.
-            await db.execute(sql`
+            const delP: any = await db.execute(sql`
               DELETE FROM payable_payments WHERE ctid IN (
                 SELECT pp.ctid FROM payable_payments pp
                 WHERE pp.payable_id = ${m.payable_id}
-                  AND pp.amount = ${settled.toFixed(2)}
+                  AND pp.amount = ${principal.toFixed(2)}
                   AND pp.reference = 'conciliacao-bancaria'
                 ORDER BY pp.created_at DESC LIMIT 1)`);
-            reverted.push({ kind: "payable", id: m.payable_id, status });
+            const okP = (delP?.rowCount ?? 0) > 0;
+            reverted.push({ kind: "payable", id: m.payable_id, status, estornado: principal, juros: jurosMatch || undefined, descontoDevolvido: descMatch || undefined, pagamentoRemovido: okP, ...(okP ? {} : { atencao: "linha de pagamento nao encontrada para estorno" }) });
           }
         }
       }
