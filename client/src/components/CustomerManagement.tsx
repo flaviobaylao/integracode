@@ -17,14 +17,11 @@ import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import CustomerModal from "./CustomerModal";
 import CustomerDetailsModal from "./CustomerDetailsModal";
-import OmieClientImport from "./OmieClientImport";
-import OmieSyncManager from "./OmieSyncManager";
 import CustomerExcelImport from "./CustomerExcelImport";
 import WhatsAppButton from "./WhatsAppButton";
 import GeocodeAllButton from "./GeocodeAllButton";
 import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
-import OmieInstanceBadge from "./OmieInstanceBadge";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
@@ -87,8 +84,6 @@ export default function CustomerManagement() {
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
-  const [showOmieImport, setShowOmieImport] = useState(false);
-  const [showOmieSync, setShowOmieSync] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -664,7 +659,6 @@ export default function CustomerManagement() {
                           >
                             {(customer as any).fantasyName || customer.name}
                           </button>
-                          <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
                           <SobDelegacaoBadge show={delegMarks.has(customer.id)} />
                         </div>
                       </td>
@@ -812,18 +806,6 @@ export default function CustomerManagement() {
           customer={editingCustomer}
         />
       )}
-
-      {/* Omie Import Modal */}
-      <OmieClientImport
-        isOpen={showOmieImport}
-        onClose={() => setShowOmieImport(false)}
-      />
-
-      {/* Omie Sync Manager Modal */}
-      <OmieSyncManager
-        isOpen={showOmieSync}
-        onClose={() => setShowOmieSync(false)}
-      />
 
       {/* Excel Import Modal */}
       <CustomerExcelImport
