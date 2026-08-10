@@ -1507,6 +1507,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔠 PADRONIZAÇÃO DE NOME (INTEGRA vira dono do nome): UPPERCASE + colapsa espaços + trim,
+  // aplicado a name/companyName/fantasyName no INTEGRA (auditado em customer_change_history)
+  // e propagado ao Omie via AlterarCliente. Marca name_locked p/ blindar contra futura sync.
+  // Execução em lotes: o front envia { ids: [...], escreverOmie?: boolean }. Admin/coord/administrativo.
+  app.post('/api/admin/padronizar-nomes/lote', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res: any) => {
+    try {
+      await db.execute(sql.raw("ALTER TABLE customers ADD COLUMN IF NOT EXISTS name_locked boolean DEFAULT false"));
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => String(x)) : [];
+      const escreverOmie = req.body?.escreverOmie !== false;
+      if (!ids.length) return res.status(400).json({ message: 'Envie ids (array).' });
+      const norm = (s: any) => (s == null ? s : String(s).toUpperCase().replace(/\s+/g, ' ').trim());
+      const u = req.currentUser || {};
+      const actor = { id: u.id, name: (`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || 'admin') };
+      const results: any[] = [];
+      for (const id of ids) {
+        try {
+          const c: any = await storage.getCustomer(id);
+          if (!c) { results.push({ id, ok: false, error: 'não encontrado' }); continue; }
+          const changes: any = {};
+          if (c.name != null && norm(c.name) !== c.name) changes.name = norm(c.name);
+          if (c.companyName != null && norm(c.companyName) !== c.companyName) changes.companyName = norm(c.companyName);
+          if (c.fantasyName != null && norm(c.fantasyName) !== c.fantasyName) changes.fantasyName = norm(c.fantasyName);
+          if (Object.keys(changes).length === 0) {
+            await db.execute(sql`UPDATE customers SET name_locked = true WHERE id = ${id}`);
+            results.push({ id, name: c.name, changed: false, integraOk: true, omieOk: null });
+            continue;
+          }
+          await storage.updateCustomer(id, changes);
+          try { await logCustomerChanges({ customerId: id, before: c, changes, actor, source: 'padronizacao-nome' }); } catch {}
+          await db.execute(sql`UPDATE customers SET name_locked = true WHERE id = ${id}`);
+          let omieOk: any = null, omieErr: any = null;
+          if (escreverOmie && c.omieClientCode) {
+            try {
+              const svc = c.omieInstanceId ? await getOmieServiceForInstance(storage, c.omieInstanceId) : getOmieService(storage);
+              if (!svc) { omieErr = 'serviço Omie indisponível'; }
+              else {
+                const razao = changes.companyName ?? norm(c.companyName) ?? norm(c.name);
+                const fantasia = changes.fantasyName ?? norm(c.fantasyName);
+                omieOk = await svc.updateCustomerName(Number(c.omieClientCode), razao, fantasia);
+              }
+            } catch (e: any) { omieErr = String(e?.message || e).slice(0, 200); }
+          }
+          results.push({ id, name: c.name, novo: changes, integraOk: true, omieOk, omieErr });
+        } catch (e: any) {
+          results.push({ id, ok: false, error: String(e?.message || e).slice(0, 200) });
+        }
+      }
+      const resumo = {
+        total: ids.length,
+        alterados: results.filter((r) => r.novo).length,
+        jaPadronizados: results.filter((r) => r.changed === false).length,
+        omieOk: results.filter((r) => r.omieOk === true).length,
+        omieFalha: results.filter((r) => r.omieOk === false || r.omieErr).length,
+        erros: results.filter((r) => r.ok === false).length,
+      };
+      res.json({ ok: true, resumo, results });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
+    }
+  });
+
   // Listar TODOS os clientes cadastrados para criação de cards de vendas
   // (inclui inativos, permite criar cards para qualquer cliente cadastrado)
   app.get('/api/customers/all-for-sales', authenticateUser, async (req: any, res) => {
