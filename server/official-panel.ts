@@ -58,8 +58,14 @@ export function registerOfficialPanel(app: any) {
     // nao dava para distinguir "o disparo demorou" de "o pedido chegou tarde ao sistema" —
     // e a leitura era de que os disparos estavam agendados de hora em hora.
     const ultimos: any = (await db.execute(sql`SELECT customer_phone, template_label, status, use_case, error,
-      to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') AS quando,
-      to_char(sent_at AT TIME ZONE 'America/Sao_Paulo','HH24:MI:SS') AS enviado,
+      -- ⏰ REGRA DAS DUAS CONVERSOES (medido em 10/08, painel mostrava +6h):
+      --   coluna timestamptz         -> col AT TIME ZONE 'America/Sao_Paulo'
+      --   coluna timestamp (UTC cru) -> col AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'
+      -- official_dispatches.created_at/sent_at sao 'timestamp without time zone' guardando
+      -- UTC: a forma curta INTERPRETA o valor como se ja fosse horario de Brasilia e joga
+      -- tudo para frente. Era por isso que um disparo das 14:16 aparecia como 20:16.
+      to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI:SS') AS quando,
+      to_char(sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','HH24:MI:SS') AS enviado,
       CASE WHEN sent_at IS NULL THEN NULL
            ELSE round(EXTRACT(EPOCH FROM (sent_at - created_at)))::int END AS espera_s
       FROM official_dispatches ORDER BY created_at DESC LIMIT 20`)).rows || [];

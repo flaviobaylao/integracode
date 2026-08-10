@@ -179,7 +179,8 @@ export function registerPromessaPagamento(app: any) {
       const r: any = await db.execute(sql`
         SELECT p.id, p.customer_id, p.telefone, p.titulo, p.valor, p.vencimento,
                to_char(p.data_prometida, 'DD/MM/YYYY') AS promessa, p.status,
-               to_char(p.criado_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando,
+               -- criado_at e timestamptz: conversao curta (a dupla adiantaria 6h).
+               to_char(p.criado_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando,
                COALESCE(c.fantasy_name, c.name) AS cliente
         FROM promessas_pagamento p
         LEFT JOIN customers c ON c.id = p.customer_id

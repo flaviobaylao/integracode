@@ -263,7 +263,8 @@ export function registerIaDiag(app: any) {
       const fone = String(req.query.phone || '').replace(/\D/g, '');
       const n = Math.min(200, Math.max(5, parseInt(String(req.query.n || '60'), 10) || 60));
       const r: any = await db.execute(sql`SELECT
-          to_char(criado_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS quando,
+          -- ia_trilha.criado_at e timestamptz: aqui a conversao e a curta (a dupla adiantaria 6h).
+          to_char(criado_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') AS quando,
           telefone, porta, detalhe, LEFT(texto, 80) AS texto, conversation_id AS conv
         FROM ia_trilha
         WHERE (${fone} = '' OR right(telefone, 8) = right(${fone}, 8))
