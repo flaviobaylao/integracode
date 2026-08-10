@@ -117,6 +117,24 @@ export default function Repescagem() {
     enabled: !!historyCustomer?.id,
   });
 
+  // Sugestões de migração de carteira (opção 2): a migração NÃO é automática; o admin aprova/rejeita.
+  const isGestor = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  const { data: sugestoesData } = useQuery<{ ok: boolean; total: number; sugestoes: any[] }>({
+    queryKey: ['/api/repescagem/carteira-sugestoes'],
+    enabled: !!isGestor,
+    refetchInterval: 60000,
+  });
+  const sugestoes = sugestoesData?.sugestoes || [];
+  const decidirSugestao = useMutation({
+    mutationFn: async ({ id, acao }: { id: string; acao: 'aprovar' | 'rejeitar' }) =>
+      apiRequest('POST', `/api/repescagem/carteira-sugestoes/${id}/decidir`, { acao }),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/carteira-sugestoes'] });
+      toast({ title: v.acao === 'aprovar' ? 'Carteira migrada' : 'Sugestão rejeitada', description: v.acao === 'aprovar' ? 'O cliente foi movido para o novo vendedor.' : 'Nenhuma alteração foi feita.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao decidir', variant: 'destructive' }),
+  });
+
   const enabledAttendants = attendants.filter(a => a.isEnabled);
   const isAdmin = user?.role === 'admin';
 
@@ -214,6 +232,33 @@ export default function Repescagem() {
           Atualizar
         </Button>
       </div>
+
+      {/* Sugestões de migração de carteira (aprovação do admin — não migra sozinho) */}
+      {isGestor && sugestoes.length > 0 && (
+        <Card className="border-amber-300">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-amber-600" />
+              Sugestões de migração de carteira ({sugestoes.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-2">
+            <div className="text-xs text-muted-foreground">O vendedor fez 2ª venda em repescagem para o cliente. A migração de carteira <span className="font-semibold">não é automática</span>: aprove para mover o cliente para o novo vendedor, ou rejeite para manter como está.</div>
+            {sugestoes.map((s: any) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 border rounded-lg px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate">{s.customer_name || s.customer_id}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{s.from_name || s.from_seller_id || '—'} → <span className="font-semibold text-gray-700">{s.to_name || s.to_seller_id}</span></div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8" disabled={decidirSugestao.isPending} onClick={() => decidirSugestao.mutate({ id: s.id, acao: 'aprovar' })}>Aprovar</Button>
+                  <Button size="sm" variant="outline" className="h-8" disabled={decidirSugestao.isPending} onClick={() => decidirSugestao.mutate({ id: s.id, acao: 'rejeitar' })}>Rejeitar</Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Painel de habilitação + atendentes */}
       <Card>
