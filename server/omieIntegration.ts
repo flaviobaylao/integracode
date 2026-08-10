@@ -4753,6 +4753,34 @@ export class OmieService {
     }
   }
 
+  // Padronizar nome do cliente no Omie (razão social + nome fantasia) — usado pela padronização
+  // de nomes em lote (INTEGRA vira dono do nome). Mantém cnpj_cpf do cadastro atual do Omie.
+  async updateCustomerName(omieClientCode: number, razaoSocial: string, nomeFantasia?: string | null): Promise<boolean> {
+    try {
+      const clientData = await this.getClientByCode(omieClientCode);
+      if (!clientData) {
+        console.error(`❌ [OMIE] Cliente ${omieClientCode} não encontrado para padronização de nome`);
+        return false;
+      }
+      const updatePayload: any = {
+        codigo_cliente_omie: omieClientCode,
+        cnpj_cpf: clientData.cnpj_cpf,
+        razao_social: (razaoSocial && String(razaoSocial).trim()) ? razaoSocial : clientData.razao_social,
+      };
+      const nf = (nomeFantasia != null && String(nomeFantasia).trim() !== '') ? nomeFantasia : clientData.nome_fantasia;
+      if (nf) updatePayload.nome_fantasia = nf;
+      const response = await this.makeRequest('/geral/clientes/', 'AlterarCliente', updatePayload);
+      if (response && (response.codigo_cliente_omie || String(response.codigo_status) === '0')) {
+        return true;
+      }
+      console.error(`❌ [OMIE] Falha ao padronizar nome do cliente ${omieClientCode}:`, response);
+      return false;
+    } catch (error) {
+      console.error(`❌ [OMIE] Erro ao padronizar nome do cliente ${omieClientCode}:`, error);
+      return false;
+    }
+  }
+
   // Listar todos os vendedores ativos do Omie - buscar TODAS as páginas
   async getAllVendors(page = 1, pageSize = 50): Promise<{
     vendors: OmieVendor[];
