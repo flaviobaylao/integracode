@@ -412,24 +412,6 @@ export default function CustomerManagement() {
           <GeocodeAllButton />
           <Button
             variant="outline"
-            className="border-orange-500 text-orange-600 hover:bg-orange-500 hover:text-white"
-            onClick={() => setShowOmieSync(true)}
-            data-testid="button-sync-omie"
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Sincronizar Omie
-          </Button>
-          <Button
-            variant="outline"
-            className="border-honest-blue text-honest-blue hover:bg-honest-blue hover:text-white"
-            onClick={() => setShowOmieImport(true)}
-            data-testid="button-import-omie"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Importar do Omie
-          </Button>
-          <Button
-            variant="outline"
             className="border-green-500 text-green-600 hover:bg-green-500 hover:text-white"
             onClick={() => setShowExcelImport(true)}
             data-testid="button-import-excel"
