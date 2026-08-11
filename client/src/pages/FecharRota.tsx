@@ -265,7 +265,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
         <Card className="mt-5 border-green-200"><CardContent className="pt-6 text-center">
           <div className="w-14 h-14 rounded-full bg-green-50 text-green-600 flex items-center justify-center mx-auto mb-3"><CheckCircle2 className="w-7 h-7" /></div>
           <div className="font-bold text-lg">Rota de {today.split("-").reverse().join("/")} já fechada</div>
-          <div className="text-sm text-muted-foreground mt-1">Fechada às {statusData?.closure?.closedAt ? String(statusData.closure.closedAt).slice(11, 16) : "—"}. Para reabrir, fale com o admin.</div>
+          <div className="text-sm text-muted-foreground mt-1">Fechada às {statusData?.closure?.closedAt ? new Date(statusData.closure.closedAt).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" }) : "—"}. Para reabrir, fale com o admin.</div>
         </CardContent></Card>
       )}
 
