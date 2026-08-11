@@ -16,7 +16,7 @@ import { BarChart3, Ban, CheckCircle2, ClipboardList, FileDown, Copy, Check, Inf
 const MOTIVO_LABEL: Record<string, string> = {
   sem_tempo: "Não deu tempo / rota grande",
   remarcou: "Cliente avisou / remarcou",
-  fechado: "Cliente fechado ou de férias",
+  fechado: "Cliente fechado temporariamente",
   rota_inviavel: "Rota/distância inviável",
   imprevisto: "Imprevisto (veículo/pessoal)",
   cancelou: "Cliente cancelou fornecimento",
