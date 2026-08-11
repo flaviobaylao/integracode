@@ -30,6 +30,7 @@ import { enviarAlertaDebitosVencidos } from './debitos-vencidos-alert';
 import { ensureFinancialAuditSchema } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { registerVisitSummary } from "./visit-summary-route";
+import { registerCarteira } from "./carteira-routes";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
 import { registerGeocodeAnalyze } from "./geocode-analyze";
@@ -344,6 +345,7 @@ run();
   } catch (e: any) { console.error('[canais routes]', e?.message || e); }
   registerPaymentLink(app);
   registerVisitSummary(app);
+  registerCarteira(app);
   registerCadastroReceitaSync(app);
   registerGeocodeAnalyze(app);
   registerReconciliation(app);
