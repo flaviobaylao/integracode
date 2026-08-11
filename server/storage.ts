@@ -2184,9 +2184,11 @@ export class DatabaseStorage implements IStorage {
         recurrenceType: customer.visitPeriodicity || parentCard.recurrenceType,
         isRecurring: parentCard.isRecurring,
         parentCardId: parentCardId,
-        // Copiar dados da venda anterior
-        products: parentCard.products,
-        saleValue: parentCard.saleValue,
+        // NAO copiar produtos/valor da venda anterior: o card recorrente nasce em branco.
+        // O vendedor pode preencher com o pedido anterior usando o botao "Preencher card com
+        // dados do pedido anterior" na tela de venda, que consulta /last-order sob demanda.
+        products: [] as any,
+        saleValue: null as any,
         paymentMethod: parentCard.paymentMethod,
         operationType: parentCard.operationType,
         boletoDays: parentCard.boletoDays,
