@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check } from "lucide-react";
@@ -250,6 +251,9 @@ export default function SolicitacoesAlteracao() {
     refetchInterval: 60_000,
   });
 
+  // Busca por cliente (aplica a Pendentes e Resolvidas).
+  const [busca, setBusca] = useState("");
+
   if (!isAdmin) {
     return <div className="p-6 text-sm text-muted-foreground">Acesso restrito aos administradores.</div>;
   }
@@ -259,6 +263,13 @@ export default function SolicitacoesAlteracao() {
   const sugestoes: any[] = sugData?.sugestoes || [];
   const totalPend = pending.length + sugestoes.length;
 
+  // Filtro de busca por nome do cliente (case-insensitive).
+  const q = busca.trim().toLowerCase();
+  const matchNome = (nome) => !q || String(nome || "").toLowerCase().includes(q);
+  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId));
+  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId));
+  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id));
+
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
       <div className="flex items-center gap-2">
@@ -267,6 +278,14 @@ export default function SolicitacoesAlteracao() {
         {totalPend > 0 && <Badge className="bg-indigo-600">{totalPend}</Badge>}
       </div>
 
+      <Input
+        placeholder="Buscar cliente..."
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+        className="max-w-sm"
+        data-testid="input-busca-cliente"
+      />
+
       <Tabs defaultValue="pendentes">
         <TabsList>
           <TabsTrigger value="pendentes">Pendentes {totalPend > 0 ? `(${totalPend})` : ""}</TabsTrigger>
@@ -274,28 +293,28 @@ export default function SolicitacoesAlteracao() {
         </TabsList>
 
         <TabsContent value="pendentes" className="space-y-3 mt-3">
-          {sugestoes.length > 0 && (
+          {sugestoesF.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Migração de carteira (repescagem)</div>
-              {sugestoes.map((s) => <CarteiraSugestaoCard key={s.id} s={s} />)}
+              {sugestoesF.map((s) => <CarteiraSugestaoCard key={s.id} s={s} />)}
             </div>
           )}
           {loadingP ? (
             <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
-          ) : pending.length === 0 ? (
-            sugestoes.length === 0 ? <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div> : null
+          ) : pendingF.length === 0 ? (
+            sugestoesF.length === 0 ? <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div> : null
           ) : (
-            pending.map((r) => <PendingCard key={r.id} r={r} />)
+            pendingF.map((r) => <PendingCard key={r.id} r={r} />)
           )}
         </TabsContent>
 
         <TabsContent value="resolvidas" className="space-y-3 mt-3">
           {loadingR ? (
             <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
-          ) : resolved.length === 0 ? (
+          ) : resolvedF.length === 0 ? (
             <div className="text-sm text-muted-foreground py-8 text-center">Nada resolvido ainda.</div>
           ) : (
-            resolved.map((r) => <ResolvedCard key={r.id} r={r} />)
+            resolvedF.map((r) => <ResolvedCard key={r.id} r={r} />)
           )}
         </TabsContent>
       </Tabs>
