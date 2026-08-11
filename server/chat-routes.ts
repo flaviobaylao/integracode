@@ -2060,7 +2060,7 @@ export function registerChatRoutes(app: Express): void {
 
       const finalMessageType = mediaInfo.messageType || 'text';
       let finalMediaUrl = mediaInfo.mediaUrl || null;
-      const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
+      let finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
       
       // 🔧 MELHORADO: Se for mídia, garantir que temos a URL/base64
       // Prioridade: 1) Tentar getBase64FromMediaMessage (mais confiável), 2) Usar URL do payload se disponível
@@ -2305,20 +2305,35 @@ export function registerChatRoutes(app: Express): void {
         isRead: isFromMe
       });
 
-      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — fire-and-forget, atualiza a mensagem
-      if (finalMessageType === 'audio' && !isFromMe && savedMsg?.id) {
-        const audioSrc = finalMediaUrl;
-        const audioMime = mediaInfo.mediaType;
-        (async () => {
-          const transcript = await transcribeAudioSource(audioSrc as string, audioMime);
-          if (transcript) {
-            await storage.updateChatMessage(savedMsg.id, {
-              content: '🎤 ' + transcript,
-              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript, transcribedAt: new Date().toISOString() },
-            } as any);
-            console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${transcript.slice(0, 60)}`);
-          }
-        })().catch((e: any) => console.error('[TRANSCRIBE] fire-and-forget erro:', e && e.message ? e.message : String(e)));
+      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — SINCRONO, ANTES do gatilho da IA,
+      // para a IA LER o conteudo do audio em vez de responder "nao consegui abrir o arquivo".
+      const _audioLike = finalMessageType === 'audio'
+        || /^audio\//.test(String(mediaInfo.mediaType || ''))
+        || /\.(ogg|opus|mp3|m4a|wav|aac)(\?|$)/i.test(String(finalMediaUrl || ''));
+      if (_audioLike && !isFromMe && savedMsg?.id) {
+        let _transcript: string | null = null;
+        if (finalMediaUrl) {
+          try { _transcript = await transcribeAudioSource(finalMediaUrl as string, mediaInfo.mediaType); }
+          catch (e: any) { console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e)); }
+        }
+        if (_transcript && _transcript.trim()) {
+          finalContent = '🎤 ' + _transcript.trim();
+          await storage.updateChatMessage(savedMsg.id, {
+            content: finalContent,
+            messageType: 'audio',
+            metadata: { ...((savedMsg as any).metadata || {}), transcription: _transcript.trim(), transcribedAt: new Date().toISOString() },
+          } as any);
+          console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${_transcript.slice(0, 60)}`);
+        } else {
+          // Falha ao transcrever: a IA NAO deve adivinhar. Pede texto ou transfere para humano.
+          storage.updateChatMessage(savedMsg.id, {
+            content: '🎤 (áudio recebido — não foi possível transcrever)',
+            messageType: 'audio',
+            metadata: { ...((savedMsg as any).metadata || {}), transcriptionFailed: true, transcribedAt: new Date().toISOString() },
+          } as any).catch(() => {});
+          finalContent = '[SISTEMA] O cliente enviou um ÁUDIO de voz que NÃO foi possível transcrever automaticamente. NÃO tente adivinhar nem inventar o que foi dito. Responda de forma breve e educada pedindo para o cliente digitar a solicitação em texto. Se o cliente não puder digitar, insistir no áudio, ou pedir para falar com uma pessoa, chame a ferramenta transferir_humano para encaminhar a um atendente.';
+          console.log(`🎤 [TRANSCRIBE] Falha ao transcrever audio (${savedMsg.id}) — IA vai pedir texto/transferir`);
+        }
       }
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
@@ -4942,9 +4957,10 @@ export function registerChatRoutes(app: Express): void {
     // 🔄 Rota para reconfigurar webhook (SEMPRE para PRODUÇÃO - fix critical issue)
   app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
-      // SEMPRE usar o domínio de produção estável - NUNCA o domínio de dev
-      const prodDomain = 'integrahonest.replit.app';
-      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
+      // SEMPRE usar o dominio de producao estavel (Railway) — mesma fonte do APP_URL dos links de pagamento.
+      // Antes estava fixo em 'integrahonest.replit.app' (dominio Replit ANTIGO/morto), o que quebrava o webhook.
+      const baseUrl = (process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
+      const webhookUrl = `${baseUrl}/api/chat/webhook/messages`;
       
       console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook SEMPRE para PRODUÇÃO: ${webhookUrl}`);
       
