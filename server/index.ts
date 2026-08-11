@@ -1962,7 +1962,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS visit_justifications (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), visit_date date NOT NULL, customer_id text NOT NULL, seller_id text NOT NULL, reason text NOT NULL, notes text, created_at timestamptz DEFAULT now(), created_by varchar)"));
     await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS uq_visit_justif ON visit_justifications (visit_date, customer_id, seller_id)"));
   }
-  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'remarcou', 'rota_inviavel', 'imprevisto', 'cancelou', 'outro', 'removido'];
+  const JUSTIF_MOTIVOS = ['fechado', 'ausente', 'sem_tempo', 'ja_comprou', 'endereco', 'sem_interesse', 'remarcou', 'rota_inviavel', 'imprevisto', 'cancelou', 'debito', 'outro', 'removido'];
 
   // lista pendencias (nao atendidas) de uma data p/ um vendedor, que ainda NAO foram justificadas
   app.get('/api/vendedor/justificativas/pendentes', async (req: Request, res: Response) => {
@@ -2017,6 +2017,22 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });
     }
+  });
+
+  // Justificativas JA REGISTRADAS de um vendedor num dia (mapa customerId -> {reason, notes}).
+  // Usado pelo Fechar Rota para nao repedir o que ja foi justificado (ex.: debito no check-in).
+  app.get('/api/vendedor/justificativas', async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      const seller = String(req.query.sellerId || '');
+      const date = String(req.query.date || '').replace(/[^0-9-]/g, '');
+      const dateOk = date.length === 10 && date[4] === '-' && date[7] === '-';
+      if (!seller || !dateOk) return res.status(400).json({ error: 'sellerId e date obrigatorios' });
+      const r: any = await db.execute(sql`SELECT customer_id AS cid, reason, notes FROM visit_justifications WHERE visit_date = ${date}::date AND seller_id = ${seller} AND reason <> 'removido'`);
+      const map: Record<string, { reason: string; notes: string }> = {};
+      for (const x of ((r.rows || r) as any[])) map[String(x.cid)] = { reason: String(x.reason || ''), notes: String(x.notes || '') };
+      res.json({ ok: true, date, sellerId: seller, justificativas: map });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
   app.post('/api/vendedor/justificativas', async (req: Request, res: Response) => {
