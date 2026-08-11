@@ -380,6 +380,12 @@ export default function GestaoCarteiras() {
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
+              {d?.excluidos?.valor > 0 ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Fora da carteira: {BRL0(d.excluidos.valor)} em {NUM(d.excluidos.titulos)} títulos que não são venda a cliente
+                  (aporte de sócio, empréstimo, adiantamento, devolução e transferência entre as empresas do grupo).
+                </p>
+              ) : null}
             </CardContent>
           </Card>
 
