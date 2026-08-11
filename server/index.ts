@@ -224,6 +224,20 @@ run();
     }
   })();
 
+  // ── CENTRAL DE MARKETING — buraco 7: mkt_agent_runs (custo/token por execucao) ──
+  // Aditivo e idempotente. Nao bloqueia o boot: se falhar, o proprio registrarRun
+  // tenta de novo na primeira execucao de agente.
+  (async () => {
+    try {
+      const { ensureMktRunsSchema } = await import('./mkt-agent-runs');
+      const r = await ensureMktRunsSchema();
+      if (!r.ok) console.warn('[MKT-RUNS-MIGRATION] passos com falha:', r.steps.filter((s: any) => !s.ok));
+      else console.log('[MKT-RUNS-MIGRATION] ok');
+    } catch (e: any) {
+      console.warn('[MKT-RUNS-MIGRATION] falha (ignorada):', e?.message);
+    }
+  })();
+
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
   app.get('/api/admin/automations/mode', async (_req, res) => {
     try {
@@ -3677,11 +3691,68 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try { await ensureAgentesTables(); res.json({ ok: true }); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+
+  // ===== CENTRAL DE MARKETING — buraco 7: custo e token por execucao de IA =====
+  // Cria/garante mkt_agent_runs + coluna de teto. Idempotente.
+  app.post("/api/mkt/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktRunsSchema } = await import('./mkt-agent-runs'); res.json(await ensureMktRunsSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Quanto a IA custou: por agente, por dia, e o gasto de HOJE em BRT.
+  app.get("/api/mkt/custos", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktRunsSchema, resumoCustos } = await import('./mkt-agent-runs');
+      await ensureMktRunsSchema();
+      res.json(await resumoCustos(Number(req.query?.dias) || 30));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Ultimas execucoes (auditoria: o que a IA fez, com que modelo, quanto custou)
+  app.get("/api/mkt/runs", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktRunsSchema } = await import('./mkt-agent-runs');
+      await ensureMktRunsSchema();
+      const lim = Math.min(500, Math.max(1, Number(req.query?.limit) || 100));
+      const ag = String(req.query?.agente || '').trim();
+      const r: any = ag
+        ? await db.execute(sql`SELECT * FROM mkt_agent_runs WHERE agente = ${ag} ORDER BY criado_em DESC LIMIT ${lim}`)
+        : await db.execute(sql`SELECT * FROM mkt_agent_runs ORDER BY criado_em DESC LIMIT ${lim}`);
+      res.json({ runs: r.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
+  app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const g = async (k: string, d: string) => { const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key=${k} LIMIT 1`); const v = r.rows?.[0]?.value; return v == null ? d : String(v).replace(/^"|"$/g, ''); };
+      res.json({ precosModelo: await g('mkt_precos_modelo', ''), usdBrl: await g('mkt_usd_brl', '5.40') });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const b = req.body || {};
+      const setK = async (k: string, v: string) => { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${v}, ${'mkt-precos'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); };
+      if (b.precosModelo != null) {
+        const s = String(b.precosModelo).trim();
+        if (s) { try { JSON.parse(s); } catch { return res.status(400).json({ error: 'precosModelo nao e JSON valido' }); } }
+        await setK('mkt_precos_modelo', s);
+      }
+      if (b.usdBrl != null) {
+        const n = Number(b.usdBrl);
+        if (!(n > 0)) return res.status(400).json({ error: 'usdBrl invalido' });
+        await setK('mkt_usd_brl', String(n));
+      }
+      const { limparCacheDePreco } = await import('./mkt-agent-runs');
+      limparCacheDePreco();
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.get("/api/admin/agentes", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
       await ensureAgentesTables();
       const base = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum'`);
-      const ags = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo, updated_at FROM agentes_config ORDER BY id`);
+      // teto_custo_dia entra aqui (Central de Marketing, buraco 7). O ALTER e idempotente
+      // e barato: garante que o painel nao quebre em instancia que ainda nao subiu o boot novo.
+      try { await db.execute(sql.raw("ALTER TABLE agentes_config ADD COLUMN IF NOT EXISTS teto_custo_dia numeric(10,2)")); } catch {}
+      const ags = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo, teto_custo_dia, updated_at FROM agentes_config ORDER BY id`);
       res.json({ baseComum: (base.rows[0] && (base.rows[0] as any).valor) || null, agentes: ags.rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
@@ -3702,7 +3773,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       await ensureAgentesTables();
       const b = req.body || {};
       if (!b.id || !b.nome || !b.modelo || !b.system_prompt) return res.status(400).json({ error: "id, nome, modelo, system_prompt obrigatorios" });
-      await db.execute(sql`INSERT INTO agentes_config (id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo) VALUES (${b.id}, ${b.nome}, ${b.modelo}, ${b.system_prompt}, ${String(b.base_conhecimento || '')}, ${JSON.stringify(b.ferramentas || [])}::jsonb, ${JSON.stringify(b.limites || {})}::jsonb, ${b.ativo !== false}) ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome, modelo = EXCLUDED.modelo, system_prompt = EXCLUDED.system_prompt, base_conhecimento = EXCLUDED.base_conhecimento, ferramentas = EXCLUDED.ferramentas, limites = EXCLUDED.limites, ativo = EXCLUDED.ativo, updated_at = now()`);
+      try { await db.execute(sql.raw("ALTER TABLE agentes_config ADD COLUMN IF NOT EXISTS teto_custo_dia numeric(10,2)")); } catch {}
+      // teto_custo_dia: null/ausente = SEM teto (comportamento de hoje). 0 tambem = sem teto.
+      // Guarda contra NaN: valor invalido vira null em vez de quebrar o INSERT.
+      let _teto: number | null = null;
+      if (!(b.teto_custo_dia === '' || b.teto_custo_dia == null)) {
+        const n = Number(b.teto_custo_dia);
+        _teto = Number.isFinite(n) && n > 0 ? n : null;
+      }
+      await db.execute(sql`INSERT INTO agentes_config (id, nome, modelo, system_prompt, base_conhecimento, ferramentas, limites, ativo, teto_custo_dia) VALUES (${b.id}, ${b.nome}, ${b.modelo}, ${b.system_prompt}, ${String(b.base_conhecimento || '')}, ${JSON.stringify(b.ferramentas || [])}::jsonb, ${JSON.stringify(b.limites || {})}::jsonb, ${b.ativo !== false}, ${_teto}) ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome, modelo = EXCLUDED.modelo, system_prompt = EXCLUDED.system_prompt, base_conhecimento = EXCLUDED.base_conhecimento, ferramentas = EXCLUDED.ferramentas, limites = EXCLUDED.limites, ativo = EXCLUDED.ativo, teto_custo_dia = EXCLUDED.teto_custo_dia, updated_at = now()`);
       res.json({ ok: true, id: b.id });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });

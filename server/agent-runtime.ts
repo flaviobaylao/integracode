@@ -832,9 +832,50 @@ async function callAnthropic(model: string, system: string, messages: any[], too
   return { ok: resp.ok, status: resp.status, j };
 }
 
+// CENTRAL DE MARKETING (buraco 7): o `usage` da resposta da Anthropic vinha sendo
+// jogado fora. Le os tokens de UMA resposta; quem soma o loop de tool-use e o
+// generateAgentReply. Tokens de cache tambem sao entrada, entao entram no total.
+function lerUso(j: any): { in: number; out: number } {
+  const u = j?.usage || {};
+  const entrada = Number(u.input_tokens || 0)
+    + Number(u.cache_creation_input_tokens || 0)
+    + Number(u.cache_read_input_tokens || 0);
+  return { in: entrada, out: Number(u.output_tokens || 0) };
+}
+
 // Gera resposta. Se ctx (com conversa/cliente) for passado, habilita ferramentas (tool-use loop).
-export async function generateAgentReply(agentId: string, messages: Array<{ role: string; content: any }>, ctx?: any): Promise<{ ok: boolean; reply?: string; error?: string; model?: string; usedTools?: string[] }> {
+export async function generateAgentReply(agentId: string, messages: Array<{ role: string; content: any }>, ctx?: any): Promise<{ ok: boolean; reply?: string; error?: string; model?: string; usedTools?: string[]; uso?: { tokensIn: number; tokensOut: number; custoBrl: number; rodadas: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, error: 'ANTHROPIC_API_KEY ausente' };
+  // Buraco 7 — medicao e teto de custo. Import dinamico para nao criar ciclo e para
+  // que uma falha aqui jamais derrube a resposta ao cliente.
+  const _t0 = Date.now();
+  let _mkt: any = null;
+  try { _mkt = await import('./mkt-agent-runs'); } catch (e: any) { console.error('[MKT-RUNS] import:', e?.message || e); }
+  let _tokIn = 0, _tokOut = 0, _rodadas = 0;
+  const _registrar = async (modelo: string, ferramentas: string[], sucesso: boolean, erro?: string) => {
+    if (!_mkt) return;
+    try {
+      await _mkt.registrarRun({
+        agente: agentId,
+        gatilho: String(ctx?.gatilho || (ctx?.conversationId ? 'chat' : 'teste')),
+        canal: String(ctx?.channel || (ctx ? 'whatsapp' : 'interno')),
+        entradaRef: ctx?.conversationId || null,
+        modelo, tokensIn: _tokIn, tokensOut: _tokOut, rodadas: Math.max(1, _rodadas),
+        ferramentas, duracaoMs: Date.now() - _t0, sucesso, erro: erro || null,
+      });
+    } catch {}
+  };
+  // Teto diario por agente (agentes_config.teto_custo_dia). Nulo/0 = sem teto,
+  // ou seja, o comportamento de hoje nao muda ate alguem definir um teto.
+  if (_mkt) {
+    try {
+      const t = await _mkt.tetoEstourado(agentId);
+      if (t.estourou) {
+        console.error('[MKT-RUNS] teto diario estourado', { agente: agentId, teto: t.teto, gasto: t.gasto });
+        return { ok: false, error: `teto de custo diario do agente ${agentId} estourado (R$ ${t.gasto.toFixed(2)} de R$ ${t.teto.toFixed(2)})` };
+      }
+    } catch {}
+  }
   try {
     const a: any = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento FROM agentes_config WHERE id = ${agentId} LIMIT 1`);
     const agent = a.rows?.[0];
@@ -899,9 +940,20 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
           : [...TOOL_DEFS, CARD_LINK_TOOL])
       : undefined;
     const usedTools: string[] = [];
+    // Buraco 7: o custo de UMA resposta e a soma de TODAS as rodadas de tool-use.
+    // Medir so a ultima subestimaria em ate 4x nas conversas que usam ferramenta.
+    const _uso = async (modelo: string) => {
+      const c = _mkt ? await _mkt.calcularCusto(modelo, _tokIn, _tokOut).catch(() => ({ brl: 0 })) : { brl: 0 };
+      return { tokensIn: _tokIn, tokensOut: _tokOut, custoBrl: Number((c as any).brl || 0), rodadas: Math.max(1, _rodadas) };
+    };
     for (let i = 0; i < 4; i++) {
       const { ok, status, j } = await callAnthropic(model, systemPrompt, conv, tools);
-      if (!ok) return { ok: false, error: 'anthropic ' + status + ': ' + JSON.stringify(j).slice(0, 200), model };
+      const u = lerUso(j); _tokIn += u.in; _tokOut += u.out; _rodadas++;
+      if (!ok) {
+        const erro = 'anthropic ' + status + ': ' + JSON.stringify(j).slice(0, 200);
+        await _registrar(model, usedTools, false, erro);
+        return { ok: false, error: erro, model, uso: await _uso(model) };
+      }
       const content = j.content || [];
       const toolUses = content.filter((c: any) => c.type === 'tool_use');
       if (j.stop_reason === 'tool_use' && toolUses.length && ctx) {
@@ -912,10 +964,15 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
         continue;
       }
       const reply = content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n').trim();
-      return { ok: true, reply, model, usedTools };
+      await _registrar(model, usedTools, true);
+      return { ok: true, reply, model, usedTools, uso: await _uso(model) };
     }
-    return { ok: true, reply: '', model, usedTools };
-  } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+    await _registrar(model, usedTools, true, 'limite de 4 rodadas de ferramenta atingido');
+    return { ok: true, reply: '', model, usedTools, uso: await _uso(model) };
+  } catch (e: any) {
+    await _registrar('', [], false, e?.message || String(e));
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 export async function maybeRunAgent(opts: { phone: string; conversationId: string; incomingText: string; sendText: (to: string, text: string) => Promise<any>; sendImage?: (url: string) => Promise<any>; channel?: string; username?: string; }): Promise<void> {
