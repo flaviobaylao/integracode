@@ -35,7 +35,7 @@ const REPESCAGEM_FECHA_SELLERS = new Set<string>(["omie-vendor-4323360115", "omi
 const MOTIVOS: [string, string][] = [
   ["sem_tempo", "Não deu tempo / rota grande"],
   ["remarcou", "Cliente avisou / remarcou"],
-  ["fechado", "Cliente fechado ou de férias"],
+  ["fechado", "Cliente fechado temporariamente"],
   ["rota_inviavel", "Rota/distância inviável hoje"],
   ["imprevisto", "Imprevisto (veículo/pessoal)"],
   ["cancelou", "Cliente cancelou fornecimento"],
@@ -257,7 +257,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     onError: (e: any) => toast({ title: "Não foi possível fechar", description: e?.message || "Verifique as pendências.", variant: "destructive" }),
   });
 
-  const canSave = !!draftReason && ((draftReason !== "outro" && draftReason !== "debito") || !!draftNote.trim());
+  const canSave = !!draftReason && ((draftReason !== "outro" && draftReason !== "debito" && draftReason !== "remarcou") || !!draftNote.trim());
 
   return (
     <div className={embedded ? "" : "p-4 md:p-6 max-w-3xl mx-auto"}>
@@ -335,7 +335,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                           <button key={id} onClick={() => setDraftReason(id)} className={`px-3 py-2 rounded-full text-xs font-semibold border ${draftReason === id ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-200 text-gray-600"}`}>{label}</button>
                         ))}
                       </div>
-                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Observação {(draftReason === "outro" || draftReason === "debito") ? "(obrigatória)" : "(opcional)"}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
+                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Observação {(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
                       <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Ex.: passei 17h e estava fechado" value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
                       <div className="flex gap-2 mt-2">
                         <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpenId(null)}>Cancelar</button>
