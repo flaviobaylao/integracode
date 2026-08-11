@@ -3955,6 +3955,41 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== CENTRAL DE MARKETING — buraco 4: cartao de marca (brand voice) =====
+  app.post("/api/mkt/marca/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktMarcaSchema } = await import('./mkt-marca'); res.json(await ensureMktMarcaSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/marca", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { ensureMktMarcaSchema, marcaAtiva, historico } = await import('./mkt-marca');
+      await ensureMktMarcaSchema();
+      res.json({ marca: await marcaAtiva(), historico: await historico() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Mudou o tom? Nasce uma VERSAO NOVA — nunca se edita no lugar, porque as pecas
+  // antigas guardam a versao que usaram.
+  app.post("/api/mkt/marca", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { novaVersao } = await import('./mkt-marca');
+      res.json(await novaVersao(req.body || {}, req.user?.email || req.user?.id || 'admin'));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // O REVISOR — cola o texto, ve o veredito. E o mesmo que os buracos 5 e 6 vao usar.
+  app.post("/api/mkt/marca/revisar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { revisarTexto } = await import('./mkt-marca');
+      const b = req.body || {};
+      if (!String(b.texto || '').trim()) return res.status(400).json({ error: 'informe o texto' });
+      res.json(await revisarTexto(String(b.texto), { canal: b.canal, exigirCodigo: !!b.exigirCodigo, categoria: b.categoria }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // O cartao em texto, do jeito que entra no prompt dos agentes que escrevem
+  app.get("/api/mkt/marca/prompt", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { blocoDePrompt } = await import('./mkt-marca'); res.type('text/plain').send(await blocoDePrompt()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
   app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
