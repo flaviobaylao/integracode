@@ -3999,6 +3999,80 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== Central de Marketing - buraco 5: biblioteca de criativos com tags =====
+  app.post("/api/mkt/assets/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktAssetsSchema } = await import('./mkt-assets'); res.json(await ensureMktAssetsSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/assets/panorama", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panorama } = await import('./mkt-assets'); res.json(await panorama()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // O motivo do buraco 5 existir: qual gancho vende mais.
+  // Vem ANTES de /api/mkt/assets/:id/... para "desempenho" nao virar um id.
+  app.get("/api/mkt/assets/desempenho", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { desempenhoPorTag } = await import('./mkt-assets');
+      res.json(await desempenhoPorTag((req.query?.eixo || 'gancho') as any, Number(req.query?.dias || 90)));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // O que falta fotografar
+  app.get("/api/mkt/assets/lacunas", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { lacunas } = await import('./mkt-assets'); res.json(await lacunas()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/assets", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { buscar } = await import('./mkt-assets');
+      const q = req.query || {};
+      res.json(await buscar({
+        gancho: q.gancho, cenario: q.cenario, publico: q.publico, produto: q.produto,
+        formato: q.formato, origem: q.origem, fonte: q.fonte, texto: q.texto,
+        soElegiveis: String(q.soElegiveis) === 'true',
+        limite: q.limite ? Number(q.limite) : undefined,
+      }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Miniatura: a listagem manda o endereco, o navegador busca a imagem aqui.
+  app.get("/api/mkt/assets/:id/arquivo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { arquivoDoAsset } = await import('./mkt-assets');
+      const a = await arquivoDoAsset(Number(req.params.id));
+      if (!a) return res.status(404).json({ error: 'sem arquivo embutido' });
+      res.setHeader('Content-Type', a.mime);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(a.buf);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/assets", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { cadastrarAsset } = await import('./mkt-assets');
+      const r = await cadastrarAsset({ ...(req.body || {}), criadoPor: req.user?.username || req.user?.email || 'admin' });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.patch("/api/mkt/assets/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { atualizarAsset } = await import('./mkt-assets');
+      const r = await atualizarAsset(Number(req.params.id), req.body || {});
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Popula a biblioteca com o que a Honest ja tem, em vez de pedir recadastro
+  app.post("/api/mkt/assets/importar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { importarDoCatalogo } = await import('./mkt-assets');
+      res.json(await importarDoCatalogo(req.user?.username || req.user?.email || 'admin'));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/assets/:id/uso", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { registrarUso } = await import('./mkt-assets');
+      const r = await registrarUso({ ...(req.body || {}), assetId: Number(req.params.id), criadoPor: req.user?.username || req.user?.email || 'admin' });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
   app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
