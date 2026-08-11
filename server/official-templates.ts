@@ -171,14 +171,14 @@ export async function linhaDebitos(documento: string): Promise<{
   if (!doc) return vazio;
   const r: any = await db.execute(sql`
     SELECT title_number,
-           to_char(due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','DD/MM') AS venc,
+           to_char(due_date,'DD/MM') AS venc,
            (amount - COALESCE(amount_paid, 0))::float AS saldo
     FROM receivables
     WHERE deleted_at IS NULL
       AND (amount - COALESCE(amount_paid, 0)) > 0
       AND COALESCE(import_origin, '') <> 'omie_historico'
       AND status IN ('a_vencer', 'vencida')
-      AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
       AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${doc}
     ORDER BY due_date`);
   const titulos = r.rows || [];

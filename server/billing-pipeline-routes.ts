@@ -1,7 +1,9 @@
 import { Express } from 'express';
 import { randomUUID } from 'crypto';
 import { storage } from './storage';
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — ver shared/tempo.ts (INSTANTE grava UTC; DATA DE
+// CALENDARIO grava meia-noite UTC e nunca converte fuso).
+import { agora, paredeBR, dataCalendario, hojeBR } from '@shared/tempo';
 import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto, cancelarBoleto } from './bb-boleto-service';
@@ -108,7 +110,7 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
           saleValue: nf.totalInvoice || null,
           invoiceNumber: `NF-${nf.invoiceNumber}`,
           omieInstanceId: nf.omieInstanceId || null,
-          stageHistory: [{ stage: 'faturado', changedAt: (nf.emissionDate ? new Date(nf.emissionDate) : nowBrazil()).toISOString(), changedBy: 'reconcile-nf' }],
+          stageHistory: [{ stage: 'faturado', changedAt: paredeBR(nf.emissionDate ? new Date(nf.emissionDate) : agora()), changedBy: 'reconcile-nf' }],
           notes: nf.status === 'rejected' ? 'NF REJEITADA na SEFAZ - preencher UF do cliente e re-transmitir (nao re-faturar, evita NF duplicada)' : null,
           createdBy: nf.status === 'rejected' ? 'reconcile-nf-rej' : 'reconcile-nf',
           ...(nf.emissionDate ? { createdAt: new Date(nf.emissionDate) } : {}),
@@ -167,7 +169,7 @@ export async function reconcileOrphanOrders(days: number = 7): Promise<{ scanned
           notes: sc.notes || null,
           omieInstanceId: (customer as any)?.omieInstanceId || null,
           omieInstanceName: omieInstanceName || null,
-          stageHistory: [{ stage: 'pedido', changedAt: (sc.completedDate ? new Date(sc.completedDate) : (sc.createdAt ? new Date(sc.createdAt) : nowBrazil())).toISOString(), changedBy: 'reconcile-card' }],
+          stageHistory: [{ stage: 'pedido', changedAt: paredeBR(sc.completedDate ? new Date(sc.completedDate) : (sc.createdAt ? new Date(sc.createdAt) : agora())), changedBy: 'reconcile-card' }],
           createdBy: 'reconcile-card',
           // Data da venda = completedDate (conclusao); fallback createdAt do card (aproxima a venda, nao a hora da reconciliacao).
           ...(sc.completedDate ? { createdAt: new Date(sc.completedDate) } : (sc.createdAt ? { createdAt: new Date(sc.createdAt) } : {})),
@@ -488,7 +490,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       omieInstanceName: omieInstanceName || null,
       stageHistory: [{
         stage: stage,
-        changedAt: (salesCard.completedDate ? new Date(salesCard.completedDate) : nowBrazil()).toISOString(),
+        changedAt: paredeBR(salesCard.completedDate ? new Date(salesCard.completedDate) : agora()),
         changedBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`
       }],
       createdBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`,
@@ -1380,7 +1382,7 @@ export function registerBillingPipelineRoutes(app: Express) {
             invoiceNumber: `NF-${nf.invoiceNumber}`,
             omieInstanceId: nf.omieInstanceId || null,
             notes: nf.status === 'rejected' ? 'NF REJEITADA na SEFAZ - preencher UF do cliente e re-transmitir (nao re-faturar, evita NF duplicada)' : null,
-            stageHistory: [{ stage: 'faturado', changedAt: (nf.emissionDate ? new Date(nf.emissionDate) : nowBrazil()).toISOString(), changedBy: 'create-card-manual' }],
+            stageHistory: [{ stage: 'faturado', changedAt: paredeBR(nf.emissionDate ? new Date(nf.emissionDate) : agora()), changedBy: 'create-card-manual' }],
             createdBy: nf.status === 'rejected' ? 'reconcile-nf-rej' : 'reconcile-nf',
             ...(nf.emissionDate ? { createdAt: new Date(nf.emissionDate) } : {}),
           } as any);
@@ -1515,7 +1517,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         omieInstanceName: omieInstanceName || null,
         stageHistory: [{
           stage: 'pedido',
-          changedAt: nowBrazil().toISOString(),
+          changedAt: paredeBR(agora()),
           changedBy: user.email
         }],
         createdBy: user.email,
@@ -1561,7 +1563,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         omieInstanceName: original.omieInstanceName || null,
         stageHistory: [{
           stage: 'pedido',
-          changedAt: nowBrazil().toISOString(),
+          changedAt: paredeBR(agora()),
           changedBy: user?.email || 'system',
         }],
         createdBy: user?.email || null,
@@ -1590,7 +1592,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       const history = (item.stageHistory as any[]) || [];
       history.push({
         stage,
-        changedAt: nowBrazil().toISOString(),
+        changedAt: paredeBR(agora()),
         changedBy: user.email
       });
 
@@ -1794,7 +1796,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           if (newStage !== current.stage) {
             updates.stage = newStage as any;
             const hist = Array.isArray((current as any).stageHistory) ? (current as any).stageHistory : [];
-            updates.stageHistory = [...hist, { stage: newStage, changedAt: new Date().toISOString(), changedBy: (req.currentUser?.email || 'pipeline-edit') }] as any;
+            updates.stageHistory = [...hist, { stage: newStage, changedAt: paredeBR(agora()), changedBy: (req.currentUser?.email || 'pipeline-edit') }] as any;
           }
         }
       }
@@ -1906,7 +1908,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
       if (!(BILLING_STAGES as readonly string[]).includes(prev) || prev === 'lixeira') prev = 'pedido';
       const user = req.currentUser || req.user;
-      const newHist = [...hist, { stage: prev, changedAt: nowBrazil().toISOString(), changedBy: `${user?.email || 'sistema'} (restaurado da lixeira)` }];
+      const newHist = [...hist, { stage: prev, changedAt: paredeBR(agora()), changedBy: `${user?.email || 'sistema'} (restaurado da lixeira)` }];
       await db.execute(sql`
         UPDATE billing_pipeline
         SET stage = ${prev}::billing_pipeline_stage, updated_at = now(), stage_history = ${JSON.stringify(newHist)}::jsonb
@@ -1942,7 +1944,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           const history = (item.stageHistory as any[]) || [];
           history.push({
             stage,
-            changedAt: nowBrazil().toISOString(),
+            changedAt: paredeBR(agora()),
             changedBy: user.email
           });
 
@@ -2402,7 +2404,9 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     paymentMethod: item.paymentMethod || 'a_vista',
     salesCardId: item.salesCardId || null,
     notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
-    emissionDate: nowBrazil(),
+    // INSTANTE -> UTC real. Era nowBrazil(), que gravava hora de parede de Brasilia
+    // e fazia o dhEmi da NF-e sair 3h antes do real. Ver shared/tempo.ts.
+    emissionDate: agora(),
     environment: invEnv,
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
@@ -2691,7 +2695,12 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
 
-  const now = nowBrazil();
+  // issue_date / due_date / paid_at sao DATA DE CALENDARIO: gravam meia-noite UTC do dia
+  // corrente NO BRASIL. Antes vinha de nowBrazil(), que carregava junto a hora de parede
+  // (ex.: 2026-08-11T14:00Z) — o dia saia certo no ::date, mas o vencimento ficava com
+  // hora e escapava dos filtros por faixa (dueDateStart/dueDateEnd usam meia-noite UTC).
+  // Ver shared/tempo.ts.
+  const now = dataCalendario(hojeBR());
 
   // PEDIDO PAGO NA LOJA (hotsite): o dinheiro ja foi recebido (cartao/GooglePay/PIX na Cielo).
   // Nesse caso NAO emitimos boleto/PIX de cobranca e, ao faturar, o titulo ja nasce QUITADO
@@ -2766,7 +2775,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     for (let i = 0; i < nParc; i++) {
       const cents = i < nParc - 1 ? baseCents : (totalCents - baseCents * (nParc - 1));
       const due = new Date(now);
-      due.setDate(due.getDate() + (isNaN(scheduleDays[i]) ? 0 : scheduleDays[i]));
+      due.setUTCDate(due.getUTCDate() + (isNaN(scheduleDays[i]) ? 0 : scheduleDays[i]));
       const rcv = await storage.createReceivable({
         ...baseReceivable,
         titleNumber: `${titleNumber}/${i + 1}`,
@@ -2785,7 +2794,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   // Sem cronograma: 1 titulo com vencimento pelo PRAZO (comportamento padrao).
   // Pedido pago na loja (paidOnline) -> vencimento hoje (a vista, ja quitado).
   const dueDate = new Date(now);
-  dueDate.setDate(dueDate.getDate() + (paidOnline ? 0 : prazoDays));
+  dueDate.setUTCDate(dueDate.getUTCDate() + (paidOnline ? 0 : prazoDays));
   const receivable = await storage.createReceivable({
     ...baseReceivable,
     titleNumber: titleNumber,

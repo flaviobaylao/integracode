@@ -4197,7 +4197,7 @@ export class DatabaseStorage implements IStorage {
             AND r.deleted_at IS NULL
             AND (r.amount - coalesce(r.amount_paid, 0)) > 0
             AND coalesce(r.import_origin, '') <> 'omie_historico'
-            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -5440,7 +5440,7 @@ export class DatabaseStorage implements IStorage {
     const result: any = await db.execute(sql`
       SELECT MAX(customer_name) AS client_name,
              SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
-             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)) AS max_dias,
+             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_dias,
              COUNT(*)::int AS n
       FROM receivables
       WHERE deleted_at IS NULL
@@ -5452,7 +5452,7 @@ export class DatabaseStorage implements IStorage {
         AND COALESCE(import_origin, '') <> 'omie_historico'
         AND (
           status IN ('a_vencer', 'vencida')
-          AND (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+          AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         )
         AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
@@ -8871,11 +8871,11 @@ export class DatabaseStorage implements IStorage {
       // um título que já venceu e depois teve o vencimento REpostergado (renegociação /
       // boleto unificado) ou uma baixa desfeita fica 'vencida' no banco COM vencimento
       // hoje/futuro — e NÃO é mais vencido. Vence HOJE (qualquer hora) NÃO é vencida.
-      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate})::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status === 'a_vencer') {
       // A VENCER = título em aberto cujo vencimento é HOJE ou FUTURO (dia-calendário BRT),
       // mesmo que o status gravado seja 'vencida' (vencimento repostergado / baixa desfeita).
-      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate})::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status) {
       conditions.push(eq(receivables.status, filters.status as any));
     }
@@ -8895,10 +8895,15 @@ export class DatabaseStorage implements IStorage {
     // com vencimento HOJE ou FUTURO (vencimento repostergado por renegociação/boleto
     // unificado, ou baixa desfeita) => a_vencer. Assim o status exibido é SEMPRE função da
     // data, nunca de um flag defasado. Vence HOJE NÃO é vencida. (recebida/cancelada não muda.)
+    // HOJE e um INSTANTE -> lido no fuso do Brasil.
+    // VENCIMENTO e DATA DE CALENDARIO (meia-noite UTC) -> lido em 'UTC', SEM conversao.
+    // Ler o vencimento em America/Sao_Paulo subtraia 3h de uma data que nao tem hora e
+    // jogava 2026-08-11T00:00Z para 10/08: TODO titulo que vencia HOJE aparecia VENCIDO.
+    // Ver shared/tempo.ts.
     const _hojeBR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     for (const r of rows) {
       if (((r.status as any) === 'a_vencer' || (r.status as any) === 'vencida') && r.dueDate) {
-        const _dueBR = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        const _dueBR = new Date(r.dueDate).toLocaleDateString('en-CA', { timeZone: 'UTC' });
         (r as any).status = _dueBR < _hojeBR ? 'vencida' : 'a_vencer';
       }
     }

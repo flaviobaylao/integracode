@@ -7,6 +7,9 @@ import {
 
 import { storage } from './storage';
 import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — ver shared/tempo.ts (regra de ouro: INSTANTE grava UTC,
+// DATA DE CALENDARIO grava meia-noite UTC e nunca converte fuso).
+import { agora, isoOffsetBR, componentesBR } from '@shared/tempo';
 import { isValidFiscalDoc } from './fiscal-doc';
 import { normalizeUf, ufFromCep } from './cep-uf';
 import type { FiscalInvoice, FiscalInvoiceItem, FiscalScenario } from '@shared/schema';
@@ -209,8 +212,13 @@ export function computeNFeAccessKey(params: {
   modelo?: string;
 }): string {
   const { cUF, emissionDate, cnpj, serie, nNF, tpEmis = '1', cNF, modelo = '55' } = params;
-  const year = emissionDate.getFullYear().toString().slice(-2);
-  const month = String(emissionDate.getMonth() + 1).padStart(2, '0');
+  // AAMM da chave = ano/mes da emissao NO FUSO DO BRASIL, o mesmo que vai no dhEmi.
+  // Antes usava getFullYear()/getMonth() (fuso do processo, que na Railway e UTC):
+  // numa emissao entre 21:00 e 23:59 BRT do ultimo dia do mes a chave saia com o mes
+  // SEGUINTE e discordava do dhEmi -> rejeicao na SEFAZ.
+  const _emiBR = componentesBR(emissionDate);
+  const year = String(_emiBR.ano).slice(-2);
+  const month = String(_emiBR.mes).padStart(2, '0');
   const AAMM = year + month;
   const key43 = [
     cUF.padStart(2, '0'),
@@ -668,15 +676,15 @@ function buildDocumento(
   const issuerCnpj = onlyDigits(invoice.issuerCnpj || '');
   const issuerCep = onlyDigits(invoice.issuerCep || '74335102').padStart(8, '0');
 
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-  const brtDate = new Date(emissionDate.getTime() - 3 * 60 * 60 * 1000);
-  const yyyy = brtDate.getUTCFullYear();
-  const MM = pad2(brtDate.getUTCMonth() + 1);
-  const dd = pad2(brtDate.getUTCDate());
-  const hh = pad2(brtDate.getUTCHours());
-  const mm = pad2(brtDate.getUTCMinutes());
-  const ss = pad2(brtDate.getUTCSeconds());
-  const dhEmi = `${yyyy}-${MM}-${dd}T${hh}:${mm}:${ss}-03:00`;
+  // dhEmi/dhSaiEnt: hora oficial do Brasil com offset -03:00, derivada do INSTANTE
+  // gravado em emission_date (UTC). NAO subtrair 3h na mao: emission_date passou a ser
+  // gravado com `agora()` (UTC real) e isoOffsetBR() ja faz a conversao para BRT.
+  // O codigo antigo fazia `emissionDate.getTime() - 3h` sobre um valor que JA era hora
+  // de parede de Brasilia (gravado por nowBrazil()), aplicando um SEGUNDO deslocamento:
+  // o dhEmi saia 3h antes da emissao real e, entre 00:00 e 02:59 BRT, caia no DIA
+  // ANTERIOR — divergindo do AAMM da chave de acesso (candidato a Rejeicao 228 e a
+  // DANFE com data errada). Ver shared/tempo.ts.
+  const dhEmi = isoOffsetBR(emissionDate);
   const dhSaiEnt = dhEmi;
 
   const rawIe = (invoice.customerIe || '').trim();
@@ -1921,7 +1929,9 @@ export class SefazService {
         const emiAtual = invoice?.emissionDate ? new Date(invoice.emissionDate as any) : null;
         const idadeMs = emiAtual && !isNaN(emiAtual.getTime()) ? Date.now() - emiAtual.getTime() : Infinity;
         if (idadeMs > STALE_EMISSION_MS) {
-          const novaEmissao = nowBrazil();
+          // INSTANTE -> UTC real. Era nowBrazil(), que gravava hora de parede BR e
+          // deslocava dhEmi e AAMM da chave em 3h. Ver shared/tempo.ts.
+          const novaEmissao = agora();
           await storage.updateFiscalInvoice(invoiceId, { emissionDate: novaEmissao } as any);
           const recarregada = await storage.getFiscalInvoice(invoiceId);
           if (recarregada) invoice = recarregada;
@@ -2333,7 +2343,8 @@ export class SefazService {
           xmlEnvio,
           xmlRetorno,
           xmlAutorizacao: xmlCompleto,
-          authorizationDate: nowBrazil(),
+          // INSTANTE -> UTC real (era nowBrazil(), 3h deslocado). Ver shared/tempo.ts.
+          authorizationDate: agora(),
         });
 
         await storage.createFiscalInvoiceEvent({
@@ -2631,7 +2642,8 @@ export class SefazService {
 
         await storage.updateFiscalInvoice(invoiceId, {
           status: 'cancelled',
-          cancellationDate: nowBrazil(),
+          // INSTANTE -> UTC real (era nowBrazil(), 3h deslocado). Ver shared/tempo.ts.
+          cancellationDate: agora(),
         });
 
         await storage.createFiscalInvoiceEvent({
@@ -3292,9 +3304,9 @@ const RECEP_EVENTO_AN_URL: Record<'producao' | 'homologacao', string> = {
 };
 
 function brasiliaIsoNow(): string {
-  const b = new Date(Date.now() - 3 * 3600 * 1000); // Brasil = UTC-3 (sem horário de verão)
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${b.getUTCFullYear()}-${p(b.getUTCMonth() + 1)}-${p(b.getUTCDate())}T${p(b.getUTCHours())}:${p(b.getUTCMinutes())}:${p(b.getUTCSeconds())}-03:00`;
+  // Hora oficial do Brasil com offset, para dhEvento da Manifestacao do Destinatario.
+  // Unificado em shared/tempo.ts — antes cada arquivo tinha a sua propria conta de -3h.
+  return isoOffsetBR(agora());
 }
 
 export interface ManifestacaoResult {

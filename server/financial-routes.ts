@@ -479,7 +479,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           await db.execute(sql.raw(
             "UPDATE receivables SET amount_paid = " + novo.toFixed(2) +
             ", status = (CASE WHEN " + novo.toFixed(2) + " >= amount::numeric - 0.005 THEN 'recebida' " +
-            "WHEN (due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' " +
+            "WHEN (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencida' " +
             "ELSE 'a_vencer' END)::receivable_status, updated_at = now(), updated_by = 'estorno-duplicidade' WHERE id = '" + recId.replace(/'/g, "''") + "'"));
           const dep: any = await db.execute(sql`SELECT COALESCE(amount_paid,0)::numeric AS pago, status FROM receivables WHERE id = ${recId}`);
           const d = (dep.rows || [])[0] || {};
@@ -514,7 +514,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const filtroStatus = soVencida ? " AND r.status = 'vencida'" : "";
       const many = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return ((r.rows || r) as any[]); };
       const hoje = "(now() AT TIME ZONE 'America/Sao_Paulo')::date";
-      const venc = "(r.due_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date";
+      const venc = "(r.due_date)::date";
       const base = "FROM receivables r WHERE r.deleted_at IS NULL AND r.status <> 'cancelada'" + filtroStatus;
       const cols = "r.id, r.title_number AS titulo, r.customer_name AS cliente, r.customer_document AS documento, r.amount::float AS valor, COALESCE(r.amount_paid,0)::float AS baixado, r.status, " + venc + " AS vencimento, r.payment_method AS forma, r.updated_by AS alterado_por";
 

@@ -16,6 +16,8 @@
 //     com o calculo legado (nao reprocessamos o passado). Use `dentroDaVigencia()`.
 // -----------------------------------------------------------------------------
 
+import { VIRADA_FUSO_UTC } from '@shared/tempo';
+
 /** CFOPs de VENDA. Ampla de proposito: ate mar/2026 a operacao saia em 5101/6101
  *  (venda de producao propria) e a partir de abr/2026 passou a sair em 5102 (revenda).
  *  Uma lista curta zeraria jan-mar. */
@@ -54,9 +56,20 @@ export function nfVendaWhere(a = 'fi'): string {
   ].join(' AND ');
 }
 
-/** Data oficial da nota. SEM AT TIME ZONE — ver nota 3 acima. */
+/** Data oficial da nota, sempre na hora de parede de Brasilia.
+ *
+ *  ATE 11/08/2026 emission_date/authorization_date eram gravados por nowBrazil(), ou seja,
+ *  ja continham a hora de Brasilia — dai a nota 3 acima mandar NAO usar AT TIME ZONE.
+ *  A PARTIR DA VIRADA (ver shared/tempo.ts) esses campos passaram a guardar o INSTANTE em
+ *  UTC, que e a regra unica do sistema. Para que o historico continue batendo NUMERO A
+ *  NUMERO com o que ja foi apresentado ao Flavio, a conversao UTC->BRT e aplicada SO as
+ *  linhas novas: antes da virada le como esta; a partir dela, converte.
+ *  Sem esse CASE, toda nota emitida entre 00:00 e 02:59 BRT do passado migraria de mes. */
 export function nfData(a = 'fi'): string {
-  return `COALESCE(${a}.emission_date, ${a}.authorization_date, ${a}.created_at)`;
+  const bruto = `COALESCE(${a}.emission_date, ${a}.authorization_date, ${a}.created_at)`;
+  return `(CASE WHEN ${bruto} >= TIMESTAMP '${VIRADA_FUSO_UTC}'`
+    + ` THEN (${bruto} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`
+    + ` ELSE ${bruto} END)`;
 }
 
 /** Chave de deduplicacao. COALESCE em tudo: sem isso, linhas com issuer_cnpj/series/
