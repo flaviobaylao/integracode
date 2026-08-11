@@ -59,6 +59,7 @@ const SECOES_AGENTES_IA = [
   { id: 'polish', icone: 'fas fa-pen-fancy', titulo: 'Correção Profissional' },
   { id: 'notificacoes', icone: 'fas fa-bell', titulo: 'Notificações' },
   { id: 'auto-resposta', icone: 'fas fa-power-off', titulo: 'Auto-resposta dos Agentes' },
+  { id: 'custos-ia', icone: 'fas fa-coins', titulo: 'Custos de IA' },
 ];
 
 interface LayoutProps {
