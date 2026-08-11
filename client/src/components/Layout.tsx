@@ -413,6 +413,17 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       ],
     },
     {
+      groupLabel: 'Marketing',
+      color: 'bg-fuchsia-600',
+      bgColor: 'bg-fuchsia-50',
+      textColor: 'text-fuchsia-700',
+      hexColor: '#c026d3',
+      icon: 'fas fa-bullseye',
+      items: [
+        { id: 'marketing', label: 'Central de Marketing', icon: 'fas fa-bullseye', available: canAccessReports, badge: null },
+      ],
+    },
+    {
       groupLabel: 'Indústria',
       color: 'bg-emerald-600',
       bgColor: 'bg-emerald-50',
@@ -614,6 +625,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'agentes-ia') {
       navigate('/admin/agentes');
+      return;
+    }
+
+    // Central de Marketing (buraco 2: fio de atribuicao)
+    if (itemId === 'marketing') {
+      navigate('/marketing');
       return;
     }
 
