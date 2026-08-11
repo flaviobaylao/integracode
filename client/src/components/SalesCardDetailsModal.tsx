@@ -47,9 +47,11 @@ interface SalesCardDetailsModalProps {
   card: SalesCardWithRelations | null;
   onStartSale?: (card: SalesCardWithRelations) => void;
   onStartNoSale?: (card: SalesCardWithRelations) => void;
+  // Debito em aberto do cliente (repassado ao check-in para a caixa de explicacao).
+  customerDebt?: number;
 }
 
-export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale }: SalesCardDetailsModalProps) {
+export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, customerDebt = 0 }: SalesCardDetailsModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
@@ -1018,6 +1020,9 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           cardId={card.id}
           customerLatitude={card.customerLatitude}
           customerLongitude={card.customerLongitude}
+          customerId={card.customer?.id ?? (card as any).customerId ?? null}
+          sellerId={(card as any).sellerId ?? card.seller?.id ?? null}
+          debt={customerDebt}
           onSuccess={async () => {
             await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
             await queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
