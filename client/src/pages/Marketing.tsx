@@ -62,6 +62,56 @@ export default function Marketing() {
     queryKey: ["/api/mkt/ctwa", dias],
     queryFn: () => apiGet("/api/mkt/ctwa?dias=" + dias),
   });
+  // Buraco 8: régua de recompra sobre a base própria
+  const rec = useQuery<any>({ queryKey: ["/api/mkt/recompra"], queryFn: () => apiGet("/api/mkt/recompra") });
+  const [reguaAlvo, setReguaAlvo] = useState("");
+  const [limiteLote, setLimiteLote] = useState("");
+  const [lote, setLote] = useState<any>(null);
+  const [montando, setMontando] = useState(false);
+  const [liberando, setLiberando] = useState(false);
+
+  const montarLote = async () => {
+    setMontando(true); setLote(null);
+    try {
+      const r = await apiPost("/api/mkt/recompra/lote", {
+        regua: reguaAlvo || undefined,
+        limite: limiteLote === "" ? undefined : Number(limiteLote),
+      });
+      setLote(r);
+      toast({
+        title: "Lote montado — nada foi enviado",
+        description: `${r.total} mensagens · custo ${brl(r.custoEstimado)} · receita esperada ${brl(r.receitaEsperada)}`,
+      });
+      rec.refetch();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally { setMontando(false); }
+  };
+
+  const liberarLote = async () => {
+    if (!lote?.loteId) return;
+    setLiberando(true);
+    try {
+      const r = await apiPost("/api/mkt/recompra/lote/" + lote.loteId + "/liberar", {});
+      const enf = r.resultado?.enfileirado || 0;
+      toast({
+        title: enf ? `${enf} mensagens entraram na fila do 1841` : "Nada entrou na fila",
+        description: enf
+          ? "A fila do 1841 ainda aplica as travas dela (modo, teto diário, horário)."
+          : "Confira se o caso de uso 'recompra' e o template estão ligados no painel do 1841.",
+      });
+      setLote(null); rec.refetch();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally { setLiberando(false); }
+  };
+
+  const descartarLote = async () => {
+    if (!lote?.loteId) return;
+    try { await apiPost("/api/mkt/recompra/lote/" + lote.loteId + "/descartar", {}); setLote(null); rec.refetch();
+      toast({ title: "Lote descartado" }); } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  };
+
   const [mudandoModo, setMudandoModo] = useState(false);
   const trocarModoCapi = async (modo: string) => {
     setMudandoModo(true);
@@ -397,6 +447,155 @@ export default function Marketing() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── régua de recompra sobre a base própria (buraco 8) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <i className="fas fa-rotate-right text-muted-foreground" /> Régua de recompra (base própria)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Fala com quem <b>já é cliente</b>, na hora certa: três dias antes do estoque dele acabar, e não um mês
+            depois que ele comprou do concorrente. Mensagem <i>utility</i> no 1841 sai por ~R$ 0,04. Não depende da
+            Meta, de App Review nem de verba de mídia.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{num(rec.data?.base?.clientes)}</div>
+              <div className="text-xs text-muted-foreground mt-1">clientes com histórico</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{num(rec.data?.base?.comCicloConfiavel)}</div>
+              <div className="text-xs text-muted-foreground mt-1">com ciclo de compra confiável</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{rec.data?.base?.cicloMedianoDias ?? "—"}</div>
+              <div className="text-xs text-muted-foreground mt-1">dias — ciclo mediano da base</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold" style={{ color: ROXO }}>{num(rec.data?.totalCandidatos)}</div>
+              <div className="text-xs text-muted-foreground mt-1">clientes para falar HOJE</div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-xs text-muted-foreground">
+                  <th className="text-left py-2">Régua</th>
+                  <th className="text-left">Quando dispara</th>
+                  <th className="text-right">Candidatos hoje</th>
+                  <th className="text-left">Template</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(rec.data?.candidatosHoje || []).map((r: any) => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="py-2 font-medium">{r.nome}</td>
+                    <td className="text-xs text-muted-foreground">{r.descricao}</td>
+                    <td className="text-right font-semibold">{num(r.candidatos)}</td>
+                    <td><code className="text-[11px]">{r.template}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <Label className="text-sm">Régua</Label>
+                <select className="w-full border rounded-md h-9 px-2 bg-background text-sm min-w-[200px]"
+                        value={reguaAlvo} onChange={(e) => setReguaAlvo(e.target.value)}>
+                  <option value="">todas</option>
+                  {(rec.data?.candidatosHoje || []).map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.nome} ({r.candidatos})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="text-sm">Máximo no lote</Label>
+                <Input className="w-32" type="number" value={limiteLote}
+                       onChange={(e) => setLimiteLote(e.target.value)}
+                       placeholder={rec.data?.parametros?.mkt_recompra_lote_max || "80"} />
+              </div>
+              <Button onClick={montarLote} disabled={montando}>
+                {montando ? "Montando..." : "Montar lote (não envia)"}
+              </Button>
+            </div>
+
+            {lote && (
+              <div className="rounded-lg border-2 p-3" style={{ borderColor: ROXO }}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div><div className="text-xl font-bold">{num(lote.total)}</div><div className="text-xs text-muted-foreground">mensagens</div></div>
+                  <div><div className="text-xl font-bold">{brl(lote.custoEstimado)}</div><div className="text-xs text-muted-foreground">custo estimado</div></div>
+                  <div><div className="text-xl font-bold" style={{ color: "#0f9d6e" }}>{brl(lote.receitaEsperada)}</div><div className="text-xs text-muted-foreground">receita esperada</div></div>
+                  <div><div className="text-xl font-bold">{num(lote.bloqueados)}</div><div className="text-xs text-muted-foreground">bloqueados (opt-out, dívida, frequência)</div></div>
+                </div>
+                {(lote.porRegua || []).length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {(lote.porRegua || []).map((p: any) => (
+                      <span key={p.regua} className="text-xs bg-muted rounded px-2 py-1">
+                        {p.nome}: <b>{num(p.total)}</b> · {brl(p.receita)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  Analisou {num(lote.baseAnalisada)} clientes. <b>Nada foi enviado ainda.</b> Ao liberar, as mensagens
+                  entram na fila do 1841 — que ainda aplica modo, teto diário, ritmo por minuto e horário comercial.
+                </p>
+                <div className="flex gap-2">
+                  <Button onClick={liberarLote} disabled={liberando || !lote.total}>
+                    {liberando ? "Liberando..." : `Liberar ${lote.total} mensagens`}
+                  </Button>
+                  <Button variant="outline" onClick={descartarLote}>Descartar</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {(rec.data?.resultado || []).length > 0 && (
+            <div>
+              <h4 className="text-sm font-semibold mb-2">O que a régua rendeu (pedidos em até 14 dias do toque)</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="text-left py-2">Régua</th>
+                      <th className="text-right">Enviados</th>
+                      <th className="text-right">Pedidos</th>
+                      <th className="text-right">Custo</th>
+                      <th className="text-right">Receita</th>
+                      <th className="text-right">Retorno</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(rec.data.resultado || []).map((r: any) => {
+                      const custo = Number(r.custo || 0), receita = Number(r.receita || 0);
+                      return (
+                        <tr key={r.regua} className="border-b last:border-0">
+                          <td className="py-2">{rec.data.candidatosHoje?.find((x: any) => x.id === r.regua)?.nome || r.regua}</td>
+                          <td className="text-right">{num(r.enviados)}</td>
+                          <td className="text-right">{num(r.pedidos)}</td>
+                          <td className="text-right">{brl(custo)}</td>
+                          <td className="text-right font-semibold">{brl(receita)}</td>
+                          <td className="text-right">
+                            {custo > 0 ? <Badge variant="default">{(receita / custo).toFixed(0)}×</Badge> : <span className="text-muted-foreground">—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── canal pago: CTWA + CAPI (buraco 3) ── */}
       <Card>
