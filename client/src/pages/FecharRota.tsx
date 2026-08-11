@@ -14,7 +14,7 @@
 // Excecao (debito): cliente com debito vencido em aberto SEMPRE entra na lista para
 // justificar o debito (motivo "Debito"). A observacao pode ser ditada por audio (transcricao).
 // ============================================================================
-import { useMemo, useState, useRef } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
@@ -137,6 +137,10 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const { data: svcData } = useQuery<any>({ queryKey: ["/api/service-logs/count/customer", sellerId, today, routeCustomerIds.length], enabled: enabled && routeCustomerIds.length > 0, queryFn: () => apiRequest("GET", `/api/service-logs/count/customer?sellerId=${encodeURIComponent(sellerId)}&date=${today}&customerIds=${routeCustomerIds.join(",")}`) });
   const { data: infoData } = useQuery<any>({ queryKey: ["/api/daily-routes", route?.id, "customer-info"], enabled: !!route?.id, queryFn: () => apiRequest("GET", `/api/daily-routes/${route.id}/customer-info`) });
 
+  // Justificativas JA registradas no dia (ex.: débito explicado no check-in): semeiam o
+  // estado `justified` para NÃO reaparecerem como pendência no fechamento.
+  const { data: justifData } = useQuery<any>({ queryKey: ["/api/vendedor/justificativas", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/vendedor/justificativas?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
+
   const cfg = statusData?.config || { travaObrigatoria: true, tipos: ["presencial", "virtual", "lead"] };
   const allowed = new Set<Tipo>((cfg.tipos || ["presencial", "virtual", "lead"]) as Tipo[]);
   // Débito no fechamento suspenso globalmente por padrão (até segunda ordem). O fechamento segue só com as não-visitas.
@@ -195,6 +199,20 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
 
   // justificativas locais
   const [justified, setJustified] = useState<Record<string, { reason: string; note: string }>>({});
+
+  // Semeia as justificativas já salvas no servidor (ex.: débito explicado no check-in),
+  // sem sobrescrever o que o vendedor acabou de justificar nesta tela.
+  useEffect(() => {
+    const m = justifData?.justificativas;
+    if (!m || typeof m !== "object") return;
+    setJustified((prev) => {
+      const next = { ...prev };
+      for (const cid of Object.keys(m)) {
+        if (!next[cid]) next[cid] = { reason: m[cid]?.reason || "outro", note: m[cid]?.notes || "" };
+      }
+      return next;
+    });
+  }, [justifData]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draftReason, setDraftReason] = useState<string>("");
   const [draftNote, setDraftNote] = useState<string>("");
