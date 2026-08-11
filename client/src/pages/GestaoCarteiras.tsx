@@ -202,6 +202,9 @@ export default function GestaoCarteiras() {
   // Relação completa: filtra por classe e por busca, e ordena pelo critério escolhido.
   const listaFiltrada = useMemo(() => {
     const alvo = busca.trim().toLocaleLowerCase("pt-BR");
+    // So-digitos da busca. Sem esse guarda, procurar por texto casaria com TODO
+    // mundo: "moreira".replace(/\D/g,"") vira "" e includes("") e sempre true.
+    const alvoDoc = alvo.replace(/\D/g, "");
     const arr = clientes.filter((c) => {
       if (classeSel !== "todas" && (classeDe.get(c.chave) || c.classe) !== classeSel) return false;
       if (!alvo) return true;
@@ -209,7 +212,7 @@ export default function GestaoCarteiras() {
         c.nome.toLocaleLowerCase("pt-BR").includes(alvo) ||
         (c.cidade || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
         (c.vendedor || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
-        (c.doc || "").includes(alvo.replace(/\D/g, ""))
+        (alvoDoc.length >= 3 && (c.doc || "").includes(alvoDoc))
       );
     });
     arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
