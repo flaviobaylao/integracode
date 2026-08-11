@@ -4370,7 +4370,11 @@ export function registerChatRoutes(app: Express): void {
       if (!isManager && conversationOwner && conversationOwner !== 'chatgpt') {
         const agents = await storage.getChatAgents();
         const userAgent = agents.find(a => a.userId === userId);
-        if (!userAgent || userAgent.id !== conversationOwner) {
+        // 🎯 O DONO DA CARTEIRA (vendedor do cliente) sempre pode escrever, mesmo que a conversa
+        // esteja atribuida a outro atendente (regra Flavio).
+        let ehDonoCarteira = false;
+        try { const { donoDaCarteira } = await import('./ia-fila'); ehDonoCarteira = !!userId && (await donoDaCarteira((conversation as any).customerPhone || '')) === userId; } catch {}
+        if (!ehDonoCarteira && (!userAgent || userAgent.id !== conversationOwner)) {
           const ownerAgent = agents.find(a => a.id === conversationOwner);
           // 🔓 Só trava se o DONO estiver ONLINE. Se o dono saiu/está offline, a conversa
           // é liberada para outro atendente assumir (evita conversas "presas" com donos ausentes).
