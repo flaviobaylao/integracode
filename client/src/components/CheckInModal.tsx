@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Camera, MapPin, Loader2 } from "lucide-react";
+import { Camera, MapPin, Loader2, Mic } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { getBrazilDateISO } from "@/lib/brazilTimezone";
 
 interface CheckInModalProps {
   isOpen: boolean;
@@ -12,15 +13,23 @@ interface CheckInModalProps {
   customerLatitude?: string | null;
   customerLongitude?: string | null;
   onSuccess: () => void;
+  // Débito em aberto do cliente: quando > 0, o check-in mostra a caixa de explicação
+  // do débito (com microfone). Justificado aqui, não vira pendência no fechamento.
+  customerId?: string | null;
+  sellerId?: string | null;
+  debt?: number;
 }
 
-export default function CheckInModal({ 
-  isOpen, 
-  onClose, 
-  cardId, 
-  customerLatitude, 
-  customerLongitude, 
-  onSuccess 
+export default function CheckInModal({
+  isOpen,
+  onClose,
+  cardId,
+  customerLatitude,
+  customerLongitude,
+  onSuccess,
+  customerId,
+  sellerId,
+  debt = 0,
 }: CheckInModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -35,6 +44,27 @@ export default function CheckInModal({
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Explicação do débito (quando o cliente tem débito em aberto). Transcrição por voz (pt-BR).
+  const hasDebt = Number(debt) > 0;
+  const [debtNote, setDebtNote] = useState('');
+  const [gravando, setGravando] = useState(false);
+  const recRef = useRef<any>(null);
+  const debtBaseRef = useRef<string>('');
+  const toggleGravacao = () => {
+    const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SR) { toast({ title: 'Gravação de áudio não suportada neste navegador', description: 'Abra pelo Chrome do celular para usar a transcrição.', variant: 'destructive' }); return; }
+    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} return; }
+    try {
+      const r = new SR();
+      r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
+      debtBaseRef.current = debtNote ? debtNote.trim() + ' ' : '';
+      r.onresult = (e: any) => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setDebtNote(debtBaseRef.current + t); };
+      r.onerror = () => { setGravando(false); recRef.current = null; };
+      r.onend = () => { setGravando(false); recRef.current = null; };
+      recRef.current = r; r.start(); setGravando(true);
+    } catch { setGravando(false); recRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
+  };
 
   // Calcular distância usando Haversine
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -249,10 +279,22 @@ export default function CheckInModal({
         throw new Error('Erro ao realizar check-in');
       }
 
+      // Débito explicado no check-in: registra como justificativa (motivo "debito").
+      // Assim o cliente NÃO entra na pendência do Fechar Rota do dia.
+      if (hasDebt && debtNote.trim() && customerId && sellerId) {
+        try {
+          await fetch('/api/vendedor/justificativas', {
+            method: 'POST', credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ date: getBrazilDateISO(), customerId, sellerId, reason: 'debito', notes: debtNote.trim() }),
+          });
+        } catch { /* não bloqueia o check-in */ }
+      }
+
       toast({
         title: "Check-in realizado!",
-        description: distance 
-          ? `Distância: ${distance.toFixed(0)}m do cliente` 
+        description: distance
+          ? `Distância: ${distance.toFixed(0)}m do cliente`
           : "Check-in registrado com sucesso"
       });
 
@@ -279,6 +321,8 @@ export default function CheckInModal({
     setDistance(null);
     setPhotoData(null);
     setNotes('');
+    setDebtNote('');
+    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} }
     setCameraError(false);
     onClose();
   };
@@ -398,6 +442,36 @@ export default function CheckInModal({
                   data-testid="textarea-checkin-notes"
                 />
               </div>
+
+              {hasDebt && (
+                <div className="border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-900 rounded-lg p-3">
+                  <div className="text-sm font-bold text-red-700 dark:text-red-300 mb-1">
+                    💰 Débito em aberto: R$ {Number(debt).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </div>
+                  <label className="block text-xs text-red-800 dark:text-red-300 mb-1">
+                    Explique o débito. Ao justificar aqui, o cliente não entra na pendência do fechamento da rota.
+                  </label>
+                  <div className="relative">
+                    <textarea
+                      placeholder="Explique a situação do débito (pode ditar pelo microfone)…"
+                      value={debtNote}
+                      onChange={(e) => setDebtNote(e.target.value)}
+                      className="w-full h-20 p-2 pr-11 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
+                      data-testid="textarea-checkin-debito"
+                    />
+                    <button
+                      type="button"
+                      onClick={toggleGravacao}
+                      className={`absolute right-2 top-2 rounded-full p-1.5 ${gravando ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-red-600 border border-red-300'}`}
+                      aria-label={gravando ? 'Parar gravação' : 'Ditar explicação'}
+                      data-testid="button-mic-debito"
+                    >
+                      <Mic className="h-4 w-4" />
+                    </button>
+                  </div>
+                  {gravando && <div className="text-[11px] text-red-600 dark:text-red-300 mt-1">Gravando… fale a explicação do débito.</div>}
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <Button variant="outline" onClick={retakePhoto} className="flex-1" data-testid="button-retake-photo">
