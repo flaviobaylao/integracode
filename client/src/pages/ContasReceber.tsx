@@ -1,5 +1,23 @@
 import { useState, useEffect } from "react";
-import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
+import { hojeBR } from '@shared/tempo';
+
+// VENCIDO = dia do vencimento ANTERIOR a hoje no Brasil. Vence HOJE (a qualquer hora)
+// NAO esta vencido — regra oficial do sistema, a mesma de Financial.tsx e do servidor.
+// Antes, as 3 copias deste calculo montavam `new Date('aaaa-mm-dd')` (meia-noite UTC) e
+// comparavam com `nowBrazil()` zerado (meia-noite LOCAL = 03:00Z): o titulo que vencia
+// HOJE entrava como vencido nos KPIs e nas abas. Comparando DIA com DIA nao ha fuso
+// envolvido. Ver shared/tempo.ts.
+const diaDoVencimento = (v?: string | null): string | null => {
+  if (!v) return null;
+  const [d, m, a] = String(v).split('/');
+  if (!a || !m || !d) return null;
+  return `${a}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+};
+const tituloVencido = (titulo: any): boolean => {
+  const dia = diaDoVencimento(titulo?.data_previsao);
+  return !!dia && dia < hojeBR() && (titulo?.valor_a_receber || 0) > 0;
+};
 import { useQuery } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,12 +80,8 @@ export default function ContasReceber() {
 
   // Calcular estatísticas no frontend
   const stats = contasData?.titulos.reduce((acc, titulo) => {
-    const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = nowBrazil();
-    hoje.setHours(0, 0, 0, 0);
-    
     const valorReceber = titulo.valor_a_receber || 0;
-    const isVencido = dataPrevisao && dataPrevisao < hoje && valorReceber > 0;
+    const isVencido = tituloVencido(titulo);
     
     if (isVencido) {
       acc.vencidos++;
@@ -82,19 +96,11 @@ export default function ContasReceber() {
   // Separar títulos por aba
   const titulos = contasData?.titulos || [];
   const vencidos = titulos.filter(titulo => {
-    const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = nowBrazil();
-    hoje.setHours(0, 0, 0, 0);
-    const valorReceber = titulo.valor_a_receber || 0;
-    return dataPrevisao && dataPrevisao < hoje && valorReceber > 0;
+    return tituloVencido(titulo);
   });
 
   const emAtraso = titulos.filter(titulo => {
-    const dataPrevisao = titulo.data_previsao ? new Date(titulo.data_previsao.split('/').reverse().join('-')) : null;
-    const hoje = nowBrazil();
-    hoje.setHours(0, 0, 0, 0);
-    const valorReceber = titulo.valor_a_receber || 0;
-    return dataPrevisao && dataPrevisao < hoje && valorReceber > 0;
+    return tituloVencido(titulo);
   });
 
   // Filtrar títulos no frontend por aba ativa

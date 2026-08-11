@@ -6,7 +6,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 
 const brl = (v: any) => { const n = Number(v); return isNaN(n) ? "-" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); };
-const dt = (v: any) => { if (!v) return "-"; const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("pt-BR"); };
+// Vencimento e DATA DE CALENDARIO (meia-noite UTC): le-se em 'UTC', sem conversao de
+// fuso. Sem o timeZone, o dia exibido era o do fuso do NAVEGADOR do usuario e
+// qualquer maquina a oeste de UTC mostrava o vencimento 1 dia antes. Ver shared/tempo.ts.
+const dt = (v: any) => { if (!v) return "-"; const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("pt-BR", { timeZone: "UTC" }); };
 
 export default function ConferenciaPagamentos() {
   const [q, setQ] = useState("");
