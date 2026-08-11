@@ -1300,7 +1300,19 @@ function ChatCenterInner() {
   const displaySellerName = registrySellerName || sellerName;
   // 🎯 O DONO DA CARTEIRA (vendedor do cliente) sempre pode escrever, mesmo com a conversa atribuida a outro.
   const ehDonoCarteira = !!(sellerInfoData as any)?.sellerId && String((sellerInfoData as any).sellerId) === String((user as any)?.id);
-  const conversationLocked = iaAtendendo || (!isLockManager && !ehDonoCarteira && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
+  // 🕒 Libera apos inatividade: a trava so vale se o dono da conversa falou nos ultimos 30 min.
+  const donoAtivoRecente = (() => {
+    if (!selectedChat?.assignedAgentId) return false;
+    let latest = 0;
+    for (const m of (messages as any[])) {
+      if (m?.senderType === 'agent' && m?.senderId && !String(m.senderId).startsWith('agent:') && !['system','bot','chatgpt'].includes(String(m.senderId))) {
+        const t = m.createdAt ? new Date(m.createdAt).getTime() : 0;
+        if (t > latest) latest = t;
+      }
+    }
+    return latest > 0 && (Date.now() - latest) < 30 * 60 * 1000;
+  })();
+  const conversationLocked = iaAtendendo || (!isLockManager && !ehDonoCarteira && donoAtivoRecente && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
   const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   // Atendente = e-mail do atendente que está conversando
