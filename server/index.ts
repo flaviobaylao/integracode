@@ -2107,7 +2107,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const vendorCfg = { travaObrigatoria: !!cfg.travaObrigatoria, bloqueioDiaSeguinte: !!cfg.bloqueioDiaSeguinte, tipos: cfg.tipos, exigirDebito: !!cfg.exigirDebito };
       let closure: any = null;
       if (seller) {
-        const r: any = await db.execute(sql`SELECT id, seller_id, close_date, closed_at, nao_visitados, justificados, pendentes FROM route_closures WHERE seller_id = ${seller} AND close_date = ${date}::date LIMIT 1`);
+        const r: any = await db.execute(sql`SELECT id, seller_id, close_date, closed_at, nao_visitados, justificados, pendentes FROM route_closures WHERE seller_id = ${seller} AND close_date = ${date}::date AND COALESCE(closed_by, '') <> 'auto' LIMIT 1`);
         const row = ((r.rows || r) as any[])[0];
         if (row) closure = { id: row.id, sellerId: row.seller_id, date, closedAt: row.closed_at, naoVisitados: row.nao_visitados, justificados: row.justificados, pendentes: row.pendentes };
       }
@@ -2126,7 +2126,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const nv = Math.max(0, parseInt(String(b.naoVisitados), 10) || 0);
       const cfg = await getFechamentoConfig();
       if (cfg.travaObrigatoria && pend > 0) return res.status(400).json({ error: 'Ha ' + pend + ' cliente(s) sem justificativa. Justifique para fechar.', pendentes: pend });
-      await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, ${seller}, ${nv}, ${just}, ${pend}) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), nao_visitados = EXCLUDED.nao_visitados, justificados = EXCLUDED.justificados, pendentes = EXCLUDED.pendentes`);
+      await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, ${seller}, ${nv}, ${just}, ${pend}) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), closed_by = EXCLUDED.closed_by, nao_visitados = EXCLUDED.nao_visitados, justificados = EXCLUDED.justificados, pendentes = EXCLUDED.pendentes`);
       res.json({ ok: true, date, closed: true });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
@@ -2141,7 +2141,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const cfg = await getFechamentoConfig();
       if (!seller || !cfg.bloqueioDiaSeguinte) return res.json({ ok: true, blocked: false });
       const desde = (typeof cfg.bloqueioDesde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cfg.bloqueioDesde)) ? cfg.bloqueioDesde : date;
-      const r: any = await db.execute(sql`SELECT to_char(dr.route_date::date, 'YYYY-MM-DD') AS d FROM daily_routes dr WHERE dr.seller_id = ${seller} AND dr.route_date::date < ${date}::date AND dr.route_date::date >= ${desde}::date AND NOT EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = dr.route_date::date) ORDER BY dr.route_date DESC LIMIT 1`);
+      const r: any = await db.execute(sql`SELECT to_char(dr.route_date::date, 'YYYY-MM-DD') AS d FROM daily_routes dr WHERE dr.seller_id = ${seller} AND dr.route_date::date < ${date}::date AND dr.route_date::date >= ${desde}::date AND NOT EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = dr.route_date::date AND COALESCE(rc.closed_by, '') <> 'auto') ORDER BY dr.route_date DESC LIMIT 1`);
       const row = ((r.rows || r) as any[])[0];
       res.json({ ok: true, blocked: !!row, pendingDate: row ? row.d : null });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
