@@ -257,7 +257,9 @@ export function registerCarteira(app: Express) {
           tipo: classificaTipo(doc, r.customer_type),
           vendedor: String(r.vendedor || "Sem vendedor"),
           cidade: r.city ? String(r.city) : "",
-          segmento: normSegmento(r.segmento_principal),
+          // Mesmo segmento exibido no filtro de Clientes Ativos: valor bruto de
+          // segmento_principal (sem normalizar a caixa) e "(Sem segmento)" quando vazio.
+          segmento: String(r.segmento_principal ?? "").trim() || "(Sem segmento)",
           cadastrado: !!r.cad_nome,
           ativo: r.is_active === true,
           total,
