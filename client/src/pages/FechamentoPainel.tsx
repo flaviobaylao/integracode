@@ -53,6 +53,11 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   const { data } = useQuery<any>({
     queryKey: ["/api/admin/fechamento/mensal", mes, sellerId],
     queryFn: () => apiRequest("GET", `/api/admin/fechamento/mensal?mes=${mes}${sellerId !== "__all__" ? `&sellerId=${encodeURIComponent(sellerId)}` : ""}`),
+    // Sempre buscar do banco ao (re)montar o painel — evita que suspensões de
+    // justificativa (Visita/Débito) reapareçam marcadas ao trocar de aba e voltar
+    // por causa de cache antigo do React Query (staleTime padrão de 5 min).
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const porMotivo = (data?.porMotivo || []) as any[];
