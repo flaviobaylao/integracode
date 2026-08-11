@@ -103,22 +103,35 @@ export function registerCarteira(app: Express) {
 
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
-      // ── O QUE NAO E CARTEIRA DE CLIENTE ─────────────────────────────────────
-      // (a) titulo no CNPJ de uma das 4 empresas do grupo = transferencia entre
-      //     empresas (o "cliente" e a propria casa);
-      // (b) categoria de nao-venda (aporte de socio, emprestimo, adiantamento,
-      //     devolucao, transferencia);
-      // (c) categoria que e SO codigo de plano de contas, sem texto ("1.01.02"):
-      //     medido em ago/2026, 98% desse balde era aporte de socio via PIX.
-      // Sem isso, os socios apareciam como 2o e 3o maiores "clientes" da carteira.
+      // ── O QUE NAO E FATURAMENTO DE VENDA ────────────────────────────────────
+      // Mesma regua do dashboard geral (server/faturamento-oficial.ts): so entra
+      // VENDA. Ficam de fora, cada um com seu balde (devolvidos em `excluidos`):
+      // (a) GRUPO — titulo no CNPJ de uma das 4 empresas do grupo: transferencia
+      //     entre empresas, o "cliente" e a propria casa;
+      // (b) CATEGORIA — aporte de socio, emprestimo, adiantamento, devolucao,
+      //     troca, amostra, bonificacao, brinde, doacao, remessa, transferencia;
+      //     e tambem a categoria que e SO codigo de plano de contas ("1.01.02"),
+      //     porque medido em ago/2026 98% desse balde era aporte de socio via PIX;
+      // (c) NF INVALIDA — titulo amarrado a uma NF-e que NAO e venda: cancelada,
+      //     rejeitada, rascunho, entrada, homologacao, devolucao, troca, amostra,
+      //     bonificacao, remessa ou transferencia (criterio = nfVendaWhere, o
+      //     mesmo do faturamento oficial);
+      // (d) LIXEIRA — pedido do pipeline mandado para a lixeira nunca entra em
+      //     relatorio (regra 5 de faturamento-oficial.ts).
       const CNPJS_GRUPO = ["28295493000153", "28295493000234", "28295493000315", "52921727000105"];
+      const C_GRUPO = `COALESCE(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') IN (${CNPJS_GRUPO.map((c) => `'${c}'`).join(",")})`;
+      const C_CATEGORIA = `(UPPER(COALESCE(category,'')) ~ '(APORTE|SOCIO|SÓCIO|EMPREST|ADIANT|DEVOLU|TROCA|AMOSTRA|BONIFICA|BRINDE|DOACAO|DOAÇÃO|REMESSA|TRANSFER)'
+                            OR TRIM(COALESCE(category,'')) ~ '^[0-9]+([.-][0-9]+)*$')`;
+      const C_NF_INVALIDA = `(receivables.fiscal_invoice_id IS NOT NULL AND NOT EXISTS (
+                                SELECT 1 FROM fiscal_invoices fx
+                                WHERE fx.id = receivables.fiscal_invoice_id AND ${nfVendaWhere("fx")}))`;
+      const C_LIXEIRA = `EXISTS (SELECT 1 FROM billing_pipeline bpx
+                                 WHERE bpx.id = receivables.billing_pipeline_id AND bpx.stage = 'lixeira')`;
       const FILTRO_VENDA = `
-            AND COALESCE(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'')
-                NOT IN (${CNPJS_GRUPO.map((c) => `'${c}'`).join(",")})
-            AND NOT (
-                  UPPER(COALESCE(category,'')) ~ '(APORTE|SOCIO|SÓCIO|EMPREST|ADIANT|DEVOLU|TRANSFER)'
-               OR TRIM(COALESCE(category,'')) ~ '^[0-9]+([.-][0-9]+)*$'
-            )`;
+            AND NOT (${C_GRUPO})
+            AND NOT ${C_CATEGORIA}
+            AND NOT ${C_NF_INVALIDA}
+            AND NOT ${C_LIXEIRA}`;
 
       // CTE comum: titulos validos do periodo, ja com a chave do cliente.
       const CTE_REC = `
@@ -148,16 +161,32 @@ export function registerCarteira(app: Express) {
                COUNT(DISTINCT chave)::int  AS clientes
         FROM rk GROUP BY mes ORDER BY mes`);
 
-      // 1b) O que ficou de fora (transparencia: vai como nota de rodape na tela).
-      const foraRows = await q(`
-        SELECT COUNT(*)::int AS titulos, COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0)),0)::float AS valor
+      // 1b) O que ficou de fora, balde a balde (vira nota de rodape + tooltip).
+      //     Os baldes se sobrepoem (um titulo pode cair em mais de um), por isso
+      //     o total sai de uma contagem propria e nao da soma das partes.
+      const JANELA_FORA = `
         FROM receivables
         WHERE issue_date >= '${iniDate}'
           AND issue_date <  '${fimDateExcl}'
           AND deleted_at IS NULL
-          AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
-          AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
-          AND NOT (TRUE ${FILTRO_VENDA})`);
+          AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0`;
+      const VAL = `COALESCE(NULLIF(amount::text,'')::numeric,0)`;
+      const NAO_CANCELADO = `COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')`;
+      const foraRows = await q(`
+        SELECT
+          COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND NOT (TRUE ${FILTRO_VENDA}))::int          AS titulos,
+          COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND NOT (TRUE ${FILTRO_VENDA})),0)::float AS valor,
+          COUNT(*) FILTER (WHERE NOT (${NAO_CANCELADO}))::int                                   AS n_cancelado,
+          COALESCE(SUM(${VAL}) FILTER (WHERE NOT (${NAO_CANCELADO})),0)::float                  AS v_cancelado,
+          COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND ${C_GRUPO})::int                          AS n_grupo,
+          COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND ${C_GRUPO}),0)::float         AS v_grupo,
+          COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND ${C_CATEGORIA})::int                      AS n_categoria,
+          COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND ${C_CATEGORIA}),0)::float     AS v_categoria,
+          COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND ${C_NF_INVALIDA})::int                    AS n_nf,
+          COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND ${C_NF_INVALIDA}),0)::float   AS v_nf,
+          COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND ${C_LIXEIRA})::int                        AS n_lixeira,
+          COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND ${C_LIXEIRA}),0)::float       AS v_lixeira
+        ${JANELA_FORA}`);
 
       // 2) Serie mensal comparativa — NF-e de VENDA.
       //    Ate 30/06/2026 vale o calculo legado; de 01/07/2026 em diante, a Regra
@@ -355,7 +384,14 @@ export function registerCarteira(app: Express) {
         excluidos: {
           titulos: Number(foraRows?.[0]?.titulos) || 0,
           valor: Number(foraRows?.[0]?.valor) || 0,
-          motivo: "títulos que não são venda a cliente: aporte de sócio, empréstimo, adiantamento, devolução, transferência entre as empresas do grupo e lançamentos contábeis sem descrição",
+          motivo: "títulos que não são venda a cliente",
+          detalhe: [
+            { motivo: "NF-e cancelada, devolução, troca, amostra, bonificação, remessa ou transferência", titulos: Number(foraRows?.[0]?.n_nf) || 0, valor: Number(foraRows?.[0]?.v_nf) || 0 },
+            { motivo: "categoria de não-venda (aporte de sócio, empréstimo, adiantamento, devolução, troca, amostra, bonificação) e lançamento contábil sem descrição", titulos: Number(foraRows?.[0]?.n_categoria) || 0, valor: Number(foraRows?.[0]?.v_categoria) || 0 },
+            { motivo: "transferência entre as empresas do grupo (título no CNPJ da própria casa)", titulos: Number(foraRows?.[0]?.n_grupo) || 0, valor: Number(foraRows?.[0]?.v_grupo) || 0 },
+            { motivo: "pedido mandado para a lixeira do pipeline", titulos: Number(foraRows?.[0]?.n_lixeira) || 0, valor: Number(foraRows?.[0]?.v_lixeira) || 0 },
+          ].filter((x) => x.titulos > 0),
+          cancelados: { titulos: Number(foraRows?.[0]?.n_cancelado) || 0, valor: Number(foraRows?.[0]?.v_cancelado) || 0 },
         },
         fonte: {
           base: "receivables (títulos emitidos, exclui cancelados)",
