@@ -285,13 +285,13 @@ export default function GestaoCarteiras() {
                 </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
+                <ResponsiveContainer width="100%" height={290}>
                   <PieChart>
                     <Pie
                       data={(tipoPizza === "abc"
                         ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
                         : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|^Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] })))}
-                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={95}
+                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
                       stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
                     >
                       {(tipoPizza === "abc"
@@ -327,11 +327,11 @@ export default function GestaoCarteiras() {
                 <CardDescription>Classificado pelo CPF/CNPJ do título; sem documento, pelo tipo do cadastro</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
+                <ResponsiveContainer width="100%" height={290}>
                   <PieChart>
                     <Pie
                       data={tipos.map((t: any) => ({ nome: t.tipo, valor: t.clientes, faturamento: t.valor }))}
-                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={95}
+                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
                       stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
                     >
                       {tipos.map((t: any, i: number) => <Cell key={i} fill={COR_TIPO[t.tipo] || CINZA} />)}
@@ -380,7 +380,7 @@ export default function GestaoCarteiras() {
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
-              {d?.excluidos?.valor > 0 ? (
+              {!filtrarVend && d?.excluidos?.valor > 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">
                   Fora da carteira: {BRL0(d.excluidos.valor)} em {NUM(d.excluidos.titulos)} títulos que não são venda a cliente
                   (aporte de sócio, empréstimo, adiantamento, devolução e transferência entre as empresas do grupo).
