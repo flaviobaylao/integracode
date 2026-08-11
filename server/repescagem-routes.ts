@@ -1117,7 +1117,18 @@ async function ensureCarteiraMigrations(): Promise<void> {
   await db.execute(sql.raw("ALTER TABLE carteira_migrations ADD COLUMN IF NOT EXISTS decided_at timestamptz"));
 }
 
+// Marca, na alocação, se o fechamento veio de um PEDIDO IMPLANTADO (billing_pipeline
+// operation_type='venda') pelo MESMO vendedor — e não apenas registro de atendimento.
+// A migração de carteira só conta essas ocorrências (ver closeAndExpireRepescagem).
+let __ensuredOrderCol = false;
+async function ensureRepescagemOrderCol(): Promise<void> {
+  if (__ensuredOrderCol) return;
+  await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS closed_by_order boolean NOT NULL DEFAULT false"));
+  __ensuredOrderCol = true;
+}
+
 async function closeAndExpireRepescagem(date: string): Promise<any> {
+  await ensureRepescagemOrderCol();
   const inRoute = await db.select().from(repescagemAssignments)
     .where(and(eq(repescagemAssignments.drawDate, date), eq(repescagemAssignments.status, 'in_route')));
 
@@ -1150,22 +1161,37 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of orders.rows as any[]) mark(r.customer_id, null);
 
+    // PEDIDO IMPLANTADO (venda) por vendedor no dia — usado SÓ para a migração de carteira.
+    // "implantado" = billing_pipeline com operation_type='venda'; o pedido é de QUEM implantou
+    // (seller_id). A migração exige 2 pedidos implantados pelo mesmo vendedor, não atendimento.
+    const orderBySeller = new Set<string>();
+    const implOrders = await db.execute(sql`
+      SELECT customer_id, seller_id FROM billing_pipeline
+      WHERE DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) = ${date}::date
+        AND COALESCE(operation_type,'venda') = 'venda'
+        AND customer_id = ANY(string_to_array(${arr}, ','))`);
+    for (const r of implOrders.rows as any[]) { if (r.seller_id) orderBySeller.add(`${r.customer_id}|${r.seller_id}`); }
+
     for (const a of inRoute) {
       if (!attendedBy.has(a.customerId)) continue;
       const by = attendedBy.get(a.customerId) || a.assignedUserId; // venda de quem atendeu
+      // Este fechamento veio de um PEDIDO IMPLANTADO pelo vendedor da alocação?
+      const hadOrder = orderBySeller.has(`${a.customerId}|${a.assignedUserId}`);
       await db.update(repescagemAssignments).set({
         status: 'completed', completedAt: new Date(), completedByUserId: by, updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, a.id));
+      if (hadOrder) await db.execute(sql`UPDATE repescagem_assignments SET closed_by_order = true WHERE id = ${a.id}`);
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
-      // Item 1 (revisado — opção 2): se o MESMO vendedor concluiu venda em repescagem 2x ao mesmo
-      // cliente, NÃO migramos mais a carteira automaticamente. Registramos uma SUGESTÃO pendente
-      // para o admin aprovar/rejeitar (nada é gravado em customers sem clique). Evita troca em massa.
+      // Item 1 (revisado): a migração de carteira só é SUGERIDA quando o MESMO vendedor teve
+      // PEDIDO IMPLANTADO (venda) para o cliente 2x em repescagem — não basta registro de
+      // atendimento. Conta apenas alocações fechadas por pedido (closed_by_order = true).
+      // Continua sendo SUGESTÃO pendente (admin aprova/rejeita); nada é gravado sem clique.
       const migSeller = a.assignedUserId;
-      if (migSeller) {
-        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller} AND status = 'completed'`);
+      if (migSeller && hadOrder) {
+        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller} AND status = 'completed' AND closed_by_order = true`);
         const nDone = Number(((cnt.rows || cnt)[0] as any)?.n || 0);
         if (nDone >= 2) {
           const cur: any = await db.execute(sql`SELECT seller_id FROM customers WHERE id = ${a.customerId} LIMIT 1`);
@@ -1174,7 +1200,7 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
             await ensureCarteiraMigrations();
             // Cria sugestão pendente só se ainda não existir uma pendente igual (dedup).
             await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status)
-              SELECT ${a.customerId}, ${curSeller}, ${migSeller}, ${'2a venda em repescagem pelo mesmo vendedor'}, 'pendente'
+              SELECT ${a.customerId}, ${curSeller}, ${migSeller}, ${'2 pedidos implantados em repescagem pelo mesmo vendedor'}, 'pendente'
               WHERE NOT EXISTS (SELECT 1 FROM carteira_migrations m WHERE m.customer_id = ${a.customerId} AND m.to_seller_id = ${migSeller} AND m.status = 'pendente')`);
           }
         }
