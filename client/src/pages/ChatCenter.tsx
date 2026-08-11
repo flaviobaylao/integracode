@@ -1170,8 +1170,6 @@ function ChatCenterInner() {
   // 🤖 IA conduzindo: ninguem escreve por cima dela (o servidor tambem bloqueia com 403
   // IA_ATENDENDO; aqui e so para o atendente ver antes de digitar).
   const iaAtendendo = !!(selectedChat as any)?.iaAtendendo;
-  const conversationLocked = iaAtendendo || (!isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
-  const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   const setChannelMutation = useMutation({
     mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
@@ -1300,6 +1298,10 @@ function ChatCenterInner() {
     return null;
   })();
   const displaySellerName = registrySellerName || sellerName;
+  // 🎯 O DONO DA CARTEIRA (vendedor do cliente) sempre pode escrever, mesmo com a conversa atribuida a outro.
+  const ehDonoCarteira = !!(sellerInfoData as any)?.sellerId && String((sellerInfoData as any).sellerId) === String((user as any)?.id);
+  const conversationLocked = iaAtendendo || (!isLockManager && !ehDonoCarteira && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
+  const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   // Atendente = e-mail do atendente que está conversando
   const resolveAgentLabel = (idOrUserId: any): string | null => {
