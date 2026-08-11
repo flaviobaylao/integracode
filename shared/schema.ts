@@ -533,7 +533,16 @@ export const salesCards = pgTable("sales_cards", {
   
   // Origem do pedido
   source: varchar("source").default('integra'), // Origem: 'integra', 'hotsite', 'telemarketing', etc
-  
+
+  // ── CENTRAL DE MARKETING — fio de atribuição (buraco 2) ──
+  // `source` só distingue o CANAL grosso; estes três dizem QUAL campanha trouxe o pedido.
+  // ⚠️ Como entram no schema drizzle, o ALTER TABLE correspondente PRECISA rodar no boot
+  // (server/mkt-atribuicao.ts → ensureMktAtribuicaoSchema, chamado no index.ts). Sem isso,
+  // entre o deploy e o ALTER todo SELECT de sales_cards quebraria. Mesma lição do is_priority.
+  campaignId: varchar("campaign_id"),               // código da campanha (ex.: IG0825)
+  utm: jsonb("utm").$type<Record<string, string>>(), // utm_* + gclid/fbclid/landing/referrer
+  attributionKind: varchar("attribution_kind"),      // link | ctwa | keyword | cupom
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
