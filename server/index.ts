@@ -148,6 +148,45 @@ app.use((req, res, next) => {
     next();
   });
 
+  // ── CENTRAL DE MARKETING — buraco 2: A PORTA DO FIO DE ATRIBUIÇÃO ──
+  // `GET /r/:slug` registra o clique e redireciona para o destino já com UTM + cid.
+  // É o link curto que vai na bio, no story, na legenda e no anúncio.
+  //
+  // Fica AQUI de propósito: antes do express.static do /shop e muito antes do
+  // catch-all do SPA, para nunca ser interceptado por nenhum dos dois.
+  //
+  // Três decisões que evitam prejuízo:
+  //  1. O clique é gravado SEM await — o cliente nunca espera o banco para ser
+  //     redirecionado. Clique perdido é aceitável; cliente esperando não é.
+  //  2. Slug desconhecido ou banco fora do ar NÃO dá 404: cai no destino padrão
+  //     (/shop). Um link impresso num post não pode morrer por erro nosso.
+  //  3. Cache desligado — senão o CDN/navegador serve o 302 antigo e o clique
+  //     seguinte nunca chega ao servidor.
+  app.get('/r/:slug', async (req, res) => {
+    const base = `${req.protocol}://${req.get('host') || 'integracode-production.up.railway.app'}`;
+    let destino = new URL('/shop', base).toString();
+    try {
+      const { resolverSlug, registrarClique, montarDestino } = await import('./mkt-atribuicao');
+      const slug = String(req.params.slug || '').toLowerCase().slice(0, 60);
+      const link = await resolverSlug(slug);
+      if (link) {
+        destino = montarDestino(link, base);
+        void registrarClique({
+          link,
+          ua: req.get('user-agent') || '',
+          ip: (String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || ''),
+          referer: req.get('referer') || '',
+        });
+      } else {
+        console.warn('[MKT-ATRIB] slug desconhecido (redirecionado p/ /shop):', slug);
+      }
+    } catch (e: any) {
+      console.error('[MKT-ATRIB] /r/:slug falhou (redireciona mesmo assim):', e?.message || e);
+    }
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.redirect(302, destino);
+  });
+
   // Servir arquivos estáticos do hotsite com fallthrough disabled
   app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
 
@@ -235,6 +274,23 @@ run();
       else console.log('[MKT-RUNS-MIGRATION] ok');
     } catch (e: any) {
       console.warn('[MKT-RUNS-MIGRATION] falha (ignorada):', e?.message);
+    }
+  })();
+
+  // ── CENTRAL DE MARKETING — buraco 2: fio de atribuição ──
+  // Cria mkt_campanhas / mkt_links / mkt_cliques / mkt_toques E as 3 colunas de
+  // sales_cards (campaign_id, utm, attribution_kind).
+  // ⚠️ Estas 3 colunas ESTÃO no schema drizzle (shared/schema.ts) — por isso este
+  // ALTER precisa rodar no boot, senão entre o deploy e a migração todo SELECT de
+  // sales_cards quebra. Mesma lição que já custou caro no is_priority.
+  (async () => {
+    try {
+      const { ensureMktAtribuicaoSchema } = await import('./mkt-atribuicao');
+      const r = await ensureMktAtribuicaoSchema();
+      if (!r.ok) console.warn('[MKT-ATRIB-MIGRATION] passos com falha:', r.steps.filter((s: any) => !s.ok));
+      else console.log('[MKT-ATRIB-MIGRATION] ok');
+    } catch (e: any) {
+      console.warn('[MKT-ATRIB-MIGRATION] falha (ignorada):', e?.message);
     }
   })();
 
@@ -3719,6 +3775,89 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json({ runs: r.rows || [] });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // ===== CENTRAL DE MARKETING — buraco 2: fio de atribuicao =====
+  app.post("/api/mkt/atribuicao/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktAtribuicaoSchema } = await import('./mkt-atribuicao'); res.json(await ensureMktAtribuicaoSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // Campanhas — o codigo (ex.: IG0825) e o que costura link, cupom e pedido
+  app.get("/api/mkt/campanhas", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { ensureMktAtribuicaoSchema } = await import('./mkt-atribuicao');
+      await ensureMktAtribuicaoSchema();
+      const r: any = await db.execute(sql`SELECT * FROM mkt_campanhas ORDER BY criado_em DESC`);
+      res.json({ campanhas: r.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/campanhas", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktAtribuicaoSchema } = await import('./mkt-atribuicao');
+      await ensureMktAtribuicaoSchema();
+      const b = req.body || {};
+      const codigo = String(b.codigo || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 40);
+      if (!codigo || !String(b.nome || '').trim()) return res.status(400).json({ error: 'codigo e nome obrigatorios' });
+      const verba = b.verba == null || b.verba === '' ? null : Number(b.verba);
+      await db.execute(sql`
+        INSERT INTO mkt_campanhas (codigo, nome, objetivo, canal, publico, verba, inicio, fim, cupom, ativo)
+        VALUES (${codigo}, ${String(b.nome).trim()}, ${b.objetivo || null}, ${b.canal || null}, ${b.publico || null},
+                ${Number.isFinite(verba as number) ? verba : null}, ${b.inicio || null}, ${b.fim || null},
+                ${b.cupom ? String(b.cupom).toUpperCase() : null}, ${b.ativo !== false})
+        ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome, objetivo = EXCLUDED.objetivo,
+          canal = EXCLUDED.canal, publico = EXCLUDED.publico, verba = EXCLUDED.verba,
+          inicio = EXCLUDED.inicio, fim = EXCLUDED.fim, cupom = EXCLUDED.cupom, ativo = EXCLUDED.ativo`);
+      res.json({ ok: true, codigo });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // Links curtos /r/<slug>
+  app.get("/api/mkt/links", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { ensureMktAtribuicaoSchema } = await import('./mkt-atribuicao');
+      await ensureMktAtribuicaoSchema();
+      const r: any = await db.execute(sql`
+        SELECT l.*, c.codigo AS campanha_codigo, c.nome AS campanha_nome
+          FROM mkt_links l LEFT JOIN mkt_campanhas c ON c.id = l.campanha_id
+         ORDER BY l.criado_em DESC LIMIT 300`);
+      res.json({ links: r.rows || [] });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/links", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktAtribuicaoSchema, normalizarSlug } = await import('./mkt-atribuicao');
+      await ensureMktAtribuicaoSchema();
+      const b = req.body || {};
+      const slug = normalizarSlug(b.slug || b.nome || '');
+      if (!slug) return res.status(400).json({ error: 'slug invalido' });
+      // Resolve a campanha por codigo (mais amigavel que pedir o uuid na tela)
+      let campanhaId: string | null = b.campanha_id || null;
+      if (!campanhaId && b.campanha_codigo) {
+        const c: any = await db.execute(sql`SELECT id FROM mkt_campanhas WHERE upper(codigo) = ${String(b.campanha_codigo).toUpperCase()} LIMIT 1`);
+        campanhaId = c.rows?.[0]?.id || null;
+      }
+      await db.execute(sql`
+        INSERT INTO mkt_links (slug, destino, campanha_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term, post_ref, ativo, criado_por)
+        VALUES (${slug}, ${String(b.destino || '/shop')}, ${campanhaId},
+                ${b.utm_source || 'instagram'}, ${b.utm_medium || 'organic'}, ${b.utm_campaign || slug},
+                ${b.utm_content || null}, ${b.utm_term || null}, ${b.post_ref || null},
+                ${b.ativo !== false}, ${req.user?.email || req.user?.id || null})
+        ON CONFLICT (slug) DO UPDATE SET destino = EXCLUDED.destino, campanha_id = EXCLUDED.campanha_id,
+          utm_source = EXCLUDED.utm_source, utm_medium = EXCLUDED.utm_medium, utm_campaign = EXCLUDED.utm_campaign,
+          utm_content = EXCLUDED.utm_content, utm_term = EXCLUDED.utm_term, post_ref = EXCLUDED.post_ref,
+          ativo = EXCLUDED.ativo`);
+      res.json({ ok: true, slug, url: `${req.protocol}://${req.get('host')}/r/${slug}` });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // O relatorio que este buraco existe para entregar: RECEITA POR CAMPANHA
+  app.get("/api/mkt/atribuicao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktAtribuicaoSchema, relatorioPorCampanha } = await import('./mkt-atribuicao');
+      await ensureMktAtribuicaoSchema();
+      res.json(await relatorioPorCampanha(Number(req.query?.dias) || 30));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
   app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {

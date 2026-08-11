@@ -24685,7 +24685,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: z.enum(['pix', 'card', 'boleto']).default('pix'),
         source: z.enum(['hotsite', 'website']).default('hotsite'),
         // Tabela de preço selecionada pelo cliente no hotsite
-        priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional()
+        priceTable: z.enum(['retail', 'wholesale', 'goiania', 'interior', 'brasilia']).optional(),
+        // ── CENTRAL DE MARKETING — fio de atribuição (buraco 2) ──
+        // Origem capturada pelo hotsite (UTM da URL de entrada) + código da campanha.
+        // ⚠️ Precisam estar declarados AQUI: o Zod descarta chave desconhecida, então
+        // sem isto o campo nunca chegaria ao validatedData. Ambos opcionais — pedido
+        // direto, sem campanha nenhuma, continua funcionando exatamente como hoje.
+        utm: z.record(z.string()).optional().nullable(),
+        cid: z.string().max(60).optional().nullable()
       }).refine((data) => {
         // ✅ CPF obrigatório para consumidores (pessoa física)
         if (data.customer.customerType === 'pessoa_fisica') {
@@ -25014,6 +25021,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPrice: Number(item.quantity) * Number(item.unitPrice) // ✅ Campo obrigatório para Omie (numérico)
       }));
       
+      // ── CENTRAL DE MARKETING (buraco 2): lê a origem ANTES de montar o pedido ──
+      // Nunca lança: se o módulo de atribuição falhar, o pedido nasce sem campanha
+      // (comportamento de hoje) em vez de não nascer.
+      let _atribuicao: { campaignId?: string | null; utm?: any; attributionKind?: string | null } = {};
+      let _origem: { utm: Record<string, string> | null; cid: string | null } = { utm: null, cid: null };
+      try {
+        const { lerOrigem } = await import('./mkt-atribuicao');
+        _origem = lerOrigem(req.body);
+        if (_origem.cid || _origem.utm) {
+          _atribuicao = {
+            campaignId: _origem.cid || null,
+            utm: _origem.utm || null,
+            attributionKind: _origem.cid || _origem.utm ? 'link' : null,
+          };
+          console.log('🎯 [ATRIB] pedido com origem:', { cid: _origem.cid, utm: _origem.utm });
+        }
+      } catch (_ae: any) { console.warn('[ATRIB] leitura de origem falhou (segue):', _ae?.message); }
+
       // Criar registro do pedido (usando sales_cards temporariamente)
       // TODO: Criar tabela específica para pedidos web quando houver necessidade
       const orderData = {
@@ -25034,7 +25059,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliverySaturdayTimeSlots: [],
         boletoDays: validatedData.paymentMethod === 'boleto' ? 7 : null,
         source: validatedData.source,
-        customerAddress: validatedData.customer.address // Endereço de entrega informado pelo cliente no hotsite
+        customerAddress: validatedData.customer.address, // Endereço de entrega informado pelo cliente no hotsite
+        // ── CENTRAL DE MARKETING — fio de atribuição (buraco 2) ──
+        // A partir daqui o pedido deixa de ser órfão: `source` diz o canal grosso
+        // ('hotsite'), estes três dizem QUAL campanha o trouxe. Lidos do corpo com
+        // tolerância (aceita { utm:{...}, cid } ou os campos soltos) porque os fluxos
+        // PIX e cartão reprocessam o payload salvo, e ele precisa sobreviver à volta.
+        ..._atribuicao
       };
       
       console.log('💾 Salvando pedido com source:', validatedData.source);
@@ -25044,6 +25075,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { journalOrderCreated } = await import('./order-journal');
         void journalOrderCreated(_journalId, { orderNumber, salesCardId: salesCard.id });
       } catch (_je: any) { console.warn('[PUBLIC-ORDER] journal vinculo (segue):', _je?.message); }
+      // 🎯 CENTRAL DE MARKETING (buraco 2): fecha o fio — grava o toque que liga a
+      // campanha a ESTE pedido, com o valor. É daqui que sai "receita por campanha".
+      // Idempotente por sales_card_id (PIX/cartão reprocessam o payload) e nunca lança.
+      if (_origem.cid || _origem.utm) {
+        try {
+          const { registrarToqueDoPedido } = await import('./mkt-atribuicao');
+          void registrarToqueDoPedido({
+            salesCardId: salesCard.id,
+            clienteId: customerId,
+            valor: validatedData.totalAmount,
+            canal: 'hotsite',
+            tipo: 'link',
+            utm: _origem.utm,
+            cid: _origem.cid,
+          });
+        } catch (_te: any) { console.warn('[ATRIB] toque do pedido (segue):', _te?.message); }
+      }
       // REGRA: todo pedido registrado entra no pipeline. Envia o pedido da loja ao pipeline de
       // faturamento ja na criacao (idempotente por sales_card_id; os pagos online passam pelo
       // reconcile depois, sem duplicar). Nunca quebra a criacao do pedido.
