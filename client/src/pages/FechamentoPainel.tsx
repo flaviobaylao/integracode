@@ -73,6 +73,8 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   const motivosPresentes = Array.from(new Set(clientesAll.map((c) => c.motivo || ""))).filter(Boolean);
   const porVendedor = (data?.porVendedor || []) as any[];
   const vendedores = (data?.vendedores || []) as any[];
+  // Vendedores que JÁ fecharam a rota de hoje (reseta a cada dia).
+  const fechadosHoje = new Set<string>(((data?.fechadosHoje || []) as any[]).map(String));
   const totalNV = data?.totalNaoVisitados || 0;
   const totalJust = porVendedor.reduce((s, v) => s + (v.justificados || 0), 0);
   const totalPend = porVendedor.reduce((s, v) => s + (v.pendentes || 0), 0);
@@ -336,19 +338,21 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Desempenho por vendedor — {mesLabel(mes)}</CardTitle></CardHeader>
         <CardContent>
-          <div className="text-xs text-muted-foreground mb-3">Dias fechados, não visitados, justificados e pendências acumuladas no mês.</div>
+          <div className="text-xs text-muted-foreground mb-3">Dias fechados, não visitados, justificados e pendências acumuladas no mês. A coluna <b>Fechou hoje</b> mostra o fechamento da rota de hoje e reseta a cada novo dia.</div>
           <table className="w-full text-sm">
             <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="text-left font-bold pb-2 px-2">Vendedor</th>
+              <th className="text-center font-bold pb-2 px-2" title="Fechou a rota de hoje?">Fechou hoje</th>
               <th className="text-right font-bold pb-2 px-2">Dias fechados</th>
               <th className="text-right font-bold pb-2 px-2">Não visitados</th>
               <th className="text-right font-bold pb-2 px-2">Justificados</th>
               <th className="text-right font-bold pb-2 px-2">Sem justif.</th>
             </tr></thead>
             <tbody>
-              {porVendedor.length === 0 ? (<tr><td colSpan={5} className="text-sm text-muted-foreground py-4 px-2">Nenhum fechamento registrado neste mês.</td></tr>) : porVendedor.map((v) => (
+              {porVendedor.length === 0 ? (<tr><td colSpan={6} className="text-sm text-muted-foreground py-4 px-2">Nenhum fechamento registrado neste mês.</td></tr>) : porVendedor.map((v) => (
                 <tr key={v.sellerId} className="border-t">
                   <td className="py-2 px-2 font-semibold">{v.vendedor}</td>
+                  <td className="py-2 px-2 text-center" title={fechadosHoje.has(String(v.sellerId)) ? "Rota de hoje fechada" : "Rota de hoje ainda não fechada"}>{fechadosHoje.has(String(v.sellerId)) ? "✔️" : "❌"}</td>
                   <td className="py-2 px-2 text-right tabular-nums">{v.dias}</td>
                   <td className="py-2 px-2 text-right tabular-nums">{v.naoVisitados}</td>
                   <td className="py-2 px-2 text-right tabular-nums">{v.justificados}</td>
