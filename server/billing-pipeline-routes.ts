@@ -358,7 +358,7 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 
   try {
     const existing = await storage.getBillingPipelineItems();
-    if (existing.find(i => i.salesCardId === salesCard.id)) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
+    if (existing.find(i => i.salesCardId === salesCard.id && String(i.stage) !== 'lixeira')) { await logOrderAudit(salesCard.id, 'skipped_duplicate'); return null; }
 
     const customer = salesCard.customerId ? await storage.getCustomer(salesCard.customerId) : null;
 
