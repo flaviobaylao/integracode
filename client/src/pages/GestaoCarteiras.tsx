@@ -292,7 +292,7 @@ export default function GestaoCarteiras() {
                         ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
                         : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|^Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] })))}
                       dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={95}
-                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false}
+                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
                     >
                       {(tipoPizza === "abc"
                         ? abc.map((a: any) => COR_ABC[a.classe])
@@ -332,7 +332,7 @@ export default function GestaoCarteiras() {
                     <Pie
                       data={tipos.map((t: any) => ({ nome: t.tipo, valor: t.clientes, faturamento: t.valor }))}
                       dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={95}
-                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false}
+                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
                     >
                       {tipos.map((t: any, i: number) => <Cell key={i} fill={COR_TIPO[t.tipo] || CINZA} />)}
                     </Pie>
@@ -374,9 +374,9 @@ export default function GestaoCarteiras() {
                     tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={false} width={52} />
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
-                  <Line type="monotone" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                  <Line type="linear" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
                   {!filtrarVend && (d?.fonte?.mesesComNf || 0) > 0 ? (
-                    <Line type="monotone" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
+                    <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
