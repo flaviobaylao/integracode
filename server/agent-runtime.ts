@@ -502,6 +502,23 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
 
     try { const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes'); await autoSendToBillingPipeline(card, 'chatgpt-ai'); } catch (e: any) { console.error('[IG-ORDER] autoSend', e?.message || e); }
 
+    // 🎯 CENTRAL DE MARKETING (buraco 3): FECHA O CICLO DO ANUNCIO.
+    // Se esta conversa nasceu de anuncio (ctwa_clid gravado no toque), liga o toque
+    // a ESTE pedido e enfileira o evento Purchase com o valor para a Meta. A partir
+    // daqui o algoritmo aprende a otimizar por QUEM COMPRA, nao por quem clica.
+    // Fire-and-forget: jamais pode derrubar o registro de um pedido.
+    try {
+      const { vincularPedidoAConversa } = await import('./mkt-ctwa');
+      void vincularPedidoAConversa({
+        conversaId: ctx?.conversationId || null,
+        salesCardId: card?.id,
+        valor: total,
+        clienteId: customer?.id || null,
+        telefone: onlyDigits(ctx?.phone) || null,
+        canal: String(ctx?.channel || '') === 'instagram' ? 'instagram' : 'whatsapp',
+      });
+    } catch (e: any) { console.error('[IG-ORDER] ctwa (segue):', e?.message || e); }
+
     // Vincula o pedido para permitir gerar PIX depois (gerar_pix busca por conversation_id).
     try {
       await ensureIgPixTable();

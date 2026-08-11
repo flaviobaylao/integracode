@@ -51,6 +51,20 @@ cron.schedule('50 7 * * *', async () => {
   await runPositivacaoAlertaCron();
 }, { timezone: 'America/Sao_Paulo' });
 
+// 🎯 CENTRAL DE MARKETING (buraco 3): reenvio da fila do Conversions API.
+// A cada 10 min tenta os eventos 'pendente' e 'erro' (ate 5 tentativas cada).
+// Sem credencial da Meta ou com mkt_capi_mode != 'on', a funcao sai na hora sem
+// fazer nada — este cron e inerte ate alguem ligar o CAPI de proposito.
+cron.schedule('*/10 * * * *', async () => {
+  try {
+    const { enviarPendentes } = await import('./mkt-ctwa');
+    const r = await enviarPendentes(50);
+    if (r.enviados || r.erros) console.log('🎯 [CAPI-CRON]', r);
+  } catch (e: any) {
+    console.error('❌ [CAPI-CRON]', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // Alerta fim de dia 18:30 (BRT), SOMENTE DIAS ÚTEIS (Seg–Sex): clientes da rota de HOJE
 // (presenciais/virtuais) que NÃO foram visitados, por vendedor. Externo -> próprio WhatsApp;
 // interno (telemarketing) -> Cinthia. Kill-switch: system_settings 'rota_nao_visitados_ativo'='on'.

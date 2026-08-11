@@ -88,7 +88,7 @@ function validSignature(req: Request, rawBody: string): boolean {
 }
 
 // Processa 1 mensagem recebida (fire-and-forget; nao segura a resposta do webhook).
-async function handleInbound(igsid: string, text: string, mid: string): Promise<void> {
+async function handleInbound(igsid: string, text: string, mid: string, referral?: any): Promise<void> {
   try {
     if (!igsid || !text || !text.trim()) return;
     // dedup por message id da Meta
@@ -173,6 +173,24 @@ async function handleInbound(igsid: string, text: string, mid: string): Promise<
     } as any);
 
     console.log(`[IG-IN] igsid=${igsid} user=${username || "-"} conv=${conversation.id} text=${text.slice(0, 40)}`);
+
+    // 🎯 CENTRAL DE MARKETING (buraco 3): se esta conversa nasceu de um anuncio, a
+    // Meta manda o `referral` (com o ctwa_clid) junto da PRIMEIRA mensagem. Grava a
+    // origem na conversa, cria o toque de atribuicao e enfileira o evento Lead.
+    // Idempotente por conversa e fire-and-forget: atribuicao NUNCA pode atrasar nem
+    // derrubar o atendimento.
+    if (referral) {
+      try {
+        const { lerReferral, referralUtil, registrarToqueDeConversa } = await import("./mkt-ctwa");
+        const ref = lerReferral(referral);
+        if (referralUtil(ref)) {
+          void registrarToqueDeConversa({
+            conversaId: conversation.id, canal: "instagram", referral: ref!,
+            clienteId: conversation.customerId || null, telefone: null,
+          });
+        }
+      } catch (e: any) { console.error("[IG-IN] ctwa (segue):", e?.message || e); }
+    }
 
     // Motor de agentes (mesmo do WhatsApp), canal instagram. Gate off/test/on em system_settings agents_ig_mode.
     const { maybeRunAgent } = await import("./agent-runtime");
@@ -283,7 +301,11 @@ export function registerInstagram(app: Express) {
           const igsid = ev.sender && ev.sender.id;
           const text = msg.text;
           const mid = msg.mid;
-          if (igsid && text) handleInbound(String(igsid), String(text), String(mid || "")).catch(() => {});
+          // CENTRAL DE MARKETING (buraco 3): a Meta manda o referral do anuncio junto
+          // da PRIMEIRA mensagem. Pode vir em ev.referral, ev.postback.referral ou
+          // msg.referral — por isso passamos o evento inteiro e deixamos o leitor
+          // tolerante a formato achar o ctwa_clid.
+          if (igsid && text) handleInbound(String(igsid), String(text), String(mid || ""), ev).catch(() => {});
         }
         // formato changes/field: entry.changes[] com field=messages
         for (const ch of entry.changes || []) {
@@ -294,7 +316,7 @@ export function registerInstagram(app: Express) {
           const igsid = v.sender && v.sender.id;
           const text = msg.text;
           const mid = msg.mid;
-          if (igsid && text) handleInbound(String(igsid), String(text), String(mid || "")).catch(() => {});
+          if (igsid && text) handleInbound(String(igsid), String(text), String(mid || ""), v).catch(() => {});
         }
       }
     } catch (e: any) {

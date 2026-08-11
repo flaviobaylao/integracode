@@ -294,6 +294,21 @@ run();
     }
   })();
 
+  // ── CENTRAL DE MARKETING — buraco 3: CTWA + Conversions API ──
+  // Colunas de origem em chat_conversations + fila mkt_capi_eventos.
+  // NASCE DESLIGADO: sem META_PIXEL_ID/META_CAPI_TOKEN e com mkt_capi_mode='off',
+  // nada e enviado para a Meta — so gravado para auditoria.
+  (async () => {
+    try {
+      const { ensureMktCtwaSchema } = await import('./mkt-ctwa');
+      const r = await ensureMktCtwaSchema();
+      if (!r.ok) console.warn('[MKT-CTWA-MIGRATION] passos com falha:', r.steps.filter((s: any) => !s.ok));
+      else console.log('[MKT-CTWA-MIGRATION] ok');
+    } catch (e: any) {
+      console.warn('[MKT-CTWA-MIGRATION] falha (ignorada):', e?.message);
+    }
+  })();
+
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
   app.get('/api/admin/automations/mode', async (_req, res) => {
     try {
@@ -3856,6 +3871,37 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       await ensureMktAtribuicaoSchema();
       res.json(await relatorioPorCampanha(Number(req.query?.dias) || 30));
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // ===== CENTRAL DE MARKETING — buraco 3: CTWA + CAPI =====
+  app.post("/api/mkt/ctwa/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktCtwaSchema } = await import('./mkt-ctwa'); res.json(await ensureMktCtwaSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Funil do canal pago + estado da fila de eventos devolvidos a Meta
+  app.get("/api/mkt/ctwa", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { ensureMktCtwaSchema, relatorioCtwa } = await import('./mkt-ctwa');
+      await ensureMktCtwaSchema();
+      res.json(await relatorioCtwa(Number(req.query?.dias) || 30));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Modo do CAPI: off (so grava) | test (monta e grava, NAO envia) | on (envia)
+  app.post("/api/mkt/ctwa/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const modo = String((req.body || {}).modo || '').trim();
+      if (!['off', 'test', 'on'].includes(modo)) return res.status(400).json({ error: "modo deve ser off, test ou on" });
+      if (modo === 'on' && !(process.env.META_PIXEL_ID && process.env.META_CAPI_TOKEN)) {
+        return res.status(400).json({ error: 'faltam META_PIXEL_ID e/ou META_CAPI_TOKEN nas variaveis do Railway' });
+      }
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('mkt_capi_mode', ${modo}, ${'mkt-ctwa'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      res.json({ ok: true, modo });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Reenvia a fila (idempotente; tambem roda no cron)
+  app.post("/api/mkt/ctwa/enviar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { enviarPendentes } = await import('./mkt-ctwa'); res.json(await enviarPendentes(50)); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)

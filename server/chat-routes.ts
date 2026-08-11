@@ -1860,6 +1860,18 @@ export function registerChatRoutes(app: Express): void {
       env: process.env.NODE_ENV
     };
     
+    // 🎯 CENTRAL DE MARKETING (buraco 3): antes de qualquer normalizacao, guarda o
+    // referral de anuncio se ele existir no payload cru. O ctwa_clid pode vir em
+    // formatos diferentes conforme o provedor (Cloud API direta ou repassado pela
+    // Umbler), entao o leitor varre o objeto em vez de assumir um caminho fixo.
+    // O vinculo com a conversa acontece adiante, quando ela ja tem id.
+    let _ctwaRef: any = null;
+    try {
+      const { lerReferral, referralUtil } = await import('./mkt-ctwa');
+      const r = lerReferral(req.body);
+      if (referralUtil(r)) { _ctwaRef = r; console.log('🎯 [CTWA-WA] referral de anuncio detectado no webhook'); }
+    } catch (e: any) { console.warn('[CTWA-WA] leitura do referral (segue):', e?.message); }
+
     try {
       let { event, instance, data } = req.body;
       debugInfo.steps.push('1-parse-body');
@@ -2348,6 +2360,19 @@ export function registerChatRoutes(app: Express): void {
         }
       }
       
+      // 🎯 CENTRAL DE MARKETING (buraco 3): agora que a conversa existe, carimba a
+      // origem se o webhook trouxe referral de anúncio (Click-to-WhatsApp).
+      // Idempotente por conversa e fire-and-forget — nunca atrasa o atendimento.
+      if (_ctwaRef && !isFromMe) {
+        try {
+          const { registrarToqueDeConversa } = await import('./mkt-ctwa');
+          void registrarToqueDeConversa({
+            conversaId: conversation.id, canal: 'whatsapp', referral: _ctwaRef,
+            clienteId: customer?.id || null, telefone: normalizedPhone,
+          });
+        } catch (e: any) { console.error('[CTWA-WA] toque (segue):', e?.message || e); }
+      }
+
       const savedMsg = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
