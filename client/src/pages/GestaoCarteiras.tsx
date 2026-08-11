@@ -8,7 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
-import { Briefcase, Users, TrendingUp, Wallet, Download } from "lucide-react";
+import { Briefcase, Users, TrendingUp, Wallet, Download, Info } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel } from "@/lib/tableTools";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
@@ -379,12 +380,70 @@ export default function GestaoCarteiras() {
           {/* Linha — evolução mensal */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>Evolução do faturamento</CardTitle>
-              <CardDescription>
-                Base: títulos emitidos em Contas a Receber (exclui cancelados)
-                {!filtrarVend && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
-                {fim === mesHoje ? " · o último mês ainda está em curso" : ""}
-              </CardDescription>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle>Evolução do faturamento</CardTitle>
+                  <CardDescription>
+                    Base: títulos de venda emitidos em Contas a Receber
+                    {!filtrarVend && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
+                    {fim === mesHoje ? " · o último mês ainda está em curso" : ""}
+                  </CardDescription>
+                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" aria-label="O que entra em cada linha" data-testid="button-info-faturamento">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[420px] max-w-[92vw] text-sm space-y-3">
+                    <div>
+                      <p className="font-semibold flex items-center gap-2">
+                        <span className="inline-block h-0.5 w-5 rounded" style={{ background: SERIE_TITULOS }} />
+                        Faturamento (títulos emitidos)
+                      </p>
+                      <p className="text-muted-foreground mt-1">
+                        Soma dos títulos de <b>venda</b> lançados em Contas a Receber, pela data de emissão. É a base de tudo
+                        nesta tela — os gráficos de pizza e a tabela saem dela.
+                      </p>
+                    </div>
+                    <div>
+                      <p className="font-semibold">Nunca entram no faturamento</p>
+                      <ul className="text-muted-foreground mt-1 list-disc pl-4 space-y-0.5">
+                        <li>título cancelado ou excluído</li>
+                        <li>NF-e cancelada, rejeitada ou de entrada</li>
+                        <li>devolução, troca, amostra, bonificação, brinde e remessa</li>
+                        <li>transferência entre as empresas do grupo</li>
+                        <li>aporte de sócio, empréstimo e adiantamento</li>
+                        <li>pedido mandado para a lixeira do pipeline</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="font-semibold flex items-center gap-2">
+                        <span className="inline-block h-0.5 w-5 rounded" style={{ background: SERIE_NF, backgroundImage: `repeating-linear-gradient(90deg, ${SERIE_NF} 0 4px, transparent 4px 7px)` }} />
+                        NF-e de venda autorizada
+                      </p>
+                      <p className="text-muted-foreground mt-1">
+                        Linha de conferência: NF-e autorizada em produção com CFOP de venda, uma linha por CNPJ + série + número
+                        (mata nota lançada em duplicidade). É a mesma regra oficial do dashboard. Só aparece a partir de mar/26 —
+                        a base de notas não cobre 2025, e por isso o faturamento da tela sai dos títulos, não das notas.
+                      </p>
+                    </div>
+                    {!filtrarVend && d?.excluidos?.valor > 0 ? (
+                      <div className="border-t pt-2">
+                        <p className="font-semibold">Fora da carteira no período</p>
+                        <ul className="text-muted-foreground mt-1 space-y-0.5">
+                          {(d.excluidos.detalhe || []).map((x: any, i: number) => (
+                            <li key={i}>{BRL0(x.valor)} — {x.motivo}</li>
+                          ))}
+                          {d?.excluidos?.cancelados?.titulos > 0 ? (
+                            <li>{BRL0(d.excluidos.cancelados.valor)} — títulos cancelados</li>
+                          ) : null}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </PopoverContent>
+                </Popover>
+              </div>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={320}>
@@ -403,8 +462,9 @@ export default function GestaoCarteiras() {
               </ResponsiveContainer>
               {!filtrarVend && d?.excluidos?.valor > 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Fora da carteira: {BRL0(d.excluidos.valor)} em {NUM(d.excluidos.titulos)} títulos que não são venda a cliente
-                  (aporte de sócio, empréstimo, adiantamento, devolução e transferência entre as empresas do grupo).
+                  Fora da carteira: {BRL0(d.excluidos.valor)} em {NUM(d.excluidos.titulos)} títulos que não são venda
+                  (NF-e cancelada, devolução, troca, amostra, bonificação, transferência entre as empresas do grupo, aporte de sócio).
+                  Detalhe no <b>i</b> acima.
                 </p>
               ) : null}
             </CardContent>
