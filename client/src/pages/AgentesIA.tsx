@@ -21,6 +21,8 @@ type Agente = {
   ferramentas: string[];
   limites: Record<string, any>;
   ativo: boolean;
+  // Central de Marketing (buraco 7): teto de gasto diario em R$. null/vazio = sem teto.
+  teto_custo_dia?: number | string | null;
 };
 
 const MODELOS = ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-8"];
@@ -93,6 +95,8 @@ function AgenteEditor({
         ferramentas,
         limites,
         ativo: a.ativo,
+        // Central de Marketing (buraco 7): vazio = SEM teto (comportamento de hoje).
+        teto_custo_dia: String((a as any).teto_custo_dia ?? "").trim() === "" ? null : Number((a as any).teto_custo_dia),
       });
       setStatus("✓ salvo");
       onSaved();
@@ -168,6 +172,21 @@ function AgenteEditor({
               value={limitesTxt}
               onChange={(e) => setLimitesTxt(e.target.value)}
             />
+          </div>
+          <div>
+            <Label className="text-sm">Teto de custo/dia (R$)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="vazio = sem teto"
+              value={(a as any).teto_custo_dia ?? ""}
+              onChange={(e) => setA({ ...a, teto_custo_dia: e.target.value } as any)}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Estourou o teto do dia (BRT), este agente <b>para de responder</b> e registra o motivo. Vazio ou
+              zero = sem teto. Acompanhe o gasto no card <b>Custos de IA</b>.
+            </p>
           </div>
         </div>
 
@@ -732,6 +751,201 @@ function NotificacoesManager() {
 // ---------------------------------------------------------------------------
 // Seções da página Agentes de IA. Cada uma vira um CARD na grade de entrada,
 // no mesmo padrão visual das telas de seção do menu (ex.: Faturamento).
+// ---------------------------------------------------------------------------
+// CENTRAL DE MARKETING — buraco 7: quanto a IA custou
+// Lê GET /api/mkt/custos (mkt_agent_runs). Antes disto o `usage` da Anthropic
+// era descartado e não existia CAC real nem teto de gasto.
+// ---------------------------------------------------------------------------
+function brl(v: any) {
+  const n = Number(v || 0);
+  return "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function num(v: any) {
+  return Number(v || 0).toLocaleString("pt-BR");
+}
+
+function CustosIA() {
+  const [dias, setDias] = useState(30);
+  const [usdBrl, setUsdBrl] = useState("");
+  const [salvandoCambio, setSalvandoCambio] = useState(false);
+  const { toast } = useToast();
+
+  const { data, isLoading, error, refetch } = useQuery<any>({
+    queryKey: ["/api/mkt/custos", dias],
+    queryFn: () => apiGet("/api/mkt/custos?dias=" + dias),
+  });
+
+  useEffect(() => {
+    if (data?.cambioUsdBrl != null && usdBrl === "") setUsdBrl(String(data.cambioUsdBrl));
+  }, [data?.cambioUsdBrl]);
+
+  const salvarCambio = async () => {
+    setSalvandoCambio(true);
+    try {
+      await apiSend("/api/mkt/precos", "POST", { usdBrl });
+      toast({ title: "Câmbio atualizado", description: "Os próximos cálculos já usam o novo valor." });
+      refetch();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally {
+      setSalvandoCambio(false);
+    }
+  };
+
+  const porDia: any[] = data?.porDia || [];
+  const maxDia = Math.max(1, ...porDia.map((d) => Number(d.custo_brl || 0)));
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <i className="fas fa-coins text-muted-foreground" /> Quanto a IA custou
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Cada resposta de agente grava tokens, modelo e custo em <code>mkt_agent_runs</code>. O custo de uma
+            resposta é a soma de <b>todas</b> as rodadas de ferramenta, não só da última.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {[7, 30, 90].map((d) => (
+              <Button key={d} size="sm" variant={dias === d ? "default" : "outline"} onClick={() => setDias(d)}>
+                {d} dias
+              </Button>
+            ))}
+            <span className="ml-auto flex items-center gap-2">
+              <Label className="text-xs whitespace-nowrap">US$ 1 =</Label>
+              <Input
+                className="w-24 h-8"
+                value={usdBrl}
+                onChange={(e) => setUsdBrl(e.target.value)}
+                placeholder="5.40"
+              />
+              <Button size="sm" variant="outline" onClick={salvarCambio} disabled={salvandoCambio}>
+                {salvandoCambio ? "..." : "Salvar câmbio"}
+              </Button>
+            </span>
+          </div>
+
+          {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
+          {error && <p className="text-sm text-red-600">{(error as any).message}</p>}
+
+          {data && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{brl(data.hoje)}</div>
+                  <div className="text-xs text-muted-foreground mt-1">gasto de HOJE (BRT)</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{brl(data.total?.custo_brl)}</div>
+                  <div className="text-xs text-muted-foreground mt-1">em {data.dias} dias</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{num(data.total?.execucoes)}</div>
+                  <div className="text-xs text-muted-foreground mt-1">execuções de agente</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">
+                    {num(Number(data.total?.tokens_in || 0) + Number(data.total?.tokens_out || 0))}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">tokens totais</div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold mb-2">Por agente</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="text-left py-2">Agente</th>
+                        <th className="text-right">Execuções</th>
+                        <th className="text-right">Tokens</th>
+                        <th className="text-right">Custo médio</th>
+                        <th className="text-right">Custo total</th>
+                        <th className="text-right">Erros</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data.porAgente || []).length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="py-4 text-center text-muted-foreground text-xs">
+                            Nenhuma execução registrada ainda. Os números aparecem assim que um agente responder.
+                          </td>
+                        </tr>
+                      )}
+                      {(data.porAgente || []).map((a: any) => (
+                        <tr key={a.agente} className="border-b last:border-0">
+                          <td className="py-2 font-medium">{a.agente}</td>
+                          <td className="text-right">{num(a.execucoes)}</td>
+                          <td className="text-right">{num(Number(a.tokens_in || 0) + Number(a.tokens_out || 0))}</td>
+                          <td className="text-right">{brl(a.custo_medio_brl)}</td>
+                          <td className="text-right font-semibold">{brl(a.custo_brl)}</td>
+                          <td className="text-right">
+                            {Number(a.erros || 0) > 0 ? (
+                              <Badge variant="destructive">{a.erros}</Badge>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {porDia.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Por dia</h4>
+                  <div className="space-y-1">
+                    {porDia.slice(0, 14).map((d: any) => (
+                      <div key={d.dia} className="flex items-center gap-2 text-xs">
+                        <span className="w-20 text-muted-foreground tabular-nums">
+                          {String(d.dia).slice(0, 10).split("-").reverse().slice(0, 2).join("/")}
+                        </span>
+                        <div className="flex-1 h-4 bg-muted rounded overflow-hidden">
+                          <div
+                            className="h-full rounded"
+                            style={{
+                              width: Math.max(2, (Number(d.custo_brl || 0) / maxDia) * 100) + "%",
+                              background: COR_AGENTES,
+                            }}
+                          />
+                        </div>
+                        <span className="w-20 text-right tabular-nums">{brl(d.custo_brl)}</span>
+                        <span className="w-14 text-right text-muted-foreground tabular-nums">{num(d.execucoes)}x</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <i className="fas fa-shield-halved text-muted-foreground" /> Teto de gasto por agente
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Cada agente aceita um <b>teto diário em R$</b> (campo "Teto de custo/dia" no card do agente, em
+            Auto-resposta). Estourou o teto, o agente <b>para de responder e registra o motivo</b> — em vez de
+            queimar dinheiro em silêncio. Vazio ou zero = sem teto, que é o comportamento atual.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // O `id` também é o deep-link: /admin/agentes?sec=<id>
 // ⚠️ Se mexer nesta lista, espelhe em SECOES_AGENTES_IA no Layout.tsx (usado
 //    para desenhar o atalho favoritado no cabeçalho).
@@ -746,6 +960,8 @@ export const SECOES_AGENTES_IA: SecaoAgentes[] = [
   { id: "polish", icone: "fas fa-pen-fancy", titulo: "Correção Profissional" },
   { id: "notificacoes", icone: "fas fa-bell", titulo: "Notificações" },
   { id: "auto-resposta", icone: "fas fa-power-off", titulo: "Auto-resposta dos Agentes" },
+  // Central de Marketing — buraco 7: até aqui ninguém sabia quanto a IA custava.
+  { id: "custos-ia", icone: "fas fa-coins", titulo: "Custos de IA" },
 ];
 
 // Roxo do grupo "Agentes IA" no menu — mantém a identidade visual dos cards.
@@ -945,6 +1161,8 @@ export default function AgentesIA() {
         return <PainelIframe src="/api/admin/polish/painel" titulo="Painel de Correcao Profissional" altura={620} />;
       case "notificacoes":
         return <NotificacoesManager />;
+      case "custos-ia":
+        return <CustosIA />;
       case "auto-resposta":
         return (
           <div className="space-y-6">
