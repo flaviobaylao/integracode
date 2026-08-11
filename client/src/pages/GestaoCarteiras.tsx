@@ -73,9 +73,30 @@ export default function GestaoCarteiras() {
     },
   });
 
+  // Vendedores ATIVOS -- mesma fonte usada em "Vendedores" e no filtro de
+  // "Clientes Ativos". O dropdown de vendedor lista somente quem esta ativo.
+  const { data: vendedoresAtivos = [] } = useQuery<Array<{ id: string; name: string; allIds?: string[] }>>({
+    queryKey: ["/api/sellers/active"],
+    staleTime: 30000,
+  });
+
   const d = data || {};
   const meses: string[] = d?.periodo?.meses || [];
   const todos: Cliente[] = d?.clientes || [];
+
+  // Normaliza o nome do vendedor igual a dedup do endpoint /api/sellers/active.
+  const normVend = (s: any) => String(s || "").toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  const nomesAtivos = useMemo(
+    () => new Set((vendedoresAtivos || []).map((s: any) => normVend(s.name))),
+    [vendedoresAtivos],
+  );
+  // Opcoes do dropdown: so vendedores ativos. Se a lista de ativos ainda nao
+  // carregou (ou vier vazia), cai para todos -- evita esvaziar o filtro.
+  const vendedoresDropdown = useMemo(() => {
+    const lista: any[] = d?.vendedores || [];
+    return nomesAtivos.size ? lista.filter((v: any) => nomesAtivos.has(normVend(v.vendedor))) : lista;
+  }, [d, nomesAtivos]);
+
   const filtrarVend = vendedor !== "__todos__";
   const clientes = useMemo(
     () => (filtrarVend ? todos.filter((c) => c.vendedor === vendedor) : todos),
@@ -233,7 +254,7 @@ export default function GestaoCarteiras() {
               <SelectTrigger className="w-[220px]" data-testid="select-vendedor"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__todos__">Todos os vendedores</SelectItem>
-                {(d?.vendedores || []).map((v: any) => (
+                {vendedoresDropdown.map((v: any) => (
                   <SelectItem key={v.vendedor} value={v.vendedor}>{v.vendedor} ({v.clientes})</SelectItem>
                 ))}
               </SelectContent>
@@ -290,13 +311,13 @@ export default function GestaoCarteiras() {
                     <Pie
                       data={(tipoPizza === "abc"
                         ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
-                        : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|^Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] })))}
+                        : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] })))}
                       dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
                       stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
                     >
                       {(tipoPizza === "abc"
                         ? abc.map((a: any) => COR_ABC[a.classe])
-                        : segmentos.map((s: any, i: number) => (/^Demais|^Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length]))
+                        : segmentos.map((s: any, i: number) => (/^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length]))
                       ).map((cor: string, i: number) => <Cell key={i} fill={cor} />)}
                     </Pie>
                     <Tooltip formatter={(v: any, n: any, p: any) => [`${BRL(v)} · ${NUM(p?.payload?.clientes)} clientes`, p?.payload?.nome]} />
@@ -306,7 +327,7 @@ export default function GestaoCarteiras() {
                 <div className="mt-2 border-t pt-2 text-sm">
                   {(tipoPizza === "abc"
                     ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
-                    : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|^Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] }))
+                    : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] }))
                   ).map((x: any) => (
                     <div key={x.nome} className="flex items-center justify-between py-0.5">
                       <span className="flex items-center gap-2">
