@@ -639,7 +639,7 @@ export async function canalSaidaPadrao(): Promise<string | undefined> {
   try {
     const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'canal_saida_padrao' LIMIT 1`);
     const v = String(r.rows?.[0]?.value ?? '').replace(/^"|"$/g, '').replace(/\D/g, '');
-    return v || undefined;
+    return v || '5562993227169'; // 2630 bloqueado na Umbler -> saida padrao vai pelo 7169
   } catch { return undefined; }
 }
 
@@ -667,7 +667,18 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body });
     const raw = await resp.text();
     console.log(`[UMBLER-TALK] to=${digits} from=${cfg.fromPhone} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
-    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    if (!resp.ok) {
+      // 2630 bloqueado na Umbler: reenvia UMA vez pelo canal de saida padrao (7169) e segue.
+      const _saidaR = String((await canalSaidaPadrao()) || '').replace(/\D/g, '');
+      if (_saidaR && _saidaR !== fromPhone) {
+        const resp2 = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify({ organizationId: cfg.orgId, fromPhone: _saidaR, toPhone: digits, message: text }) });
+        const raw2 = await resp2.text();
+        console.log(`[UMBLER-TALK] RETRY from=${_saidaR} to=${digits} httpStatus=${resp2.status} resp=${raw2.slice(0, 150)}`);
+        if (resp2.ok) { let id2: string | undefined; try { id2 = JSON.parse(raw2).id; } catch {} return { success: true, messageId: id2 }; }
+        return { success: false, error: `HTTP ${resp.status} (retry ${resp2.status}): ${raw2.slice(0, 150)}` };
+      }
+      return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    }
     let id: string | undefined;
     try { id = JSON.parse(raw).id; } catch {}
     return { success: true, messageId: id };
@@ -693,7 +704,20 @@ export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, capt
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload) });
     const raw = await resp.text();
     console.log(`[UMBLER-TALK-MEDIA] to=${digits} file=${String(fileUrl).slice(0, 80)} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
-    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    if (!resp.ok) {
+      // 2630 bloqueado na Umbler: reenvia UMA vez pelo canal de saida padrao (7169) e segue.
+      const _saidaR = String((await canalSaidaPadrao()) || '').replace(/\D/g, '');
+      if (_saidaR && _saidaR !== fromPhone) {
+        const payload2: any = { organizationId: cfg.orgId, fromPhone: _saidaR, toPhone: digits, file: fileUrl };
+        if (caption) payload2.message = caption;
+        const resp2 = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload2) });
+        const raw2 = await resp2.text();
+        console.log(`[UMBLER-TALK-MEDIA] RETRY from=${_saidaR} to=${digits} httpStatus=${resp2.status} resp=${raw2.slice(0, 150)}`);
+        if (resp2.ok) { let id2: string | undefined; try { id2 = JSON.parse(raw2).id; } catch {} return { success: true, messageId: id2 }; }
+        return { success: false, error: `HTTP ${resp.status} (retry ${resp2.status}): ${raw2.slice(0, 150)}` };
+      }
+      return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
+    }
     let id: string | undefined;
     try { id = JSON.parse(raw).id; } catch {}
     return { success: true, messageId: id };
