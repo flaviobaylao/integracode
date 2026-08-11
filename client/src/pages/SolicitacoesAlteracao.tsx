@@ -216,7 +216,7 @@ function CarteiraSugestaoCard({ s }: { s: any }) {
             <Badge className="bg-amber-500 text-[11px]">Migração de carteira</Badge>
             <span className="text-sm font-semibold truncate">{s.customer_name || s.customer_id}</span>
           </div>
-          <div className="text-[11px] text-muted-foreground mt-0.5">Repescagem: 2ª venda pelo mesmo vendedor · {s.from_name || s.from_seller_id || "—"} → <span className="font-semibold text-gray-700">{s.to_name || s.to_seller_id}</span></div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Repescagem: 2º pedido implantado pelo mesmo vendedor · {s.from_name || s.from_seller_id || "—"} → <span className="font-semibold text-gray-700">{s.to_name || s.to_seller_id}</span></div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8" disabled={decidir.isPending} onClick={() => decidir.mutate("aprovar")}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Aprovar</Button>
