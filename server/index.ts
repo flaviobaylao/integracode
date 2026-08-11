@@ -2291,7 +2291,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const porVendedor = ((rv.rows || rv) as any[]).map((x: any) => ({ sellerId: String(x.sid), vendedor: x.vendedor || x.sid, dias: Number(x.dias), naoVisitados: Number(x.nv), justificados: Number(x.just), pendentes: Number(x.pend) }));
       const rvd: any = await db.execute(sql.raw("SELECT vj.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor FROM visit_justifications vj WHERE to_char(vj.visit_date,'YYYY-MM') = '" + mes + "' AND vj.reason <> 'removido' GROUP BY vj.seller_id ORDER BY vendedor"));
       const vendedores = ((rvd.rows || rvd) as any[]).map((x: any) => ({ sellerId: String(x.sid || ''), vendedor: x.vendedor || x.sid })).filter((v: any) => v.sellerId);
-      res.json({ ok: true, mes, sellerId: sid || null, totalNaoVisitados: porMotivo.reduce((s: number, x: any) => s + x.n, 0), porMotivo, clientes, porVendedor, vendedores });
+      // "Fechou hoje": vendedores com fechamento REAL (nao-auto) da rota de HOJE (BRT).
+      // Reinicia a cada dia — no dia seguinte, sem fechamento ainda, volta a ❌.
+      const hojeBRT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      const rfh: any = await db.execute(sql`SELECT DISTINCT seller_id AS sid FROM route_closures WHERE close_date = ${hojeBRT}::date AND COALESCE(closed_by, '') <> 'auto'`);
+      const fechadosHoje = ((rfh.rows || rfh) as any[]).map((x: any) => String(x.sid));
+      res.json({ ok: true, mes, sellerId: sid || null, hoje: hojeBRT, fechadosHoje, totalNaoVisitados: porMotivo.reduce((s: number, x: any) => s + x.n, 0), porMotivo, clientes, porVendedor, vendedores });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
@@ -2356,7 +2361,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
           await db.execute(sql`INSERT INTO justif_suspensions (mes, customer_id, tipo, created_by) VALUES (${mes}, ${cid}, ${tipo}, ${uid}) ON CONFLICT (mes, customer_id, tipo) DO NOTHING`);
         }
       } else if (ids.length > 0) {
-        await db.execute(sql`DELETE FROM justif_suspensions WHERE mes = ${mes} AND tipo = ${tipo} AND customer_id = ANY(${ids})`);
+        // DELETE por id (loop), igual ao INSERT acima. O `= ANY(${ids})` com bind de
+        // array falhava e derrubava o "limpar" em massa (erro "atualizar em massa").
+        for (const cid of ids) {
+          await db.execute(sql`DELETE FROM justif_suspensions WHERE mes = ${mes} AND tipo = ${tipo} AND customer_id = ${cid}`);
+        }
       }
       res.json({ ok: true, mes, tipo, value, afetados: ids.length });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
