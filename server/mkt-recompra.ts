@@ -185,10 +185,18 @@ ticket AS (
    GROUP BY customer_id
 ),
 mix AS (
-  SELECT customer_id AS cid, COUNT(DISTINCT p->>'name')::int AS skus
-    FROM sales_cards sc, jsonb_array_elements(COALESCE(sc.products,'[]'::jsonb)) p
+  -- ⚠️ ACHADO EM PRODUÇÃO: nem todo sales_cards.products é um array. Tem linha
+  -- com objeto (e com string) vindas de importações antigas, e o
+  -- jsonb_array_elements derrubava a consulta inteira com "cannot extract
+  -- elements from an object" — ou seja, a régua não abria para ninguém por causa
+  -- de meia dúzia de linhas velhas. O CASE só desembrulha o que é array de fato;
+  -- o resto conta zero SKU em vez de quebrar tudo.
+  SELECT sc.customer_id AS cid, COUNT(DISTINCT p->>'name')::int AS skus
+    FROM sales_cards sc
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(sc.products) = 'array' THEN sc.products ELSE '[]'::jsonb END) p
    WHERE sc.customer_id IS NOT NULL AND sc.created_at >= now() - interval '90 days'
-   GROUP BY customer_id
+   GROUP BY sc.customer_id
 )
 SELECT c.id, c.name, c.phone, c.seller_id,
        r.ultima_compra, r.primeira_compra, r.compras,
