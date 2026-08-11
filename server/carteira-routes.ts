@@ -103,6 +103,23 @@ export function registerCarteira(app: Express) {
 
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
+      // ── O QUE NAO E CARTEIRA DE CLIENTE ─────────────────────────────────────
+      // (a) titulo no CNPJ de uma das 4 empresas do grupo = transferencia entre
+      //     empresas (o "cliente" e a propria casa);
+      // (b) categoria de nao-venda (aporte de socio, emprestimo, adiantamento,
+      //     devolucao, transferencia);
+      // (c) categoria que e SO codigo de plano de contas, sem texto ("1.01.02"):
+      //     medido em ago/2026, 98% desse balde era aporte de socio via PIX.
+      // Sem isso, os socios apareciam como 2o e 3o maiores "clientes" da carteira.
+      const CNPJS_GRUPO = ["28295493000153", "28295493000234", "28295493000315", "52921727000105"];
+      const FILTRO_VENDA = `
+            AND COALESCE(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'')
+                NOT IN (${CNPJS_GRUPO.map((c) => `'${c}'`).join(",")})
+            AND NOT (
+                  UPPER(COALESCE(category,'')) ~ '(APORTE|SOCIO|SÓCIO|EMPREST|ADIANT|DEVOLU|TRANSFER)'
+               OR TRIM(COALESCE(category,'')) ~ '^[0-9]+([.-][0-9]+)*$'
+            )`;
+
       // CTE comum: titulos validos do periodo, ja com a chave do cliente.
       const CTE_REC = `
         WITH r AS (
@@ -117,6 +134,7 @@ export function registerCarteira(app: Express) {
             AND deleted_at IS NULL
             AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
             AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+            ${FILTRO_VENDA}
         ),
         rk AS (
           SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v FROM r
@@ -129,6 +147,17 @@ export function registerCarteira(app: Express) {
                COUNT(*)::int               AS titulos,
                COUNT(DISTINCT chave)::int  AS clientes
         FROM rk GROUP BY mes ORDER BY mes`);
+
+      // 1b) O que ficou de fora (transparencia: vai como nota de rodape na tela).
+      const foraRows = await q(`
+        SELECT COUNT(*)::int AS titulos, COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0)),0)::float AS valor
+        FROM receivables
+        WHERE issue_date >= '${iniDate}'
+          AND issue_date <  '${fimDateExcl}'
+          AND deleted_at IS NULL
+          AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+          AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+          AND NOT (TRUE ${FILTRO_VENDA})`);
 
       // 2) Serie mensal comparativa — NF-e de VENDA.
       //    Ate 30/06/2026 vale o calculo legado; de 01/07/2026 em diante, a Regra
@@ -321,6 +350,11 @@ export function registerCarteira(app: Express) {
       res.json({
         ok: true,
         periodo: { inicio, fim, meses, mesesQtd: meses.length },
+        excluidos: {
+          titulos: Number(foraRows?.[0]?.titulos) || 0,
+          valor: Number(foraRows?.[0]?.valor) || 0,
+          motivo: "títulos que não são venda a cliente: aporte de sócio, empréstimo, adiantamento, devolução, transferência entre as empresas do grupo e lançamentos contábeis sem descrição",
+        },
         fonte: {
           base: "receivables (títulos emitidos, exclui cancelados)",
           comparativo: "NF-e de venda autorizada (regra oficial a partir de " + VIGENCIA_REGRA_OFICIAL + ")",
