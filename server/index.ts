@@ -3904,6 +3904,57 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== CENTRAL DE MARKETING — buraco 8: regua de recompra sobre a base =====
+  app.post("/api/mkt/recompra/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktRecompraSchema } = await import('./mkt-recompra'); res.json(await ensureMktRecompraSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Panorama: retrato da base, quem se encaixa em cada regua HOJE e o que ja rendeu
+  app.get("/api/mkt/recompra", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { ensureMktRecompraSchema, panorama } = await import('./mkt-recompra');
+      await ensureMktRecompraSchema();
+      res.json(await panorama());
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Monta o lote. NAO envia nada — so calcula quem entra, quanto custa e quanto pode render.
+  app.post("/api/mkt/recompra/lote", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { montarLote } = await import('./mkt-recompra');
+      res.json(await montarLote({ regua: req.body?.regua || undefined, limite: req.body?.limite, criadoPor: req.user?.email }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/recompra/lote/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { verLote } = await import('./mkt-recompra'); res.json(await verLote(String(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // O PORTAO: so aqui as mensagens entram na fila do 1841 (que ainda aplica as travas dela)
+  app.post("/api/mkt/recompra/lote/:id/liberar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { liberarLote } = await import('./mkt-recompra');
+      res.json(await liberarLote(String(req.params.id), req.user?.email || req.user?.id || 'admin'));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/recompra/lote/:id/descartar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { descartarLote } = await import('./mkt-recompra'); res.json(await descartarLote(String(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Parametros da regua — editaveis sem deploy
+  app.post("/api/mkt/recompra/parametros", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const b = req.body || {};
+      const permitidas = ['mkt_recompra_antecedencia_dias','mkt_recompra_folga_dias','mkt_recompra_reativacao_dias',
+        'mkt_recompra_reativacao_max','mkt_recompra_mix_min_skus','mkt_recompra_frequencia_dias',
+        'mkt_recompra_lote_max','mkt_recompra_pular_inadimplente','mkt_recompra_min_pedidos_ciclo'];
+      for (const k of Object.keys(b)) {
+        if (!permitidas.includes(k)) continue;
+        await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${String(b[k])}, ${'mkt-recompra'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      }
+      const { parametros } = await import('./mkt-recompra');
+      res.json({ ok: true, parametros: await parametros() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
   app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
