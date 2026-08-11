@@ -4378,7 +4378,14 @@ export function registerChatRoutes(app: Express): void {
           const ownerAgent = agents.find(a => a.id === conversationOwner);
           // 🔓 Só trava se o DONO estiver ONLINE. Se o dono saiu/está offline, a conversa
           // é liberada para outro atendente assumir (evita conversas "presas" com donos ausentes).
-          if (ownerAgent && ownerAgent.status === 'online') {
+          // 🕒 Libera apos INATIVIDADE: a trava so vale se o DONO falou ha pouco (30 min).
+          // Passado esse tempo sem mensagem dele, a conversa e liberada para outro assumir.
+          let _donoAtivo = false;
+          try {
+            const _rr: any = await db.execute(sql`SELECT (max(created_at) > now() - interval '30 minutes') AS r FROM chat_messages WHERE conversation_id = ${conversationId} AND sender_type <> 'customer' AND coalesce(sender_id,'') NOT LIKE 'agent:%' AND coalesce(sender_id,'') NOT IN ('system','bot','chatgpt')`);
+            _donoAtivo = !!_rr.rows?.[0]?.r;
+          } catch { _donoAtivo = true; }
+          if (ownerAgent && ownerAgent.status === 'online' && _donoAtivo) {
             return res.status(403).json({
               error: `Esta conversa está sendo atendida por ${ownerAgent?.name || 'outro atendente'}. Peça a transferência ao responsável ou a um administrador para poder enviar mensagens.`,
               code: "CONVERSATION_LOCKED",
