@@ -1,0 +1,205 @@
+// shared/tempo.ts
+// -----------------------------------------------------------------------------
+// FONTE UNICA DE HORARIO — INTEGRA 2.0
+// Hora oficial do Brasil = America/Sao_Paulo (UTC-3, sem horario de verao desde 2019).
+//
+// ============================ A REGRA DE OURO ================================
+// Existem DOIS tipos de campo de tempo no sistema. Confundir os dois e a causa
+// de praticamente todo bug de fuso do INTEGRA:
+//
+//  (1) INSTANTE — "quando isso aconteceu de verdade"
+//      Ex.: created_at, updated_at, check_in_time, sent_at, authorization_date.
+//      GRAVA .... em UTC real  -> `agora()` no JS, `now()` no Postgres.
+//      LE ...... convertendo p/ BR SO na hora de exibir/agrupar por dia.
+//      SQL do dia BR: (col AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date
+//      JS do dia BR:  new Date(col).toLocaleDateString('en-CA', { timeZone: BR_TZ })
+//
+//  (2) DATA DE CALENDARIO — "que dia e este", sem hora nenhuma
+//      Ex.: due_date, issue_date, scheduled_date, route_date, competencia.
+//      GRAVA .... meia-noite UTC -> `dataCalendario('2026-08-11')`.
+//      LE ...... SEM NENHUMA conversao de fuso. Converter subtrai 3h de um valor
+//                que nao tem hora e joga o dia para tras.
+//      SQL do dia:    col::date
+//      JS do dia:     new Date(col).toLocaleDateString('en-CA', { timeZone: 'UTC' })
+//
+// "HOJE" no Brasil, sempre: SQL_HOJE_BR (SQL) ou hojeBR() (JS).
+//
+// ============================== PROIBIDO =====================================
+//  * Gravar em coluna o retorno de nowBrazil() (server ou client). nowBrazil()
+//    devolve um Date DESLOCADO -3h: os getters dele mostram a hora de parede de
+//    Brasilia, mas o INSTANTE que ele representa esta errado. Gravar isso numa
+//    coluna `timestamp` guarda hora BR onde o resto do sistema le UTC.
+//    nowBrazil() so pode ser usado para LER componentes (getFullYear/getMonth/
+//    getDate/getDay). NUNCA .toISOString(), .getTime(), comparacao ou gravacao.
+//  * `col AT TIME ZONE 'America/Sao_Paulo'` sozinho sobre coluna `timestamp`.
+//    Numa coluna sem fuso o Postgres INTERPRETA o valor como se ja fosse BR e
+//    devolve timestamptz — o efeito liquido e SOMAR 3h, nao subtrair.
+//    Para instante use as DUAS etapas (AT TIME ZONE 'UTC' AT TIME ZONE ...).
+//    Para data de calendario nao use nenhuma.
+// -----------------------------------------------------------------------------
+
+export const BR_TZ = 'America/Sao_Paulo';
+
+/* ========================= GRAVACAO ========================= */
+
+/** Instante atual, em UTC real. Use SEMPRE isto para gravar created_at,
+ *  updated_at, check_in_time, sent_at, paid_at, authorization_date etc. */
+export function agora(): Date {
+  return new Date();
+}
+
+/** Converte 'YYYY-MM-DD' na DATA DE CALENDARIO canonica (meia-noite UTC).
+ *  E o formato que due_date/scheduled_date/route_date usam no banco.
+ *  Aceita tambem string ISO completa: a parte de hora e descartada. */
+export function dataCalendario(iso: string): Date {
+  const dia = String(iso).slice(0, 10);
+  return new Date(`${dia}T00:00:00.000Z`);
+}
+
+/** Instante UTC correspondente a uma data+hora de parede de Brasilia.
+ *  Ex.: instanteBR('2026-08-11', '08:00') -> 2026-08-11T11:00:00.000Z */
+export function instanteBR(dia: string, hora = '00:00'): Date {
+  const hhmmss = hora.length === 5 ? `${hora}:00` : hora;
+  return new Date(`${String(dia).slice(0, 10)}T${hhmmss}-03:00`);
+}
+
+/* ========================= LEITURA ========================= */
+
+/** Hoje no Brasil, 'YYYY-MM-DD'. Funciona em qualquer fuso de servidor/navegador. */
+export function hojeBR(d: Date = new Date()): string {
+  return d.toLocaleDateString('en-CA', { timeZone: BR_TZ });
+}
+
+/** Dia BR ('YYYY-MM-DD') de um INSTANTE gravado em UTC. */
+export function diaBR(v: Date | string | number): string {
+  return new Date(v).toLocaleDateString('en-CA', { timeZone: BR_TZ });
+}
+
+/** Dia ('YYYY-MM-DD') de uma DATA DE CALENDARIO. SEM conversao de fuso. */
+export function diaCalendario(v: Date | string): string {
+  return new Date(v).toLocaleDateString('en-CA', { timeZone: 'UTC' });
+}
+
+/** true se a DATA DE CALENDARIO ja passou. Vence HOJE NAO esta vencido. */
+export function jaVenceu(vencimento: Date | string, ref: Date = new Date()): boolean {
+  return diaCalendario(vencimento) < hojeBR(ref);
+}
+
+/** Dias de atraso de uma DATA DE CALENDARIO (0 se vence hoje ou no futuro). */
+export function diasDeAtraso(vencimento: Date | string, ref: Date = new Date()): number {
+  const v = Date.parse(`${diaCalendario(vencimento)}T00:00:00Z`);
+  const h = Date.parse(`${hojeBR(ref)}T00:00:00Z`);
+  return Math.max(0, Math.round((h - v) / 86400000));
+}
+
+/* ====================== FORMATACAO (exibicao) ====================== */
+
+/** INSTANTE -> 'dd/mm/aaaa' no fuso do Brasil. */
+export function fmtDataBR(v: Date | string | null | undefined): string {
+  if (!v) return '';
+  return new Date(v).toLocaleDateString('pt-BR', { timeZone: BR_TZ });
+}
+
+/** INSTANTE -> 'dd/mm/aaaa hh:mm' no fuso do Brasil. */
+export function fmtDataHoraBR(v: Date | string | null | undefined): string {
+  if (!v) return '';
+  return new Date(v).toLocaleString('pt-BR', {
+    timeZone: BR_TZ,
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** DATA DE CALENDARIO -> 'dd/mm/aaaa'. SEM conversao de fuso: e o dia gravado. */
+export function fmtCalendarioBR(v: Date | string | null | undefined): string {
+  if (!v) return '';
+  return new Date(v).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+}
+
+/** INSTANTE -> ISO com offset -03:00, formato exigido pela SEFAZ (dhEmi/dhSaiEnt). */
+export function isoOffsetBR(v: Date | string | number = new Date()): string {
+  const d = new Date(v);
+  const p = (partes: Intl.DateTimeFormatPart[], t: string) =>
+    partes.find((x) => x.type === t)?.value ?? '00';
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BR_TZ, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(d);
+  const hh = p(partes, 'hour') === '24' ? '00' : p(partes, 'hour');
+  return `${p(partes, 'year')}-${p(partes, 'month')}-${p(partes, 'day')}`
+    + `T${hh}:${p(partes, 'minute')}:${p(partes, 'second')}-03:00`;
+}
+
+/** INSTANTE -> 'YYYY-MM-DDTHH:MM:SS' na hora de parede de Brasilia, SEM offset.
+ *  E a convencao usada em billing_pipeline.stage_history.changedAt, que o resto do
+ *  sistema consome com LEFT(changedAt, 10) para extrair o dia. */
+export function paredeBR(v: Date | string | number = new Date()): string {
+  return isoOffsetBR(v).slice(0, 19);
+}
+
+/** Componentes do relogio de parede de Brasilia para um INSTANTE.
+ *  Use isto em vez de nowBrazil().getMonth() & cia. */
+export function componentesBR(v: Date | string | number = new Date()) {
+  const [ano, mes, dia] = diaBR(new Date(v)).split('-').map(Number);
+  const hora = new Date(v).toLocaleTimeString('en-GB', { timeZone: BR_TZ, hour12: false });
+  const [h, mi, s] = hora.split(':').map(Number);
+  return { ano, mes, dia, hora: h, minuto: mi, segundo: s };
+}
+
+/* ========================= SQL ========================= */
+
+/** Hoje no Brasil, como expressao SQL. */
+export const SQL_HOJE_BR = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
+
+/** Dia BR de uma coluna `timestamp` que guarda um INSTANTE em UTC.
+ *  As DUAS etapas sao obrigatorias: a primeira rotula o naive como UTC. */
+export function sqlDiaBR(col: string): string {
+  return `(${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date`;
+}
+
+/** Dia de uma coluna que guarda DATA DE CALENDARIO. Sem conversao — de proposito. */
+export function sqlDiaCalendario(col: string): string {
+  return `(${col})::date`;
+}
+
+/** Instante BR (parede) de uma coluna `timestamp` em UTC, p/ to_char de hora. */
+export function sqlParedeBR(col: string): string {
+  return `(${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`;
+}
+
+/** Vencido por dia-calendario. Vence HOJE NAO e vencido. */
+export function sqlVencido(col = 'due_date'): string {
+  return `${sqlDiaCalendario(col)} < ${SQL_HOJE_BR}`;
+}
+
+/** Dias de atraso por dia-calendario (negativo = ainda a vencer). */
+export function sqlDiasAtraso(col = 'due_date'): string {
+  return `(${SQL_HOJE_BR} - ${sqlDiaCalendario(col)})`;
+}
+
+/* ==================== VIRADA DE CONVENCAO ==================== */
+
+/** Data/hora em que o sistema passou a gravar INSTANTES em UTC real.
+ *  Antes disso varias colunas guardavam hora de parede de Brasilia (nowBrazil()).
+ *  Os registros antigos NAO foram reescritos — por decisao do Flavio em 11/08/2026.
+ *  Onde o historico precisa continuar batendo (faturamento, DRE), use
+ *  `sqlDiaBRComVirada()`, que so aplica a conversao nas linhas novas. */
+export const VIRADA_FUSO_UTC = '2026-08-12 00:00:00';
+
+/** Dia BR de uma coluna de INSTANTE, respeitando a virada de convencao:
+ *  linhas gravadas ANTES da virada ja estao em hora de Brasilia e sao lidas
+ *  como estao; linhas novas (UTC) passam pela conversao de duas etapas.
+ *  Mantem os numeros historicos IDENTICOS aos de hoje. */
+export function sqlDiaBRComVirada(col: string): string {
+  return `(CASE WHEN ${col} >= TIMESTAMP '${VIRADA_FUSO_UTC}'`
+    + ` THEN (${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`
+    + ` ELSE ${col} END)::date`;
+}
+
+/** Versao expressao-timestamp (sem ::date) da regra acima. */
+export function sqlParedeBRComVirada(col: string): string {
+  return `(CASE WHEN ${col} >= TIMESTAMP '${VIRADA_FUSO_UTC}'`
+    + ` THEN (${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`
+    + ` ELSE ${col} END)`;
+}
