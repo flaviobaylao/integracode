@@ -339,6 +339,26 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       if (attended) continue;
     }
 
+    // NOVA REGRA: se o cliente caiu na repescagem e ficou 2 dias na lista SEM
+    // registro de atendimento (check-in de rota pelo vendedor OU atendimento
+    // virtual/visita concluida pelo telemarketing), ele SAI da repescagem e so
+    // volta em um NOVO ciclo (nova visita vermelha muda o anchor e reabre a janela).
+    // Janela de 2 dias a partir do dia em que o cliente caiu na lista:
+    //  - Semanal/Quinzenal: cai no dia seguinte a visita (anchor + 1).
+    //  - Mensal: cai no 3o dia apos a visita (anchor + 3), ja passada a tolerancia.
+    {
+      const addDays = (base: string, k: number) => { const d = new Date(base + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + k); return d.toISOString().slice(0, 10); };
+      const fallDate = addDays(ev.lastRedAnchor, isMensal ? 3 : 1);
+      const windowEnd = addDays(fallDate, 1); // 2 dias: fallDate e fallDate+1
+      if (todayStr > windowEnd) {
+        const attendedInWindow = [checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer].some(map => {
+          const set = map.get(c.id); if (!set) return false;
+          for (const d of set) if (d >= fallDate && d <= windowEnd) return true; return false;
+        });
+        if (!attendedInWindow) continue; // 2 dias sem atendimento -> sai; volta so em novo ciclo
+      }
+    }
+
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
