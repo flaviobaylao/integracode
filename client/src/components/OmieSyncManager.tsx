@@ -403,8 +403,12 @@ export default function OmieSyncManager({ isOpen, onClose }: OmieSyncManagerProp
     }).format(value);
   };
 
+  // Vencimento / data de faturamento sao DATA DE CALENDARIO (gravadas como meia-noite
+  // UTC). Renderizar em America/Sao_Paulo subtraia 3h de um valor sem hora e mostrava o
+  // dia ANTERIOR — o mesmo titulo aparecia 20/07 no Financeiro e 19/07 aqui.
+  // Data de calendario le-se em 'UTC'. Ver shared/tempo.ts.
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    return new Date(dateString).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
   };
 
   const getDaysOverdueColor = (days: number) => {
