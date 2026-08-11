@@ -826,6 +826,9 @@ export default function Marketing() {
         </CardContent>
       </Card>
 
+      {/* ── biblioteca de criativos (buraco 5) ── */}
+      <SecaoCriativos />
+
       {/* ── links e cliques ── */}
       <Card>
         <CardHeader className="pb-3">
@@ -868,5 +871,349 @@ export default function Marketing() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ============================================================================
+// BURACO 5 — Biblioteca de criativos com tags
+// ----------------------------------------------------------------------------
+// A pergunta que esta seção existe para responder: QUAL GANCHO VENDE MAIS.
+// Por isso ela não é uma galeria de fotos — é foto + tag + uso + receita.
+// E quando a amostra não sustenta conclusão, ela diz isso na cara, em vez de
+// mostrar um ranking que parece resposta.
+// ============================================================================
+function SecaoCriativos() {
+  const { toast } = useToast();
+  const [eixo, setEixo] = useState("gancho");
+  const [filtro, setFiltro] = useState<any>({ soElegiveis: false });
+  const [importando, setImportando] = useState(false);
+  const [novaUrl, setNovaUrl] = useState("");
+  const [novoTitulo, setNovoTitulo] = useState("");
+  const [novoGancho, setNovoGancho] = useState("");
+  const [novoCenario, setNovoCenario] = useState("");
+  const [novoPublico, setNovoPublico] = useState("");
+  const [novaOrigem, setNovaOrigem] = useState("foto_real");
+  const [salvando, setSalvando] = useState(false);
+
+  const pan = useQuery<any>({
+    queryKey: ["/api/mkt/assets/panorama"],
+    queryFn: () => apiGet("/api/mkt/assets/panorama"),
+  });
+  const qs = new URLSearchParams(
+    Object.entries(filtro).filter(([, v]) => v !== "" && v !== undefined && v !== false) as any
+  ).toString();
+  const lista = useQuery<any>({
+    queryKey: ["/api/mkt/assets", qs],
+    queryFn: () => apiGet("/api/mkt/assets" + (qs ? "?" + qs : "")),
+  });
+  const desemp = useQuery<any>({
+    queryKey: ["/api/mkt/assets/desempenho", eixo],
+    queryFn: () => apiGet("/api/mkt/assets/desempenho?eixo=" + eixo + "&dias=90"),
+  });
+  const lac = useQuery<any>({
+    queryKey: ["/api/mkt/assets/lacunas"],
+    queryFn: () => apiGet("/api/mkt/assets/lacunas"),
+  });
+
+  const vocab = pan.data?.vocabulario || {};
+  const recarregar = () => { pan.refetch(); lista.refetch(); desemp.refetch(); lac.refetch(); };
+
+  async function importar() {
+    setImportando(true);
+    try {
+      const r = await apiPost("/api/mkt/assets/importar", {});
+      toast({
+        title: "Catálogo lido",
+        description:
+          r.encontradas + " foto(s) em " + r.produtos + " produto(s) · " +
+          r.novas + " nova(s) · " + r.duplicadas + " já existia(m)",
+      });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setImportando(false);
+  }
+
+  async function cadastrar() {
+    if (!novaUrl.trim()) return;
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/assets", {
+        url: novaUrl.trim(),
+        titulo: novoTitulo.trim() || null,
+        origem: novaOrigem,
+        direitosOk: true,
+        tags: {
+          gancho: novoGancho ? [novoGancho] : [],
+          cenario: novoCenario ? [novoCenario] : [],
+          publico: novoPublico ? [novoPublico] : [],
+        },
+      });
+      if (r.recusadas?.length) {
+        toast({ title: "Tag fora do vocabulário", description: r.recusadas.map((x: any) => x.valor).join(", "), variant: "destructive" });
+      }
+      toast({
+        title: r.duplicado ? "Já existia — tags somadas" : "Criativo cadastrado",
+        description: "formato: " + (r.formato || "desconhecido"),
+      });
+      setNovaUrl(""); setNovoTitulo("");
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  async function marcarUso(id: number) {
+    try {
+      const r = await apiPost("/api/mkt/assets/" + id + "/uso", { canal: "instagram" });
+      if (r.motivo) { toast({ title: "Não pode ir ao ar", description: r.motivo, variant: "destructive" }); return; }
+      toast({ title: "Uso registrado", description: "Entra no descanso e passa a contar no desempenho." });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+
+  async function alternarDireitos(a: any) {
+    try {
+      await fetch("/api/mkt/assets/" + a.id, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direitosOk: !a.direitos_ok }),
+      });
+      recarregar();
+    } catch { /* silencioso: a tela recarrega e mostra o estado real */ }
+  }
+
+  const p = pan.data || {};
+  const d = desemp.data || {};
+  const L = lac.data || {};
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <i className="fas fa-images text-muted-foreground" /> Biblioteca de criativos
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <p className="text-xs text-muted-foreground">
+          Sem isto é impossível saber que <b>gancho de margem</b> vende mais que <b>gancho de sabor</b>.
+          Cada criativo carrega tag, e cada uso aponta para uma campanha — a receita volta pelo fio de
+          atribuição e cai na tag. Só há conclusão com amostra: abaixo de {p.amostraMinima || 3} usos, ou
+          quando o mesmo criativo dividiu campanha com outro gancho, a tela avisa em vez de ranquear.
+        </p>
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            ["No acervo", num(p.total), ""],
+            ["Liberados", num(p.liberados), "direitos conferidos"],
+            ["Prontos hoje", num(p.elegiveis), "fora do descanso de " + (p.diasDescanso || 21) + "d"],
+            ["Nunca usados", num(p.nunca_usados), ""],
+            ["Usos registrados", num(p.usos_totais), ""],
+          ].map(([t, v, s]: any) => (
+            <div key={t} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{t}</div>
+              <div className="text-xl font-semibold">{v}</div>
+              {s ? <div className="text-[10px] text-muted-foreground">{s}</div> : null}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2 items-center">
+          <Button size="sm" onClick={importar} disabled={importando}>
+            <i className="fas fa-download mr-2" />
+            {importando ? "Lendo o catálogo…" : "Trazer as fotos do catálogo"}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Lê as fotos que já estão nos produtos ativos. Foto repetida em vários produtos vira um criativo só.
+          </span>
+        </div>
+
+        {/* ── desempenho por tag: o motivo da seção existir ── */}
+        <div className="rounded-lg border p-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">O que vende mais</span>
+            {["gancho", "cenario", "publico", "produto"].map((e) => (
+              <Button key={e} size="sm" variant={eixo === e ? "default" : "outline"} onClick={() => setEixo(e)}>
+                {e}
+              </Button>
+            ))}
+            <span className="text-[11px] text-muted-foreground ml-auto">últimos 90 dias</span>
+          </div>
+          {d.recado && (
+            <div className="text-xs rounded-md bg-muted/60 px-3 py-2">
+              <i className="fas fa-circle-info mr-2 text-muted-foreground" />{d.recado}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground border-b">
+                <tr>
+                  <th className="text-left py-1">{eixo}</th>
+                  <th className="text-right">Criativos</th>
+                  <th className="text-right">Usos</th>
+                  <th className="text-right">Pedidos</th>
+                  <th className="text-right">Receita</th>
+                  <th className="text-right">Por uso</th>
+                  <th className="text-left pl-3">Dá para concluir?</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(d.linhas || []).length === 0 && (
+                  <tr><td colSpan={7} className="py-4 text-center text-muted-foreground text-xs">
+                    Nenhum uso de criativo registrado ainda.
+                  </td></tr>
+                )}
+                {(d.linhas || []).map((l: any) => (
+                  <tr key={l.valor} className="border-b last:border-0">
+                    <td className="py-2 font-medium">{l.valor}</td>
+                    <td className="text-right">{num(l.criativos)}</td>
+                    <td className="text-right">{num(l.usos)}</td>
+                    <td className="text-right">{num(l.pedidos)}</td>
+                    <td className="text-right font-semibold">{brl(l.receita)}</td>
+                    <td className="text-right">{brl(l.receitaPorUso)}</td>
+                    <td className="pl-3">
+                      {l.confiavel
+                        ? <Badge variant="default">sim</Badge>
+                        : <Badge variant="secondary">ainda não</Badge>}
+                      <div className="text-[10px] text-muted-foreground">{l.observacao}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── o que falta fotografar ── */}
+        <div className="rounded-lg border p-3 space-y-2">
+          <div className="text-sm font-semibold">O que falta fotografar</div>
+          <p className="text-[11px] text-muted-foreground">
+            Quando falta material, a Central entrega roteiro de captação — nunca inventa a cena.
+          </p>
+          {(L.roteiro || []).length === 0 ? (
+            <div className="text-xs text-muted-foreground">Sem lacuna apontada.</div>
+          ) : (
+            <ul className="text-xs space-y-1 list-disc pl-5">
+              {(L.roteiro || []).map((r: string, i: number) => <li key={i}>{r}</li>)}
+            </ul>
+          )}
+          <div className="flex gap-4 text-[11px] text-muted-foreground pt-1">
+            <span>sem direitos conferidos: <b>{num(L.semDireitos)}</b></span>
+            <span>sem tag de gancho/público: <b>{num(L.semTag)}</b></span>
+            <span>sem dimensão lida: <b>{num(L.semDimensao)}</b></span>
+          </div>
+        </div>
+
+        {/* ── cadastro avulso ── */}
+        <div className="rounded-lg border p-3 space-y-3">
+          <div className="text-sm font-semibold">Cadastrar um criativo</div>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Endereço da imagem</Label>
+              <Input value={novaUrl} onChange={(e) => setNovaUrl(e.target.value)}
+                placeholder="/api/photo-media/123  ou  /shop/images/amora.jpg" />
+            </div>
+            <div>
+              <Label className="text-xs">Título</Label>
+              <Input value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} placeholder="Prateleira da padaria" />
+            </div>
+          </div>
+          <div className="grid md:grid-cols-4 gap-3">
+            {[
+              ["Gancho", novoGancho, setNovoGancho, vocab.gancho || []],
+              ["Cenário", novoCenario, setNovoCenario, vocab.cenario || []],
+              ["Público", novoPublico, setNovoPublico, vocab.publico || []],
+              ["Origem", novaOrigem, setNovaOrigem, vocab.origem || []],
+            ].map(([rot, val, set, ops]: any) => (
+              <div key={rot}>
+                <Label className="text-xs">{rot}</Label>
+                <select className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+                  value={val} onChange={(e) => set(e.target.value)}>
+                  <option value="">—</option>
+                  {ops.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <Button size="sm" onClick={cadastrar} disabled={salvando || !novaUrl.trim()}>
+            {salvando ? "Salvando…" : "Cadastrar"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            Peça gerada por IA nasce <b>bloqueada</b> mesmo aqui: só vai ao ar depois de você liberar os direitos na lista.
+          </p>
+        </div>
+
+        {/* ── acervo ── */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-sm font-semibold">Acervo</span>
+            <select className="h-8 rounded-md border bg-background px-2 text-xs"
+              value={filtro.gancho || ""} onChange={(e) => setFiltro({ ...filtro, gancho: e.target.value })}>
+              <option value="">todo gancho</option>
+              {(vocab.gancho || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <select className="h-8 rounded-md border bg-background px-2 text-xs"
+              value={filtro.publico || ""} onChange={(e) => setFiltro({ ...filtro, publico: e.target.value })}>
+              <option value="">todo público</option>
+              {(vocab.publico || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <select className="h-8 rounded-md border bg-background px-2 text-xs"
+              value={filtro.formato || ""} onChange={(e) => setFiltro({ ...filtro, formato: e.target.value })}>
+              <option value="">todo formato</option>
+              {(p.porFormato || []).map((f: any) => <option key={f.formato} value={f.formato}>{f.formato} ({f.n})</option>)}
+            </select>
+            <Button size="sm" variant={filtro.soElegiveis ? "default" : "outline"}
+              onClick={() => setFiltro({ ...filtro, soElegiveis: !filtro.soElegiveis })}>
+              só os prontos para hoje
+            </Button>
+          </div>
+
+          {lista.isLoading && <div className="text-xs text-muted-foreground">Carregando…</div>}
+          {lista.error && <div className="text-xs text-destructive">{String((lista.error as any).message)}</div>}
+          {!lista.isLoading && (lista.data || []).length === 0 && (
+            <div className="text-xs text-muted-foreground py-4 text-center">
+              Biblioteca vazia com esse filtro. Comece por “Trazer as fotos do catálogo”.
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {(lista.data || []).map((a: any) => (
+              <div key={a.id} className="rounded-lg border overflow-hidden flex flex-col">
+                <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden">
+                  {a.url
+                    ? <img src={a.url} alt={a.titulo || ""} className="w-full h-full object-cover" loading="lazy" />
+                    : <i className="fas fa-image text-2xl text-muted-foreground" />}
+                </div>
+                <div className="p-2 space-y-1 flex-1 flex flex-col">
+                  <div className="text-[11px] font-medium truncate" title={a.titulo || a.produto_nome || ""}>
+                    {a.titulo || a.produto_nome || "sem título"}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="outline" className="text-[9px] px-1 py-0">{a.formato}</Badge>
+                    {(a.tags?.gancho || []).slice(0, 2).map((g: string) => (
+                      <Badge key={g} className="text-[9px] px-1 py-0" style={{ background: ROXO }}>{g}</Badge>
+                    ))}
+                    {a.origem === "ia_gerado" && <Badge variant="destructive" className="text-[9px] px-1 py-0">IA</Badge>}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {num(a.usos)} uso(s)
+                    {a.dias_de_descanso ? " · descansando " + a.dias_de_descanso + "d" : ""}
+                  </div>
+                  <div className="mt-auto flex gap-1 pt-1">
+                    <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 flex-1"
+                      onClick={() => alternarDireitos(a)}>
+                      {a.direitos_ok ? "liberado" : "liberar"}
+                    </Button>
+                    <Button size="sm" className="h-6 text-[10px] px-2 flex-1"
+                      disabled={!a.elegivel} onClick={() => marcarUso(a.id)}>
+                      usei
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
