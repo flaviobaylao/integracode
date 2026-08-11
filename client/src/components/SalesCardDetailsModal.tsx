@@ -83,6 +83,19 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   // Usar freshCard se disponível, senão usar card da prop
   const displayCard = freshCard || card;
 
+  // Check-in é considerado "do dia" só quando ocorreu HOJE (horário de Brasília).
+  // Cards permanentes reaproveitados guardam o último check-in; sem esse recorte, um
+  // check-in antigo aparecia como "Check-in Realizado" e bloqueava o check-in da nova rota.
+  const isHojeBR = (t: any) => {
+    if (!t) return false;
+    try {
+      const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+      return f.format(new Date(t)) === f.format(new Date());
+    } catch { return false; }
+  };
+  const checkedInToday = isHojeBR(displayCard?.checkInTime);
+  const checkedOutToday = isHojeBR(displayCard?.checkOutTime);
+
   // Buscar histórico de pedidos do card
   const { data: orderHistory } = useQuery({
     queryKey: ['/api/sales-cards', card?.id, 'orders'],
@@ -759,7 +772,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           <div className="border-t pt-4 space-y-3">
             {/* Check-in continua disponível mesmo com pedido registrado, enquanto não houver check-in.
                 (Antes o botão só existia nos status open/pending/... e sumia ao registrar o pedido.) */}
-            {!displayCard?.checkInTime && !card.customer?.virtualService && (
+            {!checkedInToday && !card.customer?.virtualService && (
               <Button
                 onClick={handleCheckIn}
                 disabled={isCheckingIn}
@@ -818,7 +831,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             <div className="flex flex-wrap justify-center gap-3">
               <Button
                 onClick={handleCheckIn}
-                disabled={isCheckingIn || !!displayCard?.checkInTime}
+                disabled={isCheckingIn || checkedInToday}
                 variant="outline"
                 className="border-blue-600 text-blue-600 hover:bg-blue-50"
                 data-testid="button-check-in"
@@ -828,60 +841,60 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 ) : (
                   <LogIn className="h-4 w-4 mr-2" />
                 )}
-                {displayCard?.checkInTime ? 'Check-in Realizado' : 'Check-in'}
+                {checkedInToday ? 'Check-in Realizado' : 'Check-in'}
               </Button>
             </div>
 
-            {/* Informações de Check-in/Check-out */}
-            {(card.checkInTime || card.checkOutTime) && (
+            {/* Informações de Check-in/Check-out — só o registro de HOJE (não o antigo do card permanente) */}
+            {(checkedInToday || checkedOutToday) && (
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h4 className="font-semibold text-gray-700 mb-3">Registro de Presença</h4>
-                
-                {card.checkInTime && (
+
+                {checkedInToday && (
                   <div className="border-l-4 border-blue-500 pl-3 mb-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-blue-600 font-medium">✓ Check-in Realizado</span>
-                      <span className="text-sm text-gray-600">{new Date(card.checkInTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
+                      <span className="text-sm text-gray-600">{new Date(displayCard?.checkInTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
                     </div>
-                    {(card.checkInLatitude && card.checkInLongitude) && (
+                    {(displayCard?.checkInLatitude && displayCard?.checkInLongitude) && (
                       <div className="text-xs text-gray-500">
-                        Localização: {parseFloat(card.checkInLatitude).toFixed(6)}, {parseFloat(card.checkInLongitude).toFixed(6)}
+                        Localização: {parseFloat(displayCard.checkInLatitude).toFixed(6)}, {parseFloat(displayCard.checkInLongitude).toFixed(6)}
                       </div>
                     )}
-                    {card.distanceToCustomer && (
+                    {displayCard?.distanceToCustomer && (
                       <div className="text-xs text-gray-500 mt-1">
-                        Distância até o cliente: {parseFloat(card.distanceToCustomer).toFixed(0)}m
+                        Distância até o cliente: {parseFloat(displayCard.distanceToCustomer).toFixed(0)}m
                       </div>
                     )}
-                    {card.checkInPhotoUrl && card.checkInPhotoUrl.length > 100 && (
+                    {displayCard?.checkInPhotoUrl && displayCard.checkInPhotoUrl.length > 100 && (
                       <div className="mt-3">
                         <span className="text-xs text-gray-600 mb-1 block">Foto do check-in:</span>
-                        <img 
-                          src={card.checkInPhotoUrl} 
-                          alt="Foto do check-in" 
+                        <img
+                          src={displayCard.checkInPhotoUrl}
+                          alt="Foto do check-in"
                           className="w-full max-w-sm rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
-                          onClick={() => card.checkInPhotoUrl && window.open(card.checkInPhotoUrl, '_blank')}
+                          onClick={() => displayCard.checkInPhotoUrl && window.open(displayCard.checkInPhotoUrl, '_blank')}
                           data-testid="img-check-in-photo"
                         />
                       </div>
                     )}
                   </div>
                 )}
-                
-                {card.checkOutTime && (
+
+                {checkedOutToday && (
                   <div className="border-l-4 border-purple-500 pl-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-purple-600 font-medium">✓ Check-out Realizado</span>
-                      <span className="text-sm text-gray-600">{new Date(card.checkOutTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
+                      <span className="text-sm text-gray-600">{new Date(displayCard?.checkOutTime).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
                     </div>
-                    {(card.checkOutLatitude && card.checkOutLongitude) && (
+                    {(displayCard?.checkOutLatitude && displayCard?.checkOutLongitude) && (
                       <div className="text-xs text-gray-500">
-                        Localização: {parseFloat(card.checkOutLatitude).toFixed(6)}, {parseFloat(card.checkOutLongitude).toFixed(6)}
+                        Localização: {parseFloat(displayCard.checkOutLatitude).toFixed(6)}, {parseFloat(displayCard.checkOutLongitude).toFixed(6)}
                       </div>
                     )}
-                    {card.checkOutDistanceToCustomer && (
+                    {displayCard?.checkOutDistanceToCustomer && (
                       <div className="text-xs text-gray-500 mt-1">
-                        Distância até o cliente: {parseFloat(card.checkOutDistanceToCustomer).toFixed(0)}m
+                        Distância até o cliente: {parseFloat(displayCard.checkOutDistanceToCustomer).toFixed(0)}m
                       </div>
                     )}
                   </div>
