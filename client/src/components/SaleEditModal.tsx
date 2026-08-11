@@ -65,6 +65,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [paymentMethod, setPaymentMethod] = useState('a_vista');
   const [operationType, setOperationType] = useState('venda');
   const [notes, setNotes] = useState('');
+  // Popup "Preencher card com dados do pedido anterior"
+  const [fillPopupOpen, setFillPopupOpen] = useState(false);
+  const [prevOrderData, setPrevOrderData] = useState<any>(null);
+  const [isFetchingPrev, setIsFetchingPrev] = useState(false);
   const [referralCode, setReferralCode] = useState('');
   const [routeDay, setRouteDay] = useState('');
   const [recurrenceType, setRecurrenceType] = useState('');
@@ -306,6 +310,67 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     } else {
       setProducts(products.filter(p => p.id !== productId));
     }
+  };
+
+  // Buscar o ultimo pedido do cliente e abrir o popup "Manter as mesmas quantidades?"
+  const openFillFromPrevious = async () => {
+    const cid = (card as any)?.customerId || (card as any)?.customer?.id;
+    if (!cid) return;
+    setIsFetchingPrev(true);
+    try {
+      const res = await apiRequest('GET', `/api/customers/${cid}/last-order`);
+      const data = await res.json();
+      if (!data || !data.hasOrder || !Array.isArray(data.products) || data.products.length === 0) {
+        toast({
+          title: 'Sem pedido anterior',
+          description: 'Este cliente nao possui um pedido anterior para copiar.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setPrevOrderData(data);
+      setFillPopupOpen(true);
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao buscar pedido anterior',
+        description: e?.message || 'Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsFetchingPrev(false);
+    }
+  };
+
+  // Aplicar o pedido anterior. keepQuantities=true copia exatamente (com quantidades);
+  // false traz apenas os itens com as quantidades em branco para o vendedor preencher.
+  const applyPreviousOrder = (keepQuantities: boolean) => {
+    const data = prevOrderData;
+    if (!data || !Array.isArray(data.products)) { setFillPopupOpen(false); return; }
+    const mapped: ProductItem[] = data.products.map((p: any) => {
+      const unit = Number(p.unitPrice ?? p.unit_price ?? p.price ?? 0) || 0;
+      const qtyRaw = Number(p.quantity ?? p.qty ?? 0) || 0;
+      const qty = keepQuantities ? qtyRaw : 0;
+      return {
+        id: String(p.id ?? p.productId ?? p.product_id ?? p.name),
+        name: String(p.name ?? p.productName ?? p.product_name ?? ''),
+        quantity: qty,
+        unitPrice: unit,
+        totalPrice: qty * unit,
+      };
+    });
+    setProducts(mapped);
+    // No modo "manter quantidades" tambem herdamos forma de pagamento e observacoes.
+    if (keepQuantities) {
+      if (data.payment_method) setPaymentMethod(data.payment_method);
+      if (data.notes) setNotes(data.notes);
+    }
+    setFillPopupOpen(false);
+    toast({
+      title: 'Card preenchido',
+      description: keepQuantities
+        ? 'Produtos e quantidades do pedido anterior carregados.'
+        : 'Produtos carregados — informe as quantidades.',
+    });
   };
 
   const updateProductQuantity = (productId: string, quantity: number) => {
@@ -1098,6 +1163,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -1136,6 +1202,28 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Preencher card com dados do pedido anterior */}
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                <p className="text-sm text-indigo-800 mb-2">
+                  🔁 <strong>Pedido Anterior:</strong> Carrega os produtos do último pedido deste cliente.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={openFillFromPrevious}
+                  disabled={isFetchingPrev}
+                  className="w-full bg-indigo-100 hover:bg-indigo-200 border-indigo-300 text-indigo-800"
+                  data-testid="button-fill-previous-order"
+                >
+                  {isFetchingPrev ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-indigo-800 border-t-transparent rounded-full mr-2" />
+                  ) : (
+                    <Package className="h-4 w-4 mr-2" />
+                  )}
+                  Preencher card com dados do pedido anterior
+                </Button>
+              </div>
+
               {/* Carregando produtos */}
               {isLoadingProducts && (
                 <div className="flex items-center justify-center py-8">
@@ -1541,5 +1629,38 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Popup: manter as mesmas quantidades do pedido anterior? */}
+    <Dialog open={fillPopupOpen} onOpenChange={setFillPopupOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Manter as mesmas quantidades?</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Deseja copiar exatamente o pedido anterior (com as mesmas quantidades) ou apenas
+            trazer os itens com as quantidades em branco para você preencher?
+          </p>
+          <div className="flex flex-col gap-2">
+            <Button
+              onClick={() => applyPreviousOrder(true)}
+              className="w-full bg-green-600 hover:bg-green-700"
+              data-testid="button-fill-keep-quantities"
+            >
+              Sim — manter as mesmas quantidades
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => applyPreviousOrder(false)}
+              className="w-full"
+              data-testid="button-fill-blank-quantities"
+            >
+              Não — apenas os itens (quantidades em branco)
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
