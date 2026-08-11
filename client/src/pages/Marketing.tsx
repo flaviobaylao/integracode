@@ -57,6 +57,29 @@ export default function Marketing() {
     queryKey: ["/api/mkt/campanhas"],
     queryFn: () => apiGet("/api/mkt/campanhas"),
   });
+  // Buraco 3: funil do canal pago (Click-to-WhatsApp/Instagram) + fila do CAPI
+  const ctwa = useQuery<any>({
+    queryKey: ["/api/mkt/ctwa", dias],
+    queryFn: () => apiGet("/api/mkt/ctwa?dias=" + dias),
+  });
+  const [mudandoModo, setMudandoModo] = useState(false);
+  const trocarModoCapi = async (modo: string) => {
+    setMudandoModo(true);
+    try {
+      await apiPost("/api/mkt/ctwa/modo", { modo });
+      toast({
+        title: "Modo do CAPI: " + modo,
+        description: modo === "on"
+          ? "Os eventos passam a ser enviados para a Meta."
+          : modo === "test"
+            ? "Os eventos são montados e gravados, mas NÃO saem. Confira o payload antes de ligar."
+            : "Nada é enviado para a Meta.",
+      });
+      ctwa.refetch();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally { setMudandoModo(false); }
+  };
 
   // ── formulário de campanha ──
   const [cCodigo, setCCodigo] = useState("");
@@ -374,6 +397,100 @@ export default function Marketing() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── canal pago: CTWA + CAPI (buraco 3) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <i className="fas fa-bullhorn text-muted-foreground" /> Anúncio pago (Click-to-WhatsApp / Instagram)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Conversa que nasce de anúncio carrega o <code>ctwa_clid</code> da Meta. Quando ela vira pedido, o
+            evento volta para a Meta com o valor — e o algoritmo passa a otimizar por <b>quem compra</b>, não por
+            quem clica. É o item de maior retorno do plano.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{num(ctwa.data?.funil?.conversas)}</div>
+              <div className="text-xs text-muted-foreground mt-1">conversas vindas de anúncio</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{num(ctwa.data?.funil?.pedidos)}</div>
+              <div className="text-xs text-muted-foreground mt-1">viraram pedido</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{brl(ctwa.data?.funil?.receita)}</div>
+              <div className="text-xs text-muted-foreground mt-1">receita do canal pago</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-2xl font-bold">{num(ctwa.data?.funil?.anuncios_distintos)}</div>
+              <div className="text-xs text-muted-foreground mt-1">anúncios distintos</div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold">Devolver eventos para a Meta (CAPI)</span>
+              <Badge variant={ctwa.data?.modo === "on" ? "default" : "secondary"}>
+                {ctwa.data?.modo === "on" ? "ligado" : ctwa.data?.modo === "test" ? "modo teste" : "desligado"}
+              </Badge>
+              <span className="ml-auto flex gap-2">
+                {["off", "test", "on"].map((m) => (
+                  <Button key={m} size="sm" variant={ctwa.data?.modo === m ? "default" : "outline"}
+                          disabled={mudandoModo} onClick={() => trocarModoCapi(m)}>
+                    {m === "off" ? "Desligar" : m === "test" ? "Modo teste" : "Ligar"}
+                  </Button>
+                ))}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span>Pixel: {ctwa.data?.credenciais?.pixel ? "✓ configurado" : "✗ falta META_PIXEL_ID"}</span>
+              <span>Token: {ctwa.data?.credenciais?.token ? "✓ configurado" : "✗ falta META_CAPI_TOKEN"}</span>
+            </div>
+            {(ctwa.data?.capi || []).length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {(ctwa.data.capi || []).map((c: any, i: number) => (
+                  <span key={i} className="text-xs bg-muted rounded px-2 py-1">
+                    {c.event_name} · {c.status}: <b>{num(c.total)}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Em <b>modo teste</b> o evento é montado e gravado, mas não sai — dá para conferir o payload antes de
+              ligar de verdade. Ligar exige <code>META_PIXEL_ID</code> e <code>META_CAPI_TOKEN</code> no Railway.
+            </p>
+          </div>
+
+          {(ctwa.data?.porAnuncio || []).length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-xs text-muted-foreground">
+                    <th className="text-left py-2">Anúncio</th>
+                    <th className="text-right">Conversas</th>
+                    <th className="text-right">Pedidos</th>
+                    <th className="text-right">Receita</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(ctwa.data.porAnuncio || []).map((a: any) => (
+                    <tr key={a.anuncio} className="border-b last:border-0">
+                      <td className="py-2"><code className="text-xs">{a.anuncio}</code></td>
+                      <td className="text-right">{num(a.conversas)}</td>
+                      <td className="text-right">{num(a.pedidos)}</td>
+                      <td className="text-right font-semibold">{brl(a.receita)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── links e cliques ── */}
       <Card>
