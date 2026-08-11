@@ -2749,6 +2749,7 @@ export default function RotaDoDia() {
           card={selectedCard}
           onStartSale={handleEditSale}
           onStartNoSale={handleNoSale}
+          customerDebt={(() => { const cid = selectedCard?.customerId || selectedCard?.customer?.id; return cid ? Number(customerInfo?.debts?.[cid] || 0) : 0; })()}
         />
       )}
 
