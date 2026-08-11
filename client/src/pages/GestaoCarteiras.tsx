@@ -1,14 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
-import { Briefcase, Users, TrendingUp, Wallet, Download, Info } from "lucide-react";
+import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel } from "@/lib/tableTools";
 
@@ -64,6 +65,9 @@ export default function GestaoCarteiras() {
   const [vendedor, setVendedor] = useState("__todos__");
   const [tipoPizza, setTipoPizza] = useState<"abc" | "segmento">("abc");
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
+  const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
+  const [busca, setBusca] = useState("");
+  const [visiveis, setVisiveis] = useState(50);
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/reports/gestao-carteiras", inicio, fim],
@@ -184,11 +188,39 @@ export default function GestaoCarteiras() {
     };
   }, [d, clientes, serie, meses, filtrarVend]);
 
-  const top20 = useMemo(() => {
-    const arr = [...clientes];
+  // Contagem por classe dentro do recorte atual (vendedor), para os chips.
+  const porClasse = useMemo(() => {
+    const acc: Record<string, { clientes: number; valor: number }> = { A: { clientes: 0, valor: 0 }, B: { clientes: 0, valor: 0 }, C: { clientes: 0, valor: 0 } };
+    for (const c of clientes) {
+      const k = classeDe.get(c.chave) || c.classe;
+      if (!acc[k]) continue;
+      acc[k].clientes++; acc[k].valor += c.total;
+    }
+    return acc;
+  }, [clientes, classeDe]);
+
+  // Relação completa: filtra por classe e por busca, e ordena pelo critério escolhido.
+  const listaFiltrada = useMemo(() => {
+    const alvo = busca.trim().toLocaleLowerCase("pt-BR");
+    const arr = clientes.filter((c) => {
+      if (classeSel !== "todas" && (classeDe.get(c.chave) || c.classe) !== classeSel) return false;
+      if (!alvo) return true;
+      return (
+        c.nome.toLocaleLowerCase("pt-BR").includes(alvo) ||
+        (c.cidade || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
+        (c.vendedor || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
+        (c.doc || "").includes(alvo.replace(/\D/g, ""))
+      );
+    });
     arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
-    return arr.slice(0, 20);
-  }, [clientes, ordem]);
+    return arr;
+  }, [clientes, classeDe, classeSel, busca, ordem]);
+
+  // Mexeu no filtro, volta para o começo da lista.
+  useEffect(() => { setVisiveis(50); }, [classeSel, busca, ordem, vendedor, inicio, fim]);
+
+  const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
+  const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
 
   const opcoesMes = useMemo(() => {
     const out: string[] = [];
@@ -202,8 +234,7 @@ export default function GestaoCarteiras() {
 
   const exportar = () => {
     exportToExcel(
-      [...clientes]
-        .sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada))
+      listaFiltrada
         .map((c, i) => ({
           "#": i + 1, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: c.tipo, Classe: classeDe.get(c.chave) || c.classe,
           Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
@@ -212,7 +243,7 @@ export default function GestaoCarteiras() {
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
           "Meses com compra": c.mesesComCompra, "Última compra": c.ultimaCompra || "",
         })),
-      `gestao-carteiras_${inicio}_a_${fim}`,
+      `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}`,
     );
   };
 
@@ -472,12 +503,13 @@ export default function GestaoCarteiras() {
 
           {/* Tabela — top 20 */}
           <Card>
-            <CardHeader className="pb-2">
+            <CardHeader className="pb-2 space-y-3">
               <div className="flex items-start justify-between gap-2 flex-wrap">
                 <div>
-                  <CardTitle>Top 20 clientes</CardTitle>
+                  <CardTitle>Clientes da carteira</CardTitle>
                   <CardDescription>
-                    Média ponderada dá mais peso aos meses recentes (o mês mais antigo do período pesa 1; o mais recente, {meses.length})
+                    Relação completa do período. Média ponderada dá mais peso aos meses recentes
+                    (o mês mais antigo do período pesa 1; o mais recente, {meses.length}).
                   </CardDescription>
                 </div>
                 <div className="flex gap-1 shrink-0">
@@ -485,6 +517,52 @@ export default function GestaoCarteiras() {
                   <Button size="sm" variant={ordem === "ponderada" ? "default" : "outline"} onClick={() => setOrdem("ponderada")} data-testid="button-ordem-ponderada">Por média ponderada</Button>
                 </div>
               </div>
+
+              {/* Filtro por classe da curva ABC + busca */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setClasseSel("todas")}
+                  data-testid="chip-classe-todas"
+                  className={`px-3 py-1.5 rounded-md border text-sm transition ${classeSel === "todas" ? "border-foreground/40 bg-muted font-semibold" : "border-transparent bg-muted/40 hover:bg-muted"}`}
+                >
+                  Todas as classes <span className="text-muted-foreground">({NUM(clientes.length)})</span>
+                </button>
+                {(["A", "B", "C"] as const).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setClasseSel(classeSel === k ? "todas" : k)}
+                    data-testid={`chip-classe-${k}`}
+                    className={`px-3 py-1.5 rounded-md border text-sm transition flex items-center gap-2 ${classeSel === k ? "border-foreground/40 bg-muted font-semibold" : "border-transparent bg-muted/40 hover:bg-muted"}`}
+                  >
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-white" style={{ background: COR_ABC[k] }}>{k}</span>
+                    Classe {k}
+                    <span className="text-muted-foreground">
+                      {NUM(porClasse[k]?.clientes || 0)} · {BRL0(porClasse[k]?.valor || 0)}
+                    </span>
+                  </button>
+                ))}
+                <div className="relative ml-auto w-[260px] max-w-full">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar cliente, cidade, vendedor ou CNPJ"
+                    className="pl-8 h-9"
+                    data-testid="input-busca-cliente"
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                {classeSel === "todas"
+                  ? "A = clientes que somam 80% do faturamento · B = até 95% · C = o restante."
+                  : classeSel === "A"
+                    ? "Classe A — os clientes que somam os primeiros 80% do faturamento do período."
+                    : classeSel === "B"
+                      ? "Classe B — a faixa entre 80% e 95% do faturamento acumulado."
+                      : "Classe C — os últimos 5% do faturamento acumulado."}
+                {filtrarVend ? ` A curva está recalculada dentro da carteira de ${vendedor}.` : ""}
+              </p>
             </CardHeader>
             <CardContent>
               <Table>
@@ -503,13 +581,16 @@ export default function GestaoCarteiras() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {top20.map((c, i) => {
+                  {listaVisivel.map((c, i) => {
                     const cl = classeDe.get(c.chave) || c.classe;
                     return (
                       <TableRow key={c.chave} data-testid={`row-cliente-${i}`}>
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
                           {c.nome}
+                          {c.cadastrado && !c.ativo ? (
+                            <span className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground align-middle">inativo</span>
+                          ) : null}
                           {c.cidade ? <span className="block text-xs text-muted-foreground">{c.cidade}</span> : null}
                         </TableCell>
                         <TableCell>
@@ -527,15 +608,31 @@ export default function GestaoCarteiras() {
                       </TableRow>
                     );
                   })}
-                  {top20.length === 0 ? (
-                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-6">Nenhum cliente com faturamento no período.</TableCell></TableRow>
+                  {listaFiltrada.length === 0 ? (
+                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-6">
+                      {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
+                    </TableCell></TableRow>
                   ) : null}
                 </TableBody>
               </Table>
-              <p className="text-xs text-muted-foreground mt-3">
-                {NUM(clientes.length)} clientes com faturamento no período{filtrarVend ? ` na carteira de ${vendedor}` : ""}.
-                {d?.clientesTruncado ? " Lista limitada aos 2.000 maiores." : ""}
-              </p>
+              <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
+                  {classeSel !== "todas" ? ` da classe ${classeSel}` : ""}
+                  {filtrarVend ? ` na carteira de ${vendedor}` : ""} · {BRL0(totalFiltrado)} no período.
+                  {d?.clientesTruncado ? " Base limitada aos 2.000 maiores." : ""}
+                </p>
+                {listaVisivel.length < listaFiltrada.length ? (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setVisiveis((v) => v + 100)} data-testid="button-mostrar-mais">
+                      Mostrar mais 100
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setVisiveis(listaFiltrada.length)} data-testid="button-mostrar-todos">
+                      Mostrar todos ({NUM(listaFiltrada.length)})
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         </>
