@@ -282,6 +282,18 @@ export default function Dashboard() {
     }
     return { weeks, mensal };
   }, [sellerDaily, monthWeeks]);
+
+  const businessDays = useMemo(() => {
+    const [Y, M, D] = bounds.today.split("-").map(Number);
+    const lastDay = new Date(Y, M, 0).getDate();
+    let total = 0, elapsed = 0;
+    for (let day = 1; day <= lastDay; day++) {
+      const dow = new Date(Y, M - 1, day).getDay();
+      if (dow >= 1 && dow <= 5) { total++; if (day <= D) elapsed++; }
+    }
+    return { total, elapsed };
+  }, [bounds.today]);
+  const projTotal = businessDays.elapsed > 0 ? (grandTotals.mensal / businessDays.elapsed) * businessDays.total : grandTotals.mensal;
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -439,6 +451,14 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center justify-between gap-4">
+        <div>
+          <div className="text-sm font-semibold text-indigo-800">Projeção do mês (dias úteis seg-sex)</div>
+          <div className="text-[11px] text-indigo-600">Ritmo dos dias úteis já decorridos: {businessDays.elapsed} de {businessDays.total} · média por dia útil {brl(businessDays.elapsed > 0 ? grandTotals.mensal / businessDays.elapsed : 0)}</div>
+        </div>
+        <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap">{brl(projTotal)}</div>
+      </div>
+
       <Card>
         <CardHeader>
           <div>
@@ -455,6 +475,7 @@ export default function Dashboard() {
                   {monthWeeks.map((wk: any, i: number) => (
                     <th key={i} colSpan={7} className="py-1 px-2 font-semibold text-center border-l bg-gray-50 sticky top-0 z-10">Semana {i + 1}{wk.label ? " (" + wk.label + ")" : ""}</th>
                   ))}
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-indigo-50 text-indigo-700">Projeção</th>
                   <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Mensal{sortArrow("fatMes")}</button></th>
                 </tr>
                 <tr className="border-b text-gray-400">
@@ -476,11 +497,12 @@ export default function Dashboard() {
                       )),
                       <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
                     ])}
+                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(businessDays.elapsed > 0 ? (x.mensal / businessDays.elapsed) * businessDays.total : x.mensal)}</td>
                     <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
                   </tr>
                 ))}
                 {sortedSellerDaily.length === 0 && (
-                  <tr><td colSpan={monthWeeks.length * 7 + 2} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                  <tr><td colSpan={monthWeeks.length * 7 + 3} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
@@ -492,6 +514,7 @@ export default function Dashboard() {
                     )),
                     <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
                   ])}
+                  <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(projTotal)}</td>
                   <td className="py-1 px-2 text-right tabular-nums border-l">{brl(grandTotals.mensal)}</td>
                 </tr>
               </tfoot>
