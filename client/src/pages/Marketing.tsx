@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 
@@ -62,6 +63,26 @@ export default function Marketing() {
     queryKey: ["/api/mkt/ctwa", dias],
     queryFn: () => apiGet("/api/mkt/ctwa?dias=" + dias),
   });
+  // Buraco 4: cartão de marca + revisor de texto
+  const marca = useQuery<any>({ queryKey: ["/api/mkt/marca"], queryFn: () => apiGet("/api/mkt/marca") });
+  const [textoRevisar, setTextoRevisar] = useState("");
+  const [canalRevisar, setCanalRevisar] = useState("instagram");
+  const [exigirCodigo, setExigirCodigo] = useState(true);
+  const [revisao, setRevisao] = useState<any>(null);
+  const [revisando, setRevisando] = useState(false);
+  const revisar = async () => {
+    if (!textoRevisar.trim()) return;
+    setRevisando(true);
+    try {
+      setRevisao(await apiPost("/api/mkt/marca/revisar", {
+        texto: textoRevisar, canal: canalRevisar, exigirCodigo,
+        categoria: canalRevisar === "whatsapp" ? "UTILITY" : undefined,
+      }));
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally { setRevisando(false); }
+  };
+
   // Buraco 8: régua de recompra sobre a base própria
   const rec = useQuery<any>({ queryKey: ["/api/mkt/recompra"], queryFn: () => apiGet("/api/mkt/recompra") });
   const [reguaAlvo, setReguaAlvo] = useState("");
@@ -447,6 +468,120 @@ export default function Marketing() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── cartão de marca + revisor (buraco 4) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <i className="fas fa-feather-pointed text-muted-foreground" /> Cartão de marca
+            {marca.data?.marca?.versao && <Badge variant="secondary">v{marca.data.marca.versao}</Badge>}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            A fonte única de como a Honest fala e do que ela nunca diz. É este cartão que entra no prompt de todo
+            agente que escreve — sem ele, cada peça sai com um tom, e a IA amplifica a inconsistência.
+            Mudou o tom? <b>Nasce uma versão nova</b>: as peças antigas guardam a versão que usaram.
+          </p>
+
+          {marca.data?.marca && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs font-semibold text-muted-foreground mb-1">POSICIONAMENTO</div>
+                <p className="text-sm">{marca.data.marca.posicionamento}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs font-semibold text-muted-foreground mb-1">TOM</div>
+                <p className="text-sm">{marca.data.marca.tom}</p>
+              </div>
+            </div>
+          )}
+
+          {(marca.data?.marca?.pilares || []).length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              {(marca.data.marca.pilares || []).map((p: any, i: number) => (
+                <div key={i} className="rounded-lg border p-3">
+                  <div className="text-sm font-semibold" style={{ color: ROXO }}>{p.nome}</div>
+                  <p className="text-xs text-muted-foreground mt-1">{p.ideia}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <div className="text-sm font-semibold">Revisor — cole um texto e veja o veredito</div>
+            <p className="text-[11px] text-muted-foreground">
+              É o mesmo revisor que vai barrar peça de IA nos próximos buracos. Já funciona avulso.
+            </p>
+            <Textarea rows={4} value={textoRevisar} onChange={(e) => setTextoRevisar(e.target.value)}
+                      placeholder="Cole aqui a legenda, o template ou o texto do anúncio..." />
+            <div className="flex flex-wrap items-center gap-3">
+              <select className="border rounded-md h-9 px-2 bg-background text-sm" value={canalRevisar}
+                      onChange={(e) => setCanalRevisar(e.target.value)}>
+                {["instagram", "whatsapp", "google", "hotsite"].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={exigirCodigo} onChange={(e) => setExigirCodigo(e.target.checked)} />
+                exigir código de atribuição
+              </label>
+              <Button size="sm" onClick={revisar} disabled={revisando}>{revisando ? "Revisando..." : "Revisar"}</Button>
+            </div>
+
+            {revisao && (
+              <div className="rounded-lg border-2 p-3" style={{
+                borderColor: revisao.veredito === "bloqueado" ? "#cf3b47" : revisao.veredito === "ajuste" ? "#c2820b" : "#0f9d6e",
+              }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant={revisao.veredito === "bloqueado" ? "destructive" : "default"}>
+                    {revisao.veredito === "bloqueado" ? "BLOQUEADO" : revisao.veredito === "ajuste" ? "AJUSTE" : "APROVADO"}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">conferido contra o cartão v{revisao.versaoMarca}</span>
+                </div>
+                {(revisao.achados || []).length === 0 && (
+                  <p className="text-xs text-muted-foreground">Nenhum problema encontrado.</p>
+                )}
+                <ul className="space-y-1">
+                  {(revisao.achados || []).map((a: any, i: number) => (
+                    <li key={i} className="text-xs">
+                      <b style={{
+                        color: a.gravidade === "bloqueio" ? "#cf3b47" : a.gravidade === "atencao" ? "#c2820b" : undefined,
+                      }}>{a.regra}</b>
+                      {a.trecho && <code className="mx-1 text-[11px]">{a.trecho}</code>}
+                      — {a.explicacao}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <details className="rounded-lg border p-3">
+            <summary className="text-sm font-semibold cursor-pointer">Palavras proibidas e palavras que exigem conferência</summary>
+            <div className="mt-3 space-y-3">
+              <div>
+                <div className="text-xs font-semibold text-red-600 mb-1">Bloqueiam a peça</div>
+                <div className="flex flex-wrap gap-1">
+                  {(marca.data?.marca?.termos_bloqueados || []).map((t: string) => (
+                    <span key={t} className="text-[11px] bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 rounded px-2 py-0.5">{t}</span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-amber-600 mb-1">Precisam bater com o rótulo</div>
+                <div className="flex flex-wrap gap-1">
+                  {(marca.data?.marca?.termos_atencao || []).map((t: string) => (
+                    <span key={t} className="text-[11px] bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 rounded px-2 py-0.5">{t}</span>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Os termos são tratados como <b>radical</b> e casados no início da palavra: <code>emagrec</code> pega
+                emagrece, emagrecer e emagreça de uma vez, e <code>cura</code> não dispara dentro de "procura".
+              </p>
+            </div>
+          </details>
+        </CardContent>
+      </Card>
 
       {/* ── régua de recompra sobre a base própria (buraco 8) ── */}
       <Card>
