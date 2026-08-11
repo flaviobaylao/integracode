@@ -12,6 +12,8 @@ import BenefitsSection from './components/BenefitsSection';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
 import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
+// Central de Marketing (buraco 2): captura a origem do visitante (UTM + cid do /r/<slug>)
+import { capturarOrigem, origemDoPedido } from './utils/origem';
 import type { Product, CartItem, Customer } from './types';
 
 type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
@@ -44,6 +46,11 @@ function HotsiteContent() {
   const [cardError, setCardError] = useState('');
   const [cardProcessing, setCardProcessing] = useState(false);
   const [cardPendingMsg, setCardPendingMsg] = useState('');
+
+  // 🎯 Central de Marketing (buraco 2): captura a origem na PRIMEIRA carga, antes
+  // de qualquer navegação. Guarda em sessionStorage e limpa os utm_* da barra de
+  // endereço. Sem parâmetro na URL, não faz nada — visita direta continua igual.
+  useEffect(() => { capturarOrigem(); }, []);
 
   // Contagem regressiva da expiração do PIX (1s)
   useEffect(() => {
@@ -234,6 +241,10 @@ function HotsiteContent() {
         source: 'hotsite' as const,
         priceTable: convertPriceTable(priceTable), // ✅ Adicionar tabela de preço
         deliveryLocation: customer.deliveryLocation || null, // ✅ Adicionar coordenadas GPS (opcional)
+        // 🎯 Origem do visitante (utm + cid). Vai junto no PIX, no cartão e no boleto —
+        // os três guardam este mesmo objeto e o servidor o reprocessa quando o
+        // pagamento confirma, então a atribuição sobrevive à volta. Sem origem, sai {}.
+        ...origemDoPedido(),
       };
 
       console.log('🔵 Order objeto criado:', order);
