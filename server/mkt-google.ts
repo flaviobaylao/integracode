@@ -409,7 +409,7 @@ export async function conversoesOffline(dias = 90): Promise<{
     totalPedidos = Number(t.rows?.[0]?.n || 0);
 
     const r: any = await db.execute(sql`
-      SELECT id, created_at, total_amount, utm
+      SELECT id, created_at, sale_value, utm
         FROM sales_cards
        WHERE created_at >= NOW() - (${dias}::text || ' days')::interval
          AND utm IS NOT NULL
@@ -425,7 +425,7 @@ export async function conversoesOffline(dias = 90): Promise<{
         nome: cfg.adsRotuloConversao,
         // Formato aceito pelo Google Ads: yyyy-MM-dd HH:mm:ss (com TimeZone no cabecalho)
         quando: quando.toISOString().replace('T', ' ').slice(0, 19),
-        valor: Number(x.total_amount || 0),
+        valor: Number(x.sale_value || 0),
         moeda: 'BRL',
         pedido: String(x.id || ''),
         diasDesdeClique: null,
