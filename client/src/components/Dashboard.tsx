@@ -299,11 +299,13 @@ export default function Dashboard() {
   const forecast = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
     const bySeller: Record<string, number> = {};
+    const byDate: Record<string, number> = {};
     let total = 0;
     const arr = forecastData?.forecast;
-    if (Array.isArray(arr)) for (const r of arr) { const s = normId(r.seller); const d = String(r.date).slice(0, 10); const v = Number(r.value) || 0; (map[s] = map[s] || {}); map[s][d] = (map[s][d] || 0) + v; bySeller[s] = (bySeller[s] || 0) + v; total += v; }
-    return { map, bySeller, total: Math.round(total * 100) / 100 };
+    if (Array.isArray(arr)) for (const r of arr) { const s = normId(r.seller); const d = String(r.date).slice(0, 10); const v = Number(r.value) || 0; (map[s] = map[s] || {}); map[s][d] = (map[s][d] || 0) + v; bySeller[s] = (bySeller[s] || 0) + v; byDate[d] = (byDate[d] || 0) + v; total += v; }
+    return { map, bySeller, byDate, total: Math.round(total * 100) / 100 };
   }, [forecastData]);
+  const wkFc = (dm: Record<string, number>, wi: number) => monthWeeks[wi].days.reduce((a: number, d: any) => a + ((showForecast && d && d.inMonth && d.iso > bounds.today) ? (dm[d.iso] || 0) : 0), 0);
   const projTotal = grandTotals.mensal + forecast.total;
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
@@ -511,7 +513,7 @@ export default function Dashboard() {
                         const showFc = fc > 0 && (v == null || v === 0);
                         return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
                       }),
-                      <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
+                      <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.map[x.sellerId] || {}, wi); return t ? nfmt(t) : ""; })()}</td>
                     ])}
                     <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
                     <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
@@ -525,10 +527,13 @@ export default function Dashboard() {
                 <tr className="border-t-2 border-gray-300 font-semibold text-gray-800">
                   <td className="py-1 pr-3 pl-1 sticky left-0 bg-white">Total</td>
                   {grandTotals.weeks.flatMap((wk: any, wi: number) => [
-                    ...wk.dayVals.map((v: number, di: number) => (
-                      <td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>
-                    )),
-                    <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
+                    ...wk.dayVals.map((v: number, di: number) => {
+                      const day = monthWeeks[wi].days[di];
+                      const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.byDate[day.iso] || 0) : 0;
+                      const showFc = fc > 0 && !v;
+                      return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : (showFc ? nfmt(fc) : "")}</td>);
+                    }),
+                    <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.byDate, wi); return t ? nfmt(t) : ""; })()}</td>
                   ])}
                   <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(projTotal)}</td>
                   <td className="py-1 px-2 text-right tabular-nums border-l">{brl(grandTotals.mensal)}</td>
