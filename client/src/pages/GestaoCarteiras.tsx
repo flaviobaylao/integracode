@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { exportToExcel } from "@/lib/tableTools";
+import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
 // ABC e ordinal: rampa de UM tom (azul), claro -> escuro.
@@ -62,7 +62,7 @@ export default function GestaoCarteiras() {
   const mesHoje = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
   const [inicio, setInicio] = useState("2025-01");
   const [fim, setFim] = useState(mesHoje);
-  const [vendedor, setVendedor] = useState("__todos__");
+  const [vendedores, setVendedores] = useState<string[]>([]); // vazio = todos
   const [tipoPizza, setTipoPizza] = useState<"abc" | "segmento">("abc");
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
@@ -102,10 +102,34 @@ export default function GestaoCarteiras() {
     return nomesAtivos.size ? lista.filter((v: any) => nomesAtivos.has(normVend(v.vendedor))) : lista;
   }, [d, nomesAtivos]);
 
-  const filtrarVend = vendedor !== "__todos__";
+  // O rotulo do dropdown carrega a contagem ("Gilmar M (240)"); o mapa devolve o
+  // nome puro, que e o que casa com `cliente.vendedor`.
+  const opcoesVend = useMemo(
+    () => vendedoresDropdown.map((v: any) => `${v.vendedor} (${v.clientes})`),
+    [vendedoresDropdown],
+  );
+  const nomePorRotulo = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const v of vendedoresDropdown as any[]) m.set(`${v.vendedor} (${v.clientes})`, v.vendedor);
+    return m;
+  }, [vendedoresDropdown]);
+  const nomesSel = useMemo(
+    () => new Set(vendedores.map((r) => nomePorRotulo.get(r) || r)),
+    [vendedores, nomePorRotulo],
+  );
+
+  const filtrarVend = nomesSel.size > 0;
+  // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
+  // vira "nas N carteiras selecionadas".
+  const rotuloCarteira = !filtrarVend
+    ? ""
+    : nomesSel.size === 1
+      ? ` na carteira de ${Array.from(nomesSel)[0]}`
+      : ` nas ${nomesSel.size} carteiras selecionadas`;
+
   const clientes = useMemo(
-    () => (filtrarVend ? todos.filter((c) => c.vendedor === vendedor) : todos),
-    [todos, vendedor, filtrarVend],
+    () => (filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos),
+    [todos, nomesSel, filtrarVend],
   );
 
   // Com filtro de vendedor a curva ABC é recalculada só na carteira dele.
@@ -220,7 +244,7 @@ export default function GestaoCarteiras() {
   }, [clientes, classeDe, classeSel, busca, ordem]);
 
   // Mexeu no filtro, volta para o começo da lista.
-  useEffect(() => { setVisiveis(50); }, [classeSel, busca, ordem, vendedor, inicio, fim]);
+  useEffect(() => { setVisiveis(50); }, [classeSel, busca, ordem, vendedores, inicio, fim]);
 
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
@@ -246,7 +270,7 @@ export default function GestaoCarteiras() {
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
           "Meses com compra": c.mesesComCompra, "Última compra": c.ultimaCompra || "",
         })),
-      `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}`,
+      `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
   };
 
@@ -283,17 +307,15 @@ export default function GestaoCarteiras() {
               <SelectContent>{opcoesMes.map((m) => <SelectItem key={m} value={m}>{labelMes(m)}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Vendedor</label>
-            <Select value={vendedor} onValueChange={setVendedor}>
-              <SelectTrigger className="w-[220px]" data-testid="select-vendedor"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__todos__">Todos os vendedores</SelectItem>
-                {vendedoresDropdown.map((v: any) => (
-                  <SelectItem key={v.vendedor} value={v.vendedor}>{v.vendedor} ({v.clientes})</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Multipla escolha: vazio = todos os vendedores */}
+          <div className="pt-[21px]">
+            <MultiSelect
+              label="Vendedor"
+              options={opcoesVend}
+              selected={vendedores}
+              onChange={setVendedores}
+              testId="select-vendedor"
+            />
           </div>
           <div className="ml-auto">
             <Button variant="outline" onClick={exportar} data-testid="button-export">
@@ -564,7 +586,7 @@ export default function GestaoCarteiras() {
                     : classeSel === "B"
                       ? "Classe B — a faixa entre 80% e 95% do faturamento acumulado."
                       : "Classe C — os últimos 5% do faturamento acumulado."}
-                {filtrarVend ? ` A curva está recalculada dentro da carteira de ${vendedor}.` : ""}
+                {filtrarVend ? ` A curva está recalculada dentro do recorte${rotuloCarteira}.` : ""}
               </p>
             </CardHeader>
             <CardContent>
@@ -622,7 +644,7 @@ export default function GestaoCarteiras() {
                 <p className="text-xs text-muted-foreground">
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
                   {classeSel !== "todas" ? ` da classe ${classeSel}` : ""}
-                  {filtrarVend ? ` na carteira de ${vendedor}` : ""} · {BRL0(totalFiltrado)} no período.
+                  {rotuloCarteira} · {BRL0(totalFiltrado)} no período.
                   {d?.clientesTruncado ? " Base limitada aos 2.000 maiores." : ""}
                 </p>
                 {listaVisivel.length < listaFiltrada.length ? (
