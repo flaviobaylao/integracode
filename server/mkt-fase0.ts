@@ -36,10 +36,12 @@ async function get(chave: string, padrao: string): Promise<string> {
 }
 
 async function set(chave: string, valor: string): Promise<void> {
-  await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS system_settings (key text PRIMARY KEY, value text, updated_at timestamptz DEFAULT now())"));
+    // system_settings tem `updated_by` NOT NULL. Sem essa coluna, o INSERT estoura -
+  // e o erro so aparece em producao, porque a tabela de teste era mais simples que
+  // a de verdade. Mesmo formato usado pelo setSetting() do agent-runtime.
   await db.execute(sql`
-    INSERT INTO system_settings (key, value) VALUES (${chave}, ${valor})
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    INSERT INTO system_settings (key, value, updated_by) VALUES (${chave}, ${valor}, ${'fase0'})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()
   `);
 }
 

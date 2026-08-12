@@ -101,17 +101,17 @@ export async function salvarConfigGoogle(campos: Record<string, string>): Promis
   };
   const salvos: string[] = [];
   try {
-    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS system_settings (key text PRIMARY KEY, value text, updated_at timestamptz DEFAULT now())"));
-    for (const [campo, chave] of Object.entries(MAPA)) {
+        for (const [campo, chave] of Object.entries(MAPA)) {
       if (!(campo in campos)) continue;
       let valor = String((campos as any)[campo] ?? '');
       if (campo === 'seoLigado') valor = (valor === 'false' || valor === 'off') ? 'off' : 'on';
       // Formato do ID e conferido aqui: ID errado nao gera erro visivel, so some o dado.
       if (campo === 'ga4Id' && valor && !/^G-[A-Z0-9]{4,}$/i.test(valor)) return { ok: false, salvos, erro: 'ID do GA4 tem o formato G-XXXXXXX' };
       if (campo === 'adsId' && valor && !/^AW-\d{6,}$/i.test(valor)) return { ok: false, salvos, erro: 'ID do Google Ads tem o formato AW-000000000' };
+      // updated_by e NOT NULL no schema real - ver o setSetting() do agent-runtime.
       await db.execute(sql`
-        INSERT INTO system_settings (key, value) VALUES (${chave}, ${valor})
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        INSERT INTO system_settings (key, value, updated_by) VALUES (${chave}, ${valor}, ${'mkt-google'})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()
       `);
       salvos.push(chave);
     }
