@@ -2034,10 +2034,32 @@ function Fase0() {
                 </Button>
               ))}
             </div>
+            {dist.data.porFonte?.pipeline && (
+              <div className="rounded-md bg-muted/60 p-2 text-[11px] space-y-1">
+                <div className="font-semibold">O ticket de revenda é de outra ordem</div>
+                <div className="text-muted-foreground">
+                  Pedidos do pipeline ({num(dist.data.porFonte.pipeline.n)} em 180 dias): metade até{" "}
+                  <b>{brl(dist.data.porFonte.pipeline.p50)}</b>, 90% até <b>{brl(dist.data.porFonte.pipeline.p90)}</b>,
+                  maior <b>{brl(dist.data.porFonte.pipeline.max)}</b>.
+                  {dist.data.porFonte.ia && <> Pedidos da IA ({num(dist.data.porFonte.ia.n)}): metade até{" "}
+                  <b>{brl(dist.data.porFonte.ia.p50)}</b>, maior <b>{brl(dist.data.porFonte.ia.max)}</b>.</>}
+                </div>
+              </div>
+            )}
+            {dist.data.alerta && (
+              <p className="text-[11px] text-amber-600">
+                <i className="fas fa-triangle-exclamation mr-1" />{dist.data.alerta}
+              </p>
+            )}
             <p className="text-[11px] text-muted-foreground">
               Sugestão: <b>{brl(dist.data.sugestao)}</b> — deixa cerca de 1 em cada 10 pedidos indo para uma
               pessoa. É o suficiente para pegar o pedido fora do padrão sem a trava virar gargalo.
-              {dist.data.fonte === "pipeline" && " (Ainda calculado sobre os pedidos do pipeline, porque a IA não registrou volume próprio.)"}
+              {dist.data.fonte === "pipeline" && " (Calculado sobre os pedidos do pipeline, porque a IA ainda não registrou volume próprio.)"}
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              O teto não existe para revisar pedido normal — existe para pegar <b>erro de leitura</b>: a IA
+              entender 100 caixas onde eram 10. Então ele deve ficar acima do maior pedido que você considera
+              rotineiro, e bem abaixo do que seria obviamente errado.
             </p>
           </div>
         )}
