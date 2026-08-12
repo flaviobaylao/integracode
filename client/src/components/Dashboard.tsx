@@ -510,7 +510,7 @@ export default function Dashboard() {
                         const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.map[x.sellerId]?.[day.iso] || 0) : 0;
                         const showFc = fc > 0 && (v == null || v === 0);
                         return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
-                      })
+                      }),
                       <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
                     ])}
                     <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
