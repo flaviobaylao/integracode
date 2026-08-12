@@ -635,68 +635,22 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
 // Numero de saida usado quando a conversa nao tem canal proprio (ex.: conversa aberta
 // pelo atendente). Configuravel em system_settings 'canal_saida_padrao' — hoje o 7169,
 // enquanto o 2630 estiver bloqueado. Sem a chave, cai no padrao do Umbler.
+
+// Leitura simples do system_settings, para as chaves de configuracao do chat.
+async function getSettingChat(key: string, def: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
+    const v = r.rows?.[0]?.value;
+    return v == null ? def : String(v).replace(/^"|"$/g, '');
+  } catch { return def; }
+}
+
 export async function canalSaidaPadrao(): Promise<string | undefined> {
   try {
     const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'canal_saida_padrao' LIMIT 1`);
     const v = String(r.rows?.[0]?.value ?? '').replace(/^"|"$/g, '').replace(/\D/g, '');
-    return v || '5562993227169'; // 2630 bloqueado na Umbler -> saida padrao vai pelo 7169
+    return v || undefined;
   } catch { return undefined; }
-}
-
-// 📶 Polling de entrega/leitura: a API do Umbler ATUALIZA o messageState (Sent -> Received -> Read)
-// mesmo sem webhook. Consultamos as mensagens enviadas recentes e atualizamos o ack.
-let _umblerPollBusy = false;
-export async function pollUmblerDeliveryStatus(): Promise<{ checked: number; updated: number }> {
-  if (_umblerPollBusy) return { checked: 0, updated: 0 };
-  if (!process.env.UMBLER_TALK_TOKEN) return { checked: 0, updated: 0 };
-  _umblerPollBusy = true;
-  let checked = 0, updated = 0;
-  try {
-    // 📶 Heuristica: se o cliente RESPONDEU depois de uma mensagem nossa, ela FOI entregue.
-    // Marca como entregue (ack=2) qualquer msg de saida com flag menor anterior a uma resposta do cliente.
-    try {
-      await db.execute(sql`
-        UPDATE chat_messages m
-        SET ack = GREATEST(coalesce(m.ack,0), 2),
-            metadata = jsonb_set(jsonb_set(jsonb_set(coalesce(m.metadata,'{}'::jsonb), '{delivery}', coalesce(m.metadata->'delivery','{}'::jsonb), true), '{delivery,state}', '"received"'::jsonb, true), '{delivery,success}', 'true'::jsonb, true)
-        WHERE m.sender_type IN ('agent','system')
-          AND (coalesce(m.ack,0) < 2 OR coalesce(m.metadata->'delivery'->>'success','') = 'false')
-          AND m.created_at > now() - interval '7 days'
-          AND EXISTS (SELECT 1 FROM chat_messages r WHERE r.conversation_id = m.conversation_id AND r.sender_type = 'customer' AND r.created_at > m.created_at)`);
-    } catch (e: any) { console.warn('[UMBLER-POLL] heuristica resposta->entregue:', e?.message || e); }
-    const cfg = await resolveUmblerTalkConfig();
-    if ('error' in cfg) return { checked, updated };
-    const rows: any = await db.execute(sql`SELECT id, metadata->'delivery'->>'providerStatus' AS pid
-      FROM chat_messages
-      WHERE sender_type IN ('agent','system')
-        AND metadata->'delivery'->>'providerStatus' IS NOT NULL
-        AND coalesce(ack,0) < 3
-        AND created_at > now() - interval '12 hours'
-      ORDER BY created_at DESC LIMIT 25`);
-    for (const r of (rows.rows || [])) {
-      const pid = String(r.pid || ''); if (!pid) continue; checked++;
-      try {
-        const resp = await umblerTalkFetch('/v1/messages/' + encodeURIComponent(pid) + '/?organizationId=' + encodeURIComponent((cfg as any).orgId));
-        if (!resp.ok) continue;
-        const j: any = await resp.json().catch(() => null);
-        const st = String(j?.messageState || j?.MessageState || '').toLowerCase();
-        let ack: number | null = null; let fail = false;
-        if (/read|seen|lida|visualiz/.test(st)) ack = 3;
-        else if (/receiv|received|deliver|entreg|receb/.test(st)) ack = 2;
-        else if (/sent|enviad/.test(st)) ack = 1;
-        if (/fail|erro|error|reject|undeliver|nao.?entreg|not.?deliver/.test(st)) { fail = true; ack = 0; }
-        if (ack !== null) {
-          await db.execute(sql`UPDATE chat_messages
-            SET ack = CASE WHEN ${fail} THEN 0 ELSE GREATEST(coalesce(ack,0), ${ack}) END,
-                metadata = jsonb_set(jsonb_set(coalesce(metadata,'{}'::jsonb), '{delivery,state}', to_jsonb(${st}::text), true), '{delivery,success}', ${fail ? 'false' : 'true'}::jsonb, true)
-            WHERE id = ${r.id}`);
-          updated++;
-        }
-      } catch {}
-    }
-  } catch (e: any) { console.warn('[UMBLER-POLL] erro:', e?.message || e); }
-  finally { _umblerPollBusy = false; }
-  return { checked, updated };
 }
 
 export async function sendUmblerTalkText(toPhone: string, text: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
@@ -723,18 +677,7 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body });
     const raw = await resp.text();
     console.log(`[UMBLER-TALK] to=${digits} from=${cfg.fromPhone} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
-    if (!resp.ok) {
-      // 2630 bloqueado na Umbler: reenvia UMA vez pelo canal de saida padrao (7169) e segue.
-      const _saidaR = String((await canalSaidaPadrao()) || '').replace(/\D/g, '');
-      if (_saidaR && _saidaR !== fromPhone) {
-        const resp2 = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify({ organizationId: cfg.orgId, fromPhone: _saidaR, toPhone: digits, message: text }) });
-        const raw2 = await resp2.text();
-        console.log(`[UMBLER-TALK] RETRY from=${_saidaR} to=${digits} httpStatus=${resp2.status} resp=${raw2.slice(0, 150)}`);
-        if (resp2.ok) { let id2: string | undefined; try { id2 = JSON.parse(raw2).id; } catch {} return { success: true, messageId: id2 }; }
-        return { success: false, error: `HTTP ${resp.status} (retry ${resp2.status}): ${raw2.slice(0, 150)}` };
-      }
-      return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
-    }
+    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
     let id: string | undefined;
     try { id = JSON.parse(raw).id; } catch {}
     return { success: true, messageId: id };
@@ -760,20 +703,7 @@ export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, capt
     const resp = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload) });
     const raw = await resp.text();
     console.log(`[UMBLER-TALK-MEDIA] to=${digits} file=${String(fileUrl).slice(0, 80)} httpStatus=${resp.status} resp=${raw.slice(0, 200)}`);
-    if (!resp.ok) {
-      // 2630 bloqueado na Umbler: reenvia UMA vez pelo canal de saida padrao (7169) e segue.
-      const _saidaR = String((await canalSaidaPadrao()) || '').replace(/\D/g, '');
-      if (_saidaR && _saidaR !== fromPhone) {
-        const payload2: any = { organizationId: cfg.orgId, fromPhone: _saidaR, toPhone: digits, file: fileUrl };
-        if (caption) payload2.message = caption;
-        const resp2 = await umblerTalkFetch('/v1/messages/simplified/', { method: 'POST', body: JSON.stringify(payload2) });
-        const raw2 = await resp2.text();
-        console.log(`[UMBLER-TALK-MEDIA] RETRY from=${_saidaR} to=${digits} httpStatus=${resp2.status} resp=${raw2.slice(0, 150)}`);
-        if (resp2.ok) { let id2: string | undefined; try { id2 = JSON.parse(raw2).id; } catch {} return { success: true, messageId: id2 }; }
-        return { success: false, error: `HTTP ${resp.status} (retry ${resp2.status}): ${raw2.slice(0, 150)}` };
-      }
-      return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
-    }
+    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}: ${raw.slice(0, 200)}` };
     let id: string | undefined;
     try { id = JSON.parse(raw).id; } catch {}
     return { success: true, messageId: id };
@@ -1860,18 +1790,6 @@ export function registerChatRoutes(app: Express): void {
       env: process.env.NODE_ENV
     };
     
-    // 🎯 CENTRAL DE MARKETING (buraco 3): antes de qualquer normalizacao, guarda o
-    // referral de anuncio se ele existir no payload cru. O ctwa_clid pode vir em
-    // formatos diferentes conforme o provedor (Cloud API direta ou repassado pela
-    // Umbler), entao o leitor varre o objeto em vez de assumir um caminho fixo.
-    // O vinculo com a conversa acontece adiante, quando ela ja tem id.
-    let _ctwaRef: any = null;
-    try {
-      const { lerReferral, referralUtil } = await import('./mkt-ctwa');
-      const r = lerReferral(req.body);
-      if (referralUtil(r)) { _ctwaRef = r; console.log('🎯 [CTWA-WA] referral de anuncio detectado no webhook'); }
-    } catch (e: any) { console.warn('[CTWA-WA] leitura do referral (segue):', e?.message); }
-
     try {
       let { event, instance, data } = req.body;
       debugInfo.steps.push('1-parse-body');
@@ -2128,7 +2046,7 @@ export function registerChatRoutes(app: Express): void {
 
       const finalMessageType = mediaInfo.messageType || 'text';
       let finalMediaUrl = mediaInfo.mediaUrl || null;
-      let finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
+      const finalContent = messageText || (finalMessageType !== 'text' ? `[Mídia: ${finalMessageType}]` : '');
       
       // 🔧 MELHORADO: Se for mídia, garantir que temos a URL/base64
       // Prioridade: 1) Tentar getBase64FromMediaMessage (mais confiável), 2) Usar URL do payload se disponível
@@ -2360,19 +2278,6 @@ export function registerChatRoutes(app: Express): void {
         }
       }
       
-      // 🎯 CENTRAL DE MARKETING (buraco 3): agora que a conversa existe, carimba a
-      // origem se o webhook trouxe referral de anúncio (Click-to-WhatsApp).
-      // Idempotente por conversa e fire-and-forget — nunca atrasa o atendimento.
-      if (_ctwaRef && !isFromMe) {
-        try {
-          const { registrarToqueDeConversa } = await import('./mkt-ctwa');
-          void registrarToqueDeConversa({
-            conversaId: conversation.id, canal: 'whatsapp', referral: _ctwaRef,
-            clienteId: customer?.id || null, telefone: normalizedPhone,
-          });
-        } catch (e: any) { console.error('[CTWA-WA] toque (segue):', e?.message || e); }
-      }
-
       const savedMsg = await storage.createChatMessage({
         conversationId: conversation.id,
         senderId: isFromMe ? 'system' : (customer?.id || 'unknown'),
@@ -2386,35 +2291,20 @@ export function registerChatRoutes(app: Express): void {
         isRead: isFromMe
       });
 
-      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — SINCRONO, ANTES do gatilho da IA,
-      // para a IA LER o conteudo do audio em vez de responder "nao consegui abrir o arquivo".
-      const _audioLike = finalMessageType === 'audio'
-        || /^audio\//.test(String(mediaInfo.mediaType || ''))
-        || /\.(ogg|opus|mp3|m4a|wav|aac)(\?|$)/i.test(String(finalMediaUrl || ''));
-      if (_audioLike && !isFromMe && savedMsg?.id) {
-        let _transcript: string | null = null;
-        if (finalMediaUrl) {
-          try { _transcript = await transcribeAudioSource(finalMediaUrl as string, mediaInfo.mediaType); }
-          catch (e: any) { console.error('[TRANSCRIBE] erro:', e && e.message ? e.message : String(e)); }
-        }
-        if (_transcript && _transcript.trim()) {
-          finalContent = '🎤 ' + _transcript.trim();
-          await storage.updateChatMessage(savedMsg.id, {
-            content: finalContent,
-            messageType: 'audio',
-            metadata: { ...((savedMsg as any).metadata || {}), transcription: _transcript.trim(), transcribedAt: new Date().toISOString() },
-          } as any);
-          console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${_transcript.slice(0, 60)}`);
-        } else {
-          // Falha ao transcrever: a IA NAO deve adivinhar. Pede texto ou transfere para humano.
-          storage.updateChatMessage(savedMsg.id, {
-            content: '🎤 (áudio recebido — não foi possível transcrever)',
-            messageType: 'audio',
-            metadata: { ...((savedMsg as any).metadata || {}), transcriptionFailed: true, transcribedAt: new Date().toISOString() },
-          } as any).catch(() => {});
-          finalContent = '[SISTEMA] O cliente enviou um ÁUDIO de voz que NÃO foi possível transcrever automaticamente. NÃO tente adivinhar nem inventar o que foi dito. Responda de forma breve e educada pedindo para o cliente digitar a solicitação em texto. Se o cliente não puder digitar, insistir no áudio, ou pedir para falar com uma pessoa, chame a ferramenta transferir_humano para encaminhar a um atendente.';
-          console.log(`🎤 [TRANSCRIBE] Falha ao transcrever audio (${savedMsg.id}) — IA vai pedir texto/transferir`);
-        }
+      // 🎤 Transcricao de audio recebido (OpenAI Whisper) — fire-and-forget, atualiza a mensagem
+      if (finalMessageType === 'audio' && !isFromMe && savedMsg?.id) {
+        const audioSrc = finalMediaUrl;
+        const audioMime = mediaInfo.mediaType;
+        (async () => {
+          const transcript = await transcribeAudioSource(audioSrc as string, audioMime);
+          if (transcript) {
+            await storage.updateChatMessage(savedMsg.id, {
+              content: '🎤 ' + transcript,
+              metadata: { ...((savedMsg as any).metadata || {}), transcription: transcript, transcribedAt: new Date().toISOString() },
+            } as any);
+            console.log(`🎤 [TRANSCRIBE] Audio transcrito (${savedMsg.id}): ${transcript.slice(0, 60)}`);
+          }
+        })().catch((e: any) => console.error('[TRANSCRIBE] fire-and-forget erro:', e && e.message ? e.message : String(e)));
       }
 
       // 4. Atualizar Conversa - Forçar lastMessageTime para ordenação
@@ -3773,6 +3663,33 @@ export function registerChatRoutes(app: Express): void {
         }
       } catch (e: any) { console.error('[CHAT-LIST] flag IA', e?.message || e); }
 
+      // ⏳ JANELA DE 24h (etapa 1 da migracao 1841-only).
+      // No canal OFICIAL da Meta, texto livre so e entregue ate 24h depois da ULTIMA
+      // mensagem do CLIENTE. Fora disso a mensagem e recusada e some. O atendente so
+      // descobria isso DEPOIS de tentar enviar (o "nao entregue" da COOPGRAFICA).
+      // Aqui o estado vem junto da lista para a tela avisar ANTES de ele digitar.
+      // Nesta etapa e so informativo: nao bloqueia nada (ver chat_bloqueia_fora_janela).
+      const janelaPorConv: Record<string, any> = {};
+      try {
+        if ((await getSettingChat('chat_mostra_janela', 'on')) === 'on') {
+          const jr: any = await db.execute(sql`
+            SELECT id,
+                   (last_inbound_channel = 'oficial_1841') AS oficial,
+                   (window_open_until IS NOT NULL AND window_open_until > now()) AS aberta,
+                   CASE WHEN window_open_until IS NULL THEN NULL
+                        ELSE round(EXTRACT(EPOCH FROM (window_open_until - now()))/60)::int END AS restam_min
+            FROM chat_conversations
+            WHERE last_inbound_channel = 'oficial_1841'`);
+          for (const r of (jr.rows || []) as any[]) {
+            janelaPorConv[String(r.id)] = {
+              oficial: !!r.oficial,
+              aberta: !!r.aberta,
+              restamMin: r.aberta ? Math.max(0, Number(r.restam_min) || 0) : 0,
+            };
+          }
+        }
+      } catch (e: any) { console.error('[CHAT-LIST] janela 24h', e?.message || e); }
+
       // Enriquecer conversas com dados relacionados
       const enrichedConversations = filteredConversations.map((conv: any) => {
         const assignedAgent = agents.find(a => a.id === conv.assignedAgentId);
@@ -3819,7 +3736,9 @@ export function registerChatRoutes(app: Express): void {
           lastMessageTime: conv.lastMessageTime,
           createdAt: conv.createdAt,
           unreadCount: unreadByConv[conv.id] || 0,
-          hasUnread: (unreadByConv[conv.id] || 0) > 0
+          hasUnread: (unreadByConv[conv.id] || 0) > 0,
+          // null = conversa que nao entrou pelo canal oficial (sem trava de 24h).
+          janela24h: janelaPorConv[String(conv.id)] || null
         };
       });
 
@@ -4395,22 +4314,11 @@ export function registerChatRoutes(app: Express): void {
       if (!isManager && conversationOwner && conversationOwner !== 'chatgpt') {
         const agents = await storage.getChatAgents();
         const userAgent = agents.find(a => a.userId === userId);
-        // 🎯 O DONO DA CARTEIRA (vendedor do cliente) sempre pode escrever, mesmo que a conversa
-        // esteja atribuida a outro atendente (regra Flavio).
-        let ehDonoCarteira = false;
-        try { const { donoDaCarteira } = await import('./ia-fila'); ehDonoCarteira = !!userId && (await donoDaCarteira((conversation as any).customerPhone || '')) === userId; } catch {}
-        if (!ehDonoCarteira && (!userAgent || userAgent.id !== conversationOwner)) {
+        if (!userAgent || userAgent.id !== conversationOwner) {
           const ownerAgent = agents.find(a => a.id === conversationOwner);
           // 🔓 Só trava se o DONO estiver ONLINE. Se o dono saiu/está offline, a conversa
           // é liberada para outro atendente assumir (evita conversas "presas" com donos ausentes).
-          // 🕒 Libera apos INATIVIDADE: a trava so vale se o DONO falou ha pouco (10 min).
-          // Passado esse tempo sem mensagem dele, a conversa e liberada para outro assumir.
-          let _donoAtivo = false;
-          try {
-            const _rr: any = await db.execute(sql`SELECT (max(created_at) > now() - interval '10 minutes') AS r FROM chat_messages WHERE conversation_id = ${conversationId} AND sender_type <> 'customer' AND coalesce(sender_id,'') NOT LIKE 'agent:%' AND coalesce(sender_id,'') NOT IN ('system','bot','chatgpt')`);
-            _donoAtivo = !!_rr.rows?.[0]?.r;
-          } catch { _donoAtivo = true; }
-          if (ownerAgent && ownerAgent.status === 'online' && _donoAtivo) {
+          if (ownerAgent && ownerAgent.status === 'online') {
             return res.status(403).json({
               error: `Esta conversa está sendo atendida por ${ownerAgent?.name || 'outro atendente'}. Peça a transferência ao responsável ou a um administrador para poder enviar mensagens.`,
               code: "CONVERSATION_LOCKED",
@@ -5049,10 +4957,9 @@ export function registerChatRoutes(app: Express): void {
     // 🔄 Rota para reconfigurar webhook (SEMPRE para PRODUÇÃO - fix critical issue)
   app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
-      // SEMPRE usar o dominio de producao estavel (Railway) — mesma fonte do APP_URL dos links de pagamento.
-      // Antes estava fixo em 'integrahonest.replit.app' (dominio Replit ANTIGO/morto), o que quebrava o webhook.
-      const baseUrl = (process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
-      const webhookUrl = `${baseUrl}/api/chat/webhook/messages`;
+      // SEMPRE usar o domínio de produção estável - NUNCA o domínio de dev
+      const prodDomain = 'integrahonest.replit.app';
+      const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
       
       console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook SEMPRE para PRODUÇÃO: ${webhookUrl}`);
       
@@ -6616,17 +6523,7 @@ export function registerChatRoutes(app: Express): void {
     res.json({ configured: !!process.env.OPENAI_API_KEY });
   });
 
-  app.get("/api/chat/umbler-talk/poll-now", async (req: any, res: any) => {
-    try { res.json(await pollUmblerDeliveryStatus()); } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
-  });
-
   console.log("✅ Chat routes registered successfully");
-
-  // 📶 Polling de status de entrega/leitura das mensagens enviadas (a cada 90s).
-  try {
-    setInterval(() => { pollUmblerDeliveryStatus().catch((e: any) => console.warn('[UMBLER-POLL] tick', e?.message || e)); }, 90 * 1000);
-    console.log('📶 [UMBLER-POLL] polling de entrega/leitura ativo (90s)');
-  } catch {}
 }
 
 // Helper para configurações padrão
