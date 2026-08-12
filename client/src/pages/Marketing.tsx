@@ -1934,6 +1934,7 @@ function Fase0() {
   const [salvando, setSalvando] = useState(false);
   const q = useQuery<any>({ queryKey: ["/api/mkt/fase0"], queryFn: () => apiGet("/api/mkt/fase0") });
   const barrados = useQuery<any>({ queryKey: ["/api/mkt/fase0/pix-barrados"], queryFn: () => apiGet("/api/mkt/fase0/pix-barrados") });
+  const dist = useQuery<any>({ queryKey: ["/api/mkt/fase0/distribuicao"], queryFn: () => apiGet("/api/mkt/fase0/distribuicao?dias=180") });
   const d = q.data || {};
   const abertos = (d.itens || []).filter((i: any) => i.estado !== "fechado");
 
@@ -2004,6 +2005,42 @@ function Fase0() {
           Acima do teto a IA <b>não gera a cobrança</b>: registra e passa para uma pessoa. Zero desliga a trava
           — não recomendado no piloto.
         </p>
+
+        {/* O teto certo não é palpite: é a distribuição real dos pedidos. */}
+        {dist.data && dist.data.n > 0 && (
+          <div className="rounded-lg border p-3 space-y-2">
+            <div className="text-sm font-semibold">Onde ficam os seus pedidos</div>
+            <p className="text-[11px] text-muted-foreground">{dist.data.recado}</p>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+              {[["mínimo", dist.data.min], ["metade até", dist.data.p50], ["75% até", dist.data.p75],
+                ["90% até", dist.data.p90], ["95% até", dist.data.p95], ["maior", dist.data.max]].map(([t, v]: any) => (
+                <div key={t} className="rounded border p-2">
+                  <div className="text-[10px] text-muted-foreground">{t}</div>
+                  <div className="text-sm font-semibold">{brl(v)}</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[11px] text-muted-foreground pt-1">
+              Quantos pedidos iriam para uma pessoa com cada teto — clique para usar:
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(dist.data.simulacao || []).map((sm: any) => (
+                <Button key={sm.teto} size="sm"
+                  variant={Number(teto ?? d.tetoPix) === sm.teto ? "default" : "outline"}
+                  className="h-auto py-1 px-2 flex-col items-start"
+                  onClick={() => setTeto(String(sm.teto))}>
+                  <span className="text-[11px] font-semibold">{brl(sm.teto)}</span>
+                  <span className="text-[9px] opacity-70">{sm.percentual}% para humano</span>
+                </Button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Sugestão: <b>{brl(dist.data.sugestao)}</b> — deixa cerca de 1 em cada 10 pedidos indo para uma
+              pessoa. É o suficiente para pegar o pedido fora do padrão sem a trava virar gargalo.
+              {dist.data.fonte === "pipeline" && " (Ainda calculado sobre os pedidos do pipeline, porque a IA não registrou volume próprio.)"}
+            </p>
+          </div>
+        )}
 
         {(barrados.data || []).length > 0 && (
           <div className="rounded-lg border p-3 space-y-2">
