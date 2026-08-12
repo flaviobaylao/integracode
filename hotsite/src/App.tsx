@@ -624,7 +624,7 @@ function HotsiteContent() {
             <div>
               <HonestLogo size="xl" className="text-white mb-4" />
               <p className="text-sm opacity-90">
-                Sucos 100% naturais direto da fazenda para você.
+                Suco natural, sem adição de açúcares, direto da fazenda para você.
                 Sem açúcar, sem adição de conservantes, sem enrolação.
               </p>
             </div>
