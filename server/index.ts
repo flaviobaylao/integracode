@@ -4065,6 +4065,13 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json(await importarDoCatalogo(req.user?.username || req.user?.email || 'admin'));
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  app.delete("/api/mkt/assets/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { removerAsset } = await import('./mkt-assets');
+      const r = await removerAsset(Number(req.params.id), String(req.query?.confirmar) === 'true');
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.post("/api/mkt/assets/:id/uso", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       const { registrarUso } = await import('./mkt-assets');

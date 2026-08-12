@@ -430,6 +430,29 @@ export async function atualizarAsset(id: number, campos: Partial<NovoAsset> & { 
   }
 }
 
+/**
+ * Apaga de verdade. Existe porque foto errada sobe - e sem isso o unico caminho
+ * seria arquivar, que deixa o registro na contagem para sempre.
+ * Criativo que ja foi ao ar NAO some por acidente: quem tem uso registrado so sai
+ * com confirmacao explicita, senao o historico de desempenho perde a referencia.
+ */
+export async function removerAsset(id: number, confirmarComUso = false): Promise<{ ok: boolean; erro?: string; usos?: number }> {
+  if (!(await garantirSchema())) return { ok: false, erro: 'schema indisponivel' };
+  const a = await verAsset(id);
+  if (!a) return { ok: false, erro: 'criativo nao encontrado' };
+  const usos = Number(a.usos || 0);
+  if (usos > 0 && !confirmarComUso) {
+    return { ok: false, erro: 'este criativo ja foi usado ' + usos + ' vez(es) - apagar tira ele do historico de desempenho', usos };
+  }
+  try {
+    await db.execute(sql`DELETE FROM mkt_asset_usos WHERE asset_id = ${id}`);
+    await db.execute(sql`DELETE FROM mkt_assets WHERE id = ${id}`);
+    return { ok: true, usos };
+  } catch (e: any) {
+    return { ok: false, erro: String(e?.message || e) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Importar o que a Honest JA tem
 // ---------------------------------------------------------------------------
