@@ -4082,6 +4082,86 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== Central de Marketing - buraco 6: esteira de estados + fila de aprovacao =====
+  const quem = (req: any) => req.user?.username || req.user?.email || 'admin';
+
+  app.post("/api/mkt/esteira/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktEsteiraSchema } = await import('./mkt-esteira'); res.json(await ensureMktEsteiraSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/esteira/panorama", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { panoramaEsteira } = await import('./mkt-esteira'); res.json(await panoramaEsteira(Number(req.query?.dias || 30))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // A tela que decide o projeto
+  app.get("/api/mkt/fila-aprovacao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { fila } = await import('./mkt-esteira'); res.json(await fila(Number(req.query?.limite || 40))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/pieces", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { listarPorEstado } = await import('./mkt-esteira');
+      res.json(await listarPorEstado(String(req.query?.estado || 'aprovado'), Number(req.query?.limite || 30)));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/pieces", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { criarPeca } = await import('./mkt-esteira');
+      const r = await criarPeca({ ...(req.body || {}), criadoPor: quem(req) });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.patch("/api/mkt/pieces/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { editarPeca } = await import('./mkt-esteira');
+      const r = await editarPeca(String(req.params.id), req.body || {});
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/pieces/:id/historico", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { historicoDaPeca } = await import('./mkt-esteira'); res.json(await historicoDaPeca(String(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/pieces/:id/revisar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { enviarParaRevisao } = await import('./mkt-esteira');
+      const r = await enviarParaRevisao(String(req.params.id), quem(req));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Decisao EM LOTE - aceita 1 ou 40 pecas no mesmo gesto
+  app.post("/api/mkt/pieces/decisao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { decidir } = await import('./mkt-esteira');
+      const b = req.body || {};
+      const r = await decidir(b.ids || [], b.decisao, { comentario: b.comentario, quem: quem(req), assumirBloqueio: b.assumirBloqueio === true });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/pieces/aprovar-exceto", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { aprovarTudoExceto } = await import('./mkt-esteira');
+      const b = req.body || {};
+      const r = await aprovarTudoExceto(b.excecoes || [], { quem: quem(req), assumirBloqueio: b.assumirBloqueio === true });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/pieces/:id/agendar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { agendar } = await import('./mkt-esteira');
+      const r = await agendar(String(req.params.id), String(req.body?.quando || ''), quem(req));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Ate o App Review da Meta sair, a publicacao e sua - e e aqui que o criativo conta uso
+  app.post("/api/mkt/pieces/:id/publicada", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { marcarPublicada } = await import('./mkt-esteira');
+      const r = await marcarPublicada(String(req.params.id), { ...(req.body || {}), quem: quem(req) });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // Preco por modelo e cambio — editaveis SEM deploy (motivo: preco de token muda)
   app.get("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
