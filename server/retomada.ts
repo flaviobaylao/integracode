@@ -59,10 +59,13 @@ export function limpaParam(s: any): string {
 
 export async function templatesDeRetomada(): Promise<TemplateRetomada[]> {
   try {
+    // A coluna e `is_active` — nao `ativo`. Escrever o nome errado aqui nao dava erro na
+    // tela: a consulta estourava, o catch devolvia [] e o atendente via "nenhum template
+    // de retomada", como se ninguem tivesse cadastrado. Por isso o erro agora sobe.
     const r: any = await db.execute(sql`
       SELECT label, umbler_id, coalesce(categoria,'UTILITY') AS categoria,
              coalesce(corpo,'') AS corpo, coalesce(observacao,'') AS observacao,
-             coalesce(ativo, true) AS ativo, botoes
+             COALESCE(is_active, true) AS ativo, botoes
       FROM whatsapp_templates
       WHERE coalesce(observacao,'') ILIKE ${'%' + MARCA_RETOMADA + '%'}
       ORDER BY label`);
@@ -77,7 +80,7 @@ export async function templatesDeRetomada(): Promise<TemplateRetomada[]> {
     }));
   } catch (e: any) {
     console.error('[RETOMADA] lista', e?.message || e);
-    return [];
+    throw e;   // lista vazia por engano e pior do que erro visivel
   }
 }
 
@@ -92,8 +95,12 @@ export function registerRetomada(app: any) {
   // Quais templates o atendente pode usar para reabrir uma conversa, e o que preencher.
   app.get('/api/chat/retomada/templates', async (_req: any, res: any) => {
     try {
-      const itens = (await templatesDeRetomada()).filter(t => t.ativo && t.umblerId);
-      res.json({ itens, marca: MARCA_RETOMADA });
+      const todos = await templatesDeRetomada();
+      const itens = todos.filter(t => t.ativo && t.umblerId);
+      // Diz POR QUE um template marcado nao apareceu, em vez de sumir sem explicacao.
+      const fora = todos.filter(t => !(t.ativo && t.umblerId))
+        .map(t => ({ label: t.label, motivo: !t.ativo ? 'desligado' : 'sem umbler_id (importe do Umbler)' }));
+      res.json({ itens, fora, marca: MARCA_RETOMADA });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
