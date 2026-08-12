@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { hojeBR } from '@shared/tempo';
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -59,7 +60,7 @@ interface RouteWithDeliveries {
 }
 
 export default function DeliveryDailySummary() {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(hojeBR());
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);

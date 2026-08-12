@@ -1,6 +1,7 @@
 console.log('🚀 DailyRouteView CARREGADO - Versão: 2025-11-12 12:34');
 
 import { useState, useEffect } from "react";
+import { fmtCalendarioBR } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -517,7 +518,7 @@ export default function DailyRouteView() {
   const downloadPhoto = (photoUrl: string, customerName: string, checkInTime: string) => {
     const link = document.createElement('a');
     link.href = photoUrl;
-    link.download = `checkin-${customerName}-${format(new Date(checkInTime), 'yyyy-MM-dd-HHmm')}.jpg`;
+    link.download = `checkin-${customerName}-${formatInTimeZone(new Date(checkInTime), 'America/Sao_Paulo', 'yyyy-MM-dd-HHmm')}.jpg`;
     link.click();
   };
 
@@ -726,7 +727,7 @@ export default function DailyRouteView() {
             {isAdmin ? 'Rotas dos Vendedores' : 'Minha Rota do Dia'}
           </h1>
           <p className="text-gray-600 dark:text-gray-400">
-            {formatInTimeZone(route.routeDate, 'America/Sao_Paulo', "EEEE, dd 'de' MMMM", { locale: ptBR })}
+            {formatInTimeZone(new Date(route.routeDate), 'UTC', "EEEE, dd 'de' MMMM", { locale: ptBR })}
             {isAdmin && currentSeller && ` - ${currentSeller.firstName} ${currentSeller.lastName || ''}`}
           </p>
         </div>
@@ -1116,7 +1117,7 @@ export default function DailyRouteView() {
                         {checkpoint.timestamp && (
                           <div className="flex items-center">
                             <Clock className="h-3 w-3 mr-1" />
-                            {format(new Date(checkpoint.timestamp), "HH:mm", { locale: ptBR })}
+                            {formatInTimeZone(new Date(checkpoint.timestamp), 'America/Sao_Paulo', "HH:mm", { locale: ptBR })}
                           </div>
                         )}
                       </div>
@@ -1327,7 +1328,7 @@ export default function DailyRouteView() {
                           </div>
                           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                             <Clock className="h-3 w-3 inline mr-1" />
-                            {format(new Date(checkIn.checkpointTime || checkIn.timestamp), "HH:mm:ss", { locale: ptBR })}
+                            {formatInTimeZone(new Date(checkIn.checkpointTime || checkIn.timestamp), 'America/Sao_Paulo', "HH:mm:ss", { locale: ptBR })}
                           </p>
                           <p className={`text-sm font-medium ${
                             isCancelled 
@@ -1369,7 +1370,7 @@ export default function DailyRouteView() {
                             </div>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
                               <Clock className="h-3 w-3 inline mr-1" />
-                              {format(new Date(checkOut.checkpointTime || checkOut.timestamp), "HH:mm:ss", { locale: ptBR })}
+                              {formatInTimeZone(new Date(checkOut.checkpointTime || checkOut.timestamp), 'America/Sao_Paulo', "HH:mm:ss", { locale: ptBR })}
                             </p>
                             <p className="text-xs text-gray-500 mt-1">
                               Tempo no local: {(() => {
@@ -1471,7 +1472,7 @@ export default function DailyRouteView() {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-gray-500" />
-                    <span>{format(new Date(selectedPhoto.checkInTime), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</span>
+                    <span>{formatInTimeZone(new Date(selectedPhoto.checkInTime), 'America/Sao_Paulo', "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-gray-500" />
@@ -1557,7 +1558,7 @@ export default function DailyRouteView() {
               autoFocus
             />
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Selecione um cliente para adicionar à rota de {route?.routeDate ? format(parseISO(route.routeDate), "dd/MM/yyyy") : format(new Date(), "dd/MM/yyyy")}
+              Selecione um cliente para adicionar à rota de {route?.routeDate ? fmtCalendarioBR(route.routeDate) : format(new Date(), "dd/MM/yyyy")}
             </p>
           </div>
 

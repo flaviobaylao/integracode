@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { fmtCalendarioBR, fmtDataBR, fmtDataHoraBR } from '@shared/tempo';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -198,7 +199,7 @@ export default function TelemarketingPage() {
                       <div className="text-right text-sm text-gray-500">
                         <div className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {format(new Date(card.scheduled_date), 'dd/MM/yyyy', { locale: ptBR })}
+                          {fmtCalendarioBR(card.scheduled_date)}
                         </div>
                       </div>
                     </div>
@@ -248,7 +249,7 @@ export default function TelemarketingPage() {
                   {getStatusBadge(selectedCard.status, selectedCard.notes || '')}
                 </CardTitle>
                 <CardDescription>
-                  Card de telemarketing - {format(new Date(selectedCard.scheduled_date), 'dd/MM/yyyy', { locale: ptBR })}
+                  Card de telemarketing - {fmtCalendarioBR(selectedCard.scheduled_date)}
                 </CardDescription>
               </CardHeader>
               

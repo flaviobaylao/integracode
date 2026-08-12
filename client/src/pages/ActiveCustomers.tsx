@@ -1,6 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useState, useRef, useEffect, Fragment } from "react";
-import { nowBrazil, getBrazilDateISO } from '@/lib/brazilTimezone';
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
@@ -81,9 +82,9 @@ function getDateRecencyClass(dateString: string | null | undefined): string {
   if (!dateString) return '';
   
   try {
-    const date = new Date(dateString);
-    const today = nowBrazil();
-    const daysDiff = differenceInDays(today, date);
+    // Recencia por DIA DE CALENDARIO. differenceInDays(nowBrazil(), date) misturava um
+    // instante falso com um instante real e a faixa de cor pulava +/- 1 dia na borda.
+    const daysDiff = diasEntre(hojeBR(), diaCalendario(dateString));
     
     if (daysDiff <= 7) {
       return 'bg-green-100 dark:bg-green-900/30';
@@ -812,7 +813,7 @@ export default function ActiveCustomers() {
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `contatos_clientes_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `contatos_clientes_${hojeBR()}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
 

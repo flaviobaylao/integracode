@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { useTableSort, SortableTh } from "@/lib/tableTools";
-import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -253,13 +253,12 @@ export default function LeadsManagement() {
     setConverterLead(lead);
   };
   const openProrrogar = (lead: Lead) => {
-    const d = nowBrazil(); d.setDate(d.getDate() + 15);
-    setNovaDataProrrogar(d.toISOString().slice(0, 10));
+    setNovaDataProrrogar(diaMaisBR(15));
     setProrrogarLead(lead);
   };
   // Limites do date picker de prorrogação: amanhã até hoje+15
-  const prorrogarMin = (() => { const d = nowBrazil(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
-  const prorrogarMax = (() => { const d = nowBrazil(); d.setDate(d.getDate() + 15); return d.toISOString().slice(0, 10); })();
+  const prorrogarMin = diaMaisBR(1);
+  const prorrogarMax = diaMaisBR(15);
 
   const resetForm = () => {
     setFormData({
@@ -433,7 +432,7 @@ export default function LeadsManagement() {
       { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 20 }, { wch: 20 },
       { wch: 16 }, { wch: 18 },
     ];
-    XLSX.writeFile(wb, `leads_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `leads_${hojeBR()}.xlsx`);
     toast({ title: "Exportação concluída", description: `${data.length} leads exportados com sucesso.` });
   };
 
@@ -832,7 +831,7 @@ export default function LeadsManagement() {
                       </td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">
                         {(lead as any).nextContactDate ? (
-                          <span className={`font-medium ${descartado ? 'text-gray-400' : (new Date((lead as any).nextContactDate) < nowBrazil() ? 'text-red-600' : 'text-green-600')}`}>
+                          <span className={`font-medium ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
                             {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
                           </span>
                         ) : '—'}

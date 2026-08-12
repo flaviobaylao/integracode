@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { hojeBR } from '@shared/tempo';
 import { useQuery } from "@tanstack/react-query";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -55,7 +56,7 @@ export default function PrecosGrade() {
   const exportarExcel = () => {
     exportToExcel(
       rows.map((r: any) => ({ Tabela: r.tabela, Produto: r.produto, Preco: Number(r.preco) || 0 })),
-      `tabela_de_precos_${new Date().toISOString().slice(0, 10)}`
+      `tabela_de_precos_${hojeBR()}`
     );
   };
 
@@ -130,7 +131,7 @@ export default function PrecosGrade() {
       pdf.setTextColor(0);
     }
 
-    pdf.save(`tabela_de_precos_${new Date().toISOString().slice(0, 10)}.pdf`);
+    pdf.save(`tabela_de_precos_${hojeBR()}.pdf`);
   };
 
   return (

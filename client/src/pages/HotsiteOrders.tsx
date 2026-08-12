@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { fmtCalendarioBR, fmtDataBR, fmtDataHoraBR } from '@shared/tempo';
 import { useTableSort, SortableTh, DateRangeFilter, dateInRange } from "@/lib/tableTools";
 import { BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery } from '@tanstack/react-query';
@@ -483,7 +484,7 @@ export default function HotsiteOrders() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4 text-gray-400" />
-                              {format(new Date(order.scheduledDate), 'dd/MM/yyyy', { locale: ptBR })}
+                              {fmtCalendarioBR(order.scheduledDate)}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -605,7 +606,7 @@ export default function HotsiteOrders() {
                     </Badge>
                   </DialogTitle>
                   <DialogDescription>
-                    Pedido realizado em {format(new Date(selectedOrder.scheduledDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    Pedido realizado em {fmtCalendarioBR(selectedOrder.scheduledDate)}
                   </DialogDescription>
                 </DialogHeader>
 

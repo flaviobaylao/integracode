@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { hojeBR, diaMaisBR } from '@shared/tempo';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import RelatorioConciliacao from "@/pages/RelatorioConciliacao";
 
@@ -705,10 +706,8 @@ export default function ConciliacaoBancaria() {
   // contraparte, CPF/CNPJ e data/hora de cada lançamento.
   const abrirBbApi = () => {
     if (!account) { alert("Selecione a CONTA (no filtro acima) antes de importar pela API do BB."); return; }
-    const hoje = new Date();
-    const d0 = new Date(hoje.getTime() - 30 * 86400000);
-    setBbDe(d0.toISOString().slice(0, 10));
-    setBbAte(hoje.toISOString().slice(0, 10));
+    setBbDe(diaMaisBR(-30));
+    setBbAte(hojeBR());
     setBbMsg(""); setBbOpen(true);
   };
   const bbDiag = async () => {

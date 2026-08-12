@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { orderedActiveSellers } from "@/lib/sellerOrder";
-import { nowBrazil, getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
+import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -103,14 +104,10 @@ export default function SalesSchedule() {
   const [selectedDay, setSelectedDay] = useState('Seg');
   const [selectedSeller, setSelectedSeller] = useState<string>('all');
   const [startDate, setStartDate] = useState(() => {
-    const today = nowBrazil();
-    today.setDate(today.getDate() - 7);
-    return today.toISOString().split('T')[0];
+    return diaMaisBR(-7);
   });
   const [endDate, setEndDate] = useState(() => {
-    const future = nowBrazil();
-    future.setDate(future.getDate() + 30);
-    return future.toISOString().split('T')[0];
+    return diaMaisBR(30);
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCard, setSelectedCard] = useState<SalesCardWithRelations | null>(null);

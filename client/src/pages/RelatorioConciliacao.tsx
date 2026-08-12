@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { hojeBR, inicioDoMes, diaMaisBR } from '@shared/tempo';
 import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
@@ -40,11 +41,8 @@ const fmtMes = (m: string) => {
   const [y, mo] = String(m || "").split("-");
   return `${MESES[(parseInt(mo, 10) || 1) - 1]}/${(y || "").slice(2)}`;
 };
-const isoHoje = () => new Date().toISOString().slice(0, 10);
-const isoPrimeiroDiaMes = () => {
-  const h = new Date();
-  return new Date(h.getFullYear(), h.getMonth(), 1).toISOString().slice(0, 10);
-};
+const isoHoje = () => hojeBR();
+const isoPrimeiroDiaMes = () => inicioDoMes(hojeBR());
 const fmtDoc = (v: any) => {
   const d = String(v ?? "").replace(/\D/g, "");
   if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");

@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useState, useEffect, useRef, useMemo, Component, Fragment } from "react";
-import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,13 +94,8 @@ interface VirtualAttendanceStat {
 // Componente para painel de estatísticas de atendimentos virtuais
 function VirtualAttendancePanel() {
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
-    const now = nowBrazil();
-    const start = new Date(now);
-    start.setDate(start.getDate() - 30);
-    return {
-      start: start.toISOString().split('T')[0],
-      end: now.toISOString().split('T')[0]
-    };
+    // Janela de 30 dias em DIAS DE CALENDARIO do Brasil. Ver shared/tempo.ts.
+    return { start: diaMaisBR(-30), end: hojeBR() };
   });
 
   const { data, isLoading, refetch } = useQuery<{ summaries: VirtualAttendanceStat[] }>({

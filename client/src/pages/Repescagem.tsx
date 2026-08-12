@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { hojeBR, inicioDoMes } from '@shared/tempo';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -97,10 +98,10 @@ export default function Repescagem() {
   const [historyCustomer, setHistoryCustomer] = useState<{ id: string; name: string } | null>(null);
 
   // Estatísticas: período
-  const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const [statsStart, setStatsStart] = useState(monthStart.toISOString().split('T')[0]);
-  const [statsEnd, setStatsEnd] = useState(today.toISOString().split('T')[0]);
+  // Mes corrente em dias de calendario do Brasil. new Date(ano, mes, 1).toISOString()
+  // usava o fuso do navegador e, a leste de UTC, virava dia 31 do mes anterior.
+  const [statsStart, setStatsStart] = useState(inicioDoMes(hojeBR()));
+  const [statsEnd, setStatsEnd] = useState(hojeBR());
 
   const { data: attendants = [], isLoading: loadingAttendants } = useQuery<Attendant[]>({
     queryKey: ['/api/repescagem/attendants'],

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { nowBrazil } from '@/lib/brazilTimezone';
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -17,9 +17,9 @@ export default function HRManagement() {
   console.log('✅ HRManagement component rendered!');
   
   const { user } = useAuth();
-  const currentDate = nowBrazil();
-  const [selectedMonth, setSelectedMonth] = useState((currentDate.getMonth() + 1).toString());
-  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear().toString());
+  const currentDate = componentesBR();
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.mes.toString());
+  const [selectedYear, setSelectedYear] = useState(currentDate.ano.toString());
 
   // Apenas roles administrativos veem todos os dados
   const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
@@ -73,7 +73,7 @@ export default function HRManagement() {
   ];
 
   const years = Array.from({ length: 5 }, (_, i) => {
-    const year = currentDate.getFullYear() - i;
+    const year = currentDate.ano - i;
     return { value: year.toString(), label: year.toString() };
   });
 

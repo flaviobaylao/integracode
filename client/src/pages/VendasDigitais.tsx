@@ -1,6 +1,6 @@
 import { MultiSelect, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
+import { hojeBR, inicioDoMes, fimDoMes, instanteBR } from '@shared/tempo';
 import { useState, useMemo } from "react";
-import { nowBrazil } from '@/lib/brazilTimezone';
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,36 +94,35 @@ export default function VendasDigitais() {
   const [selectedDetailAgentId, setSelectedDetailAgentId] = useState<string | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   
-  const now = nowBrazil();
-  const currentMonthStart = startOfMonth(now);
-  const currentMonthEnd = endOfMonth(now);
-  const previousMonthStart = startOfMonth(subMonths(now, 1));
-  const previousMonthEnd = endOfMonth(subMonths(now, 1));
-  
-  const monthStart = selectedMonth === 'current' ? currentMonthStart : previousMonthStart;
-  const monthEnd = selectedMonth === 'current' ? currentMonthEnd : previousMonthEnd;
-  
-  const [attendantStartDate, setAttendantStartDate] = useState(format(monthStart, 'yyyy-MM-dd'));
-  const [attendantEndDate, setAttendantEndDate] = useState(format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd'));
+  // Tudo em DIAS DE CALENDARIO do Brasil ('YYYY-MM-DD'), sem Date local no meio.
+  // O codigo antigo partia de nowBrazil() (ja deslocado), passava por startOfMonth/
+  // endOfMonth do date-fns (que operam no fuso do NAVEGADOR) e ainda somava 3h fixas
+  // no getUTCBoundary — tres deslocamentos empilhados. Ver shared/tempo.ts.
+  const hoje = hojeBR();
+  const mesAtual = hoje.slice(0, 7);
+  const mesAnterior = (() => { const [a, m] = mesAtual.split('-').map(Number);
+    return m === 1 ? `${a - 1}-12` : `${a}-${String(m - 1).padStart(2, '0')}`; })();
+  const mesAlvo = selectedMonth === 'current' ? mesAtual : mesAnterior;
+
+  const monthStartDia = inicioDoMes(`${mesAlvo}-01`);
+  const monthEndDia = fimDoMes(`${mesAlvo}-01`);
+  const monthEndVisivel = monthEndDia > hoje ? hoje : monthEndDia;
+
+  const [attendantStartDate, setAttendantStartDate] = useState(monthStartDia);
+  const [attendantEndDate, setAttendantEndDate] = useState(monthEndVisivel);
   const [selectedAttendant, setSelectedAttendant] = useState<string>('all');
   const [attendantMulti, setAttendantMulti] = useState<string[]>([]);
   
-  const getUTCBoundary = (date: Date, isEnd: boolean) => {
-    const d = new Date(date);
-    if (isEnd) {
-      d.setHours(23, 59, 59, 999);
-    } else {
-      d.setHours(0, 0, 0, 0);
-    }
-    d.setHours(d.getHours() + 3);
-    return d.toISOString();
-  };
+  // Limite do dia no Brasil, como INSTANTE em UTC. instanteBR() ja faz a conta certa;
+  // o "+3 horas" na mao so funcionava por acaso em navegador BRT.
+  const getUTCBoundary = (dia: string, isEnd: boolean) =>
+    instanteBR(dia, isEnd ? '23:59:59' : '00:00:00').toISOString();
   
   const { data: allLogs = [], isLoading } = useQuery<ServiceLog[]>({
     queryKey: ["/api/service-logs/all", selectedMonth],
     queryFn: async () => {
-      const startDateUTC = getUTCBoundary(monthStart, false);
-      const endDateUTC = getUTCBoundary(monthEnd, true);
+      const startDateUTC = getUTCBoundary(monthStartDia, false);
+      const endDateUTC = getUTCBoundary(monthEndDia, true);
       const response = await fetch(`/api/service-logs/all?startDate=${startDateUTC}&endDate=${endDateUTC}`, {
         credentials: 'include'
       });
@@ -141,11 +140,11 @@ export default function VendasDigitais() {
   }
   
   const { data: chatAttendanceData } = useQuery<{ summaries: ChatAttendanceStat[] }>({
-    queryKey: ["/api/chat/virtual-attendance", format(monthStart, 'yyyy-MM-dd'), format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd')],
+    queryKey: ["/api/chat/virtual-attendance", monthStartDia, monthEndVisivel],
     queryFn: async () => {
       const params = new URLSearchParams({
-        startDate: format(monthStart, 'yyyy-MM-dd'),
-        endDate: format(monthEnd > now ? now : monthEnd, 'yyyy-MM-dd')
+        startDate: monthStartDia,
+        endDate: monthEndVisivel
       });
       const res = await fetch(`/api/chat/virtual-attendance?${params}`, { credentials: 'include' });
       if (!res.ok) return { summaries: [] };
@@ -348,20 +347,21 @@ export default function VendasDigitais() {
         
         <Select value={selectedMonth} onValueChange={(v) => {
           setSelectedMonth(v as 'current' | 'previous');
-          const newMonthStart = v === 'current' ? currentMonthStart : previousMonthStart;
-          const newMonthEnd = v === 'current' ? currentMonthEnd : previousMonthEnd;
-          setAttendantStartDate(format(newMonthStart, 'yyyy-MM-dd'));
-          setAttendantEndDate(format(newMonthEnd > now ? now : newMonthEnd, 'yyyy-MM-dd'));
+          const mes = v === 'current' ? mesAtual : mesAnterior;
+          const ini = inicioDoMes(`${mes}-01`);
+          const fim = fimDoMes(`${mes}-01`);
+          setAttendantStartDate(ini);
+          setAttendantEndDate(fim > hoje ? hoje : fim);
         }}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="current">
-              {format(currentMonthStart, 'MMMM yyyy', { locale: ptBR })}
+              {format(parseISO(`${mesAtual}-01`), 'MMMM yyyy', { locale: ptBR })}
             </SelectItem>
             <SelectItem value="previous">
-              {format(previousMonthStart, 'MMMM yyyy', { locale: ptBR })}
+              {format(parseISO(`${mesAnterior}-01`), 'MMMM yyyy', { locale: ptBR })}
             </SelectItem>
           </SelectContent>
         </Select>

@@ -1,4 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
+import { hojeBR } from '@shared/tempo';
 import ReconcileButton from "@/components/ReconcileButton";
 import { useState, useEffect, useRef } from 'react';
 import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
@@ -1002,7 +1003,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
                       {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
-                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: hojeBR(), reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a receber?')) deleteMutation.mutate(r.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button></>)}
                     </div>
@@ -1461,7 +1462,7 @@ function PayablesTab() {
               amount: String(baixaValRaw),
               paymentMethod: 'dinheiro',
               financialAccountId: caixinhaAccount?.id || null,
-              paymentDate: form.cxPaymentDate || new Date().toISOString().split('T')[0],
+              paymentDate: form.cxPaymentDate || hojeBR(),
               reference: 'Baixa Caixinha (à vista)',
               notes: 'Baixa imediata à vista lançada junto com a conta (Instância CAIXINHA)',
             });
@@ -1701,7 +1702,7 @@ function PayablesTab() {
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setShowDetail(true); }}><Eye className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: new Date().toISOString().split('T')[0], reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: hojeBR(), reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(p); setForm({ ...p }); setSupSug([]); setDanfeFile(null); setBoletoFiles([]); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remover esta conta a pagar?')) deleteMutation.mutate(p.id); }}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
@@ -1776,7 +1777,7 @@ function PayablesTab() {
                 <Select value={form.instanceId || 'none'} onValueChange={v => {
                   const inst = v === 'none' ? '' : v;
                   if (inst === 'CAIXINHA') {
-                    setForm({ ...form, instanceId: inst, paymentMethod: form.paymentMethod || 'dinheiro', cxPaymentDate: form.cxPaymentDate || new Date().toISOString().split('T')[0], cxAmount: (form.cxAmount === undefined || form.cxAmount === '') ? (form.amount || '') : form.cxAmount });
+                    setForm({ ...form, instanceId: inst, paymentMethod: form.paymentMethod || 'dinheiro', cxPaymentDate: form.cxPaymentDate || hojeBR(), cxAmount: (form.cxAmount === undefined || form.cxAmount === '') ? (form.amount || '') : form.cxAmount });
                   } else {
                     setForm({ ...form, instanceId: inst });
                   }
