@@ -222,6 +222,33 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
       <div class="desc">Conversa em andamento com atendente so e finalizada pela IA depois desse tempo sem ninguem falar — ou quando o atendente finalizar na mao.</div></div>
     <div><input type="number" id="n_chat_close_atendente_min" min="5" onchange="setNum('chat_close_atendente_min', this.value)"> min</div></div>
 
+  <div class="row" style="background:#0d141c;border-radius:10px;padding:12px;margin:14px 0 4px;border:1px solid #3a2a12">
+    <div style="width:100%">
+      <div style="font-weight:800;color:#f0a94a;margin-bottom:2px">Migração · atender só pelo 1841</div>
+      <div class="desc" style="margin-bottom:10px">Ligue <b>em ordem</b> e uma de cada vez. Desligar qualquer uma
+        volta ao comportamento anterior na hora, sem deploy — é o rollback <b>MARCO ZERO HONEST</b>.</div>
+
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid #22303e">
+        <div style="flex:1"><b>1. Mostrar a janela de 24h na Central</b>
+          <div class="desc">Só informa: tarja verde/âmbar no cabeçalho da conversa e aviso acima do campo de texto.
+            Não bloqueia nada. Pode ficar ligada sempre.</div></div>
+        <span id="t_chat_mostra_janela"></span></div>
+
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid #22303e">
+        <div style="flex:1"><b>2. Bloquear texto livre fora da janela</b>
+          <div class="desc">O campo de texto fica desabilitado quando a janela está fechada, e a saída passa a ser
+            o botão "Retomar contato". <b>Só ligue depois</b> que os templates de retomada estiverem aprovados e o
+            caso de uso <i>retomada</i> ligado em Disparos 1841 — senão o atendente fica sem saída.</div></div>
+        <span id="t_chat_bloqueia_fora_janela"></span></div>
+
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid #22303e">
+        <div style="flex:1"><b>3. Enviar só pelo 1841</b>
+          <div class="desc">Corta a escada de canais: o 2630 e o 7169 deixam de ser tentados quando o oficial recusa.
+            É o passo que aposenta os outros números no atendimento — deixe por último.</div></div>
+        <span id="t_envio_so_oficial"></span></div>
+    </div>
+  </div>
+
   <div class="row"><div>Vender pelo WhatsApp (modo Instagram)
       <div class="desc">Libera no WhatsApp as ferramentas de registrar pedido no pipeline e gerar/enviar PIX — o mesmo que a IA ja faz no Direct do Instagram.</div></div>
     <div id="t_ia_wpp_vendas"></div></div>
@@ -261,7 +288,7 @@ async function load(){
   try{
     const d = await (await fetch('/api/admin/ia-atendimento/estado'+q(''))).json();
     for(const m of ['agents_runtime_mode','agents_ig_mode']){ const b=document.getElementById('b_'+m); b.textContent=d[m]; b.className='badge m-'+d[m]; }
-    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841','ia_wpp_vendas','ia_front_line','ia_notifica_wa','ia_trava_admin','ia_lembrete_on','ia_respeita_atendente']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
+    for(const t of ['ia_regra_responder_novas','ia_regra_timeout_on','ia_regra_finalizar_on','ia_canal_2630','ia_canal_1841','ia_wpp_vendas','ia_front_line','ia_notifica_wa','ia_trava_admin','ia_lembrete_on','ia_respeita_atendente','chat_mostra_janela','chat_bloqueia_fora_janela','envio_so_oficial']) document.getElementById('t_'+t).innerHTML=tglHtml(t, d[t]==='on');
     document.getElementById('n_ia_timeout_min').value=d.ia_timeout_min;
     document.getElementById('n_ia_finalizar_min').value=d.ia_finalizar_min;
     document.getElementById('n_ia_pausa_horas').value=d.ia_pausa_horas;
