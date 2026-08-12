@@ -34,6 +34,14 @@ export type Envio = { success: boolean; messageId?: string; error?: string; via?
 
 function so(n: any): string { return String(n || '').replace(/\D/g, ''); }
 
+async function getSetting(key: string, def: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
+    const v = r.rows?.[0]?.value;
+    return v == null ? def : String(v).replace(/^"|"$/g, '');
+  } catch { return def; }
+}
+
 // O provedor recusou porque a janela de 24h fechou? Nesse caso trocar de numero pode
 // resolver (canal broker nao tem a trava) — por isso vale tentar o proximo da fila.
 function janelaFechada(erro: string): boolean {
@@ -81,15 +89,40 @@ export async function enviarTexto(conversationId: string, toPhone: string, texto
   const { canalAtivoPorTelefone } = await import('./canais-gestao');
   const padrao = so(await canalSaidaPadrao());
 
-  // Ordem: o numero em que o cliente escreveu primeiro (e o que ele reconhece), depois o
-  // padrao, depois os demais. O 1841 so entra na frente quando a janela dele esta aberta.
+  // ------------------------------------------------------------------------
+  // ETAPA 3 — atendimento SO pelo 1841 (chave `envio_so_oficial`).
+  // Desligada (padrao), tudo segue como hoje: a escada de canais tenta os outros numeros
+  // quando o oficial recusa, e e ela que vem salvando mensagem fora da janela.
+  // Ligada, a escada some: o 1841 e o unico caminho. Fora da janela de 24h a mensagem NAO
+  // sai — e isso e intencional, e a regra da Meta. A saida passa a ser o botao "Retomar
+  // contato" (etapa 2), com template aprovado.
+  // Rollback: `envio_so_oficial = off` no painel de Regras (MARCO ZERO HONEST).
+  // ------------------------------------------------------------------------
+  const soOficial = (await getSetting('envio_so_oficial', 'off')) === 'on';
+
   const fila: string[] = [];
   const põe = (f: string) => { const d = so(f); if (d && !fila.includes(d)) fila.push(d); };
-  if (oficial && janelaAberta) põe(FONE_1841);
-  else if (canalDaConversa && canalDaConversa !== FONE_1841) põe(canalDaConversa);
-  põe(padrao);
-  for (const c of CANAIS) if (c.fone !== FONE_1841) põe(c.fone);
-  if (oficial && janelaAberta) { /* ja esta na frente */ } else põe(FONE_1841);
+  if (soOficial) {
+    põe(FONE_1841);
+  } else {
+    // Ordem: o numero em que o cliente escreveu primeiro (e o que ele reconhece), depois o
+    // padrao, depois os demais. O 1841 so entra na frente quando a janela dele esta aberta.
+    if (oficial && janelaAberta) põe(FONE_1841);
+    else if (canalDaConversa && canalDaConversa !== FONE_1841) põe(canalDaConversa);
+    põe(padrao);
+    for (const c of CANAIS) if (c.fone !== FONE_1841) põe(c.fone);
+    if (oficial && janelaAberta) { /* ja esta na frente */ } else põe(FONE_1841);
+  }
+
+  // Com o modo so-oficial ligado e a janela fechada, nem vale tentar: a Meta recusa e o
+  // atendente perde tempo. Melhor devolver na hora o que ele precisa fazer.
+  if (soOficial && !janelaAberta) {
+    return {
+      success: false, via: FONE_1841, rota: 'so 1841, janela de 24h fechada', tentativas: [],
+      error: 'Fora da janela de 24h: o WhatsApp não entrega mensagem livre agora. '
+        + 'Use "Retomar contato" e envie um template aprovado — a janela reabre quando o cliente responder.',
+    };
+  }
 
   const tentativas: any[] = [];
   for (const fone of fila) {
