@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { fmtCalendarioBR, fmtDataBR, fmtDataHoraBR } from '@shared/tempo';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -558,11 +559,7 @@ export default function SalesCards() {
                     <div className="flex items-center space-x-1">
                       <i className="fas fa-calendar"></i>
                       <span>
-                        {new Date(card.scheduledDate).toLocaleDateString('pt-BR')} às{' '}
-                        {new Date(card.scheduledDate).toLocaleTimeString('pt-BR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
+                        {fmtCalendarioBR(card.scheduledDate)}
                       </span>
                     </div>
                   </div>

@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TrendingUp, MapPin, Calendar } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface SellerMonthlyMetrics {
   sellerId: string;
@@ -27,9 +27,9 @@ interface AdminDashboardMetrics {
 }
 
 export function MonthlyMetricsOverview() {
-  const now = nowBrazil();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  const now = componentesBR();
+  const [year, setYear] = useState(now.ano);
+  const [month, setMonth] = useState(now.mes);
 
   const { data: monthData, isLoading } = useQuery<AdminDashboardMetrics>({
     queryKey: ['/api/route-metrics/admin-dashboard', year, month],

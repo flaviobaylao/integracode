@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre, fmtCalendarioBR } from '@shared/tempo';
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,6 @@ import {
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import CheckInModal from "./CheckInModal";
-import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface SalesCardDetailsModalProps {
   isOpen: boolean;
@@ -212,9 +212,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   const duplicateCardMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      const today = nowBrazil();
+      // Dia de HOJE no Brasil. Antes saia de nowBrazil().toISOString(), que reaplica o
+      // fuso do navegador sobre um Date ja deslocado. Ver shared/tempo.ts.
       return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
-        newDate: today.toISOString().split('T')[0]
+        newDate: hojeBR()
       });
     },
     onSuccess: (duplicatedCard: any) => {
@@ -573,19 +574,10 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 <div>
                   <p className="text-sm text-gray-600">Data</p>
                   <p className="font-medium">
-                    {new Date(card.scheduledDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                    {fmtCalendarioBR(card.scheduledDate)}
                   </p>
                 </div>
-                <div>
-                  <p className="text-sm text-gray-600">Horário</p>
-                  <p className="font-medium">
-                    {new Date(card.scheduledDate).toLocaleTimeString('pt-BR', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      timeZone: 'America/Sao_Paulo'
-                    })}
-                  </p>
-                </div>
+                
                 <div>
                   <p className="text-sm text-gray-600">Recorrência</p>
                   <p className="font-medium">{getRecurrenceLabel(card.recurrenceType)}</p>

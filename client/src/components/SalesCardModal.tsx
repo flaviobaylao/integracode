@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { dataCalendario, diaCalendario } from '@shared/tempo';
 import { compareSellersByType } from "@/lib/sellerOrder";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -100,12 +101,16 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
 
   useEffect(() => {
     if (editingCard) {
+      // scheduled_date e DATA DE CALENDARIO (meia-noite UTC): o dia sai SEM conversao
+      // de fuso. O codigo antigo lia o dia com toISOString() (UTC) e a hora com
+      // toTimeString() (LOCAL) — dois fusos no MESMO formulario. Um card de 22:00 BRT
+      // reaparecia como "dia seguinte / 22:00" ao ser editado.
       const scheduledDate = new Date(editingCard.scheduledDate);
       setFormData({
         customerId: editingCard.customerId,
         sellerId: editingCard.sellerId,
-        scheduledDate: scheduledDate.toISOString().split('T')[0],
-        scheduledTime: scheduledDate.toTimeString().slice(0, 5),
+        scheduledDate: diaCalendario(scheduledDate),
+        scheduledTime: scheduledDate.toISOString().slice(11, 16),
         notes: editingCard.notes || '',
         routeDay: editingCard.routeDay || '',
         recurrenceType: editingCard.recurrenceType || 'semanal',
@@ -245,8 +250,13 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
     setErrors({});
 
     try {
-      // Combine date and time into a single DateTime
-      const scheduledDateTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`);
+      // scheduled_date e DATA DE CALENDARIO: TODO leitor do sistema usa (scheduled_date)::date.
+      // Antes este formulario montava `new Date(`${dia}T${hora}`)` — parse no fuso do
+      // NAVEGADOR — e era o unico ponto que gravava hora nessa coluna. Grava o dia.
+      // ⚠️ Com isso o campo "Horário" do formulario passa a ser cosmetico: nao existe
+      // coluna para hora de visita. Para agendar horario de verdade e preciso criar uma
+      // (ex.: scheduled_time varchar 'HH:mm', como delivery_routes.time_window_start).
+      const scheduledDateTime = dataCalendario(formData.scheduledDate);
       
       const dataToSubmit = {
         customerId: formData.customerId,

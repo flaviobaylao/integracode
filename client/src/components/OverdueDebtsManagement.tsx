@@ -1,4 +1,5 @@
 import { useActiveSellers, MultiSelect, DateRangeFilter, dateInRange } from "@/lib/tableTools";
+import { hojeBR } from '@shared/tempo';
 import { useState } from "react";
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -419,7 +420,7 @@ export default function OverdueDebtsManagement() {
       XLSX.utils.book_append_sheet(workbook, estatisticasSheet, 'Estatísticas');
 
       // Gerar nome do arquivo
-      const dataAtual = new Date().toISOString().split('T')[0];
+      const dataAtual = hojeBR();
       const nomeArquivo = `debitos-vencidos-${dataAtual}.xlsx`;
 
       // Fazer download
