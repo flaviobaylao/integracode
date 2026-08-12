@@ -829,6 +829,9 @@ export default function Marketing() {
         </CardContent>
       </Card>
 
+      {/* ── presença em Google (buraco 9) ── */}
+      <PresencaGoogle />
+
       {/* ── biblioteca de criativos (buraco 5) ── */}
       <SecaoCriativos />
 
@@ -1761,5 +1764,156 @@ function PecasAprovadas({ publicar }: { publicar: (id: string) => void }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ============================================================================
+// BURACO 9 — Presença em Google
+// ----------------------------------------------------------------------------
+// O diagnóstico do plano era "zero presença". Medindo, era pior: robots.txt e
+// sitemap.xml respondiam o HTML do painel — e robots que devolve HTML não é
+// "faltando", é quebrado. Esta seção mostra o que já está de pé, o que só o
+// Flavio pode resolver, e devolve as vendas de clique do Google para o Ads.
+// ============================================================================
+function PresencaGoogle() {
+  const { toast } = useToast();
+  const [salvando, setSalvando] = useState(false);
+  const [form, setForm] = useState<any>(null);
+  const [verPrevia, setVerPrevia] = useState(false);
+
+  const q = useQuery<any>({ queryKey: ["/api/mkt/google"], queryFn: () => apiGet("/api/mkt/google") });
+  const previa = useQuery<any>({
+    queryKey: ["/api/mkt/google/previa"], queryFn: () => apiGet("/api/mkt/google/previa"), enabled: verPrevia,
+  });
+
+  const cfg = form ?? q.data?.config ?? {};
+  const d = q.data?.diagnostico || {};
+  const set = (k: string, v: any) => setForm({ ...(form ?? q.data?.config ?? {}), [k]: v });
+
+  async function salvar() {
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/google", form || {});
+      if (!r.ok) throw new Error(r.erro || "não deu para salvar");
+      toast({ title: "Salvo", description: "Vale na próxima vez que o Google visitar o site — sem deploy." });
+      setForm(null); q.refetch(); if (verPrevia) previa.refetch();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  const COR: Record<string, string> = { ok: "#16a34a", atencao: "#d97706", falta: "#dc2626" };
+  const ICONE: Record<string, string> = { ok: "fa-check", atencao: "fa-triangle-exclamation", falta: "fa-xmark" };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <i className="fab fa-google text-muted-foreground" /> Presença em Google
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-xs text-muted-foreground">
+          Quem procura <b>“suco natural atacado Goiânia”</b> não achava a Honest. O que dependia só de
+          código já está no ar; o resto precisa de contas que só você abre — está marcado abaixo.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            ["Já de pé", num(d.prontos), "resolvidos pelo sistema"],
+            ["Faltando", num(d.pendentes), "a maioria depende de você"],
+            ["Medindo", d.medindo ? "sim" : "não", d.medindo ? "GA4/Ads ligados" : "sem GA4 nem Ads"],
+            ["Pedidos do Google", num(d.conversoes?.comGclid), "de " + num(d.conversoes?.totalPedidos) + " no período"],
+          ].map(([t, v, s]: any) => (
+            <div key={t} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{t}</div>
+              <div className="text-xl font-semibold">{v}</div>
+              <div className="text-[10px] text-muted-foreground">{s}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-1">
+          {(d.itens || []).map((i: any) => (
+            <div key={i.item} className="flex gap-2 items-start rounded-md border p-2">
+              <i className={"fas " + ICONE[i.estado] + " mt-0.5 text-xs"} style={{ color: COR[i.estado] }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium flex items-center gap-2">
+                  {i.item}
+                  {i.quemResolve === "voce" && <Badge variant="secondary" className="text-[9px] px-1 py-0">com você</Badge>}
+                </div>
+                <div className="text-[11px] text-muted-foreground">{i.detalhe}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-lg border p-3 space-y-3">
+          <div className="text-sm font-semibold">Colar os códigos (sem deploy)</div>
+          <div className="grid md:grid-cols-3 gap-3">
+            {[
+              ["ga4Id", "Google Analytics 4", "G-XXXXXXX"],
+              ["adsId", "Google Ads", "AW-000000000"],
+              ["verificacaoSearchConsole", "Search Console", "código da meta tag"],
+            ].map(([k, rot, ph]: any) => (
+              <div key={k}>
+                <Label className="text-xs">{rot}</Label>
+                <Input value={cfg[k] || ""} placeholder={ph} onChange={(e) => set(k, e.target.value)} />
+              </div>
+            ))}
+          </div>
+          <div className="grid md:grid-cols-3 gap-3">
+            {[
+              ["rua", "Endereço", "Rua, número"],
+              ["cep", "CEP", "00000-000"],
+              ["telefone", "Telefone público", "+55 62 ..."],
+            ].map(([k, rot, ph]: any) => (
+              <div key={k}>
+                <Label className="text-xs">{rot}</Label>
+                <Input value={cfg[k] || ""} placeholder={ph} onChange={(e) => set(k, e.target.value)} />
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Endereço em branco fica <b>fora</b> do dado estruturado de propósito: endereço inventado é pior
+            que endereço nenhum, porque o Google cruza com o Perfil da Empresa e desconfia do resto.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={salvar} disabled={salvando || !form}>
+              {salvando ? "Salvando…" : "Salvar"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setVerPrevia(!verPrevia)}>
+              {verPrevia ? "esconder" : "ver o que o Google recebe"}
+            </Button>
+            <Button size="sm" variant="outline" asChild>
+              <a href="/api/mkt/google/conversoes.csv?dias=90" download>
+                <i className="fas fa-file-csv mr-2" />Baixar conversões para o Ads
+              </a>
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {d.conversoes?.recado}
+          </p>
+        </div>
+
+        {verPrevia && (
+          <div className="rounded-lg border p-3 space-y-2">
+            <div className="text-sm font-semibold">O que o robô do Google recebe</div>
+            {previa.isLoading && <div className="text-xs text-muted-foreground">Carregando…</div>}
+            {previa.data && (
+              <>
+                <div className="text-[11px] text-muted-foreground">robots.txt</div>
+                <pre className="text-[10px] bg-muted/60 rounded p-2 overflow-x-auto">{previa.data.robots}</pre>
+                <div className="text-[11px] text-muted-foreground">
+                  sitemap.xml — <b>{previa.data.sitemapUrls}</b> endereço(s)
+                </div>
+                <pre className="text-[10px] bg-muted/60 rounded p-2 overflow-x-auto max-h-40">{previa.data.sitemapInicio}</pre>
+                <div className="text-[11px] text-muted-foreground">dado estruturado</div>
+                <pre className="text-[10px] bg-muted/60 rounded p-2 overflow-x-auto max-h-60">{JSON.stringify(previa.data.jsonLd, null, 2)}</pre>
+              </>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
