@@ -4118,6 +4118,13 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  app.delete("/api/mkt/pieces/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { removerPeca } = await import('./mkt-esteira');
+      const r = await removerPeca(String(req.params.id));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.get("/api/mkt/pieces/:id/historico", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try { const { historicoDaPeca } = await import('./mkt-esteira'); res.json(await historicoDaPeca(String(req.params.id))); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }

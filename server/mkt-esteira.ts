@@ -529,6 +529,27 @@ export async function agendar(id: string, quando: string, quem?: string | null):
 // Historico e panorama
 // ---------------------------------------------------------------------------
 
+/**
+ * Apaga uma peca. Peca PUBLICADA nunca sai: e historico, e o uso do criativo
+ * aponta para ela. Para tirar da frente algo que nao vai ao ar, o caminho e
+ * reprovar - apagar e so para o que foi criado por engano.
+ */
+export async function removerPeca(id: string): Promise<{ ok: boolean; erro?: string }> {
+  if (!(await garantirSchema())) return { ok: false, erro: 'schema indisponivel' };
+  const p = await verPeca(id);
+  if (!p) return { ok: false, erro: 'peca nao encontrada' };
+  if (p.estado === 'publicado') return { ok: false, erro: 'peca publicada nao se apaga - ela e o historico do que foi ao ar' };
+  try {
+    await db.execute(sql`DELETE FROM mkt_reviews WHERE piece_id = ${id}`);
+    await db.execute(sql`DELETE FROM mkt_approvals WHERE piece_id = ${id}`);
+    await auditar(id, p.estado, null, 'humano', null, { acao: 'apagada' });
+    await db.execute(sql`DELETE FROM mkt_pieces WHERE id = ${id}`);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: String(e?.message || e) };
+  }
+}
+
 /** Peças num estado, com o mesmo enxugamento da fila (miniatura pronta, prévia curta). */
 export async function listarPorEstado(estado: string, limite = 30): Promise<any[]> {
   if (!(await garantirSchema())) return [];
