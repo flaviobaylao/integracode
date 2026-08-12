@@ -479,7 +479,7 @@ export async function aprovarTudoExceto(excecoes: string[], opts?: { quem?: stri
 // porque uso e o que foi ao ar, nao o que foi aprovado.
 
 export async function marcarPublicada(id: string, dados?: { externalMediaId?: string | null; permalink?: string | null; quem?: string | null }): Promise<{
-  ok: boolean; estado?: string; usosRegistrados?: number; avisos?: string[]; erro?: string;
+  ok: boolean; estado?: string; usosRegistrados?: number; postId?: string | null; avisos?: string[]; erro?: string;
 }> {
   if (!(await garantirSchema())) return { ok: false, erro: 'schema indisponivel' };
   const p = await verPeca(id);
@@ -490,6 +490,15 @@ export async function marcarPublicada(id: string, dados?: { externalMediaId?: st
     publicado_em: true, external_media_id: dados?.externalMediaId, permalink: dados?.permalink,
   }, { permalink: dados?.permalink || null });
   if (!mv.ok) return { ok: false, erro: mv.erro };
+
+  // Buraco 1: peca publicada vira registro de post, sem digitar nada duas vezes.
+  // A peca ja sabe canal, gancho, campanha, criativo e legenda - o registro so herda.
+  let postId: string | null = null;
+  try {
+    const { registrarDaPeca } = await import('./mkt-posts');
+    const rp = await registrarDaPeca({ ...p, permalink: dados?.permalink || p.permalink }, dados?.permalink, dados?.quem);
+    if (rp.ok) postId = rp.id || null;
+  } catch { /* o registro do post nao pode impedir a peca de ser marcada como publicada */ }
 
   // Fecha o laco com o buraco 5: o criativo entra em descanso e passa a contar
   // no desempenho por gancho, com a campanha desta peca.
@@ -514,7 +523,7 @@ export async function marcarPublicada(id: string, dados?: { externalMediaId?: st
     }
   }
 
-  return { ok: true, estado: 'publicado', usosRegistrados: usos, avisos };
+  return { ok: true, estado: 'publicado', usosRegistrados: usos, postId, avisos };
 }
 
 export async function agendar(id: string, quando: string, quem?: string | null): Promise<{ ok: boolean; erro?: string }> {

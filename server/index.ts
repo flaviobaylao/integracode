@@ -4234,6 +4234,58 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== Central de Marketing - buraco 1: registro de post e serie historica =====
+  app.post("/api/mkt/posts/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktPostsSchema } = await import('./mkt-posts'); res.json(await ensureMktPostsSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/posts/panorama", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { panoramaPosts } = await import('./mkt-posts'); res.json(await panoramaPosts(Number(req.query?.dias || 90))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/posts", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { listarPosts } = await import('./mkt-posts'); res.json(await listarPosts(Number(req.query?.dias || 90))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/posts", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { registrarPost } = await import('./mkt-posts');
+      const r = await registrarPost({ ...(req.body || {}), criadoPor: req.user?.username || req.user?.email || 'admin' });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.delete("/api/mkt/posts/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { removerPost } = await import('./mkt-posts');
+      const r = await removerPost(String(req.params.id));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Os numeros digitados do celular - e o que faz a serie comecar hoje
+  app.post("/api/mkt/posts/:id/medicao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { anotarMedicao } = await import('./mkt-posts');
+      const r = await anotarMedicao(String(req.params.id), { ...(req.body || {}), criadoPor: req.user?.username || req.user?.email || 'admin' });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/posts/:id/serie", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { serieDoPost } = await import('./mkt-posts'); res.json(await serieDoPost(String(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Coleta automatica: escrita e desligada ate o App Review da Meta sair
+  app.post("/api/mkt/posts/coleta/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { definirModoColeta } = await import('./mkt-posts');
+      const r = await definirModoColeta(String(req.body?.modo || 'off'), req.user?.username || req.user?.email || 'admin');
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/posts/coleta/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { coletarTodos } = await import('./mkt-posts'); res.json(await coletarTodos(Number(req.body?.dias || 30))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ===== Fase 0: os riscos que o plano manda fechar antes do trafego =====
   app.get("/api/mkt/fase0", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panoramaFase0 } = await import('./mkt-fase0'); res.json(await panoramaFase0()); }
