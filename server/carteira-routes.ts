@@ -106,8 +106,9 @@ export function registerCarteira(app: Express) {
       // ── O QUE NAO E FATURAMENTO DE VENDA ────────────────────────────────────
       // Mesma regua do dashboard geral (server/faturamento-oficial.ts): so entra
       // VENDA. Ficam de fora, cada um com seu balde (devolvidos em `excluidos`):
-      // (a) GRUPO — titulo no CNPJ de uma das 4 empresas do grupo: transferencia
-      //     entre empresas, o "cliente" e a propria casa;
+      // (a) GRUPO — titulo no CNPJ de uma das 4 empresas do grupo (transferencia
+      //     entre empresas, o "cliente" e a propria casa) ou de parceiro que nao
+      //     e cliente de venda (BARUC, transporte/armazenagem);
       // (b) CATEGORIA — aporte de socio, emprestimo, adiantamento, devolucao,
       //     troca, amostra, bonificacao, brinde, doacao, remessa, transferencia;
       //     e tambem a categoria que e SO codigo de plano de contas ("1.01.02"),
@@ -118,8 +119,16 @@ export function registerCarteira(app: Express) {
       //     mesmo do faturamento oficial);
       // (d) LIXEIRA — pedido do pipeline mandado para a lixeira nunca entra em
       //     relatorio (regra 5 de faturamento-oficial.ts).
+      // As 4 empresas do grupo + parceiros que NAO sao cliente de venda (BARUC =
+      // transporte/armazenagem). Casa por CNPJ e, como rede de seguranca para o
+      // titulo que vier sem documento, tambem pelo nome como palavra inteira
+      // (PURO / BARUC) — "PANIFICADORA PURA DELICIA" e os 44 clientes com "BAR"
+      // no nome nao sao atingidos.
       const CNPJS_GRUPO = ["28295493000153", "28295493000234", "28295493000315", "52921727000105"];
-      const C_GRUPO = `COALESCE(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') IN (${CNPJS_GRUPO.map((c) => `'${c}'`).join(",")})`;
+      const CNPJS_NAO_CLIENTE = ["14877972000173"]; // BARUC BRASILIA TRANSPORTE E ARMAZENAGEM
+      const DOCS_FORA = [...CNPJS_GRUPO, ...CNPJS_NAO_CLIENTE];
+      const C_GRUPO = `(COALESCE(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') IN (${DOCS_FORA.map((c) => `'${c}'`).join(",")})
+                        OR UPPER(COALESCE(customer_name,'')) ~ '(^|[^A-Z])(PURO|BARUC)([^A-Z]|$)')`;
       const C_CATEGORIA = `(UPPER(COALESCE(category,'')) ~ '(APORTE|SOCIO|SÓCIO|EMPREST|ADIANT|DEVOLU|TROCA|AMOSTRA|BONIFICA|BRINDE|DOACAO|DOAÇÃO|REMESSA|TRANSFER)'
                             OR TRIM(COALESCE(category,'')) ~ '^[0-9]+([.-][0-9]+)*$')`;
       const C_NF_INVALIDA = `(receivables.fiscal_invoice_id IS NOT NULL AND NOT EXISTS (
@@ -388,7 +397,7 @@ export function registerCarteira(app: Express) {
           detalhe: [
             { motivo: "NF-e cancelada, devolução, troca, amostra, bonificação, remessa ou transferência", titulos: Number(foraRows?.[0]?.n_nf) || 0, valor: Number(foraRows?.[0]?.v_nf) || 0 },
             { motivo: "categoria de não-venda (aporte de sócio, empréstimo, adiantamento, devolução, troca, amostra, bonificação) e lançamento contábil sem descrição", titulos: Number(foraRows?.[0]?.n_categoria) || 0, valor: Number(foraRows?.[0]?.v_categoria) || 0 },
-            { motivo: "transferência entre as empresas do grupo (título no CNPJ da própria casa)", titulos: Number(foraRows?.[0]?.n_grupo) || 0, valor: Number(foraRows?.[0]?.v_grupo) || 0 },
+            { motivo: "empresas do grupo e parceiros que não são cliente de venda (PURO, BARUC)", titulos: Number(foraRows?.[0]?.n_grupo) || 0, valor: Number(foraRows?.[0]?.v_grupo) || 0 },
             { motivo: "pedido mandado para a lixeira do pipeline", titulos: Number(foraRows?.[0]?.n_lixeira) || 0, valor: Number(foraRows?.[0]?.v_lixeira) || 0 },
           ].filter((x) => x.titulos > 0),
           cancelados: { titulos: Number(foraRows?.[0]?.n_cancelado) || 0, valor: Number(foraRows?.[0]?.v_cancelado) || 0 },
