@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ChatConversationWithCustomer, ChatAgent } from "@shared/schema";
 import { Input } from "@/components/ui/input";
@@ -6,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { EditIcon, CheckIcon, XIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { nowBrazil } from '@/lib/brazilTimezone';
 
 interface AgentPanelProps {
   conversation: ChatConversationWithCustomer;
@@ -84,7 +84,9 @@ export function AgentPanel({ conversation, agents }: AgentPanelProps) {
 
   const formatLastContact = (date: Date | null) => {
     if (!date) return "Nunca";
-    const now = nowBrazil();
+    // Tempo decorrido se mede com o INSTANTE real. Com nowBrazil() o resultado tinha
+    // erro fixo de 3h em navegador UTC: "Agora" virava "3h atras".
+    const now = agora();
     const lastContact = new Date(date);
     const diffInHours = Math.floor((now.getTime() - lastContact.getTime()) / (1000 * 60 * 60));
     
