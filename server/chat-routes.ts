@@ -35,6 +35,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
+import { agora } from '@shared/tempo';
 import { nowBrazil } from './brazilTimezone';
 import multer from "multer";
 import path from "path";
@@ -4212,7 +4213,7 @@ export function registerChatRoutes(app: Express): void {
         const agents = await storage.getChatAgents();
         const assignedAgent = agents.find(a => a.id === conversation.assignedAgentId);
         if (assignedAgent?.userId) {
-          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, nowBrazil());
+          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, agora());
           console.log(`📊 [VIRTUAL-ATTENDANCE] Registrado atendimento: agente=${assignedAgent.userId}, conversa=${conversationId}`);
         }
       }

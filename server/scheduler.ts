@@ -8,7 +8,8 @@ import { storage } from './storage';
 import { generateDailyRoute } from './routeOptimizationService';
 import { generateAndSaveAllReports } from './ai-reports-service';
 import { redistributeTimedOutConversations } from './chat-distribution-service';
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, dataCalendario, componentesBR } from '@shared/tempo';
 import { runRadarScan } from './purchase-routes';
 import { runPositivacaoAlertaCron } from './positivacao-alert';
 import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
@@ -87,7 +88,7 @@ cron.schedule('10 6 * * *', async () => {
       UPDATE leads SET return_overdue = true, updated_at = NOW()
       WHERE status = 'scheduled'
         AND next_contact_date IS NOT NULL
-        AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (next_contact_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         AND return_overdue = false
       RETURNING id
     `);
@@ -105,7 +106,7 @@ cron.schedule('17 * * * *', async () => {
   } catch (error: any) {
     console.error('❌ [RADAR-COMPRAS] erro no scan automático:', error.message);
   }
-});
+}, { timezone: 'America/Sao_Paulo' });
 
 // Pedidos AGENDADOS -> PEDIDO: promove os agendados cuja data já chegou.
 // Na virada do dia (00:05 BRT) e de hora em hora (rede de segurança), além de uma execução no boot.
@@ -518,7 +519,7 @@ async function syncComplete(horario: string) {
       message: `${globalResults.billings.imported} importados, ${globalResults.billings.updated} atualizados (${activeInstances.length + (bsbEnvSvc ? 1 : 0)} instâncias)`,
       recordsProcessed: globalResults.billings.totalProcessed,
       currentProgress: 100,
-      lastFinishedAt: nowBrazil()
+      lastFinishedAt: agora()
     });
 
     // Resumo da sincronização
@@ -567,9 +568,7 @@ async function syncOverdueDebts(horario: string) {
 // IMPORTANTE: Só executa em produção para evitar race condition dev+prod no mesmo banco
 if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   cron.schedule('0 6-23 * * *', () => {
-    const now = nowBrazil();
-    const hour = now.getHours();
-    const horario = `${hour.toString().padStart(2, '0')}:00h`;
+    const horario = `${String(componentesBR().hora).padStart(2, '0')}:00h`;
     syncComplete(horario);
   }, {
     timezone: "America/Sao_Paulo"
@@ -631,7 +630,7 @@ async function autoReleaseRegularizedDebtOrders(horario: string) {
           continue;
         }
         await db.update(blockedOrders)
-          .set({ status: 'released', releasedAt: nowBrazil(), releasedBy: 'system-auto-debito-regularizado', updatedAt: nowBrazil() })
+          .set({ status: 'released', releasedAt: agora(), releasedBy: 'system-auto-debito-regularizado', updatedAt: agora() })
           .where(eq(blockedOrders.id, order.id));
         released++;
         console.log(`🔓 [AUTO-RELEASE] Pedido ${order.id} (${(customer as any)?.fantasyName || (customer as any)?.name || order.customerId}) liberado - debito regularizado. Enviado a etapa "pedido".`);
@@ -643,8 +642,7 @@ async function autoReleaseRegularizedDebtOrders(horario: string) {
 
 if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   cron.schedule('15 6-23 * * *', () => {
-    const now = nowBrazil();
-    const horario = `${now.getHours().toString().padStart(2, '0')}:15h`;
+    const horario = `${String(componentesBR().hora).padStart(2, '0')}:15h`;
     autoReleaseRegularizedDebtOrders(horario);
   }, {
     timezone: "America/Sao_Paulo"
@@ -653,8 +651,7 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   // Reforco (pedido do Flavio): 2 liberacoes EXTRAS no minuto cheio — 10:00 e 14:00 BRT —
   // alem das horarias hh:15. A rotina e idempotente (so re-checa debito e libera regularizados).
   cron.schedule('0 10,14 * * *', () => {
-    const now = nowBrazil();
-    const horario = `${now.getHours().toString().padStart(2, '0')}:00h`;
+    const horario = `${String(componentesBR().hora).padStart(2, '0')}:00h`;
     autoReleaseRegularizedDebtOrders(horario);
   }, {
     timezone: "America/Sao_Paulo"
@@ -677,9 +674,10 @@ cron.schedule('0 22 * * *', async () => {
     const { generateDailyRoute } = await import('./routeOptimizationService');
 
     // amanha (BRT)
-    const amanha = nowBrazil();
-    amanha.setHours(0, 0, 0, 0);
-    amanha.setDate(amanha.getDate() + 1);
+    // Amanha no Brasil, como DATA DE CALENDARIO. Antes saia de nowBrazil() + toISOString(),
+    // que so acertava por causa do deslocamento de -3h. Ver shared/tempo.ts.
+    const amanha = dataCalendario(hojeBR());
+    amanha.setUTCDate(amanha.getUTCDate() + 1);
     const amanhaStr = amanha.toISOString().split('T')[0];
 
     // 1) Gerar as rotas de AMANHA (programa a "rota do dia seguinte").
@@ -785,8 +783,7 @@ cron.schedule('0 5 * * *', async () => {
       .from(users)
       .where(eq(users.role, 'vendedor'));
     
-    const hoje = nowBrazil();
-    hoje.setHours(0, 0, 0, 0);
+    const hoje = dataCalendario(hojeBR());
     
     let routesGenerated = 0;
     let routesSkipped = 0;

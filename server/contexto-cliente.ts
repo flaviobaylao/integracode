@@ -94,10 +94,10 @@ export async function contextoDoCliente(customerId?: string | null): Promise<str
 
     // Proxima visita agendada (mesma fonte usada na resposta da Rota do Dia).
     const v: any = await db.execute(sql`
-      SELECT to_char(scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY') AS quando
+      SELECT to_char(scheduled_date, 'DD/MM/YYYY') AS quando
       FROM visit_agenda
       WHERE customer_id = ${customerId} AND visit_status = 'pending'
-        AND (scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (scheduled_date)::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
       ORDER BY scheduled_date LIMIT 1`);
     const visita = v.rows?.[0]?.quando;
     linhas.push(visita

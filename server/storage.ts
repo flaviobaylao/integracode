@@ -185,6 +185,8 @@ let __lixeiraEnumReady = false;
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
 
 export interface IStorage {
   getAgentDetailedStats(): Promise<Array<{ 
@@ -710,7 +712,7 @@ export class DatabaseStorage implements IStorage {
   async updateUser(id: string, userData: Partial<UpsertUser>): Promise<User> {
     const [user] = await db
       .update(users)
-      .set({ ...userData, updatedAt: nowBrazil() })
+      .set({ ...userData, updatedAt: agora() })
       .where(eq(users.id, id))
       .returning();
     return user;
@@ -719,7 +721,7 @@ export class DatabaseStorage implements IStorage {
   async updateUserPassword(id: string, hashedPassword: string): Promise<User> {
     const [user] = await db
       .update(users)
-      .set({ password: hashedPassword, updatedAt: nowBrazil() })
+      .set({ password: hashedPassword, updatedAt: agora() })
       .where(eq(users.id, id))
       .returning();
     return user;
@@ -739,7 +741,7 @@ export class DatabaseStorage implements IStorage {
           target: users.email,
           set: {
             ...userData,
-            updatedAt: nowBrazil(),
+            updatedAt: agora(),
           },
         })
         .returning();
@@ -790,7 +792,7 @@ export class DatabaseStorage implements IStorage {
   async updateRoute(id: string, routeData: Partial<InsertRoute>): Promise<Route> {
     const [route] = await db
       .update(routes)
-      .set({ ...routeData, updatedAt: nowBrazil() })
+      .set({ ...routeData, updatedAt: agora() })
       .where(eq(routes.id, id))
       .returning();
     return route;
@@ -831,11 +833,11 @@ export class DatabaseStorage implements IStorage {
     const customerIds = result.map(row => row.customers!.id);
     
     // Buscar positivações do mês atual através dos faturamentos (billings)
-    const currentMonthStart = nowBrazil();
+    const currentMonthStart = dataCalendario(hojeBR());
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
     
-    const currentMonthEnd = nowBrazil();
+    const currentMonthEnd = dataCalendario(hojeBR());
     currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
     currentMonthEnd.setDate(0);
     currentMonthEnd.setHours(23, 59, 59, 999);
@@ -987,7 +989,7 @@ export class DatabaseStorage implements IStorage {
 
     const [updatedCustomer] = await db
       .update(customers)
-      .set({ ...customer, updatedAt: nowBrazil() })
+      .set({ ...customer, updatedAt: agora() })
       .where(eq(customers.id, id))
       .returning();
 
@@ -1003,7 +1005,7 @@ export class DatabaseStorage implements IStorage {
       try {
         await db
           .update(visitAgenda)
-          .set({ sellerId: updatedCustomer.sellerId, updatedAt: nowBrazil() })
+          .set({ sellerId: updatedCustomer.sellerId, updatedAt: agora() })
           .where(and(eq(visitAgenda.customerId, id), eq(visitAgenda.visitStatus, 'pending')));
         console.log(`🔁 [REZONEAMENTO] Agenda pendente de ${id} movida de ${prevSellerId} → ${updatedCustomer.sellerId}`);
       } catch (e: any) {
@@ -1031,7 +1033,7 @@ export class DatabaseStorage implements IStorage {
         deliveryTimeSlots: weekdaySlots, // Seg-Sex 08:00-18:00
         deliverySaturdayTimeSlots: [], // Vazio para sábado
         receivingWeekdays: receivingDays, // Segunda-Sexta
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       })
       .returning({ id: customers.id });
     
@@ -1065,8 +1067,8 @@ export class DatabaseStorage implements IStorage {
       .update(customers)
       .set({ 
         isActive: false, 
-        inactivatedAt: nowBrazil(),
-        updatedAt: nowBrazil() 
+        inactivatedAt: agora(),
+        updatedAt: agora() 
       })
       .where(eq(customers.id, customerId))
       .returning();
@@ -1076,15 +1078,15 @@ export class DatabaseStorage implements IStorage {
       .update(activeCustomers)
       .set({ 
         isActive: false, 
-        deactivatedAt: nowBrazil(),
-        updatedAt: nowBrazil() 
+        deactivatedAt: agora(),
+        updatedAt: agora() 
       })
       .where(eq(activeCustomers.customerId, customerId));
     
     console.log(`✅ Cliente ${customerId} removido da lista de clientes ativos`);
     
     // 3. Delete all future pending sales cards for this customer, except the current one
-    const today = nowBrazil();
+    const today = dataCalendario(hojeBR());
     today.setHours(0, 0, 0, 0);
     
     const result = await db
@@ -1112,7 +1114,7 @@ export class DatabaseStorage implements IStorage {
   // Clientes Ativos e apaga cards futuros pendentes), porém em lote e sem preservar card.
   async bulkInactivateCustomers(ids: string[]): Promise<{ processed: number; inactivated: number; alreadyInactive: number; deletedCards: number; inactivatedIds: string[] }> {
     if (!ids || ids.length === 0) return { processed: 0, inactivated: 0, alreadyInactive: 0, deletedCards: 0, inactivatedIds: [] };
-    const today = nowBrazil();
+    const today = dataCalendario(hojeBR());
     today.setHours(0, 0, 0, 0);
 
     // Quais estavam ATIVOS antes (para auditoria e contagem)
@@ -1125,13 +1127,13 @@ export class DatabaseStorage implements IStorage {
     // 1. customers.isActive = false
     await db
       .update(customers)
-      .set({ isActive: false, inactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
     await db
       .update(activeCustomers)
-      .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+      .set({ isActive: false, deactivatedAt: agora(), updatedAt: agora() })
       .where(inArray(activeCustomers.customerId, ids));
 
     // 3. Apagar cards futuros pendentes/em andamento
@@ -1170,13 +1172,13 @@ export class DatabaseStorage implements IStorage {
     // 1. customers: isActive=true, omie_status='ativo', limpa inactivatedAt
     await db
       .update(customers)
-      .set({ isActive: true, omieStatus: 'ativo', inactivatedAt: null, updatedAt: nowBrazil() })
+      .set({ isActive: true, omieStatus: 'ativo', inactivatedAt: null, updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Reabilita na lista de Clientes Ativos (inverso da inativacao); afeta so quem tinha linha
     await db
       .update(activeCustomers)
-      .set({ isActive: true, deactivatedAt: null, updatedAt: nowBrazil() })
+      .set({ isActive: true, deactivatedAt: null, updatedAt: agora() })
       .where(inArray(activeCustomers.customerId, ids));
 
     return {
@@ -1349,7 +1351,7 @@ export class DatabaseStorage implements IStorage {
       }
       
       // 2. Buscar TODAS as próximas visitas (sem limit global) e filtrar por cliente
-      const today = nowBrazil();
+      const today = dataCalendario(hojeBR());
       today.setHours(0, 0, 0, 0);
       
       const allUpcomingVisits = await db
@@ -1459,7 +1461,7 @@ export class DatabaseStorage implements IStorage {
   async updateProduct(id: string, product: Partial<InsertProduct>): Promise<Product> {
     const [updatedProduct] = await db
       .update(products)
-      .set({ ...product, updatedAt: nowBrazil() })
+      .set({ ...product, updatedAt: agora() })
       .where(eq(products.id, id))
       .returning();
     return updatedProduct;
@@ -1632,7 +1634,7 @@ export class DatabaseStorage implements IStorage {
     
     // Sempre definir attendanceStartDate como data atual de criação
     if (!processedSalesCard.attendanceStartDate) {
-      processedSalesCard.attendanceStartDate = nowBrazil();
+      processedSalesCard.attendanceStartDate = dataCalendario(hojeBR());
     }
     
     const [newSalesCard] = await db.insert(salesCards).values(processedSalesCard as any).returning();
@@ -1642,7 +1644,7 @@ export class DatabaseStorage implements IStorage {
   async updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard> {
     const [updatedSalesCard] = await db
       .update(salesCards)
-      .set({ ...salesCard as any, updatedAt: nowBrazil() })
+      .set({ ...salesCard as any, updatedAt: agora() })
       .where(eq(salesCards.id, id))
       .returning();
     return updatedSalesCard;
@@ -1696,7 +1698,7 @@ export class DatabaseStorage implements IStorage {
         .update(salesCards)
         .set({ 
           ...replicableFields as any, 
-          updatedAt: nowBrazil() 
+          updatedAt: agora() 
         })
         .where(
           and(
@@ -1746,7 +1748,7 @@ export class DatabaseStorage implements IStorage {
             const originalDateStart = new Date(originalDate);
             originalDateStart.setHours(0, 0, 0, 0);
             
-            const todayStart = nowBrazil();
+            const todayStart = dataCalendario(hojeBR());
             todayStart.setHours(0, 0, 0, 0);
 
             // Para cards atrasados, usar data atual como referência mínima
@@ -1765,7 +1767,7 @@ export class DatabaseStorage implements IStorage {
 
             // Verificação final: garantir que a nova data está no futuro
             // Se ainda está no passado (ex: hoje mas horário já passou), avançar para próximo dia válido
-            const nowFinal = nowBrazil();
+            const nowFinal = agora();
             if (nextDate <= nowFinal) {
               console.log(`   ⚠️ Card ${card.id}: Data calculada (${nextDate.toISOString()}) está no passado, avançando para próximo ciclo...`);
               
@@ -1788,7 +1790,7 @@ export class DatabaseStorage implements IStorage {
               .update(salesCards)
               .set({ 
                 scheduledDate: nextDate,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(salesCards.id, card.id));
 
@@ -1856,7 +1858,7 @@ export class DatabaseStorage implements IStorage {
         .update(salesCards)
         .set({ 
           ...replicableFields as any, 
-          updatedAt: nowBrazil() 
+          updatedAt: agora() 
         })
         .where(
           and(
@@ -1904,7 +1906,7 @@ export class DatabaseStorage implements IStorage {
             const originalDateStart = new Date(originalDate);
             originalDateStart.setHours(0, 0, 0, 0);
             
-            const todayStart = nowBrazil();
+            const todayStart = dataCalendario(hojeBR());
             todayStart.setHours(0, 0, 0, 0);
 
             // Para cards atrasados, usar data atual como referência mínima
@@ -1923,7 +1925,7 @@ export class DatabaseStorage implements IStorage {
 
             // Verificação final: garantir que a nova data está no futuro
             // Se ainda está no passado (ex: hoje mas horário já passou), avançar para próximo dia válido
-            const nowFinal = nowBrazil();
+            const nowFinal = agora();
             if (nextDate <= nowFinal) {
               console.log(`   ⚠️ Card ${card.id}: Data calculada (${nextDate.toISOString()}) está no passado, avançando para próximo ciclo...`);
               
@@ -1946,7 +1948,7 @@ export class DatabaseStorage implements IStorage {
               .update(salesCards)
               .set({ 
                 scheduledDate: nextDate,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(salesCards.id, card.id));
 
@@ -1979,8 +1981,8 @@ export class DatabaseStorage implements IStorage {
       const completedData = {
         ...updateData,
         status,
-        completedDate: nowBrazil(),
-        updatedAt: nowBrazil()
+        completedDate: agora(),
+        updatedAt: agora()
       };
 
       const [closedCard] = await db
@@ -2006,7 +2008,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Função para calcular próxima data baseada no dia da semana e periodicidade
-  private calculateNextRecurrenceDate(routeDay: string, recurrenceType: string, fromDate: Date = nowBrazil()): Date {
+  private calculateNextRecurrenceDate(routeDay: string, recurrenceType: string, fromDate: Date = dataCalendario(hojeBR())): Date {
     const daysOfWeek: { [key: string]: number } = {
       'domingo': 0,
       'segunda': 1,
@@ -2179,7 +2181,7 @@ export class DatabaseStorage implements IStorage {
         sellerId: customer.sellerId || parentCard.sellerId, // Priorizar seller_id do cliente
         status: 'pending',
         scheduledDate: nextDate,
-        attendanceStartDate: nowBrazil(), // Data de início de atendimento = data de criação
+        attendanceStartDate: dataCalendario(hojeBR()), // Data de início de atendimento = data de criação
         routeDay: derivedRouteDay, // Usar dia derivado do scheduledDate
         recurrenceType: customer.visitPeriodicity || parentCard.recurrenceType,
         isRecurring: parentCard.isRecurring,
@@ -2505,7 +2507,7 @@ export class DatabaseStorage implements IStorage {
           // Permanent cards: converter nextVisitDate para date em BRT
           and(
             eq(salesCards.isPermanent, true),
-            sql`(${salesCards.nextVisitDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`,
+            sql`(${salesCards.nextVisitDate})::date = ${targetDate}`,
             inArray(salesCards.status, ['pending', 'open'])
           ),
           // Legacy cards: converter scheduledDate para date em BRT
@@ -2514,7 +2516,7 @@ export class DatabaseStorage implements IStorage {
               eq(salesCards.isPermanent, false),
               isNull(salesCards.isPermanent)
             ),
-            sql`(${salesCards.scheduledDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`
+            sql`(${salesCards.scheduledDate})::date = ${targetDate}`
           )
         )
       );
@@ -2523,7 +2525,7 @@ export class DatabaseStorage implements IStorage {
         // Permanent cards: converter nextVisitDate para date em BRT
         and(
           eq(salesCards.isPermanent, true),
-          sql`(${salesCards.nextVisitDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`,
+          sql`(${salesCards.nextVisitDate})::date = ${targetDate}`,
           inArray(salesCards.status, ['pending', 'open'])
         ),
         // Legacy cards: converter scheduledDate para date em BRT
@@ -2532,7 +2534,7 @@ export class DatabaseStorage implements IStorage {
             eq(salesCards.isPermanent, false),
             isNull(salesCards.isPermanent)
           ),
-          sql`(${salesCards.scheduledDate} AT TIME ZONE 'America/Sao_Paulo')::date = ${targetDate}`
+          sql`(${salesCards.scheduledDate})::date = ${targetDate}`
         )
       );
     }
@@ -2564,7 +2566,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
-    const now = nowBrazil();
+    const now = dataCalendario(hojeBR());
     
     let whereConditions = and(
       lte(salesCards.scheduledDate, now),
@@ -2603,7 +2605,7 @@ export class DatabaseStorage implements IStorage {
   // Buscar cards criticamente atrasados (pending com mais de 3 dias de atraso)
   async getCriticallyOverdueCards(sellerId?: string): Promise<SalesCardWithRelations[]> {
     // Calcular data limite: hoje - 3 dias no timezone do Brasil (UTC-3)
-    const now = nowBrazil();
+    const now = dataCalendario(hojeBR());
     
     const threeDaysAgo = new Date(now);
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -2755,7 +2757,7 @@ export class DatabaseStorage implements IStorage {
         customerId,
         sellerId,
         status: 'pending',
-        scheduledDate: nowBrazil(), // Data de criação
+        scheduledDate: dataCalendario(hojeBR()), // Data de criação
         routeDay: firstWeekday,
         recurrenceType: customer.visitPeriodicity || 'semanal',
         paymentMethod: 'a_vista',
@@ -2816,7 +2818,7 @@ export class DatabaseStorage implements IStorage {
   async updateOrderHistory(id: string, orderData: Partial<InsertOrderHistory>): Promise<OrderHistory> {
     const [updatedOrder] = await db
       .update(orderHistory)
-      .set({ ...orderData, updatedAt: nowBrazil() })
+      .set({ ...orderData, updatedAt: agora() })
       .where(eq(orderHistory.id, id))
       .returning();
     
@@ -2959,7 +2961,7 @@ export class DatabaseStorage implements IStorage {
   async updateMessageTemplate(id: string, template: Partial<InsertMessageTemplate>): Promise<MessageTemplate> {
     const [updatedTemplate] = await db
       .update(messageTemplates)
-      .set({ ...template, updatedAt: nowBrazil() })
+      .set({ ...template, updatedAt: agora() })
       .where(eq(messageTemplates.id, id))
       .returning();
     return updatedTemplate;
@@ -2992,8 +2994,10 @@ export class DatabaseStorage implements IStorage {
     overdueClients: number;
     conversionRate: number;
   }> {
-    const today = nowBrazil();
-    today.setHours(0, 0, 0, 0);
+    // Inicio do dia de HOJE no Brasil, como INSTANTE (03:00Z). NAO aplicar setHours:
+    // instanteBR() ja devolve o instante certo e setHours(0,0,0,0) o jogaria para 00:00Z,
+    // ou seja, 21:00 BRT de ontem. Ver shared/tempo.ts.
+    const today = instanteBR(hojeBR());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
@@ -3113,9 +3117,10 @@ export class DatabaseStorage implements IStorage {
       );
 
     // Definir início do mês atual
-    const currentMonthStart = nowBrazil();
+    // Inicio do mes no Brasil, como INSTANTE: 03:00Z do dia 1 = meia-noite BRT.
+    // setDate(1) sobre instanteBR() ja entrega isso; setHours(0,0,0,0) estragaria.
+    const currentMonthStart = instanteBR(hojeBR());
     currentMonthStart.setDate(1);
-    currentMonthStart.setHours(0, 0, 0, 0);
 
     const sellersStats = [];
 
@@ -3236,7 +3241,7 @@ export class DatabaseStorage implements IStorage {
           JOIN delivery_routes dr ON dr.id = drs.route_id
           WHERE drs.billing_id = bp.id
             AND drs.status NOT IN ('devolvida', 'cancelada', 'entregue')
-            AND dr.route_date >= CURRENT_DATE
+            AND dr.route_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
         )
       ORDER BY bp.id, bp.created_at DESC, bp.customer_name
     `);
@@ -3332,7 +3337,7 @@ export class DatabaseStorage implements IStorage {
         ${data.checkInTime || null},
         ${data.checkOutTime || null},
         ${data.deliveryDuration || null},
-        ${data.timestamp || nowBrazil()}, 
+        ${data.timestamp || agora()}, 
         ${data.location}, 
         ${data.notes}
       )
@@ -3488,7 +3493,7 @@ export class DatabaseStorage implements IStorage {
       customerId: nextCard.customerId,
       sellerId: nextCard.sellerId,
       scheduledDate: nextCard.scheduledDate,
-      attendanceStartDate: nowBrazil(), // Data de início de atendimento = data de criação
+      attendanceStartDate: dataCalendario(hojeBR()), // Data de início de atendimento = data de criação
       status: nextCard.status,
       products: nextCard.products,
       routeDay: nextCard.routeDay,
@@ -3501,7 +3506,7 @@ export class DatabaseStorage implements IStorage {
 
     // Atualizar card pai com referência ao próximo card
     await db.update(salesCards)
-      .set({ nextCardId: createdCard.id, updatedAt: nowBrazil() })
+      .set({ nextCardId: createdCard.id, updatedAt: agora() })
       .where(eq(salesCards.id, parentCard.id));
 
     return createdCard;
@@ -3555,7 +3560,7 @@ export class DatabaseStorage implements IStorage {
     errors: string[];
   }> {
     try {
-      const today = nowBrazil();
+      const today = dataCalendario(hojeBR());
       today.setHours(0, 0, 0, 0);
       
       const yesterday = new Date(today);
@@ -3605,10 +3610,10 @@ export class DatabaseStorage implements IStorage {
               .set({
                 status: 'telemarketing',
                 telemarketingAssignedTo: assignedAgent.id,
-                telemarketingDate: nowBrazil(),
+                telemarketingDate: dataCalendario(hojeBR()),
                 scheduledDate: today,
                 notes: newNotes,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(salesCards.id, card.id));
 
@@ -3644,7 +3649,7 @@ export class DatabaseStorage implements IStorage {
                 sellerId: card.telemarketingAssignedTo, // Atendente vira novo vendedor do card
                 scheduledDate: today,
                 notes: newNotes,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(salesCards.id, card.id));
 
@@ -3719,9 +3724,9 @@ export class DatabaseStorage implements IStorage {
     const [completedCard] = await db.update(salesCards)
       .set({
         status: 'completed',
-        completedDate: nowBrazil(),
+        completedDate: agora(),
         saleValue: outcome === 'sale' ? (saleValue ? saleValue.toString() : card.saleValue) : null,
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       } as any)
       .where(eq(salesCards.id, cardId))
       .returning();
@@ -3754,7 +3759,7 @@ export class DatabaseStorage implements IStorage {
           value: setting.value,
           description: setting.description,
           updatedBy: setting.updatedBy,
-          updatedAt: nowBrazil(),
+          updatedAt: agora(),
         },
       })
       .returning();
@@ -3797,7 +3802,7 @@ export class DatabaseStorage implements IStorage {
   async updateLocation(id: string, location: Partial<InsertLocation>): Promise<Location> {
     const [updatedLocation] = await db
       .update(locations)
-      .set({ ...location, updatedAt: nowBrazil() })
+      .set({ ...location, updatedAt: agora() })
       .where(eq(locations.id, id))
       .returning();
     return updatedLocation;
@@ -3856,7 +3861,7 @@ export class DatabaseStorage implements IStorage {
             .set({
               latitude: location.latitude,
               longitude: location.longitude,
-              updatedAt: nowBrazil()
+              updatedAt: agora()
             })
             .where(eq(customers.id, customer.id));
           
@@ -3943,7 +3948,7 @@ export class DatabaseStorage implements IStorage {
       });
       
       // Usar timezone de Brasília (UTC-3)
-      const currentDate = nowBrazil();
+      const currentDate = dataCalendario(hojeBR());
       
       const targetMonth = month || (currentDate.getMonth() + 1);
       const targetYear = year || currentDate.getFullYear();
@@ -4412,7 +4417,7 @@ export class DatabaseStorage implements IStorage {
   async updateBilling(id: string, billing: Partial<InsertBilling>): Promise<Billing> {
     const [updatedBilling] = await db
       .update(billings)
-      .set({ ...billing as any, updatedAt: nowBrazil() })
+      .set({ ...billing as any, updatedAt: agora() })
       .where(eq(billings.id, id))
       .returning();
     return updatedBilling;
@@ -4421,7 +4426,7 @@ export class DatabaseStorage implements IStorage {
   async updateBillingUrgency(id: string, isUrgent: boolean): Promise<Billing> {
     const [updatedBilling] = await db
       .update(billings)
-      .set({ isUrgent, updatedAt: nowBrazil() })
+      .set({ isUrgent, updatedAt: agora() })
       .where(eq(billings.id, id))
       .returning();
     
@@ -4926,7 +4931,7 @@ export class DatabaseStorage implements IStorage {
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
     if (data.currentLocation !== undefined) updateData.currentLocation = data.currentLocation;
     
-    updateData.updatedAt = nowBrazil();
+    updateData.updatedAt = agora();
     
     const [result] = await db
       .update(deliveryDrivers)
@@ -4996,13 +5001,13 @@ export class DatabaseStorage implements IStorage {
     
     switch (period) {
       case "today":
-        dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+        dateCondition = "DATE(scheduled_date) = (now() AT TIME ZONE 'America/Sao_Paulo')::date";
         break;
       case "week":
-        dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+        dateCondition = "scheduled_date >= DATE_TRUNC('week', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
         break;
       case "month":
-        dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+        dateCondition = "scheduled_date >= DATE_TRUNC('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
         break;
     }
 
@@ -5025,13 +5030,13 @@ export class DatabaseStorage implements IStorage {
     
     switch (period) {
       case "today":
-        dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+        dateCondition = "DATE(scheduled_date) = (now() AT TIME ZONE 'America/Sao_Paulo')::date";
         break;
       case "week":
-        dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+        dateCondition = "scheduled_date >= DATE_TRUNC('week', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
         break;
       case "month":
-        dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+        dateCondition = "scheduled_date >= DATE_TRUNC('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
         break;
     }
 
@@ -5083,13 +5088,13 @@ export class DatabaseStorage implements IStorage {
     } else {
       switch (period) {
         case "today":
-          dateCondition = "DATE(scheduled_date) = CURRENT_DATE";
+          dateCondition = "DATE(scheduled_date) = (now() AT TIME ZONE 'America/Sao_Paulo')::date";
           break;
         case "week":
-          dateCondition = "scheduled_date >= DATE_TRUNC('week', CURRENT_DATE)";
+          dateCondition = "scheduled_date >= DATE_TRUNC('week', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
           break;
         case "month":
-          dateCondition = "scheduled_date >= DATE_TRUNC('month', CURRENT_DATE)";
+          dateCondition = "scheduled_date >= DATE_TRUNC('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date)";
           break;
       }
     }
@@ -5187,9 +5192,9 @@ export class DatabaseStorage implements IStorage {
         dr.driver_email,
         dr.route_date,
         drs.status,
-        drs.check_in_time AT TIME ZONE 'America/Sao_Paulo' as check_in_time,
-        drs.check_out_time AT TIME ZONE 'America/Sao_Paulo' as check_out_time,
-        drs.completed_at AT TIME ZONE 'America/Sao_Paulo' as completed_at,
+        drs.check_in_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo' as check_in_time,
+        drs.check_out_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo' as check_out_time,
+        drs.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo' as completed_at,
         drs.notes,
         dr.route_name,
         drs.stop_order,
@@ -5290,7 +5295,7 @@ export class DatabaseStorage implements IStorage {
   async updateDeliveryRoute(id: string, route: any): Promise<any> {
     const [updated] = await db
       .update(deliveryRoutes)
-      .set({ ...route, updatedAt: nowBrazil() })
+      .set({ ...route, updatedAt: agora() })
       .where(eq(deliveryRoutes.id, id))
       .returning();
     return updated;
@@ -5316,7 +5321,7 @@ export class DatabaseStorage implements IStorage {
   async updateDeliveryRouteStop(id: string, stop: any): Promise<any> {
     const [updated] = await db
       .update(deliveryRouteStops)
-      .set({ ...stop, updatedAt: nowBrazil() })
+      .set({ ...stop, updatedAt: agora() })
       .where(eq(deliveryRouteStops.id, id))
       .returning();
     return updated;
@@ -5333,7 +5338,7 @@ export class DatabaseStorage implements IStorage {
       // Se está subindo na fila (nova posição < antiga)
       if (newPosition < oldPosition) {
         await tx.update(deliveryRouteStops)
-          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} + 1`, updatedAt: nowBrazil() })
+          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} + 1`, updatedAt: agora() })
           .where(
             and(
               eq(deliveryRouteStops.routeId, routeId),
@@ -5344,7 +5349,7 @@ export class DatabaseStorage implements IStorage {
       // Se está descendo na fila (nova posição > antiga)
       else if (newPosition > oldPosition) {
         await tx.update(deliveryRouteStops)
-          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} - 1`, updatedAt: nowBrazil() })
+          .set({ stopOrder: sql`${deliveryRouteStops.stopOrder} - 1`, updatedAt: agora() })
           .where(
             and(
               eq(deliveryRouteStops.routeId, routeId),
@@ -5355,7 +5360,7 @@ export class DatabaseStorage implements IStorage {
 
       // Atualizar a posição da parada
       const [updated] = await tx.update(deliveryRouteStops)
-        .set({ stopOrder: newPosition, updatedAt: nowBrazil() })
+        .set({ stopOrder: newPosition, updatedAt: agora() })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
 
@@ -5409,7 +5414,7 @@ export class DatabaseStorage implements IStorage {
     
     await db
       .update(billings)
-      .set({ invoiceStage: newStage, updatedAt: nowBrazil() })
+      .set({ invoiceStage: newStage, updatedAt: agora() })
       .where(inArray(billings.id, billingIds));
     
     console.log(`✅ Atualizados ${billingIds.length} billings para status: ${newStage}`);
@@ -5662,7 +5667,7 @@ export class DatabaseStorage implements IStorage {
   async updateDailyRoute(id: string, data: any): Promise<any> {
     const [route] = await db
       .update(dailyRoutes)
-      .set({ ...data, updatedAt: nowBrazil() })
+      .set({ ...data, updatedAt: agora() })
       .where(eq(dailyRoutes.id, id))
       .returning();
     return route;
@@ -5761,7 +5766,7 @@ export class DatabaseStorage implements IStorage {
 
       console.log(`📋 Encontrados ${clientsWithPeriodicity.length} clientes com periodicidade configurada`);
 
-      const futureDate = nowBrazil();
+      const futureDate = dataCalendario(hojeBR());
       futureDate.setMonth(futureDate.getMonth() + monthsAhead);
 
       for (const customer of clientsWithPeriodicity) {
@@ -5966,7 +5971,7 @@ export class DatabaseStorage implements IStorage {
               .set({
                 scheduledDate: newScheduledDate,
                 routeDay: derivedRouteDay,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(salesCards.id, card.id));
 
@@ -6024,7 +6029,7 @@ export class DatabaseStorage implements IStorage {
         target: syncStatus.syncType,
         set: {
           ...data,
-          updatedAt: nowBrazil(),
+          updatedAt: agora(),
         },
       })
       .returning();
@@ -6050,7 +6055,7 @@ export class DatabaseStorage implements IStorage {
       // Atualizar registro existente
       const updateData: any = {
         status: data.status,
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       };
 
       if (data.message !== undefined) updateData.message = data.message;
@@ -6127,7 +6132,7 @@ export class DatabaseStorage implements IStorage {
       ...leadData,
       ...(leadData.latitude && { latitude: leadData.latitude.toString() }),
       ...(leadData.longitude && { longitude: leadData.longitude.toString() }),
-      updatedAt: nowBrazil(),
+      updatedAt: agora(),
     };
     const [lead] = await db
       .update(leads)
@@ -6156,7 +6161,7 @@ export class DatabaseStorage implements IStorage {
     // If temperature was provided, update the lead's temperature as well
     if (visitData.temperature) {
       await db.update(leads)
-        .set({ temperature: visitData.temperature, updatedAt: nowBrazil() })
+        .set({ temperature: visitData.temperature, updatedAt: agora() })
         .where(eq(leads.id, visitData.leadId));
     }
     
@@ -6181,7 +6186,7 @@ export class DatabaseStorage implements IStorage {
   async updateChatAgentStatus(id: string, status: string): Promise<ChatAgent> {
     const [agent] = await db
       .update(chatAgents)
-      .set({ status, updatedAt: nowBrazil() })
+      .set({ status, updatedAt: agora() })
       .where(eq(chatAgents.id, id))
       .returning();
     return agent;
@@ -6190,7 +6195,7 @@ export class DatabaseStorage implements IStorage {
   async updateChatAgentPresence(id: string, status: string): Promise<ChatAgent> {
     const [agent] = await db
       .update(chatAgents)
-      .set({ status, lastSeenAt: nowBrazil(), updatedAt: nowBrazil() })
+      .set({ status, lastSeenAt: agora(), updatedAt: agora() })
       .where(eq(chatAgents.id, id))
       .returning();
     return agent;
@@ -6261,7 +6266,7 @@ export class DatabaseStorage implements IStorage {
           status: 'resolved',
           assignedAgentId: null,
           assignedAgentColor: null,
-          updatedAt: nowBrazil()
+          updatedAt: agora()
         })
         .where(
           and(
@@ -6438,7 +6443,7 @@ export class DatabaseStorage implements IStorage {
       .update(chatConversations)
       .set({ 
         agentId: newAgentId,
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       })
       .where(eq(chatConversations.id, conversationId))
       .returning();
@@ -6745,7 +6750,7 @@ export class DatabaseStorage implements IStorage {
   async updateChatQuickMessage(id: string, messageData: Partial<InsertChatQuickMessage>): Promise<ChatQuickMessage> {
     const [message] = await db
       .update(chatQuickMessages)
-      .set({ ...messageData, updatedAt: nowBrazil() })
+      .set({ ...messageData, updatedAt: agora() })
       .where(eq(chatQuickMessages.id, id))
       .returning();
     return message;
@@ -6768,7 +6773,7 @@ export class DatabaseStorage implements IStorage {
   async updateChatOrder(id: string, orderData: Partial<InsertChatOrder>): Promise<ChatOrder> {
     const [order] = await db
       .update(chatOrders)
-      .set({ ...orderData, updatedAt: nowBrazil() })
+      .set({ ...orderData, updatedAt: agora() })
       .where(eq(chatOrders.id, id))
       .returning();
     return order;
@@ -6787,7 +6792,7 @@ export class DatabaseStorage implements IStorage {
   async updateChatDelivery(id: string, deliveryData: Partial<InsertChatDelivery>): Promise<ChatDelivery> {
     const [delivery] = await db
       .update(chatDeliveries)
-      .set({ ...deliveryData, updatedAt: nowBrazil() })
+      .set({ ...deliveryData, updatedAt: agora() })
       .where(eq(chatDeliveries.id, id))
       .returning();
     return delivery;
@@ -6869,7 +6874,7 @@ export class DatabaseStorage implements IStorage {
         .values({
           chatCustomerId: chatCustomer.id,
           status: 'active',
-          lastMessageAt: nowBrazil(),
+          lastMessageAt: agora(),
           isRead: false
         })
         .returning();
@@ -6932,7 +6937,7 @@ export class DatabaseStorage implements IStorage {
       const customerMap = new Map<string, any>();
       
       // Data de hoje em Brasília (sem timezone issues)
-      const todayBrasilia = nowBrazil();
+      const todayBrasilia = dataCalendario(hojeBR());
       const todayYear = todayBrasilia.getFullYear();
       const todayMonth = String(todayBrasilia.getMonth() + 1).padStart(2, '0');
       const todayDay = String(todayBrasilia.getDate()).padStart(2, '0');
@@ -6996,11 +7001,11 @@ export class DatabaseStorage implements IStorage {
           }
           
           // 3. Buscar positivações do mês atual através dos faturamentos (billings)
-          const currentMonthStart = nowBrazil();
+          const currentMonthStart = dataCalendario(hojeBR());
           currentMonthStart.setDate(1);
           currentMonthStart.setHours(0, 0, 0, 0);
           
-          const currentMonthEnd = nowBrazil();
+          const currentMonthEnd = dataCalendario(hojeBR());
           currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
           currentMonthEnd.setDate(0);
           currentMonthEnd.setHours(23, 59, 59, 999);
@@ -7149,7 +7154,7 @@ export class DatabaseStorage implements IStorage {
       // MÉDIA de vendas dos ÚLTIMOS 3 MESES (por cliente) — inclui faturas do 1.0.
       // Fonte: receivables (1 recebível por faturamento → sem dupla contagem; sincronizado do 1.0 + nativo do 2.0).
       try {
-        const threeStart = nowBrazil(); threeStart.setMonth(threeStart.getMonth() - 3); threeStart.setHours(0, 0, 0, 0);
+        const threeStart = dataCalendario(hojeBR()); threeStart.setMonth(threeStart.getMonth() - 3); threeStart.setHours(0, 0, 0, 0);
         const rec3 = await db
           .select({ customerId: receivables.customerId, customerDocument: receivables.customerDocument, amount: receivables.amount })
           .from(receivables)
@@ -7361,7 +7366,7 @@ export class DatabaseStorage implements IStorage {
   async updateActiveCustomer(id: string, customerData: Partial<InsertActiveCustomer>): Promise<ActiveCustomer> {
     const [ac] = await db
       .update(activeCustomers)
-      .set({ ...customerData, updatedAt: nowBrazil() })
+      .set({ ...customerData, updatedAt: agora() })
       .where(eq(activeCustomers.id, id))
       .returning();
     return ac;
@@ -7384,7 +7389,7 @@ export class DatabaseStorage implements IStorage {
             ...cust,
             isActive: true,
             deactivatedAt: null,
-            updatedAt: nowBrazil()
+            updatedAt: agora()
           })
           .where(eq(activeCustomers.id, existing.id));
         updated++;
@@ -7411,7 +7416,7 @@ export class DatabaseStorage implements IStorage {
         .from(activeCustomers)
         .where(eq(activeCustomers.isActive, true));
 
-      const today = nowBrazil();
+      const today = dataCalendario(hojeBR());
       today.setHours(0, 0, 0, 0);
 
       for (const activeCustomer of activeCustomersList) {
@@ -7495,8 +7500,10 @@ export class DatabaseStorage implements IStorage {
                   .where(
                     and(
                       eq(visitAgenda.customerId, activeCustomer.customerId),
-                      gte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T00:00:00')),
-                      lte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T23:59:59'))
+                      // Sufixo 'Z' obrigatorio: sem ele o V8 parseia no fuso LOCAL do
+                      // processo. scheduled_date e DATA DE CALENDARIO (meia-noite UTC).
+                      gte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T00:00:00Z')),
+                      lte(visitAgenda.scheduledDate, new Date(currentDate.toISOString().split('T')[0] + 'T23:59:59Z'))
                     )
                   )
                   .then(rows => rows.length > 0);
@@ -7514,7 +7521,7 @@ export class DatabaseStorage implements IStorage {
                     customerLatitude: customer.latitude || null,
                     customerLongitude: customer.longitude || null,
                     customerAddress: customer.address || null,
-                    createdAt: nowBrazil()
+                    createdAt: agora()
                   });
                   generated++;
                   baseDate = new Date(currentDate);
@@ -7558,7 +7565,7 @@ export class DatabaseStorage implements IStorage {
       }
       const result = await db
         .update(activeCustomers)
-        .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+        .set({ isActive: false, deactivatedAt: agora(), updatedAt: agora() })
         .where(whereClause)
         .returning();
       return result.length;
@@ -7587,7 +7594,7 @@ export class DatabaseStorage implements IStorage {
     for (const ac of toDeactivate) {
       await db
         .update(activeCustomers)
-        .set({ isActive: false, deactivatedAt: nowBrazil(), updatedAt: nowBrazil() })
+        .set({ isActive: false, deactivatedAt: agora(), updatedAt: agora() })
         .where(eq(activeCustomers.id, ac.id));
     }
     
@@ -7633,7 +7640,7 @@ export class DatabaseStorage implements IStorage {
       let corrected = 0;
       let errors = 0;
 
-      const today = nowBrazil();
+      const today = dataCalendario(hojeBR());
       today.setHours(0, 0, 0, 0);
       // 🛡️ BLINDAGEM (31/jul/2026): a regeneração NUNCA remove visitas de HOJE nem do passado —
       // só reescreve o FUTURO (>= amanhã). Antes apagava tudo `>= hoje`, o que fazia a Rota do
@@ -7799,7 +7806,7 @@ export class DatabaseStorage implements IStorage {
                       customerLatitude: customer.latitude || null,
                       customerLongitude: customer.longitude || null,
                       customerAddress: customer.address || null,
-                      createdAt: nowBrazil()
+                      createdAt: agora()
                     });
                     generated++;
                     break;
@@ -7896,7 +7903,7 @@ export class DatabaseStorage implements IStorage {
     if (existing) {
       const [updated] = await db
         .update(chatAiSettings)
-        .set({ ...data, updatedAt: nowBrazil() })
+        .set({ ...data, updatedAt: agora() })
         .where(eq(chatAiSettings.id, existing.id))
         .returning();
       return updated;
@@ -7915,7 +7922,7 @@ export class DatabaseStorage implements IStorage {
     if (existing) {
       const [updated] = await db
         .update(chatAiSettings)
-        .set({ ...settings, updatedAt: nowBrazil() })
+        .set({ ...settings, updatedAt: agora() })
         .where(eq(chatAiSettings.id, existing.id))
         .returning();
       return updated;
@@ -8105,7 +8112,7 @@ export class DatabaseStorage implements IStorage {
   async updatePhonebookContact(id: string, contact: Partial<InsertPhonebookContact>): Promise<PhonebookContact> {
     const [updated] = await db
       .update(phonebookContacts)
-      .set({ ...contact, updatedAt: nowBrazil() })
+      .set({ ...contact, updatedAt: agora() })
       .where(eq(phonebookContacts.id, id))
       .returning();
     return updated;
@@ -8164,7 +8171,11 @@ export class DatabaseStorage implements IStorage {
 
   // Virtual Attendance Stats operations
   async logVirtualAttendance(conversationId: string, agentId: string, serviceDate: Date): Promise<void> {
-    const formattedDate = serviceDate.toISOString().split('T')[0];
+    // serviceDate e um INSTANTE (quando o atendimento aconteceu); virtual_attendance_stats
+    // .service_date e uma coluna `date`. O dia tem de sair no fuso do Brasil: com
+    // toISOString() saia o dia UTC e todo atendimento apos as 21:00 BRT era contado no dia
+    // seguinte — com onConflictDoNothing mascarando o erro. Ver shared/tempo.ts.
+    const formattedDate = diaBR(serviceDate);
     
     try {
       await db.insert(virtualAttendanceStats).values({
@@ -8250,7 +8261,7 @@ export class DatabaseStorage implements IStorage {
   async updateOmieInstance(id: string, data: Partial<InsertOmieInstance>): Promise<OmieInstance> {
     const [instance] = await db
       .update(omieInstances)
-      .set({ ...data, updatedAt: nowBrazil() })
+      .set({ ...data, updatedAt: agora() })
       .where(eq(omieInstances.id, id))
       .returning();
     return instance;
@@ -8266,7 +8277,7 @@ export class DatabaseStorage implements IStorage {
     // Set the new default
     const [instance] = await db
       .update(omieInstances)
-      .set({ isDefault: true, updatedAt: nowBrazil() })
+      .set({ isDefault: true, updatedAt: agora() })
       .where(eq(omieInstances.id, id))
       .returning();
     return instance;
@@ -8292,7 +8303,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateFiscalScenario(id: string, data: Partial<InsertFiscalScenario>): Promise<FiscalScenario> {
     const [scenario] = await db.update(fiscalScenarios)
-      .set({ ...data, updatedAt: nowBrazil() })
+      .set({ ...data, updatedAt: agora() })
       .where(eq(fiscalScenarios.id, id))
       .returning();
     return scenario;
@@ -8322,7 +8333,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateDigitalCertificate(id: string, data: Partial<InsertDigitalCertificate>): Promise<DigitalCertificate> {
     const [cert] = await db.update(digitalCertificates)
-      .set({ ...data, updatedAt: nowBrazil() })
+      .set({ ...data, updatedAt: agora() })
       .where(eq(digitalCertificates.id, id))
       .returning();
     return cert;
@@ -8457,7 +8468,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateFiscalInvoice(id: string, data: Partial<InsertFiscalInvoice>): Promise<FiscalInvoice> {
     const [invoice] = await db.update(fiscalInvoices)
-      .set({ ...data, updatedAt: nowBrazil() })
+      .set({ ...data, updatedAt: agora() })
       .where(eq(fiscalInvoices.id, id))
       .returning();
     return invoice;

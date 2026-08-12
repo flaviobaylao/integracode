@@ -32,11 +32,11 @@ export function registerVisitSummary(app: Express) {
       const bpSellerMap = new Map<string, string>();
       for (const r of bpSeller) bpSellerMap.set(r.customer_id, r.seller_name);
 
-      const winSC = `(scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`;
+      const winSC = `(scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}'`;
       // Check-in (visita efetuada) — sales_cards.check_in_time (esparso; gap conhecido)
-      const checkins = await q(`SELECT customer_id, (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const checkins = await q(`SELECT customer_id, (scheduled_date)::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
-      const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // FATURAMENTOS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
       // VERDE = houve FATURAMENTO no ciclo. Data de faturamento = data em que o card do pipeline chegou
       // a etapa 'faturado' (changedAt no stage_history). Somente INTEGRA 2.0 (sem Omie). O changedAt e
@@ -50,7 +50,7 @@ export function registerVisitSummary(app: Express) {
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
-      try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { virt = []; }
+      try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { virt = []; }
       // Meta aproximada por cliente (média histórica de sale_value)
       let metas: any[] = [];
       try { metas = await q(`SELECT customer_id, AVG(sale_value) AS meta FROM billing_pipeline WHERE sale_value > 0 AND customer_id IS NOT NULL GROUP BY customer_id`); } catch (e) { metas = []; }
@@ -101,8 +101,8 @@ export function registerVisitSummary(app: Express) {
       const startDate = norm(req.query.startDate, todayStr);
       const endDate = norm(req.query.endDate, startDate);
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
-      const planned = await q(`SELECT DISTINCT va.customer_id, va.seller_id, (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(c.name, va.customer_id) AS customer_name FROM visit_agenda va LEFT JOIN customers c ON c.id = va.customer_id WHERE va.scheduled_date IS NOT NULL AND (va.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND (va.visit_status = 'pending' OR va.visit_status IS NULL) AND va.is_virtual = false AND va.customer_id IS NOT NULL`);
-      const routes = await q(`SELECT seller_id, (route_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, visit_stops FROM daily_routes WHERE (route_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}'`);
+      const planned = await q(`SELECT DISTINCT va.customer_id, va.seller_id, (va.scheduled_date)::date::text AS d, COALESCE(c.name, va.customer_id) AS customer_name FROM visit_agenda va LEFT JOIN customers c ON c.id = va.customer_id WHERE va.scheduled_date IS NOT NULL AND (va.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND (va.visit_status = 'pending' OR va.visit_status IS NULL) AND va.is_virtual = false AND va.customer_id IS NOT NULL`);
+      const routes = await q(`SELECT seller_id, (route_date)::date::text AS d, visit_stops FROM daily_routes WHERE (route_date)::date BETWEEN '${startDate}' AND '${endDate}'`);
       const routeEntries: any[] = [];
       const custIds = new Set<string>();
       for (const r of routes) { let stops: any = r.visit_stops; if (typeof stops === 'string') { try { stops = JSON.parse(stops); } catch (e) { stops = null; } } if (!stops || typeof stops !== 'object') continue; for (const k of Object.keys(stops)) { const st = stops[k]; if (st && st.entityType === 'customer' && st.entityId) { routeEntries.push({ customerId: st.entityId, sellerId: r.seller_id, d: r.d }); custIds.add(st.entityId); } } }

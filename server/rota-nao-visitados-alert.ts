@@ -35,25 +35,25 @@ export async function enviarAlertaNaoVisitados(
     WHERE c.is_active = true AND COALESCE(c.omie_status, 'ativo') = 'ativo'
       AND (
         (sc.is_permanent = true
-          AND (sc.next_visit_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+          AND (sc.next_visit_date)::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
           AND sc.status IN ('pending', 'in_progress'))
         OR
         ((sc.is_permanent = false OR sc.is_permanent IS NULL)
-          AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+          AND (sc.scheduled_date)::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)
       )`));
 
   // 2) VISITADOS hoje = check-in OU pedido (venda) OU atendimento virtual.
   const checkins = rowsOf(await db.execute(sql`
     SELECT DISTINCT customer_id AS cid FROM route_checkpoints
     WHERE checkpoint_type = 'check_in'
-      AND (checkpoint_time AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
+      AND (checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
   const pedidos = rowsOf(await db.execute(sql`
     SELECT DISTINCT customer_id AS cid FROM billing_pipeline
-    WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+    WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'`));
   const virtuais = rowsOf(await db.execute(sql`
     SELECT DISTINCT customer_id AS cid FROM virtual_service_logs
-    WHERE (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
+    WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
   const visitados = new Set<string>();
   for (const r of [...checkins, ...pedidos, ...virtuais]) if (r.cid) visitados.add(String(r.cid));
 

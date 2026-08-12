@@ -23,7 +23,9 @@ import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVeri
 import { registerOrderJournal } from "./order-journal";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
-import { nowBrazil, formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, todayBrazilMidnight, BRAZIL_TZ } from './brazilTimezone';
+import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -251,7 +253,7 @@ async function saveSyncStatus(
   try {
     await storage.upsertSyncStatus({
       syncType,
-      lastSyncAt: nowBrazil(),
+      lastSyncAt: agora(),
       status,
       message,
       recordsProcessed
@@ -419,7 +421,7 @@ async function markVirtualVisitExecuted(customerId: string): Promise<void> {
       SELECT id FROM sales_cards
       WHERE customer_id = ${customerId}
         AND scheduled_date IS NOT NULL
-        AND (scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (scheduled_date)::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       ORDER BY created_at DESC LIMIT 1`);
     if ((found.rows || []).length > 0) {
       const cardId = (found.rows[0] as any).id;
@@ -428,7 +430,7 @@ async function markVirtualVisitExecuted(customerId: string): Promise<void> {
       const cust: any = await storage.getCustomer(customerId).catch(() => null);
       const seller = (cust && cust.sellerId) || 'sem-vendedor';
       const rec = (cust && cust.visitPeriodicity) || 'semanal';
-      await db.execute(sql`INSERT INTO sales_cards (customer_id, seller_id, status, scheduled_date, route_day, recurrence_type, operation_type, check_in_time, check_out_time) VALUES (${customerId}, ${seller}, 'completed', now(), (CASE extract(dow from (now() AT TIME ZONE 'America/Sao_Paulo')) WHEN 0 THEN 'domingo' WHEN 1 THEN 'segunda' WHEN 2 THEN 'terca' WHEN 3 THEN 'quarta' WHEN 4 THEN 'quinta' WHEN 5 THEN 'sexta' ELSE 'sabado' END), ${rec}, 'venda', now(), now())`);
+      await db.execute(sql`INSERT INTO sales_cards (customer_id, seller_id, status, scheduled_date, route_day, recurrence_type, operation_type, check_in_time, check_out_time) VALUES (${customerId}, ${seller}, 'completed', (now() AT TIME ZONE 'America/Sao_Paulo')::date, (CASE extract(dow from (now() AT TIME ZONE 'America/Sao_Paulo')) WHEN 0 THEN 'domingo' WHEN 1 THEN 'segunda' WHEN 2 THEN 'terca' WHEN 3 THEN 'quarta' WHEN 4 THEN 'quinta' WHEN 5 THEN 'sexta' ELSE 'sabado' END), ${rec}, 'venda', now(), now())`);
     }
   } catch (e: any) {
     console.warn('[virtual->checkin] falhou (ignorado):', e?.message);
@@ -2794,22 +2796,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atendimentos do dia atual
       const todayResult = await db.execute(sql`
         SELECT COUNT(*) as today FROM virtual_service_logs 
-        WHERE DATE(attendance_date) = CURRENT_DATE
+        WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
       `);
       
       // Atendimentos do mês atual
       const monthResult = await db.execute(sql`
         SELECT COUNT(*) as month FROM virtual_service_logs 
-        WHERE EXTRACT(MONTH FROM attendance_date) = EXTRACT(MONTH FROM CURRENT_DATE)
-        AND EXTRACT(YEAR FROM attendance_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        WHERE EXTRACT(MONTH FROM (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+        AND EXTRACT(YEAR FROM (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo')::date)
       `);
       
       // Atendimentos por atendente (top 5)
       const byAttendantResult = await db.execute(sql`
         SELECT attendant_name, COUNT(*) as count 
         FROM virtual_service_logs 
-        WHERE EXTRACT(MONTH FROM attendance_date) = EXTRACT(MONTH FROM CURRENT_DATE)
-        AND EXTRACT(YEAR FROM attendance_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        WHERE EXTRACT(MONTH FROM (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+        AND EXTRACT(YEAR FROM (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         GROUP BY attendant_name 
         ORDER BY count DESC 
         LIMIT 5
@@ -2938,7 +2940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (userNextContactDate) {
             nextContactDate = new Date(userNextContactDate);
           } else {
-            nextContactDate = nowBrazil();
+            nextContactDate = dataCalendario(hojeBR());
             nextContactDate.setDate(nextContactDate.getDate() + 7);
           }
           
@@ -3240,7 +3242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         INNER JOIN customers c ON vsl.customer_id = c.id
         WHERE (c.seller_id = ${sellerId} OR vsl.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
         AND vsl.entity_type = 'customer'
-        AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+        AND DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
       `);
       
       let count = parseInt(result.rows[0]?.count || '0');
@@ -3257,9 +3259,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           WHERE (c.seller_id = ${sellerId} OR sc.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
             AND sc.status = 'no_sale'
             AND (
-              DATE(sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+              DATE(sc.scheduled_date) = ${date}::date
               OR DATE(sc.scheduled_date) = ${date}::date
-              OR DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+              OR DATE(sc.completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
             )
         `);
         (noSaleCards.rows as any[]).forEach(row => {
@@ -4444,14 +4446,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const scheduledVisitsResult = await db.execute(sql`
         SELECT 
           seller_id,
-          DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') as visit_date,
+          DATE(scheduled_date) as visit_date,
           COUNT(*) FILTER (WHERE is_virtual = false OR is_virtual IS NULL) as presencial,
           COUNT(*) FILTER (WHERE is_virtual = true) as virtual,
           COUNT(*) FILTER (WHERE actual_check_out IS NOT NULL) as completed
         FROM visit_agenda
-        WHERE DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-          AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
-        GROUP BY seller_id, DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo')
+        WHERE DATE(scheduled_date) >= ${startDateStr}::date
+          AND DATE(scheduled_date) <= ${endDateStr}::date
+        GROUP BY seller_id, DATE(scheduled_date)
       `);
       
       // QUERY AGREGADA 2: Pedidos por vendedor/dia
@@ -4460,12 +4462,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WITH order_history_orders AS (
           SELECT 
             sc.seller_id,
-            DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') as order_date
+            DATE(oh.order_date) as order_date
           FROM order_history oh
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+            AND DATE(oh.order_date) >= ${startDateStr}::date
+            AND DATE(oh.order_date) <= ${endDateStr}::date
         ),
         omie_orders AS (
           -- Pedidos enviados ao Omie que podem não estar em order_history
@@ -4479,9 +4481,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   'DD/MM/YYYY'
                 )
               ELSE COALESCE(
-                DATE(omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
-                DATE(completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                DATE(delivery_completed_date AT TIME ZONE 'America/Sao_Paulo')
+                DATE(omie_sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                DATE(delivery_completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')
               )
             END as order_date
           FROM sales_cards
@@ -4549,16 +4551,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const virtualServiceResult = await db.execute(sql`
         SELECT 
           vsl.attendant_id,
-          DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') as service_date,
+          DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') as service_date,
           COUNT(*) as count,
           COUNT(*) FILTER (WHERE vsl.service_type = 'venda') as vendas,
           COUNT(*) FILTER (WHERE vsl.service_type = 'debito_vencido') as debitos,
           COUNT(*) FILTER (WHERE vsl.service_type = 'prospeccao') as prospeccoes
         FROM virtual_service_logs vsl
-        WHERE DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-          AND DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+        WHERE DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
+          AND DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
           AND vsl.attendant_id IS NOT NULL
-        GROUP BY vsl.attendant_id, DATE(vsl.attendance_date AT TIME ZONE 'America/Sao_Paulo')
+        GROUP BY vsl.attendant_id, DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')
       `);
       
       // Buscar todos os usuários que podem fazer atendimentos (vendedores + telemarketing)
@@ -4668,8 +4670,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM order_history oh
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+            AND DATE(oh.order_date) >= ${startDateStr}::date
+            AND DATE(oh.order_date) <= ${endDateStr}::date
         ),
         omie_data AS (
           SELECT 
@@ -4733,8 +4735,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM order_history oh
         JOIN sales_cards sc ON sc.id = oh.sales_card_id
         WHERE oh.status = 'completed'
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${prevStartDateStr}::date
-          AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${prevEndDateStr}::date
+          AND DATE(oh.order_date) >= ${prevStartDateStr}::date
+          AND DATE(oh.order_date) <= ${prevEndDateStr}::date
         GROUP BY sc.seller_id
       `);
       
@@ -4754,8 +4756,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM order_history oh
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${startDateStr}::date
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${endDateStr}::date
+            AND DATE(oh.order_date) >= ${startDateStr}::date
+            AND DATE(oh.order_date) <= ${endDateStr}::date
           GROUP BY sc.seller_id, sc.customer_id
         ),
         prev_sales AS (
@@ -4763,8 +4765,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM order_history oh
           JOIN sales_cards sc ON sc.id = oh.sales_card_id
           WHERE oh.status = 'completed'
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') >= ${prevStartDateStr}::date
-            AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') <= ${prevEndDateStr}::date
+            AND DATE(oh.order_date) >= ${prevStartDateStr}::date
+            AND DATE(oh.order_date) <= ${prevEndDateStr}::date
           GROUP BY sc.seller_id, sc.customer_id
         )
         SELECT c.seller_id, COUNT(*) as count
@@ -5438,7 +5440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateSalesCard(orderId, {
         omieOrderId: omieResult.codigo_pedido?.toString(),
         omieSyncStatus: 'synced',
-        omieSentAt: nowBrazil()
+        omieSentAt: agora()
       });
       
       console.log('✅ [SEND-TO-OMIE] Pedido enviado:', omieResult.numero_pedido);
@@ -5864,7 +5866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
           
           const targetDayNumber = routeDayToNumber[routeDay];
-          let scheduledDate = nowBrazil();
+          let scheduledDate = dataCalendario(hojeBR());
           
           // Validar que o routeDay foi mapeado corretamente
           if (targetDayNumber === undefined) {
@@ -6410,7 +6412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`🔄 [AUTO-CHECKOUT] Status mudando para "${data.status}" - verificando visita relacionada ao card ${id}...`);
             
             // Buscar visita relacionada a este sales card (mais recente da data de hoje no Brasil)
-            const todayBrazil = todayBrazilMidnight();
+            const todayBrazil = dataCalendario(hojeBR());
             const tomorrow = new Date(todayBrazil);
             tomorrow.setDate(tomorrow.getDate() + 1);
             
@@ -6441,7 +6443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 } else {
                   console.log(`✅ [AUTO-CHECKOUT] Visita tem check-in sem check-out - executando check-out automático...`);
                   
-                  const checkOutTime = nowBrazil();
+                  const checkOutTime = agora();
                   const checkInTime = new Date(visit.actualCheckIn);
                   const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
                   
@@ -6526,7 +6528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const user = req.currentUser;
           const orderData = {
             salesCardId: id,
-            orderDate: nowBrazil(),
+            orderDate: dataCalendario(hojeBR()),
             products: data.products || currentCard.products || [],
             totalValue: data.saleValue || currentCard.saleValue || '0',
             status: data.status === 'completed' ? 'completed' as const : 'cancelled' as const,
@@ -6537,7 +6539,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             checkOutTime: data.checkOutTime,
             checkOutLatitude: data.checkOutLatitude,
             checkOutLongitude: data.checkOutLongitude,
-            completedAt: data.status === 'completed' ? nowBrazil() : null,
+            completedAt: data.status === 'completed' ? agora() : null,
             sellerId: user?.id || null,
             sellerName: user?.name || user?.email || null
           };
@@ -6551,7 +6553,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (customer && customer.weekdays && customer.visitPeriodicity) {
             // SEMPRE atualizar lastVisitDate quando houver visita (independente do resultado)
-            const lastVisitDate = nowBrazil();
+            const lastVisitDate = dataCalendario(hojeBR());
             
             const parsedWeekdays = typeof customer.weekdays === 'string' 
               ? JSON.parse(customer.weekdays) 
@@ -6593,7 +6595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               weekdays: parsedWeekdays,
               periodicity: customer.visitPeriodicity,
               lastCompletedDate: lastCompletedSaleDate,
-              referenceDate: nowBrazil()
+              referenceDate: dataCalendario(hojeBR())
             });
             
             // Atualizar permanent card
@@ -7798,7 +7800,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Obter data atual no timezone do Brasil
-      const brazilTime = nowBrazil();
+      // getSalesCardsByDate deriva o dia com toISOString(): passamos a DATA DE CALENDARIO
+      // (meia-noite UTC) do dia de hoje no Brasil, entao o dia extraido e sempre o certo.
+      const brazilTime = dataCalendario(hojeBR());
       
       const todayClients = await storage.getSalesCardsByDate(brazilTime, sellerId);
       res.json(todayClients);
@@ -7938,7 +7942,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (startDate) {
         start = new Date(`${startDate}T00:00:00.000Z`);
       } else {
-        start = nowBrazil();
+        start = dataCalendario(hojeBR());
         start.setHours(0, 0, 0, 0);
       }
       
@@ -7998,7 +8002,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (startDate) {
         start = new Date(`${startDate}T00:00:00.000Z`);
       } else {
-        start = nowBrazil();
+        start = dataCalendario(hojeBR());
         start.setHours(0, 0, 0, 0);
       }
       
@@ -8316,7 +8320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId: userId,
         templateId,
         message,
-        sentAt: nowBrazil(),
+        sentAt: agora(),
       });
       
       // Mock WhatsApp integration - in production, integrate with WhatsApp Business API
@@ -9571,7 +9575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         DELETE FROM visit_agenda
         WHERE visit_status = 'pending'
           AND EXTRACT(DOW FROM scheduled_date) = 0
-          AND scheduled_date >= (CURRENT_DATE - INTERVAL '1 day')`);
+          AND scheduled_date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '1 day')`);
 
       // Marca concluída ANTES de disparar o regen pesado (evita repetir em reboots e corrida entre instâncias).
       await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
@@ -10015,7 +10019,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Atualizar visita com dados de check-in
-      const checkInDate = nowBrazil();
+      const checkInDate = agora();
       await db.update(visitAgenda)
         .set({
           actualCheckIn: checkInDate,
@@ -10045,7 +10049,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         // Usar timezone do Brasil para garantir que encontramos a rota correta
-        const todayBrazil = todayBrazilMidnight();
+        const todayBrazil = dataCalendario(hojeBR());
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
@@ -10074,7 +10078,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         message: 'Check-in realizado com sucesso',
-        checkInTime: nowBrazil(),
+        checkInTime: agora(),
         distance: distanceToCustomer ? Math.round(distanceToCustomer) : null,
         routeProgress: routeProgress ? {
           distanceFromPrevious: routeProgress.distanceFromPrevious,
@@ -10166,7 +10170,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calcular tempo de visita
       const checkInTime = new Date(currentVisit.actualCheckIn);
-      const checkOutTime = nowBrazil();
+      // INSTANTE em UTC real. Migra JUNTO com o check-in (10018 / 17884): a duracao da
+      // visita e checkOutTime - actualCheckIn, entao os dois lados tem de usar o mesmo relogio.
+      const checkOutTime = agora();
       const visitDuration = Math.round((checkOutTime.getTime() - checkInTime.getTime()) / 60000); // em minutos
 
       // Atualizar visita com dados de check-out
@@ -10205,7 +10211,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let routeProgress = null;
       try {
         // Usar timezone do Brasil para garantir que encontramos a rota correta
-        const todayBrazil = todayBrazilMidnight();
+        const todayBrazil = dataCalendario(hojeBR());
         const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentVisit.sellerId, todayBrazil);
         
         if (dailyRoute) {
@@ -10262,8 +10268,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       
       // Definir período padrão (últimos 30 dias)
-      const endDate = nowBrazil();
-      const startDate = nowBrazil();
+      const endDate = dataCalendario(hojeBR());
+      const startDate = dataCalendario(hojeBR());
       startDate.setDate(startDate.getDate() - 30);
 
       // Filtros baseados na role do usuário
@@ -10396,7 +10402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Registrar início da sincronização
       await storage.upsertSyncStatus({
         syncType: 'omie_complete',
-        lastSyncAt: nowBrazil(),
+        lastSyncAt: agora(),
         status: 'in_progress',
         message: 'Sincronização em andamento...',
         recordsProcessed: 0
@@ -10417,7 +10423,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           billings: null,
           overdueDebts: null,
           errors: [],
-          startTime: nowBrazil(),
+          startTime: agora(),
           endTime: null
         };
 
@@ -10565,7 +10571,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results.errors.push(`Débitos: ${error.message}`);
       }
 
-      results.endTime = nowBrazil();
+      results.endTime = agora();
       const duration = ((results.endTime.getTime() - results.startTime.getTime()) / 1000).toFixed(2);
 
       console.log(`🏁 Sincronização completa finalizada em ${duration}s`);
@@ -10586,7 +10592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         await storage.upsertSyncStatus({
           syncType: 'omie_complete',
-          lastSyncAt: nowBrazil(),
+          lastSyncAt: agora(),
           status: results.errors.length > 0 ? 'error' : 'success',
           message: results.errors.length > 0 ? results.errors.join('; ') : 'Sincronização completa realizada com sucesso',
           recordsProcessed: totalRecords
@@ -10600,7 +10606,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('❌ Erro geral na sincronização completa em background:', error);
         await storage.upsertSyncStatus({
           syncType: 'omie_complete',
-          lastSyncAt: nowBrazil(),
+          lastSyncAt: agora(),
           status: 'error',
           message: `Erro na sincronização: ${error.message}`,
           recordsProcessed: 0
@@ -10611,7 +10617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('❌ Erro ao iniciar sincronização completa:', error);
       await storage.upsertSyncStatus({
         syncType: 'omie_complete',
-        lastSyncAt: nowBrazil(),
+        lastSyncAt: agora(),
         status: 'error',
         message: `Erro ao iniciar sincronização: ${error.message}`,
         recordsProcessed: 0
@@ -10831,7 +10837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Concluído (${servicesToSync.length} instância(s)): ${totalImported} importados, ${totalUpdated} atualizados`,
             recordsProcessed: totalProcessed,
             currentProgress: 100,
-            lastFinishedAt: nowBrazil()
+            lastFinishedAt: agora()
           });
         } catch (error: any) {
           console.error('❌ Erro na sincronização TOTAL (background):', error);
@@ -10916,7 +10922,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await db.update(billingsTable)
               .set({ 
                 sellerName,
-                updatedAt: nowBrazil()
+                updatedAt: agora()
               })
               .where(eq(billingsTable.id, billing.id));
             
@@ -11093,7 +11099,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           recordsProcessed: 0,
           totalRecords: 0,
           currentProgress: 0,
-          lastSyncAt: nowBrazil()
+          lastSyncAt: agora()
         });
         console.log('✅ [CANCEL-SYNC] Status do banco atualizado para error (cancelado)');
       } catch (dbError) {
@@ -11754,7 +11760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           {
             totalClients: totalClients,
             totalAmount: totalAmount,
-            syncDate: nowBrazil().toISOString()
+            syncDate: agora().toISOString()
           },
           req.user?.id
         );
@@ -12233,7 +12239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             errors.push(`${nm}: nao entrou no funil (mantido em Bloqueados)`);
             continue;
           }
-          await db.update(blockedOrders).set({ status: 'released', releasedAt: nowBrazil(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
+          await db.update(blockedOrders).set({ status: 'released', releasedAt: agora(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
           try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` }); } catch {}
           released++;
           console.log('[RELEASE-BLOCKED] pedido ' + orderId + ' liberado para o pipeline por ' + req.currentUser.email);
@@ -12310,7 +12316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const customerName = (cust as any)?.name || 'Cliente';
           const seller = order.sellerId ? await storage.getUser(order.sellerId).catch(() => null) : null;
           const sellerName = seller ? ([(seller as any).firstName, (seller as any).lastName].filter(Boolean).join(' ').trim() || null) : null;
-          const histJson = JSON.stringify([{ stage: 'lixeira', changedAt: nowBrazil().toISOString(), changedBy: `${req.currentUser?.email || 'sistema'} (excluido de bloqueados)` }]);
+          const histJson = JSON.stringify([{ stage: 'lixeira', changedAt: paredeBR(agora()), changedBy: `${req.currentUser?.email || 'sistema'} (excluido de bloqueados)` }]);
           const prodJson = order.products ? JSON.stringify(order.products) : null;
           // 3) Cria o card direto na Lixeira (snapshot do bloqueio). O pedido nunca some do sistema.
           await db.execute(sql`
@@ -13035,7 +13041,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await db.update(billingsTable)
                   .set({ 
                     invoiceStage: stageData.stageName,
-                    updatedAt: nowBrazil()
+                    updatedAt: agora()
                   })
                   .where(eq(billingsTable.id, billing.id));
                 
@@ -13525,7 +13531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar sales card com novo status de entrega
       const updatedCard = await storage.updateSalesCardDeliveryStatus(salesCardId, {
         deliveryStatus: status,
-        deliveryCompletedDate: status === 'delivered' ? nowBrazil() : deliveryCompletedDate,
+        deliveryCompletedDate: status === 'delivered' ? agora() : deliveryCompletedDate,
         deliveryFailureReason: status === 'failed' ? deliveryFailureReason : null,
         deliveryNotes,
         deliveryDriverId: driverId
@@ -13790,7 +13796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`✅ [ROUTE-PLANNING] ${deliveryOrders.length} pedidos prontos para roteirização`);
 
       // Planejar rotas
-      const dataDaRota = routeDate ? new Date(routeDate) : nowBrazil();
+      const dataDaRota = routeDate ? new Date(routeDate) : dataCalendario(hojeBR());
       const planOpts = { persist, respectReceivingWeekdays: respectReceivingWeekdays === true };
 
       if (useAI) {
@@ -13825,7 +13831,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   app.get("/api/delivery-routes/fleet", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const dateStr = String(req.query.date || '').slice(0, 10) || nowBrazil().toISOString().slice(0, 10);
+      const dateStr = String(req.query.date || '').slice(0, 10) || hojeBR();
       const result: any = await db.execute(sql`
         SELECT d.id,
                d.name,
@@ -14033,8 +14039,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
               status: 'rota_enviada', // Enviada automaticamente para o motorista
-              sentToDriverAt: nowBrazil(),
-              updatedAt: nowBrazil()
+              sentToDriverAt: agora(),
+              updatedAt: agora()
             })
             .where(eq(deliveryRoutes.id, routeToUpdate.id))
             .returning();
@@ -14087,7 +14093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             timeWindowStart: route.timeWindowStart || '08:00',
             timeWindowEnd: route.timeWindowEnd || '18:00',
             status: 'rota_enviada', // Enviada automaticamente para o motorista
-            sentToDriverAt: nowBrazil()
+            sentToDriverAt: agora()
           };
 
           // Buscar orderNumber dos billings para cada parada
@@ -14364,7 +14370,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Pelo menos driverId ou vehicleType deve ser fornecido" });
       }
       
-      const updateData: any = { updatedAt: nowBrazil() };
+      const updateData: any = { updatedAt: agora() };
       if (driverId) updateData.driverId = driverId;
       if (driverName) updateData.driverName = driverName;
       if (vehicleType) updateData.vehicleType = vehicleType;
@@ -14408,7 +14414,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar status da rota para 'cancelled'
       const updatedRoute = await storage.updateDeliveryRoute(routeId, {
         status: 'cancelled',
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       });
       
       if (!updatedRoute) {
@@ -14450,11 +14456,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (date) {
         targetDateStr = date;
       } else {
-        const today = nowBrazil();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        targetDateStr = `${year}-${month}-${day}`;
+        targetDateStr = hojeBR();
       }
       
       console.log(`📅 [DRIVER-ROUTES] Data alvo: "${targetDateStr}", Email normalizado: "${userEmail}"`);
@@ -14696,7 +14698,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (driverEmail) {
           // Atualizar a rota com o email encontrado
           await db.update(deliveryRoutes)
-            .set({ driverEmail, updatedAt: nowBrazil() })
+            .set({ driverEmail, updatedAt: agora() })
             .where(eq(deliveryRoutes.id, route.id));
           
           fixed.push({
@@ -15120,8 +15122,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedRoute = await db.update(deliveryRoutes)
         .set({ 
           status: 'rota_enviada', 
-          sentToDriverAt: nowBrazil(),
-          updatedAt: nowBrazil() 
+          sentToDriverAt: agora(),
+          updatedAt: agora() 
         })
         .where(eq(deliveryRoutes.id, routeId))
         .returning();
@@ -15322,8 +15324,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.update(deliveryRoutes)
         .set({ 
           status: 'rota_enviada', 
-          sentToDriverAt: nowBrazil(),
-          updatedAt: nowBrazil() 
+          sentToDriverAt: agora(),
+          updatedAt: agora() 
         })
         .where(inArray(deliveryRoutes.id, routeIds));
       
@@ -15431,7 +15433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Atualizar status da rota para 'em_andamento'
       const updatedRoute = await db.update(deliveryRoutes)
-        .set({ status: 'em_andamento', startTime: nowBrazil(), updatedAt: nowBrazil() })
+        .set({ status: 'em_andamento', startTime: agora(), updatedAt: agora() })
         .where(eq(deliveryRoutes.id, routeId))
         .returning();
       
@@ -15501,7 +15503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⚠️ [DRIVER-CHECKIN] Usando referência simples para foto');
       }
       
-      const now = nowBrazil();
+      const now = agora();
       
       // Atualizar a parada com check-in, coordenadas e foto
       const currentPhotos = (stop[0].photos as string[]) || [];
@@ -15589,7 +15591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('⚠️ [DRIVER-CHECKOUT] Usando referência simples para foto');
       }
       
-      const now = nowBrazil();
+      const now = agora();
       
       // Marcar parada como concluída com coordenadas e foto
       const currentPhotos = (stop[0].photos as string[]) || [];
@@ -15774,7 +15776,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         photoUrl = `photo-${nanoid(8)}-delivery`;
       }
       
-      const now = nowBrazil();
+      const now = agora();
       const currentPhotos = (stop[0].photos as string[]) || [];
       
       // Marcar como entregue (check-in e check-out simultâneos)
@@ -16013,7 +16015,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      const now = nowBrazil();
+      const now = agora();
       const currentPhotos = (stop[0].photos as string[]) || [];
       const currentNotes = stop[0].notes || '';
       
@@ -16149,7 +16151,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
       
-      const now = nowBrazil();
+      const now = agora();
       
       // Atualizar status
       const updatedStop = await db.update(deliveryRouteStops)
@@ -16855,7 +16857,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const baseTime = nowBrazil();
+      const baseTime = agora();
       baseTime.setHours(hours, minutes, 0, 0);
       
       // Tempo de chegada = horário base + tempo de viagem (estimado em 15 min entre pontos)
@@ -16968,7 +16970,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         checkInTime: data.checkInTime,
         checkOutTime: data.checkOutTime,
         deliveryDuration,
-        timestamp: data.timestamp || nowBrazil(),
+        timestamp: data.timestamp || agora(),
         location: data.location,
         notes: data.notes
       });
@@ -17556,7 +17558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (outcome === 'sale' && saleValue) {
         const salesCard = result.completedCard;
         await storage.updateCustomer(salesCard.customerId, {
-          lastSaleDate: nowBrazil(),
+          lastSaleDate: dataCalendario(hojeBR()),
           lastSaleValue: saleValue.toString()
         });
       }
@@ -17750,12 +17752,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updateData: any = {
         telemarketingNotes: notes,
-        updatedAt: nowBrazil()
+        updatedAt: agora()
       };
 
       if (outcome === 'completed') {
         updateData.status = 'completed';
-        updateData.completedDate = nowBrazil();
+        updateData.completedDate = agora();
       } else if (outcome === 'reschedule' && rescheduleDate) {
         updateData.status = 'pending';
         updateData.scheduledDate = new Date(rescheduleDate);
@@ -17840,7 +17842,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto é obrigatória
       if (currentCard.customerId) {
-        const todayBrazil = todayBrazilMidnight();
+        const todayBrazil = dataCalendario(hojeBR());
         const dailyRoute = currentCard.sellerId 
           ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
@@ -17881,7 +17883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updateData: any = {
-        checkInTime: nowBrazil(),
+        checkInTime: agora(),
         checkInLatitude: latitude.toString(),
         checkInLongitude: longitude.toString(),
         distanceToCustomer: checkInDistance?.toString() || null,
@@ -17924,7 +17926,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         if (currentCard.sellerId) {
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = todayBrazilMidnight();
+          const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -18150,7 +18152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Verificar se é LEAD e se foto de check-in existe
       if (currentCard.customerId) {
-        const todayBrazil = todayBrazilMidnight();
+        const todayBrazil = dataCalendario(hojeBR());
         const dailyRoute = currentCard.sellerId 
           ? await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil)
           : null;
@@ -18185,7 +18187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updateData = {
-        checkOutTime: nowBrazil(),
+        checkOutTime: agora(),
         checkOutLatitude: latitude.toString(),
         checkOutLongitude: longitude.toString(),
         ...(checkOutDistance !== null && { checkOutDistanceToCustomer: checkOutDistance.toString() })
@@ -18198,7 +18200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         if (currentCard && currentCard.sellerId) {
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = todayBrazilMidnight();
+          const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -18376,7 +18378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update sales card with products, value, payment method and operation type
       const updateData = {
         status: 'completed',
-        completedDate: nowBrazil(),
+        completedDate: agora(),
         saleValue: totalValue,
         products: products,
         paymentMethod: paymentMethod || 'a_vista',
@@ -18451,7 +18453,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalPrice: p.totalPrice
             })),
             totalValue,
-            orderDate: nowBrazil().toISOString(),
+            orderDate: agora().toISOString(),
           };
 
           // Integração real com Omie API
@@ -19592,8 +19594,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { startDate, endDate } = req.query;
       
-      let start = nowBrazil();
-      let end = nowBrazil();
+      let start = dataCalendario(hojeBR());
+      let end = dataCalendario(hojeBR());
       
       if (startDate) start = new Date(startDate as string);
       if (endDate) end = new Date(endDate as string);
@@ -20038,7 +20040,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       maybeAutoRegenTelemarketing();
 
       // Usar timezone do Brasil para garantir que encontramos a rota correta
-      const todayBrazil = todayBrazilMidnight();
+      const todayBrazil = dataCalendario(hojeBR());
       
       const route = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
       
@@ -20303,11 +20305,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             endTime = lastCheckOut;
           } else {
             // Check-in mais recente: vendedor voltou, rota em andamento
-            endTime = nowBrazil();
+            endTime = agora();
           }
         } else {
           // Sem check-outs: rota em andamento
-          endTime = nowBrazil();
+          endTime = agora();
         }
         
         // Calcular diferença em milissegundos e converter para minutos
@@ -20495,7 +20497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             SELECT id FROM leads
             WHERE status = 'scheduled'
               AND next_contact_date IS NOT NULL
-              AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${date}::date
+              AND (next_contact_date)::date <= ${date}::date
               AND assigned_to = ${sellerId}
               AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
@@ -20759,11 +20761,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .map((v: any) => v.customerId);
         if (custStopIds.length > 0) {
           const salesRes: any = await db.execute(sql`
-            SELECT customer_id, MAX(DATE(created_at AT TIME ZONE 'America/Sao_Paulo')) AS last_venda
+            SELECT customer_id, MAX(DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) AS last_venda
             FROM billing_pipeline
             WHERE customer_id = ANY(string_to_array(${custStopIds.join(',')}, ','))
-              AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') <= ${date}::date
-              AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') >= (${date}::date - INTERVAL '28 days')
+              AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') <= ${date}::date
+              AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= (${date}::date - INTERVAL '28 days')
               AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
             GROUP BY customer_id
           `);
@@ -21071,11 +21073,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             endTime = lastCheckOut;
           } else {
             // Check-in mais recente: vendedor voltou, rota em andamento
-            endTime = nowBrazil();
+            endTime = agora();
           }
         } else {
           // Sem check-outs: rota em andamento
-          endTime = nowBrazil();
+          endTime = agora();
         }
         
         // Calcular diferença em milissegundos e converter para minutos
@@ -21149,7 +21151,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             SELECT DISTINCT customer_id
             FROM visit_agenda
             WHERE seller_id = ${sellerId}
-              AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+              AND DATE(scheduled_date) = ${date}::date
           `);
           routeCustomerIds = (visitAgendaResult.rows as any[]).map(r => r.customer_id).filter(Boolean);
           console.log(`📊 [ORDERS-DEBUG] customerIds da visit_agenda: ${routeCustomerIds.length}`);
@@ -21165,7 +21167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             JOIN sales_cards sc ON sc.id = oh.sales_card_id
             WHERE sc.seller_id = ANY(${sellerIdVariations}::text[])
               AND sc.customer_id = ANY(${routeCustomerIds}::text[])
-              AND DATE(oh.order_date AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+              AND DATE(oh.order_date) = ${date}::date
           `);
           
           ordersCount = (ordersResult.rows[0] as any)?.count || 0;
@@ -21192,10 +21194,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 SELECT 
                   sc.id,
                   COALESCE(
-                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.omie_sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.delivery_completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
                     -- Extrair data do campo notes se contém "Enviado para Omie: DD/MM/YYYY"
                     CASE 
                       WHEN sc.notes LIKE '%Enviado para Omie:%' THEN
@@ -21232,9 +21234,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 SELECT 
                   sc.id,
                   COALESCE(
-                    DATE(sc.omie_sent_at AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(sc.completed_date AT TIME ZONE 'America/Sao_Paulo'),
-                    DATE(sc.delivery_completed_date AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.omie_sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
+                    DATE(sc.delivery_completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'),
                     -- Extrair data do campo notes
                     CASE 
                       WHEN sc.notes LIKE '%Enviado para Omie:%' THEN
@@ -21690,7 +21692,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Marcar horário de almoço com timestamp atual
-      const now = nowBrazil();
+      const now = agora();
       await storage.updateDailyRoute(routeId, {
         lunchBreakActivatedAt: now
       });
@@ -22463,7 +22465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sale_value
         FROM billing_pipeline
         WHERE customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
-          AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+          AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
           AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
       `);
       
@@ -22503,8 +22505,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND status = 'completed'
           AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
           AND completed_date IS NOT NULL
-          AND DATE(completed_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
-          AND DATE(scheduled_date AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+          AND DATE(completed_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${routeDate}::date
+          AND DATE(scheduled_date) = ${routeDate}::date
         ORDER BY customer_id, sale_value::numeric DESC
       `);
       (scOrdersResult.rows as any[]).forEach(row => {
@@ -23373,7 +23375,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       billingSyncState.updated = 0;
       billingSyncState.currentInvoice = '';
       billingSyncState.message = `Iniciando sincronização de ${activeInstances.length} instância(s)...`;
-      billingSyncState.startedAt = nowBrazil();
+      billingSyncState.startedAt = agora();
       billingSyncState.completedAt = null;
 
       // Persistir início no banco para que o UI mostre "Última tentativa" mesmo se SSE cair
@@ -23441,7 +23443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rejectedNote = totals.skipped > 0 ? ` (${totals.skipped} rejeitados)` : '';
       const completionMsg = `Sincronização de ${activeInstances.length} instância(s) concluída! ${totals.imported} inseridos, ${totals.updated} atualizados.${rejectedNote}`;
       billingSyncState.message = completionMsg;
-      billingSyncState.completedAt = nowBrazil();
+      billingSyncState.completedAt = agora();
 
       // Persistir conclusão no banco para atualizar "Última conclusão" no UI
       const syncDurationSeconds = Math.round((Date.now() - syncStartTime) / 1000);
@@ -23796,7 +23798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('🔄 Recalculando métricas das rotas...');
       
-      const today = nowBrazil();
+      const today = dataCalendario(hojeBR());
       const startOfDay = new Date(today);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(today);
@@ -23892,7 +23894,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`🔄 Iniciando migração retroativa de checkpoints (últimos ${daysBack} dias)...`);
       
       // Buscar todos os sales_cards com check-in ou check-out no range especificado
-      const today = nowBrazil();
+      const today = instanteBR(hojeBR());
       today.setHours(23, 59, 59, 999);
       
       const startDate = new Date(today);
@@ -24993,7 +24995,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const getNextDayOfWeek = (targetDay: string): Date => {
-        const today = nowBrazil();
+        const today = dataCalendario(hojeBR());
         const targetDayNum = weekdayMap[targetDay] ?? 0; // Default Domingo se inválido
         const currentDayNum = today.getDay();
         
@@ -25568,7 +25570,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select()
         .from(salesCards)
         .leftJoin(customers, eq(salesCards.customerId, customers.id))
-        .where(gte(salesCards.scheduledDate, todayBrazilMidnight()))
+        .where(gte(salesCards.scheduledDate, dataCalendario(hojeBR())))
         .orderBy(salesCards.scheduledDate);
 
       const inconsistencies: any[] = [];
@@ -25694,7 +25696,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         query = query.where(
           and(
             inArray(salesCards.status, ['pending', 'in_progress']),
-            gte(salesCards.scheduledDate, todayBrazilMidnight())
+            gte(salesCards.scheduledDate, dataCalendario(hojeBR()))
           )
         ) as any;
       }
@@ -26269,7 +26271,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let sellerId = String(req.query.sellerId || '');
       if (['vendedor', 'telemarketing'].includes(user.role)) sellerId = user.id;
       const dateStr = String(req.query.date || ''); // opcional YYYY-MM-DD; default = hoje BRT
-      const ref = dateStr ? new Date(`${dateStr}T12:00:00-03:00`) : nowBrazil();
+      const ref = new Date(`${dateStr ? String(dateStr).slice(0, 10) : hojeBR()}T12:00:00-03:00`);
       const refDay = ref.toISOString().slice(0, 10);
 
       const filtroVendedor = sellerId ? sql`AND assigned_to = ${sellerId}` : sql``;
@@ -26280,7 +26282,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM leads
         WHERE status = 'scheduled'
           AND next_contact_date IS NOT NULL
-          AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date <= ${refDay}::date
+          AND (next_contact_date)::date <= ${refDay}::date
           ${filtroVendedor}
         ORDER BY next_contact_date ASC
       `);
@@ -26473,7 +26475,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📅 RETORNO AUTOMÁTICO (cadastro + 15 dias, em dia útil): data TRAVADA de revisita na rota do vendedor.
       // O vendedor não pode alterá-la (o PATCH só libera photo/observation/status). Só admin ajusta.
       try {
-        let _ret = nowBrazil();
+        let _ret = dataCalendario(hojeBR());
         _ret.setDate(_ret.getDate() + 15);
         const _dow = _ret.getDay();               // 0=Dom, 6=Sáb
         if (_dow === 6) _ret.setDate(_ret.getDate() + 2);      // sábado → segunda
@@ -26794,7 +26796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const photoUrl = `data:${req.file.mimetype};base64,${base64Photo}`;
       
       // Atualizar lead com check-in usando db.update direto (bypassa insertLeadSchema validation)
-      const now = nowBrazil();
+      const now = agora();
       try {
         console.log(`🔄 Atualizando lead ${id} no banco de dados...`);
         await db
@@ -26836,7 +26838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const sellerId = lead.assignedTo || user.id;
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = todayBrazilMidnight();
+          const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -26934,7 +26936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Atualizar lead com check-out usando db.update direto (bypassa insertLeadSchema validation)
-      const now = nowBrazil();
+      const now = agora();
       try {
         await db
           .update(leads)
@@ -26952,7 +26954,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const sellerId = lead.assignedTo || user.id;
           // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = todayBrazilMidnight();
+          const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
           
           if (dailyRoute) {
@@ -27127,7 +27129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(409).json({ message: 'Prorrogação já utilizada. Finalize (não converter) ou converta o lead.', code: 'PRORROGACAO_JA_USADA' });
         }
         // Data futura escolhida (YYYY-MM-DD) OU +dias. Teto: no máximo 15 dias corridos a partir de hoje.
-        const _hoje0 = nowBrazil(); _hoje0.setHours(0, 0, 0, 0);
+        const _hoje0 = dataCalendario(hojeBR()); _hoje0.setHours(0, 0, 0, 0);
         const _teto = new Date(_hoje0); _teto.setDate(_teto.getDate() + 15);
         let _ret: Date;
         const _dataStr = String(req.body?.data || '').trim();
@@ -27141,7 +27143,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           let dias = Number(req.body?.dias);
           if (!Number.isFinite(dias) || dias < 1) dias = 15;
           if (dias > 15) dias = 15; // teto
-          _ret = nowBrazil();
+          _ret = dataCalendario(hojeBR());
           _ret.setDate(_ret.getDate() + Math.floor(dias));
           const _dow = _ret.getDay();
           if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
@@ -27176,7 +27178,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (acao === 'resgatar') {
         // Resgata um lead não convertido (descartado): volta para a lista COMO NOVO, com os mesmos dados.
         // Nova data de retorno = hoje + 15 dias (dia útil), zera prorrogação/motivo/atraso.
-        let _ret = nowBrazil();
+        let _ret = dataCalendario(hojeBR());
         _ret.setDate(_ret.getDate() + 15);
         const _dow = _ret.getDay();
         if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
@@ -27423,7 +27425,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             latitude: latitude && !isNaN(latitude) ? latitude : null,
             longitude: longitude && !isNaN(longitude) ? longitude : null,
             isActive: true,
-            activatedAt: nowBrazil()
+            activatedAt: agora()
           });
           
           if (customer) {
@@ -27689,7 +27691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const customer = customerByDoc.get(ac.document);
         if (customer) {
           await db.update(activeCustomers)
-            .set({ customerId: customer.id, matchStatus: 'matched', updatedAt: nowBrazil() })
+            .set({ customerId: customer.id, matchStatus: 'matched', updatedAt: agora() })
             .where(eq(activeCustomers.id, ac.id));
           reconciled++;
         }
@@ -27854,7 +27856,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const settings = await storage.updateChatAiSettings({
         ...validated,
-        updatedAt: nowBrazil(),
+        updatedAt: agora(),
         updatedBy: userId
       });
       
@@ -27902,7 +27904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const settings = await storage.updateChatAiSettings({
         isEnabled: newState,
-        updatedAt: nowBrazil(),
+        updatedAt: agora(),
         updatedBy: req.user?.id
       });
       

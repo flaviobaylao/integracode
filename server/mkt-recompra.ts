@@ -203,7 +203,7 @@ SELECT c.id, c.name, c.phone, c.seller_id,
        ci.intervalos, ROUND(ci.ciclo_mediano)::int AS ciclo_dias,
        COALESCE(t.ticket_medio, 0)                 AS ticket_medio,
        COALESCE(m.skus, 0)                         AS skus,
-       (CURRENT_DATE - r.ultima_compra)::int       AS dias_desde_compra,
+       ((now() AT TIME ZONE 'America/Sao_Paulo')::date - r.ultima_compra)::int       AS dias_desde_compra,
        (SELECT 1 FROM overdue_debts od WHERE od.client_id = c.id LIMIT 1) AS inadimplente,
        (SELECT 1 FROM chat_customers cc
          WHERE cc.whatsapp_opt_out = true

@@ -64,18 +64,18 @@ async function registrar(customerId: string, decisao: string, detalhe: string, t
 async function proximaVisita(customerId: string): Promise<string> {
   try {
     const r: any = await db.execute(sql`
-      SELECT to_char(scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS quando
+      SELECT to_char(scheduled_date, 'DD/MM') AS quando
       FROM visit_agenda
       WHERE customer_id = ${customerId}
         AND visit_status = 'pending'
-        AND (scheduled_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (scheduled_date)::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
       ORDER BY scheduled_date LIMIT 1`);
     if (r.rows?.[0]?.quando) return String(r.rows[0].quando);
     const c: any = await db.execute(sql`
-      SELECT to_char(next_visit_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS quando
+      SELECT to_char(next_visit_date, 'DD/MM') AS quando
       FROM sales_cards
       WHERE customer_id = ${customerId} AND next_visit_date IS NOT NULL
-        AND (next_visit_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND (next_visit_date)::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
       ORDER BY next_visit_date LIMIT 1`);
     return String(c.rows?.[0]?.quando || '');
   } catch { return ''; }

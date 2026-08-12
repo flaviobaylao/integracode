@@ -1,6 +1,7 @@
 import { DatabaseStorage } from './storage';
 import { calculateRealDistance } from './routingService';
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora } from '@shared/tempo';
 
 /**
  * Calcula a distância REAL percorrida baseada nos checkpoints (check-ins) realizados
@@ -163,7 +164,7 @@ export async function validateOffRouteVisit(
   await storage.updateRouteCheckpoint(checkpointId, {
     validationStatus: 'validated',
     validatedBy: adminId,
-    validatedAt: nowBrazil()
+    validatedAt: agora()
   });
 
   // Recalcular distância total da rota
@@ -191,7 +192,7 @@ export async function cancelOffRouteVisit(
   await storage.updateRouteCheckpoint(checkpointId, {
     validationStatus: 'cancelled',
     validatedBy: adminId,
-    validatedAt: nowBrazil()
+    validatedAt: agora()
   });
 
   // Recalcular distância total da rota

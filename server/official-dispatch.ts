@@ -208,7 +208,7 @@ async function mark(id: string, status: string, error?: string) {
 
 export async function dispatchRotaDoDia(): Promise<{ enfileirados: number; pulados: number; rotas: number }> {
   const rr: any = await db.execute(sql`SELECT seller_id, visit_stops FROM daily_routes
-    WHERE (route_date AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
+    WHERE (route_date)::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
   const routes = rr.rows || []; let enfileirados = 0, pulados = 0;
   for (const route of routes) {
     const s: any = await db.execute(sql`SELECT first_name, last_name FROM users WHERE id = ${route.seller_id} LIMIT 1`);

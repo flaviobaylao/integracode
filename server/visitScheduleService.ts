@@ -1,7 +1,9 @@
 import { db } from './db';
 import { customers, visitAgenda } from '../shared/schema';
 import { eq, and, gte, lte, isNotNull, sql } from 'drizzle-orm';
-import { nowBrazil, toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
+import { toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, dataCalendario } from '@shared/tempo';
 
 // 🛡️ Um sales_card com VALOR DE VENDA ou com PRODUTOS e um PEDIDO REAL, nao um slot de agenda.
 // Rotinas de agenda/inativacao jamais podem apaga-lo. (28/jul/2026)
@@ -321,7 +323,7 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
   console.log(`🔄 [SYNC-CARDS] Sincronizando cards futuros para ${monthsAhead} meses...`);
   
   const startTime = Date.now();
-  const today = nowBrazil();
+  const today = dataCalendario(hojeBR());
   today.setHours(0, 0, 0, 0);
   
   const targetDate = new Date(today);
@@ -497,8 +499,8 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
             routeDay: getRouteDay(date),
             recurrenceType: customer.visitPeriodicity || 'semanal',
             isRecurring: true,
-            createdAt: nowBrazil(),
-            updatedAt: nowBrazil()
+            createdAt: agora(),
+            updatedAt: agora()
           }));
           
           await db.insert(salesCards).values(cardsToInsert).onConflictDoNothing();
@@ -542,7 +544,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
   console.log(`📅 [FUTURE-AGENDA] Verificando cobertura de ${monthsAhead} meses futuros...`);
   
   const startTime = Date.now();
-  const today = nowBrazil();
+  const today = dataCalendario(hojeBR());
   today.setHours(0, 0, 0, 0);
   
   // Data limite: hoje + monthsAhead meses
@@ -729,7 +731,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         .limit(1);
       
       const newEntry = {
-        timestamp: nowBrazil().toISOString(),
+        timestamp: agora().toISOString(),
         monthsAhead,
         processed: stats.processed,
         generated: stats.generated,
@@ -749,7 +751,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
         await db.update(systemSettings)
           .set({ 
             value: JSON.stringify(trimmedHistory),
-            updatedAt: nowBrazil()
+            updatedAt: agora()
           })
           .where(eq(systemSettings.key, historyKey));
         
@@ -831,7 +833,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
     
     // Preparar dados de atualização
     const updateData: any = {
-      updatedAt: nowBrazil()
+      updatedAt: agora()
     };
     
     // Atualizar vendedor se mudou
@@ -896,7 +898,7 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
         weekdays: customerWeekdays,
         periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
         lastCompletedDate: lastCompletedDate,
-        referenceDate: nowBrazil(),
+        referenceDate: dataCalendario(hojeBR()),
         serviceStartDate: customerData.serviceStartDate ? new Date(customerData.serviceStartDate) : undefined
       });
       
@@ -1012,7 +1014,7 @@ export async function propagateRecurrenceChange(params: {
     
     // 3. Gerar cronograma alvo de datas futuras (60 dias / ~2 meses)
     const HORIZON_DAYS = 60;
-    const today = nowBrazil();
+    const today = dataCalendario(hojeBR());
     today.setHours(0, 0, 0, 0);
     
     // Usar a data do card como base (ou hoje se o card for no passado)
@@ -1124,7 +1126,7 @@ export async function propagateRecurrenceChange(params: {
           vehicleTypes: currentCard.vehicleTypes,
           customerLatitude: currentCard.customerLatitude,
           customerLongitude: currentCard.customerLongitude,
-          notes: `Card criado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${nowBrazil().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+          notes: `Card criado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${agora().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
         });
         
         cardsCreated++;
@@ -1140,8 +1142,8 @@ export async function propagateRecurrenceChange(params: {
         await db.update(salesCards)
           .set({
             status: 'cancelled' as any,
-            notes: (card.notes || '') + `\n\nCard cancelado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${nowBrazil().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-            updatedAt: nowBrazil()
+            notes: (card.notes || '') + `\n\nCard cancelado automaticamente devido a mudança de recorrência de ${oldRecurrence} para ${newRecurrence} por ${userName} em ${agora().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+            updatedAt: agora()
           })
           .where(eq(salesCards.id, card.id));
         
@@ -1210,7 +1212,7 @@ export async function recalcularAgendaPulandoCiclo(
       dates.push(calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: dates[dates.length - 1] }).nextDate);
     }
 
-    const today = nowBrazil(); today.setHours(0, 0, 0, 0);
+    const today = dataCalendario(hojeBR()); today.setHours(0, 0, 0, 0);
 
     // IDEMPOTÊNCIA: se a próxima visita pendente já é >= retomada, a agenda já foi pulada. Nada a fazer.
     const nextPending = await db.select().from(visitAgenda)
@@ -1254,7 +1256,7 @@ export async function recalcularAgendaPulandoCiclo(
       .where(and(eq(salesCards.customerId, customerId), eq(salesCards.isPermanent, true)))
       .limit(1);
     if (perm) {
-      await db.update(salesCards).set({ nextVisitDate: resume, updatedAt: nowBrazil() }).where(eq(salesCards.id, perm.id));
+      await db.update(salesCards).set({ nextVisitDate: resume, updatedAt: agora() }).where(eq(salesCards.id, perm.id));
     }
     const futurePendingCards = await db.select().from(salesCards)
       .where(and(
@@ -1269,7 +1271,7 @@ export async function recalcularAgendaPulandoCiclo(
       await db.update(salesCards).set({
         scheduledDate: dd,
         routeDay: getRouteDay(dd),
-        updatedAt: nowBrazil(),
+        updatedAt: agora(),
       }).where(eq(salesCards.id, futurePendingCards[i].id));
     }
 

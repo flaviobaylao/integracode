@@ -1,4 +1,6 @@
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, dataCalendario, instanteBR } from '@shared/tempo';
 import { registerOfficialPanel } from "./official-panel";
 import { registerIaAtendimento } from "./ia-atendimento-panel";
 import { registerIaFinalizar } from "./ia-finalizar";
@@ -639,7 +641,7 @@ run();
 
   app.get('/api/admin/routes/day-check', async (req: Request, res: Response) => {
     try {
-      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const raw = String(req.query.date || hojeBR());
       const dateStr = raw.replace(/[^0-9-]/g, '');
       const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
       const ag: any = await db.execute(sql.raw(q));
@@ -667,7 +669,7 @@ run();
   app.get('/api/routes/validate', async (req: Request, res: Response) => {
     try {
       const clean = (v: any) => String(v || '').replace(/[^0-9-]/g, '');
-      const startDate = clean(req.query.startDate) || new Date().toISOString().split('T')[0];
+      const startDate = clean(req.query.startDate) || hojeBR();
       const endDate = clean(req.query.endDate) || startDate;
       const start = new Date(startDate + 'T00:00:00.000Z');
       const end = new Date(endDate + 'T00:00:00.000Z');
@@ -726,7 +728,7 @@ run();
   // na(s) data(s) e regenera pela visit_agenda (planDailyRoute corrigido p/ Opcao A).
   app.post('/api/admin/routes/rebuild-day', async (req: Request, res: Response) => {
     try {
-      const raw = String((req.body && req.body.date) || new Date().toISOString().split('T')[0]);
+      const raw = String((req.body && req.body.date) || hojeBR());
       const dateStr = raw.replace(/[^0-9-]/g, '');
       const days = Math.min(Math.max(parseInt(String((req.body && req.body.days) || '1'), 10) || 1, 1), 14);
       res.json({ ok: true, started: true, date: dateStr, days });
@@ -985,7 +987,7 @@ run();
     // VIGIA 1A (03/jul/2026): Execucao de Rota do dia — planejados x check-ins x vendas x nao-vendas por vendedor
   app.get('/api/admin/routes/execution', async (req: Request, res: Response) => {
     try {
-      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const raw = String(req.query.date || hojeBR());
       const d = raw.replace(/[^0-9-]/g, '');
       const t1s = "(('" + d + "'::date + INTERVAL '1 day')::timestamp + INTERVAL '3 hours')";
       const evWin = (col: string) => "(" + col + " >= '" + d + " 03:00:00' AND " + col + " < " + t1s + ")";
@@ -1056,7 +1058,7 @@ run();
   // VIGIA 1B (03/jul/2026): texto de fechamento de rota (PT) — reusa o endpoint execution
   app.get('/api/admin/routes/execution/summary-text', async (req: Request, res: Response) => {
     try {
-      const raw = String(req.query.date || new Date().toISOString().split('T')[0]);
+      const raw = String(req.query.date || hojeBR());
       const d = raw.replace(/[^0-9-]/g, '');
       const port = process.env.PORT || '8080';
       const r = await fetch('http://127.0.0.1:' + port + '/api/admin/routes/execution?date=' + d);
@@ -1243,9 +1245,9 @@ run();
     const d = String(req.query.date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())).replace(/[^0-9-]/g, '');
     const br = (n: any) => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const JTL = "JOIN users u ON (u.seller_type = 'telemarketing' AND (bp.seller_id = u.id OR bp.seller_id = u.omie_vendor_code OR bp.seller_id = ('omie-vendor-' || u.omie_vendor_code)))";
-    const vendasR: any = await db.execute(sql.raw("SELECT COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), bp.seller_name, bp.seller_id) AS nome, COUNT(*)::int AS qtd, COALESCE(SUM(bp.sale_value),0)::float AS valor FROM billing_pipeline bp " + JTL + " WHERE bp.sale_value > 0 AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY valor DESC"));
+    const vendasR: any = await db.execute(sql.raw("SELECT COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), bp.seller_name, bp.seller_id) AS nome, COUNT(*)::int AS qtd, COALESCE(SUM(bp.sale_value),0)::float AS valor FROM billing_pipeline bp " + JTL + " WHERE bp.sale_value > 0 AND (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY valor DESC"));
     const vendas = (vendasR.rows || vendasR) as any[];
-    const atendR: any = await db.execute(sql.raw("SELECT attendant_name AS nome, COUNT(*)::int AS qtd FROM virtual_service_logs WHERE service_type = 'venda' AND (attendance_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY qtd DESC"));
+    const atendR: any = await db.execute(sql.raw("SELECT attendant_name AS nome, COUNT(*)::int AS qtd FROM virtual_service_logs WHERE service_type = 'venda' AND (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = '" + d + "'::date GROUP BY 1 ORDER BY qtd DESC"));
     const atend = (atendR.rows || atendR) as any[];
     const diagR: any = await db.execute(sql.raw("SELECT (SELECT COUNT(*) FROM users WHERE seller_type = 'telemarketing') AS tlmk_users, (SELECT COUNT(*) FROM billing_pipeline bp " + JTL + " WHERE bp.sale_value > 0) AS pipe_tlmk_all, (SELECT COUNT(*) FROM sales_cards WHERE telemarketing_assigned_to IS NOT NULL) AS cards_tlmk, (SELECT COUNT(*) FROM virtual_service_logs WHERE service_type = 'venda') AS venda_logs"));
     const diag = ((diagR.rows || diagR) as any[])[0] || {};
@@ -1823,7 +1825,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
           maxDist = Number.isFinite(v) && v > 0 ? v : 300;
         } catch (e) { maxDist = 300; }
       }
-      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, sc.seller_id AS sid, sc.check_in_time AS checkin, MAX(sc.distance_to_customer::numeric) AS dist, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1) AS seller_name FROM sales_cards sc LEFT JOIN customers c ON c.id = sc.customer_id WHERE sc.check_in_time IS NOT NULL AND sc.distance_to_customer IS NOT NULL AND (sc.check_in_time AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (sc.check_in_time AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date GROUP BY sc.customer_id, sc.seller_id, sc.check_in_time";
+      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, sc.seller_id AS sid, sc.check_in_time AS checkin, MAX(sc.distance_to_customer::numeric) AS dist, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1) AS seller_name FROM sales_cards sc LEFT JOIN customers c ON c.id = sc.customer_id WHERE sc.check_in_time IS NOT NULL AND sc.distance_to_customer IS NOT NULL AND (sc.check_in_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (sc.check_in_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date GROUP BY sc.customer_id, sc.seller_id, sc.check_in_time";
       const r: any = await db.execute(sql.raw(q));
       const rows = (r.rows || r) as any[];
 
@@ -1860,8 +1862,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const end = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
       const startD = new Date(end + 'T12:00:00Z'); startD.setUTCDate(startD.getUTCDate() - (days - 1));
       const start = startD.toISOString().split('T')[0];
-      const planQ = "SELECT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = dr.seller_id OR u.omie_vendor_code = replace(COALESCE(dr.seller_id,''),'omie-vendor-','') OR u.id = dr.seller_id LIMIT 1), dr.seller_id) AS uid, SUM(dr.total_visits)::int AS planejados FROM daily_routes dr WHERE (dr.route_date AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (dr.route_date AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date GROUP BY 1";
-      const atendQ = "SELECT uid, COUNT(*)::int AS atendidos FROM (SELECT DISTINCT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = bp.seller_id OR u.omie_vendor_code = replace(COALESCE(bp.seller_id,''),'omie-vendor-','') OR u.id = bp.seller_id LIMIT 1), bp.seller_id) AS uid, bp.customer_id AS cid, (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS d FROM billing_pipeline bp WHERE bp.customer_id IS NOT NULL AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date) t GROUP BY uid";
+      const planQ = "SELECT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = dr.seller_id OR u.omie_vendor_code = replace(COALESCE(dr.seller_id,''),'omie-vendor-','') OR u.id = dr.seller_id LIMIT 1), dr.seller_id) AS uid, SUM(dr.total_visits)::int AS planejados FROM daily_routes dr WHERE (dr.route_date)::date >= '" + start + "'::date AND (dr.route_date)::date <= '" + end + "'::date GROUP BY 1";
+      const atendQ = "SELECT uid, COUNT(*)::int AS atendidos FROM (SELECT DISTINCT COALESCE((SELECT u.id FROM users u WHERE u.omie_vendor_code = bp.seller_id OR u.omie_vendor_code = replace(COALESCE(bp.seller_id,''),'omie-vendor-','') OR u.id = bp.seller_id LIMIT 1), bp.seller_id) AS uid, bp.customer_id AS cid, (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS d FROM billing_pipeline bp WHERE bp.customer_id IS NOT NULL AND (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= '" + start + "'::date AND (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date <= '" + end + "'::date) t GROUP BY uid";
       const pr: any = await db.execute(sql.raw(planQ));
       const ar: any = await db.execute(sql.raw(atendQ));
       const byUser: Record<string, any> = {};
@@ -2061,7 +2063,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
         const y = new Date(Date.now() - 86400000);
         date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(y);
       }
-      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE sc.seller_id = '" + seller.replace(/'/g, "") + "' AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.customer_id ORDER BY MAX(c.name)";
+      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE sc.seller_id = '" + seller.replace(/'/g, "") + "' AND (sc.scheduled_date)::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.customer_id ORDER BY MAX(c.name)";
       const r: any = await db.execute(sql.raw(q));
       const rows = ((r.rows || r) as any[]).map((x: any) => ({ customerId: String(x.cid), nome: x.nome, cidade: x.cidade || '' }));
       res.json({ ok: true, date, sellerId: seller, total: rows.length, pendentes: rows, motivos: JUSTIF_MOTIVOS });
@@ -2084,7 +2086,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const q = "SELECT sc.seller_id AS sid, " + nomeSub + " AS vendedor, " + foneSub + " AS telefone, "
         + "sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade "
         + "FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id "
-        + "WHERE (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date "
+        + "WHERE (sc.scheduled_date)::date = '" + date + "'::date "
         + "AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 "
         + "AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) "
         + "AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) "
@@ -2988,11 +2990,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
                COALESCE(is_virtual,false) AS is_virtual, COALESCE(visit_status,'pending') AS visit_status,
                customer_name, sales_card_id, customer_latitude, customer_longitude, customer_address
         FROM visit_agenda
-        WHERE scheduled_date >= CURRENT_DATE AND scheduled_date <= $1`, [until]);
+        WHERE scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date AND scheduled_date <= $1`, [until]);
       const srcRows = r1.rows;
       // ids ja existentes no 2.0
       const idset = new Set<string>();
-      const cur: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= CURRENT_DATE`);
+      const cur: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
       for (const x of (cur.rows || [])) idset.add(x.id);
       let inserted = 0, skipped = 0, failed = 0;
       if (apply) {
@@ -3012,7 +3014,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       let pruned = 0;
       if (req.body?.prune === true) {
         const srcIds = new Set<string>(srcRows.map((x: any) => x.id));
-        const tgt: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= CURRENT_DATE AND visit_status IN ('pending','scheduled')`);
+        const tgt: any = await db.execute(sql`SELECT id FROM visit_agenda WHERE scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date AND visit_status IN ('pending','scheduled')`);
         const toDelete = (tgt.rows || []).map((x: any) => x.id).filter((id: string) => !srcIds.has(id));
         for (const id of toDelete) {
           try { await db.execute(sql`DELETE FROM visit_agenda WHERE id = ${id}`); pruned++; } catch {}
@@ -4307,8 +4309,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const ordersOverview = { blocked, aFaturar, nfsHoje, faturadosDia, faturadosSemana };
       // Clientes a atender no dia = clientes agendados (sales_cards.scheduled_date = a Rota do Dia).
       // Visitado (Visitas Efetivadas) = existe CHECK-IN em route_checkpoints na mesma data.
-      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL GROUP BY sc.customer_id, d`);
-      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date)::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date)::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL GROUP BY sc.customer_id, d`);
+      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       let metas: any[] = [];
       // Meta = média dos ÚLTIMOS 3 faturamentos (pedidos) de cada cliente
       try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM (SELECT customer_id, sale_value, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn FROM billing_pipeline WHERE stage <> 'lixeira' AND sale_value > 0 AND customer_id IS NOT NULL) t WHERE rn <= 3 GROUP BY customer_id`); } catch (e) {}
@@ -5002,8 +5004,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       out.ordersOverview.blocked = await q('blocked', "SELECT bo.id, COALESCE(c.name, bo.customer_id) AS customer_name, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)),''), bo.seller_id) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.id = bo.seller_id OR u.omie_vendor_code = bo.seller_id) WHERE bo.status='blocked' ORDER BY bo.blocked_at DESC LIMIT 400");
       const sm = (arr: any[], k: string) => arr.reduce((a: number, x: any) => a + (parseFloat(x[k]) || 0), 0);
       out.ordersOverview.totals = { blockedCount: out.ordersOverview.blocked.length, blockedAmount: sm(out.ordersOverview.blocked, 'total_amount'), unbilledCount: out.ordersOverview.unbilled.length, unbilledAmount: sm(out.ordersOverview.unbilled, 'sale_value'), todayInvoicesCount: out.ordersOverview.todayInvoices.length, todayInvoicesAmount: sm(out.ordersOverview.todayInvoices, 'total_invoice') };
-      out.monthly = { byInstance: await q('monthlyByInstance', "SELECT COALESCE(omie_instance_name,'-') AS instance, COALESCE(SUM(sale_value),0) AS revenue, COUNT(*)::int AS cnt FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') GROUP BY 1 ORDER BY 2 DESC") };
-      out.sellerComparison = await q('sellerComparison', "SELECT COALESCE(seller_name, seller_id, 'sem vendedor') AS seller_name, (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia, COALESCE(SUM(sale_value),0) AS revenue, COUNT(*)::int AS pedidos FROM billing_pipeline WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) GROUP BY 1,2 ORDER BY 1,2");
+      out.monthly = { byInstance: await q('monthlyByInstance', "SELECT COALESCE(omie_instance_name,'-') AS instance, COALESCE(SUM(sale_value),0) AS revenue, COUNT(*)::int AS cnt FROM billing_pipeline WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') GROUP BY 1 ORDER BY 2 DESC") };
+      out.sellerComparison = await q('sellerComparison', "SELECT COALESCE(seller_name, seller_id, 'sem vendedor') AS seller_name, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia, COALESCE(SUM(sale_value),0) AS revenue, COUNT(*)::int AS pedidos FROM billing_pipeline WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) GROUP BY 1,2 ORDER BY 1,2");
       res.json(out);
     } catch (err: any) { res.status(500).json({ error: err.message, partial: out }); }
   });

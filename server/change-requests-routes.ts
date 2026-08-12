@@ -271,7 +271,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     const rows = rowsOf(await db.execute(sql`
       SELECT * FROM change_requests
       WHERE entity_id IN (${inList})
-      ${dateOk ? sql`AND to_char(created_at AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') = ${dq}` : sql``}
+      ${dateOk ? sql`AND to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') = ${dq}` : sql``}
       ORDER BY created_at DESC`));
     const out: Record<string, any> = {};
     for (const r of rows) {
