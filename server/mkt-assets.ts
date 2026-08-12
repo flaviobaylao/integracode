@@ -217,7 +217,7 @@ export function classificarFormato(largura?: number | null, altura?: number | nu
 }
 
 // ---------------------------------------------------------------------------
-// URL -> bytes (so para data: URL; caminho de arquivo nao busca a rede)
+// URL -> bytes (data: URL ou tabela interna; nunca busca na rede)
 // ---------------------------------------------------------------------------
 
 function bytesDaUrl(url: string): Buffer | null {
@@ -227,11 +227,34 @@ function bytesDaUrl(url: string): Buffer | null {
   try { return Buffer.from(m[2], 'base64'); } catch { return null; }
 }
 
-export function impressaoDigital(url: string): string {
-  const b = bytesDaUrl(url);
-  // Foto embutida: hash do conteudo - pega a mesma foto repetida em N produtos.
+/**
+ * Foto que subiu pelo /api/upload-image vira uma URL curta (/api/photo-media/<id>)
+ * com os bytes guardados no banco. Sem ler esses bytes, a foto entraria SEM
+ * dimensao (formato "desconhecido") e SEM dedup de conteudo - a mesma foto
+ * enviada duas vezes viraria dois criativos e sujaria o desempenho por tag.
+ */
+async function bytesInternos(url: string): Promise<Buffer | null> {
+  const u = String(url || '').trim();
+  const m = /^\/api\/photo-media\/([A-Za-z0-9_-]{1,64})$/.exec(u);
+  if (!m) return null;
+  try {
+    const r: any = await db.execute(sql`SELECT data FROM photo_media WHERE id = ${m[1]} LIMIT 1`);
+    const b64 = r.rows?.[0]?.data;
+    if (!b64) return null;
+    return Buffer.from(String(b64), 'base64');
+  } catch { return null; }
+}
+
+/** Bytes reais da imagem, venham de data: URL ou do armazenamento interno. */
+export async function bytesDoCriativo(url: string): Promise<Buffer | null> {
+  return bytesDaUrl(url) || (await bytesInternos(url));
+}
+
+export function impressaoDigital(url: string, bytes?: Buffer | null): string {
+  const b = bytes && bytes.length > 0 ? bytes : bytesDaUrl(url);
+  // Foto com bytes em maos: hash do conteudo - pega a mesma foto repetida em N produtos.
   if (b && b.length > 0) return crypto.createHash('sha256').update(b).digest('hex');
-  // Caminho/URL: hash da propria url normalizada - dedup por identidade.
+  // Caminho/URL sem bytes: hash da propria url normalizada - dedup por identidade.
   return crypto.createHash('sha256').update('url:' + String(url).trim().toLowerCase()).digest('hex');
 }
 
@@ -334,10 +357,10 @@ export async function cadastrarAsset(a: NovoAsset): Promise<ResultadoCadastro> {
   const { tags: tagsLimpas, recusadas } = sanearTags(a.tags);
   const tags = mesclarTags(tagsLimpas, tagsSugeridas(a.produtoNome, a.fonte));
 
-  const buf = bytesDaUrl(url);
+  const buf = await bytesDoCriativo(url);
   const dim = buf ? lerDimensao(buf) : null;
   const formato = classificarFormato(dim?.largura, dim?.altura);
-  const sha = impressaoDigital(url);
+  const sha = impressaoDigital(url, buf);
 
   // IA gerada nasce SEM direitos liberados: exige aprovacao explicita (regra da casa).
   const direitosOk = origem === 'ia_gerado' ? false : (a.direitosOk === true);
@@ -367,7 +390,9 @@ export async function cadastrarAsset(a: NovoAsset): Promise<ResultadoCadastro> {
     const id = Number(ex.rows[0].id);
     const juntas = mesclarTags(ex.rows[0].tags, tags);
     await db.execute(sql`UPDATE mkt_assets SET tags = ${JSON.stringify(juntas)}::jsonb WHERE id = ${id}`);
-    return { ok: true, id, duplicado: true, formato, recusadas };
+    // Mesma forma de resposta do caminho novo - quem chama nao deveria precisar
+    // saber se caiu no insert ou no dedup para ler largura/altura.
+    return { ok: true, id, duplicado: true, formato, largura: dim?.largura ?? null, altura: dim?.altura ?? null, recusadas };
   } catch (e: any) {
     return { ok: false, erro: String(e?.message || e) };
   }
