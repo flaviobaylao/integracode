@@ -189,11 +189,58 @@ app.use((req, res, next) => {
     res.redirect(302, destino);
   });
 
+  // ── CENTRAL DE MARKETING — buraco 9: PRESENÇA EM GOOGLE ──
+  // robots.txt e sitemap.xml PRECISAM ficar aqui, antes do catch-all do SPA.
+  // Antes disso os dois respondiam 200 com o HTML do painel — e robots.txt que
+  // devolve HTML não é "faltando", é QUEBRADO: o robô trata como malformado.
+  app.get('/robots.txt', async (_req, res) => {
+    try {
+      const { robotsTxt } = await import('./mkt-google');
+      res.type('text/plain').set('Cache-Control', 'public, max-age=3600').send(await robotsTxt());
+    } catch {
+      // Sem o módulo, o mínimo seguro: liberar a loja e apontar o resto.
+      res.type('text/plain').send('User-agent: *\nAllow: /shop\nDisallow: /api/\n');
+    }
+  });
+  app.get('/sitemap.xml', async (_req, res) => {
+    try {
+      const { sitemapXml } = await import('./mkt-google');
+      res.type('application/xml').set('Cache-Control', 'public, max-age=3600').send(await sitemapXml());
+    } catch (e: any) {
+      console.error('[MKT-GOOGLE] sitemap falhou:', e?.message || e);
+      res.status(500).type('text/plain').send('sitemap indisponivel');
+    }
+  });
+
+  // O HTML do hotsite servido COM o bloco de SEO (canonical, og:image, JSON-LD,
+  // tag do GA4/Ads quando houver ID). À prova de falha: qualquer erro devolve o
+  // arquivo original — loja fora do ar por causa de SEO seria o pior negócio.
+  let _htmlShopCache: { em: number; html: string } | null = null;
+  const servirShop = async (res: any) => {
+    const arquivo = path.join(distHotsitePath, "index.html");
+    try {
+      if (_htmlShopCache && Date.now() - _htmlShopCache.em < 300_000) {
+        return res.type('text/html').send(_htmlShopCache.html);
+      }
+      const fsp = await import('fs/promises');
+      const original = await fsp.readFile(arquivo, 'utf8');
+      const { injetarSeo } = await import('./mkt-google');
+      const html = await injetarSeo(original);
+      _htmlShopCache = { em: Date.now(), html };
+      return res.type('text/html').send(html);
+    } catch (e: any) {
+      console.error('[MKT-GOOGLE] injecao de SEO falhou, servindo o original:', e?.message || e);
+      return res.sendFile(arquivo);
+    }
+  };
+  app.get(['/shop', '/shop/', '/shop/index.html'], (_req, res) => { void servirShop(res); });
+
   // Servir arquivos estáticos do hotsite com fallthrough disabled
   app.use('/shop', express.static(distHotsitePath, { fallthrough: false }));
 
   // Catch-all para servir index.html em rotas do hotsite
-  app.all('/shop*', (_req, res) => {
+  app.all('/shop*', (req, res) => {
+    if (req.method === 'GET') return void servirShop(res);
     res.sendFile(path.join(distHotsitePath, "index.html"));
   });
 
@@ -4166,6 +4213,49 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const { marcarPublicada } = await import('./mkt-esteira');
       const r = await marcarPublicada(String(req.params.id), { ...(req.body || {}), quem: quem(req) });
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // ===== Central de Marketing - buraco 9: presenca em Google =====
+  app.get("/api/mkt/google", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { configGoogle, diagnosticoGoogle } = await import('./mkt-google');
+      res.json({ config: await configGoogle(true), diagnostico: await diagnosticoGoogle() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/google", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { salvarConfigGoogle } = await import('./mkt-google');
+      const r = await salvarConfigGoogle(req.body || {});
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/google/conversoes", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { conversoesOffline } = await import('./mkt-google');
+      res.json(await conversoesOffline(Number(req.query?.dias || 90)));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // CSV no formato exato de "Importar conversoes" do Google Ads
+  app.get("/api/mkt/google/conversoes.csv", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { csvGoogleAds } = await import('./mkt-google');
+      res.type('text/csv').set('Content-Disposition', 'attachment; filename="conversoes-google-ads.csv"')
+         .send(await csvGoogleAds(Number(req.query?.dias || 90)));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Espelho do que o robo do Google recebe - para conferir sem sair da tela
+  app.get("/api/mkt/google/previa", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { robotsTxt, sitemapXml, jsonLd, blocoSeo } = await import('./mkt-google');
+      const sm = await sitemapXml();
+      res.json({
+        robots: await robotsTxt(),
+        sitemapUrls: (sm.match(/<loc>/g) || []).length,
+        sitemapInicio: sm.slice(0, 600),
+        jsonLd: await jsonLd(),
+        cabecalho: await blocoSeo(),
+      });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
