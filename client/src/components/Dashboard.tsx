@@ -144,6 +144,8 @@ export default function Dashboard() {
   // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
   const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
   const { data: phoneCoverage } = useQuery<any[]>({ queryKey: ["/api/dashboard/phone-coverage"], refetchInterval: 60000, refetchOnWindowFocus: true, staleTime: 0 });
+  const { data: forecastData } = useQuery<any>({ queryKey: ["/api/dashboard2/forecast"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
+  const [showForecast, setShowForecast] = useState<boolean>(true);
   const phoneCov = useMemo(() => {
     const arr = Array.isArray(phoneCoverage) ? [...phoneCoverage] : [];
     arr.sort((a: any, b: any) => (a.pct - b.pct) || (b.invalid - a.invalid));
@@ -293,7 +295,16 @@ export default function Dashboard() {
     }
     return { total, elapsed };
   }, [bounds.today]);
-  const projTotal = businessDays.elapsed > 0 ? (grandTotals.mensal / businessDays.elapsed) * businessDays.total : grandTotals.mensal;
+  const normId = (nm: string) => String(nm || "").toLowerCase().replace(/\s+/g, " ").replace(/\.+$/, "").trim();
+  const forecast = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    const bySeller: Record<string, number> = {};
+    let total = 0;
+    const arr = forecastData?.forecast;
+    if (Array.isArray(arr)) for (const r of arr) { const s = normId(r.seller); const d = String(r.date).slice(0, 10); const v = Number(r.value) || 0; (map[s] = map[s] || {}); map[s][d] = (map[s][d] || 0) + v; bySeller[s] = (bySeller[s] || 0) + v; total += v; }
+    return { map, bySeller, total: Math.round(total * 100) / 100 };
+  }, [forecastData]);
+  const projTotal = grandTotals.mensal + forecast.total;
   const dailyRevenue = useMemo(() => {
     const rws = data?.visitSummary?.rows;
     if (!Array.isArray(rws)) return [] as { d: string; v: number }[];
@@ -451,12 +462,14 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center justify-between gap-4">
+      <div className="relative rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center justify-between gap-4">
+        <div className="absolute top-2 right-2"><InfoDot text="Projeção de faturamento do mês = faturamento já realizado + previsão dos pedidos que ainda devem entrar até o fim do mês. A previsão é por cliente da carteira: para cada cliente com histórico, calculamos a periodicidade de compra (intervalo médio entre pedidos, ponderado por recência), o dia da semana mais frequente e o ticket médio (ponderado por recência) dos últimos ~3 meses, e projetamos os próximos pedidos nos dias previstos, creditando ao dono da carteira. O botão Previsões liga/desliga a exibição desses valores nas células (em azul); somados ao realizado, compõem a projeção." /></div>
         <div>
-          <div className="text-sm font-semibold text-indigo-800">Projeção do mês (dias úteis seg-sex)</div>
-          <div className="text-[11px] text-indigo-600">Ritmo dos dias úteis já decorridos: {businessDays.elapsed} de {businessDays.total} · média por dia útil {brl(businessDays.elapsed > 0 ? grandTotals.mensal / businessDays.elapsed : 0)}</div>
+          <div className="text-sm font-semibold text-indigo-800">Projeção de faturamento do mês</div>
+          <div className="text-[11px] text-indigo-600">Realizado {brl(grandTotals.mensal)} + previsão {brl(forecast.total)} — por cliente da carteira (periodicidade e dia da semana, últimos ~3 meses)</div>
+          <button type="button" onClick={() => setShowForecast((s) => !s)} className={"mt-1 inline-flex items-center gap-1 text-[11px] font-medium rounded px-2 py-0.5 border " + (showForecast ? "bg-sky-100 border-sky-300 text-sky-700" : "bg-white border-gray-300 text-gray-500")}>{showForecast ? "Previsões: ligadas" : "Previsões: desligadas"}</button>
         </div>
-        <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap">{brl(projTotal)}</div>
+        <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap pr-6">{brl(projTotal)}</div>
       </div>
 
       <Card>
@@ -492,12 +505,15 @@ export default function Dashboard() {
                   <tr key={x.sellerId} className="border-b border-gray-200 hover:bg-gray-50">
                     <td className="py-1 pr-3 pl-1 font-medium text-gray-800 whitespace-nowrap sticky left-0 bg-white">{x.sellerName}</td>
                     {x.weeks.flatMap((wk: any, wi: number) => [
-                      ...wk.dayVals.map((v: any, di: number) => (
-                        <td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums text-gray-700 " + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? "" : nfmt(v)}</td>
-                      )),
+                      ...wk.dayVals.map((v: any, di: number) => {
+                        const day = monthWeeks[wi].days[di];
+                        const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.map[x.sellerId]?.[day.iso] || 0) : 0;
+                        const showFc = fc > 0 && (v == null || v === 0);
+                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
+                      })
                       <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{wk.total ? nfmt(wk.total) : ""}</td>
                     ])}
-                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(businessDays.elapsed > 0 ? (x.mensal / businessDays.elapsed) * businessDays.total : x.mensal)}</td>
+                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
                     <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
                   </tr>
                 ))}
