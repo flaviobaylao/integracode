@@ -65,6 +65,13 @@ function proximoMes1(mes: string): string {
   return `${y}-${String(m).padStart(2, "0")}-01`;
 }
 
+/** Quantos meses separam 'YYYY-MM' de 'YYYY-MM' (b - a). */
+function distanciaMeses(a: string, b: string): number {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
+
 /** PJ / PF: o documento manda; sem documento, vale o tipo do cadastro. */
 function classificaTipo(doc: string | null, customerType: string | null): "PJ" | "PF" | "Não identificado" {
   const d = String(doc || "").replace(/\D/g, "");
@@ -225,6 +232,31 @@ export function registerCarteira(app: Express) {
         console.warn("[gestao-carteiras] serie NF-e indisponivel:", e?.message || e);
       }
 
+      // 2b) DEBITO DA CARTEIRA — estoque de hoje, nao do periodo. Mesma regra da
+      //     aba Contas a Receber e do alerta diario (server/debitos-vencidos-alert.ts):
+      //     status 'vencida' OU 'a_vencer' com vencimento ja passado no fuso Brasil,
+      //     valor em aberto = amount - amount_paid. Passa pelo mesmo FILTRO_VENDA:
+      //     aporte de socio vencido nao e debito de cliente.
+      const VENCIDO = `(COALESCE(status::text,'') = 'vencida'
+                        OR (COALESCE(status::text,'') = 'a_vencer'
+                            AND due_date::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date))`;
+      const debitoRows = await q(`
+        SELECT COALESCE(
+                 NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),''),
+                 'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),''),'?')
+               ) AS chave,
+               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0) - COALESCE(NULLIF(amount_paid::text,'')::numeric,0)),0)::float AS debito
+        FROM receivables
+        WHERE deleted_at IS NULL
+          AND ${VENCIDO}
+          AND (COALESCE(NULLIF(amount::text,'')::numeric,0) - COALESCE(NULLIF(amount_paid::text,'')::numeric,0)) > 0
+          ${FILTRO_VENDA}
+        GROUP BY 1`);
+      const debitoPorChave = new Map<string, number>(
+        debitoRows.map((r: any) => [String(r.chave), Number(r.debito) || 0]),
+      );
+      const debitoTotal = debitoRows.reduce((s2: number, r: any) => s2 + (Number(r.debito) || 0), 0);
+
       // 3) Por cliente: total, titulos, meses com compra e o mapa mes -> valor.
       //    O cadastro entra por LEFT JOIN no documento (tipo, vendedor, cidade,
       //    segmento, ativo) — cliente sem cadastro fica com o nome do titulo.
@@ -288,6 +320,20 @@ export function registerCarteira(app: Express) {
         }
         const total = Number(r.total) || 0;
         const doc = r.doc ? String(r.doc) : null;
+        const mesesComCompra = Number(r.meses_com_compra) || 0;
+        // SITUACAO (baldes exclusivos, nesta ordem):
+        //  inativo = cadastro inativado — a empresa ja disse que ele saiu;
+        //  perdido = cadastro ativo, comprava com regularidade (3+ meses com
+        //            compra) e esta ha 3 meses ou mais sem comprar — churn
+        //            silencioso, o balde que da para reagir;
+        //  ativo   = o resto.
+        const mesesSemComprar = r.ultimo_mes ? distanciaMeses(String(r.ultimo_mes), hoje) : 999;
+        const cadastroInativo = r.cad_nome ? r.is_active !== true : false;
+        const situacao: "ativo" | "inativo" | "perdido" = cadastroInativo
+          ? "inativo"
+          : mesesComCompra >= 3 && mesesSemComprar >= 3
+            ? "perdido"
+            : "ativo";
         return {
           chave: String(r.chave),
           doc,
@@ -307,6 +353,12 @@ export function registerCarteira(app: Express) {
           ultimaCompra: r.ultimo_mes || null,
           mediaSimples: meses.length ? total / meses.length : 0,
           mediaPonderada: ponderado / somaPesos,
+          // Ritmo do cliente QUANDO ele compra (nao dilui pelos meses parados) —
+          // e a base do "quanto deixaria de entrar se ele parar".
+          potencialMes: mesesComCompra > 0 ? total / mesesComCompra : 0,
+          debito: debitoPorChave.get(String(r.chave)) || 0,
+          situacao,
+          mesesSemComprar,
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
           classe: "C" as "A" | "B" | "C",
         };
@@ -414,6 +466,7 @@ export function registerCarteira(app: Express) {
         tipos,
         segmentos,
         vendedores,
+        debitoTotal,
         clientesTotal: clientes.length,
         clientesTruncado: clientes.length > LIMITE,
         clientes: clientes.slice(0, LIMITE),
