@@ -58,6 +58,10 @@ function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: strin
   );
 }
 
+/** "Gilmar M (240)" -> "Gilmar M". A contagem entre parênteses muda com o
+ *  período, então ela nunca pode fazer parte da chave de comparação. */
+const baseNome = (r: string) => String(r || "").replace(/\s*\([\d.,]+\)\s*$/, "").trim();
+
 /** Rótulo dentro da fatia: só nas fatias com folga (>=6%), para não colidir. */
 const rotuloFatia = (p: any) => (p.percent >= 0.06 ? `${(p.percent * 100).toFixed(0)}%` : "");
 
@@ -106,21 +110,28 @@ export default function GestaoCarteiras() {
     return nomesAtivos.size ? lista.filter((v: any) => nomesAtivos.has(normVend(v.vendedor))) : lista;
   }, [d, nomesAtivos]);
 
-  // O rotulo do dropdown carrega a contagem ("Gilmar M (240)"); o mapa devolve o
-  // nome puro, que e o que casa com `cliente.vendedor`.
+  // Rotulo do dropdown = nome + quantos clientes ele tem NO PERIODO escolhido.
   const opcoesVend = useMemo(
     () => vendedoresDropdown.map((v: any) => `${v.vendedor} (${v.clientes})`),
     [vendedoresDropdown],
   );
-  const nomePorRotulo = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const v of vendedoresDropdown as any[]) m.set(`${v.vendedor} (${v.clientes})`, v.vendedor);
-    return m;
-  }, [vendedoresDropdown]);
-  const nomesSel = useMemo(
-    () => new Set(vendedores.map((r) => nomePorRotulo.get(r) || r)),
-    [vendedores, nomePorRotulo],
-  );
+  // O rotulo carrega a contagem, e a contagem MUDA quando o periodo muda
+  // ("Gilmar M (240)" vira "Gilmar M (233)"). Por isso o filtro casa pelo NOME,
+  // nunca pelo rotulo inteiro — foi o que zerou a tela ao trocar o mes de inicio.
+  const nomesSel = useMemo(() => new Set(vendedores.map(baseNome)), [vendedores]);
+
+  // E, quando as opcoes se renovam, remapeia a selecao para os rotulos novos,
+  // senao o checkbox aparece desmarcado mesmo com o filtro valendo.
+  useEffect(() => {
+    if (!opcoesVend.length) return;
+    setVendedores((prev) => {
+      if (!prev.length) return prev;
+      const porNome = new Map(opcoesVend.map((o) => [baseNome(o), o]));
+      const next = prev.filter((r) => porNome.has(baseNome(r))).map((r) => porNome.get(baseNome(r)) as string);
+      const igual = next.length === prev.length && next.every((v, i) => v === prev[i]);
+      return igual ? prev : next;
+    });
+  }, [opcoesVend]);
 
   const filtrarVend = nomesSel.size > 0;
   // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
