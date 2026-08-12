@@ -56,6 +56,31 @@ export function dataCalendario(iso: string): Date {
   return new Date(`${dia}T00:00:00.000Z`);
 }
 
+/** Dia no Brasil deslocado de N dias, como 'YYYY-MM-DD'. Aritmetica em UTC puro,
+ *  entao nao depende do fuso do processo nem do navegador.
+ *  Ex.: diaMaisBR(-7) = ha uma semana; diaMaisBR(30) = daqui a 30 dias. */
+export function diaMaisBR(dias: number, ref: Date = new Date()): string {
+  const d = dataCalendario(hojeBR(ref));
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Primeiro dia do mes de um dia 'YYYY-MM-DD'. */
+export function inicioDoMes(dia: string): string {
+  return `${String(dia).slice(0, 7)}-01`;
+}
+
+/** Ultimo dia do mes de um dia 'YYYY-MM-DD'. */
+export function fimDoMes(dia: string): string {
+  const [a, m] = String(dia).slice(0, 7).split('-').map(Number);
+  return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
+}
+
+/** Diferenca em DIAS de calendario entre dois dias 'YYYY-MM-DD' (a - b). */
+export function diasEntre(a: string, b: string): number {
+  return Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000);
+}
+
 /** Instante UTC correspondente a uma data+hora de parede de Brasilia.
  *  Ex.: instanteBR('2026-08-11', '08:00') -> 2026-08-11T11:00:00.000Z */
 export function instanteBR(dia: string, hora = '00:00'): Date {
