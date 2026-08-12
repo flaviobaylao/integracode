@@ -1879,9 +1879,23 @@ function PresencaGoogle() {
               </div>
             ))}
           </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {[
+              ["horario", "Horário de atendimento", "Mo-Fr 08:30-18:30, Sa 08:30-12:00"],
+              ["redes", "Perfis oficiais (vírgula)", "link do Perfil no Google, Instagram, Facebook"],
+            ].map(([k, rot, ph]: any) => (
+              <div key={k}>
+                <Label className="text-xs">{rot}</Label>
+                <Input value={cfg[k] || ""} placeholder={ph} onChange={(e) => set(k, e.target.value)} />
+              </div>
+            ))}
+          </div>
           <p className="text-[11px] text-muted-foreground">
             Endereço em branco fica <b>fora</b> do dado estruturado de propósito: endereço inventado é pior
             que endereço nenhum, porque o Google cruza com o Perfil da Empresa e desconfia do resto.
+            O horário só vale no formato <code>Mo-Fr 08:30-18:30</code> — texto solto o Google ignora.
+            Em <b>perfis oficiais</b>, o link do Perfil da Empresa no Google é o mais importante: é ele
+            que diz ao Google que o site e o perfil são o mesmo negócio.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={salvar} disabled={salvando || !form}>
