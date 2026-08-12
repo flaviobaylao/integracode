@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  LineChart, Line, BarChart, Bar, LabelList, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
 import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,6 +20,9 @@ const COR_ABC: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6e
 const COR_TIPO: Record<string, string> = { PJ: "#2a78d6", PF: "#eb6834", "Não identificado": "#898781" };
 const CAT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"];
 const CINZA = "#898781";
+// Barras da situação da carteira — ordem importa: a validação é por par
+// adjacente (azul→vermelho→âmbar→violeta passa em todas as checagens).
+const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda100", perdidos: "#4a3aa7" };
 const SERIE_TITULOS = "#2a78d6";
 const SERIE_NF = "#eb6834";
 
@@ -37,6 +40,7 @@ type Cliente = {
   segmento: string; cadastrado: boolean; ativo: boolean; total: number; titulos: number;
   mesesComCompra: number; primeiraCompra: string | null; ultimaCompra: string | null;
   mediaSimples: number; mediaPonderada: number; classe: "A" | "B" | "C";
+  potencialMes: number; debito: number; situacao: "ativo" | "inativo" | "perdido"; mesesSemComprar: number;
 };
 
 function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: string; cor?: string }) {
@@ -63,7 +67,7 @@ export default function GestaoCarteiras() {
   const [inicio, setInicio] = useState("2025-01");
   const [fim, setFim] = useState(mesHoje);
   const [vendedores, setVendedores] = useState<string[]>([]); // vazio = todos
-  const [tipoPizza, setTipoPizza] = useState<"abc" | "segmento">("abc");
+  const [visao, setVisao] = useState<"situacao" | "segmento">("situacao");
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
   const [busca, setBusca] = useState("");
@@ -249,6 +253,24 @@ export default function GestaoCarteiras() {
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
 
+  // ── Situação da carteira (4 barras) ───────────────────────────────────────
+  // Fluxos em R$/mês; o débito é estoque (total vencido em aberto hoje) e vai
+  // rotulado como tal. Tudo sai da lista já filtrada por vendedor.
+  const barras = useMemo(() => {
+    const totalPeriodo = clientes.reduce((s, c) => s + c.total, 0);
+    const fatMes = meses.length ? totalPeriodo / meses.length : 0;
+    const debito = clientes.reduce((s, c) => s + (c.debito || 0), 0);
+    const inat = clientes.filter((c) => c.situacao === "inativo");
+    const perd = clientes.filter((c) => c.situacao === "perdido");
+    const soma = (arr: Cliente[]) => arr.reduce((s, c) => s + (c.potencialMes || 0), 0);
+    return [
+      { chave: "faturamento", nome: "Faturamento", valor: fatMes, cor: COR_BARRA.faturamento, unidade: "por mês", nota: `${NUM(clientes.length)} clientes · ${BRL0(totalPeriodo)} no período`, clientes: clientes.length },
+      { chave: "debito", nome: "Débito da carteira", valor: debito, cor: COR_BARRA.debito, unidade: "vencido em aberto", nota: `${NUM(clientes.filter((c) => (c.debito || 0) > 0).length)} clientes com título vencido`, clientes: clientes.filter((c) => (c.debito || 0) > 0).length },
+      { chave: "inativos", nome: "Inativos", valor: soma(inat), cor: COR_BARRA.inativos, unidade: "potencial por mês", nota: `${NUM(inat.length)} clientes com cadastro inativado`, clientes: inat.length },
+      { chave: "perdidos", nome: "Perdidos", valor: soma(perd), cor: COR_BARRA.perdidos, unidade: "potencial por mês", nota: `${NUM(perd.length)} clientes sem comprar há 3+ meses`, clientes: perd.length },
+    ];
+  }, [clientes, meses]);
+
   const opcoesMes = useMemo(() => {
     const out: string[] = [];
     let y = 2025, m = 1;
@@ -344,57 +366,87 @@ export default function GestaoCarteiras() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Pizza 1 — segmentos da carteira */}
+            {/* Barras — situação da carteira (substituiu a pizza da curva ABC) */}
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <CardTitle>Segmentos da carteira</CardTitle>
+                    <CardTitle>{visao === "situacao" ? "Situação da carteira" : "Segmentos da carteira"}</CardTitle>
                     <CardDescription>
-                      {tipoPizza === "abc"
-                        ? "Curva ABC — A = clientes que somam 80% do faturamento, B = até 95%, C = o restante"
+                      {visao === "situacao"
+                        ? "Quanto entra e quanto está parado. Valores por mês, menos o débito, que é o total vencido em aberto hoje."
                         : "Segmento de negócio informado no cadastro do cliente"}
                     </CardDescription>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <Button size="sm" variant={tipoPizza === "abc" ? "default" : "outline"} onClick={() => setTipoPizza("abc")} data-testid="button-abc">Curva ABC</Button>
-                    <Button size="sm" variant={tipoPizza === "segmento" ? "default" : "outline"} onClick={() => setTipoPizza("segmento")} data-testid="button-segmento">Negócio</Button>
+                    <Button size="sm" variant={visao === "situacao" ? "default" : "outline"} onClick={() => setVisao("situacao")} data-testid="button-situacao">Situação</Button>
+                    <Button size="sm" variant={visao === "segmento" ? "default" : "outline"} onClick={() => setVisao("segmento")} data-testid="button-segmento">Negócio</Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={290}>
-                  <PieChart>
-                    <Pie
-                      data={(tipoPizza === "abc"
-                        ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
-                        : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] })))}
-                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
-                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
-                    >
-                      {(tipoPizza === "abc"
-                        ? abc.map((a: any) => COR_ABC[a.classe])
-                        : segmentos.map((s: any, i: number) => (/^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length]))
-                      ).map((cor: string, i: number) => <Cell key={i} fill={cor} />)}
-                    </Pie>
-                    <Tooltip formatter={(v: any, n: any, p: any) => [`${BRL(v)} · ${NUM(p?.payload?.clientes)} clientes`, p?.payload?.nome]} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="mt-2 border-t pt-2 text-sm">
-                  {(tipoPizza === "abc"
-                    ? abc.map((a: any) => ({ nome: `Classe ${a.classe}`, valor: a.valor, clientes: a.clientes, cor: COR_ABC[a.classe] }))
-                    : segmentos.map((s: any, i: number) => ({ nome: s.segmento, valor: s.valor, clientes: s.clientes, cor: /^Demais|Sem segmento/.test(s.segmento) ? CINZA : CAT[i % CAT.length] }))
-                  ).map((x: any) => (
-                    <div key={x.nome} className="flex items-center justify-between py-0.5">
-                      <span className="flex items-center gap-2">
-                        <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: x.cor }} />
-                        {x.nome} <span className="text-muted-foreground">({NUM(x.clientes)} clientes)</span>
-                      </span>
-                      <span className="font-medium">{BRL0(x.valor)}</span>
+                {visao === "situacao" ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={290}>
+                      <BarChart data={barras} layout="vertical" margin={{ top: 8, right: 96, left: 8, bottom: 4 }} barCategoryGap="28%">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#ececea" horizontal={false} />
+                        <XAxis type="number" tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
+                          tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={{ stroke: "#ececea" }} />
+                        <YAxis type="category" dataKey="nome" width={140} tick={{ fontSize: 13, fill: "#52514e" }} tickLine={false} axisLine={false} />
+                        <Tooltip
+                          cursor={{ fill: "#00000008" }}
+                          formatter={(v: any, _n: any, p: any) => [`${BRL(v)} (${p?.payload?.unidade})`, p?.payload?.nome]}
+                          labelFormatter={() => ""}
+                        />
+                        <Bar dataKey="valor" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                          {barras.map((b) => <Cell key={b.chave} fill={b.cor} />)}
+                          <LabelList dataKey="valor" position="right" formatter={(v: any) => BRL0(v)}
+                            style={{ fontSize: 12, fontWeight: 600, fill: "#0b0b0b" }} />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="mt-2 border-t pt-2 text-sm">
+                      {barras.map((b) => (
+                        <div key={b.chave} className="flex items-start justify-between gap-3 py-0.5">
+                          <span className="flex items-center gap-2">
+                            <span className="inline-block h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: b.cor }} />
+                            {b.nome} <span className="text-muted-foreground text-xs">({b.unidade}) · {b.nota}</span>
+                          </span>
+                          <span className="font-medium whitespace-nowrap">{BRL0(b.valor)}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                ) : (
+                  <>
+                    <ResponsiveContainer width="100%" height={290}>
+                      <PieChart>
+                        <Pie
+                          data={segmentos.map((s2: any, i: number) => ({ nome: s2.segmento, valor: s2.valor, clientes: s2.clientes, cor: /^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length] }))}
+                          dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
+                          stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
+                        >
+                          {segmentos.map((s2: any, i: number) => (
+                            <Cell key={i} fill={/^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(v: any, n: any, p: any) => [`${BRL(v)} · ${NUM(p?.payload?.clientes)} clientes`, p?.payload?.nome]} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="mt-2 border-t pt-2 text-sm">
+                      {segmentos.map((s2: any, i: number) => (
+                        <div key={s2.segmento} className="flex items-center justify-between py-0.5">
+                          <span className="flex items-center gap-2">
+                            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: /^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length] }} />
+                            {s2.segmento} <span className="text-muted-foreground">({NUM(s2.clientes)} clientes)</span>
+                          </span>
+                          <span className="font-medium">{BRL0(s2.valor)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
