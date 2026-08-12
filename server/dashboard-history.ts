@@ -105,6 +105,82 @@ export async function backfillDashboardHistory(): Promise<number> {
   return n;
 }
 
+// ============================================================================
+// PREVISAO DE FATURAMENTO POR CLIENTE DA CARTEIRA (periodicidade + dia da semana)
+// Para cada cliente com >=2 compras nos ultimos ~100 dias: calcula periodicidade
+// (media dos intervalos, ponderada por recencia), dia da semana dominante e ticket
+// medio (ponderado por recencia). Projeta as proximas compras dentro do mes vigente,
+// creditando ao dono da carteira (customers.seller_id). Retorna 1 valor por (vendedor, dia).
+// ============================================================================
+
+function ymdToDate(iso: string): Date { const p = iso.split("-").map(Number); return new Date(Date.UTC(p[0], p[1] - 1, p[2])); }
+function dateToYmd(dt: Date): string { return dt.toISOString().slice(0, 10); }
+function addDays(iso: string, n: number): string { const dt = ymdToDate(iso); dt.setUTCDate(dt.getUTCDate() + n); return dateToYmd(dt); }
+function weekdayOf(iso: string): number { return ymdToDate(iso).getUTCDay(); } // 0=dom ... 6=sab
+function diffDays(a: string, b: string): number { return Math.round((ymdToDate(b).getTime() - ymdToDate(a).getTime()) / 86400000); }
+
+const CARTEIRA_SELLER = "(SELECT DISTINCT ON (doc) doc, seller FROM (SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') AS seller FROM customers c JOIN users u ON (u.omie_vendor_code=c.seller_id OR u.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id=c.seller_id) WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> '') s ORDER BY doc) cs";
+
+export async function computeForecast(): Promise<{ asOf: string; monthEnd: string; forecast: { seller: string; date: string; value: number }[]; total: number; clients: number }> {
+  const today = todayBrt();
+  const [Y, M] = today.split("-").map(Number);
+  const monthEnd = dateToYmd(new Date(Date.UTC(Y, M, 0)));
+  const lookbackStart = addDays(today, -100);
+
+  const dcol = nfData("fi");
+  const purchases = await rawq(
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS v" +
+    " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
+    " AND " + dcol + "::date >= '" + lookbackStart + "'::date AND " + dcol + "::date <= '" + today + "'::date" +
+    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2"
+  );
+  const carteira = await rawq("SELECT doc, seller FROM " + CARTEIRA_SELLER);
+  const docSeller: Record<string, string> = {};
+  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) docSeller[d] = r.seller || "Sem vendedor"; }
+
+  const byDoc: Record<string, { d: string; v: number }[]> = {};
+  for (const r of purchases) { const doc = String(r.doc); (byDoc[doc] = byDoc[doc] || []).push({ d: String(r.d).slice(0, 10), v: Number(r.v) || 0 }); }
+
+  const fmap: Record<string, number> = {};
+  let clients = 0;
+  for (const doc of Object.keys(byDoc)) {
+    const rows = byDoc[doc].filter((x) => x.v > 0).sort((a, b) => a.d.localeCompare(b.d));
+    if (rows.length < 2) continue;
+    // periodicidade = media dos intervalos ponderada por recencia
+    let gs = 0, gw = 0;
+    for (let i = 1; i < rows.length; i++) { const g = diffDays(rows[i - 1].d, rows[i].d); if (g > 0) { const w = i; gs += g * w; gw += w; } }
+    if (gw === 0) continue;
+    let P = Math.round(gs / gw); if (P < 3) P = 3; if (P > 45) P = 45;
+    // dia da semana dominante (seg-sab)
+    const wc: Record<number, number> = {};
+    for (const r of rows) { const wd = weekdayOf(r.d); if (wd >= 1 && wd <= 6) wc[wd] = (wc[wd] || 0) + 1; }
+    let W = 1, best = -1; for (const k of Object.keys(wc)) { const wd = Number(k); if (wc[wd] > best) { best = wc[wd]; W = wd; } }
+    // ticket medio ponderado por recencia
+    let ts = 0, tw = 0; rows.forEach((r, i) => { const w = i + 1; ts += r.v * w; tw += w; });
+    const T = tw > 0 ? ts / tw : 0;
+    if (T <= 0) continue;
+    const seller = docSeller[doc] || "Sem vendedor";
+    const L = rows[rows.length - 1].d;
+    clients++;
+    let cand = addDays(L, P); let guard = 0;
+    while (cand <= monthEnd && guard < 25) {
+      guard++;
+      // "encaixa" no dia da semana dominante (janela +-3 dias)
+      let snapped = cand, bestDiff = 99;
+      for (let off = -3; off <= 3; off++) { const cd = addDays(cand, off); if (weekdayOf(cd) === W && Math.abs(off) < bestDiff) { bestDiff = Math.abs(off); snapped = cd; } }
+      const wd = weekdayOf(snapped);
+      if (snapped > today && snapped <= monthEnd && wd >= 1 && wd <= 6) {
+        const key = seller + "|" + snapped;
+        fmap[key] = (fmap[key] || 0) + T;
+      }
+      cand = addDays(cand, P);
+    }
+  }
+  const forecast = Object.keys(fmap).map((k) => { const idx = k.indexOf("|"); return { seller: k.slice(0, idx), date: k.slice(idx + 1), value: Math.round(fmap[k] * 100) / 100 }; });
+  const total = Math.round(forecast.reduce((a, x) => a + x.value, 0) * 100) / 100;
+  return { asOf: today, monthEnd, forecast, total, clients };
+}
+
 export function registerDashboardHistoryRoutes(app: Express): void {
   // Garante tabela + backfill inicial (uma vez, em background) sem travar o boot.
   ensureDashboardHistoryTable().then(async () => {
@@ -123,6 +199,12 @@ export function registerDashboardHistoryRoutes(app: Express): void {
       const snaps = await rawq("SELECT snapshot_date::text AS snapshot_date, day_sales, sellers, captured_at FROM dashboard_snapshots ORDER BY snapshot_date");
       res.json({ snapshots: snaps.map((s) => ({ date: s.snapshot_date, daySales: Number(s.day_sales) || 0, sellers: s.sellers || [], capturedAt: s.captured_at })) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+
+  // Previsao de faturamento por cliente da carteira (periodicidade + dia da semana).
+  app.get("/api/dashboard2/forecast", async (_req, res) => {
+    try { const r = await computeForecast(); res.json(r); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
   // Snapshot diario automatico as 23:30 (BRT).
