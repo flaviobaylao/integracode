@@ -4234,6 +4234,28 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ===== Fase 0: os riscos que o plano manda fechar antes do trafego =====
+  app.get("/api/mkt/fase0", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panoramaFase0 } = await import('./mkt-fase0'); res.json(await panoramaFase0()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/fase0", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { salvarConfigFase0 } = await import('./mkt-fase0');
+      const r = await salvarConfigFase0(req.body || {});
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Cobrancas que a IA NAO gerou por estarem acima do teto - a fila que precisa de gente
+  app.get("/api/mkt/fase0/pix-barrados", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { pixBarrados } = await import('./mkt-fase0'); res.json(await pixBarrados(Number(req.query?.dias || 30))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/fase0/limpar-pausas", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { limparPausasVencidas } = await import('./mkt-fase0'); res.json(await limparPausasVencidas()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ===== Central de Marketing - buraco 9: presenca em Google =====
   app.get("/api/mkt/google", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try {
