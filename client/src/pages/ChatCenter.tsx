@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useState, useEffect, useRef, useMemo, Component, Fragment } from "react";
+import { nowBrazil } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -73,7 +73,7 @@ interface Conversation {
   messages?: ChatMessage[];
   createdAt?: string;
   // null quando a conversa nao entrou pelo canal oficial (sem trava de 24h da Meta).
-  janela24h?: { oficial: boolean; aberta: boolean; restamMin: number } | null;
+  janela24h?: { oficial: boolean; aberta: boolean; restamMin: number; bloqueia?: boolean } | null;
 }
 
 interface Agent {
@@ -94,8 +94,13 @@ interface VirtualAttendanceStat {
 // Componente para painel de estatísticas de atendimentos virtuais
 function VirtualAttendancePanel() {
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
-    // Janela de 30 dias em DIAS DE CALENDARIO do Brasil. Ver shared/tempo.ts.
-    return { start: diaMaisBR(-30), end: hojeBR() };
+    const now = nowBrazil();
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: now.toISOString().split('T')[0]
+    };
   });
 
   const { data, isLoading, refetch } = useQuery<{ summaries: VirtualAttendanceStat[] }>({
@@ -1215,6 +1220,12 @@ function ChatCenterInner() {
   // IA_ATENDENDO; aqui e so para o atendente ver antes de digitar).
   const iaAtendendo = !!(selectedChat as any)?.iaAtendendo;
   const conversationLocked = iaAtendendo || (!isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
+  // ⏳ Etapa 3: com a trava ligada, texto livre fora da janela de 24h nao sai — e regra da
+  // Meta, nao do sistema. O campo fica desabilitado e a saida e o "Retomar contato".
+  // Com a trava desligada (padrao), isto e false e a tela segue como hoje.
+  const janelaTrava = !!((selectedChat as any)?.janela24h?.oficial
+    && !(selectedChat as any)?.janela24h?.aberta
+    && (selectedChat as any)?.janela24h?.bloqueia);
   const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   const setChannelMutation = useMutation({
@@ -1453,6 +1464,8 @@ function ChatCenterInner() {
     if (polishing || sendMessageMutation.isPending) return;
     if (!messageText.trim()) return;
     if (conversationLocked) { toast({ title: iaAtendendo ? "IA atendendo" : "Envio bloqueado", description: iaAtendendo ? "A IA está conduzindo este atendimento. Ela libera a conversa assim que o cliente pedir para falar com uma pessoa." : `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
+    // A regra aqui e da Meta, nao do sistema: fora da janela so passa template aprovado.
+    if (janelaTrava) { toast({ title: "Fora da janela de 24h", description: 'Use "Retomar contato" e envie um template aprovado — a janela reabre quando o cliente responder.', variant: "destructive" }); return; }
     let toSend = messageText;
     const shouldPolish = user?.role === 'telemarketing' || user?.role === 'vendedor';
     if (shouldPolish && messageText.trim().length >= 3) {
@@ -1499,6 +1512,8 @@ function ChatCenterInner() {
   const handleSendMedia = async () => {
     if (!selectedFile) return;
     if (conversationLocked) { toast({ title: iaAtendendo ? "IA atendendo" : "Envio bloqueado", description: iaAtendendo ? "A IA está conduzindo este atendimento. Ela libera a conversa assim que o cliente pedir para falar com uma pessoa." : `Conversa em atendimento por ${lockedOwnerName}. Solicite a transferência ao responsável ou a um administrador.`, variant: "destructive" }); return; }
+    // A regra aqui e da Meta, nao do sistema: fora da janela so passa template aprovado.
+    if (janelaTrava) { toast({ title: "Fora da janela de 24h", description: 'Use "Retomar contato" e envie um template aprovado — a janela reabre quando o cliente responder.', variant: "destructive" }); return; }
     
     try {
       const uploadResult = await uploadFileMutation.mutateAsync(selectedFile);
@@ -2528,7 +2543,7 @@ function ChatCenterInner() {
                     )}
                     <div className="flex gap-2 items-end">
                       <Textarea
-                        placeholder={iaAtendendo ? "🤖 IA atendendo — aguarde o cliente pedir uma pessoa" : (conversationLocked ? "Envio bloqueado — conversa atendida por outro atendente" : "Digite sua mensagem (Enter envia · Shift+Enter nova linha)...")}
+                        placeholder={iaAtendendo ? "🤖 IA atendendo — aguarde o cliente pedir uma pessoa" : (conversationLocked ? "Envio bloqueado — conversa atendida por outro atendente" : (janelaTrava ? "⏳ Fora da janela de 24h — use \"Retomar contato\" para reabrir com um template" : "Digite sua mensagem (Enter envia · Shift+Enter nova linha)..."))}
                         value={messageText}
                         onChange={(e) => setMessageText(e.target.value)}
                         onKeyDown={(e) => {
@@ -2541,7 +2556,7 @@ function ChatCenterInner() {
                                                 data-testid="textarea-message"
                         className="resize-y flex-1 min-h-[44px] max-h-[50vh]"
                         rows={2}
-                        disabled={!!selectedFile || conversationLocked}
+                        disabled={!!selectedFile || conversationLocked || janelaTrava}
                       />
                       <div className="flex gap-1">
                         {!selectedFile ? (
@@ -2567,7 +2582,7 @@ function ChatCenterInner() {
                               onClick={() => sendLocationMutation.mutate()}
                               variant="outline"
                               size="icon"
-                              disabled={sendLocationMutation.isPending || conversationLocked}
+                              disabled={sendLocationMutation.isPending || conversationLocked || janelaTrava}
                               data-testid="button-location"
                               title="Enviar localização"
                             >
@@ -2590,7 +2605,7 @@ function ChatCenterInner() {
                             </Button>
                             <Button
                               onClick={handleSendMessage}
-                              disabled={!messageText.trim() || sendMessageMutation.isPending || conversationLocked || polishing}
+                              disabled={!messageText.trim() || sendMessageMutation.isPending || conversationLocked || janelaTrava || polishing}
                               data-testid="button-send"
                               className="bg-green-600 hover:bg-green-700"
                               title={polishing ? 'Aprimorando a mensagem...' : 'Enviar'}
@@ -2601,7 +2616,7 @@ function ChatCenterInner() {
                         ) : (
                           <Button
                             onClick={handleSendMedia}
-                            disabled={sendMediaMutation.isPending || uploadFileMutation.isPending || conversationLocked}
+                            disabled={sendMediaMutation.isPending || uploadFileMutation.isPending || conversationLocked || janelaTrava}
                             data-testid="button-send-media"
                             className="bg-blue-600"
                           >
