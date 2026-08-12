@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import { hojeBR } from '@shared/tempo';
 import autoTable from 'jspdf-autotable';
 import { renderDanfeToDoc, type DanfeInvoice } from './danfe-generator';
 
@@ -475,7 +476,7 @@ export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[]): Promise<
   const logo = await loadLogo();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   validas.forEach((r, i) => { if (i > 0) doc.addPage(); renderFolhaRosto(doc, r, logo); });
-  doc.save('romaneio_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  doc.save('romaneio_' + hojeBR() + '.pdf');
   return validas.length;
 }
 
@@ -526,7 +527,7 @@ export async function generateRotasCompletoPdf(
     });
   }
 
-  doc.save('rotas_completo_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  doc.save('rotas_completo_' + hojeBR() + '.pdf');
   return { rotas: validas.length, pedidos: impressos };
 }
 
@@ -536,7 +537,7 @@ export async function generateMultiCobrancaPdf(list: CobrancaData[]): Promise<nu
   const logo = await loadLogo();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   valid.forEach((c, i) => { if (i > 0) doc.addPage(); if (c.boleto) renderBoleto(doc, c, logo); else renderPix(doc, c, logo); });
-  doc.save('cobrancas_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  doc.save('cobrancas_' + hojeBR() + '.pdf');
   return valid.length;
 }
 
@@ -552,6 +553,6 @@ export async function generateCompletoPdf(list: CobrancaData[]): Promise<number>
     if (c.boleto) { doc.addPage(); renderBoleto(doc, c, logo); }
     else if (c.pix) { doc.addPage(); renderPix(doc, c, logo); }
   });
-  doc.save('completo_' + new Date().toISOString().slice(0, 10) + '.pdf');
+  doc.save('completo_' + hojeBR() + '.pdf');
   return list.length;
 }

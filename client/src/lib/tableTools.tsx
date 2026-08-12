@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { diaBR } from '@shared/tempo';
 import * as XLSX from "xlsx";
 import { ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
@@ -148,7 +149,11 @@ export function dateInRange(value: any, start: string, end: string): boolean {
   if (!value) return false;
   const d = new Date(value);
   if (isNaN(d.getTime())) return false;
-  const ymd = d.toISOString().slice(0, 10);
+  // O usuario digita o dia que VE na tela. Com toISOString() o filtro comparava o dia UTC:
+  // um check-in de 21:30 BRT caia no dia seguinte e sumia do periodo escolhido.
+  // Colunas com hora sao INSTANTES -> dia no fuso do Brasil. Colunas de data pura ja
+  // chegam a meia-noite UTC, e para elas os dois calculos coincidem.
+  const ymd = diaBR(d);
   if (start && ymd < start) return false;
   if (end && ymd > end) return false;
   return true;
