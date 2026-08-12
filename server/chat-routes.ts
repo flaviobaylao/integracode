@@ -36,7 +36,8 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import QRCode from "qrcode";
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, diaBR } from '@shared/tempo';
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -155,7 +156,10 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     const isFromMe = data.key?.fromMe === true;
     const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
     const rawMessageId = data.key?.id;
-    const messageTimestamp = data.messageTimestamp || Date.now();
+    // messageTimestamp da Evolution vem em SEGUNDOS. O fallback tem de ser em segundos
+    // tambem: com Date.now() (milissegundos) o valor saia ~1000x maior (ano ~54.000) e
+    // era repassado ao getBase64FromMediaMessage e gravado como timestamp da mensagem.
+    const messageTimestamp = data.messageTimestamp || Math.floor(Date.now() / 1000);
     
     // CRITICAL: Generate fallback ID when Evolution API doesn't provide one
     // This prevents message loss when webhook events arrive without valid key.id
@@ -347,7 +351,10 @@ export async function processGroupMessage(data: any): Promise<boolean> {
     const isFromMe = data.key?.fromMe === true;
     const messageText = evolutionAPIService.extractMessageText(data.message || {}) || '';
     const rawMessageId = data.key?.id;
-    const messageTimestamp = data.messageTimestamp || Date.now();
+    // messageTimestamp da Evolution vem em SEGUNDOS. O fallback tem de ser em segundos
+    // tambem: com Date.now() (milissegundos) o valor saia ~1000x maior (ano ~54.000) e
+    // era repassado ao getBase64FromMediaMessage e gravado como timestamp da mensagem.
+    const messageTimestamp = data.messageTimestamp || Math.floor(Date.now() / 1000);
     
     const messageId = rawMessageId || `group-${groupId}-${messageTimestamp}-${Date.now()}`;
     
@@ -383,13 +390,13 @@ export async function processGroupMessage(data: any): Promise<boolean> {
         status: 'active',
         agentId: null,
         channel: 'whatsapp',
-        lastMessageAt: nowBrazil(),
+        lastMessageAt: agora(),
         unreadCount: isFromMe ? 0 : 1
       });
       console.log(`👥 [GROUP] Nova conversa de grupo criada: ${conversation.id}`);
     } else {
       await storage.updateChatConversation(conversation.id, {
-        lastMessageAt: nowBrazil(),
+        lastMessageAt: agora(),
         unreadCount: isFromMe ? 0 : (conversation.unreadCount || 0) + 1
       });
     }
@@ -922,7 +929,7 @@ export function registerChatRoutes(app: Express): void {
           customerPhone: normalizedPhone,
           status: 'new',
           agentId: agent?.id || null,
-          lastMessageTime: nowBrazil(),
+          lastMessageTime: agora(),
           unreadCount: 0
         });
         console.log(`💬 [BY-PHONE] Conversa criada: ${conversation.id} - Nome: ${conversationName}`);
@@ -1289,7 +1296,7 @@ export function registerChatRoutes(app: Express): void {
           status: 'in-progress',
           assignedAgentId: userAgent.id,
           assignedAgentColor: agentColor,
-          lastAttendedAt: nowBrazil()
+          lastAttendedAt: agora()
         });
         console.log(`👤 [START-CONVERSATION] Conversa ${conversation.id} atribuída ao atendente ${userAgent.name} (${userAgent.id})`);
       }
@@ -2319,8 +2326,8 @@ export function registerChatRoutes(app: Express): void {
       const newStatus = isFromMe ? conversation.status : (hasAssignedAgent ? conversation.status : 'new');
       
       await storage.updateChatConversation(conversation.id, {
-        updatedAt: nowBrazil(),
-        lastMessageTime: nowBrazil(),
+        updatedAt: agora(),
+        lastMessageTime: agora(),
         status: newStatus,
         unreadCount: 0
       });
@@ -2567,8 +2574,8 @@ export function registerChatRoutes(app: Express): void {
           customerPhone: normalizedPhone,
           status: 'new' as const,
           priority: 'normal' as const,
-          lastMessageTime: nowBrazil(),
-          updatedAt: nowBrazil()
+          lastMessageTime: agora(),
+          updatedAt: agora()
         });
         console.log(`✅ [WHATSAPP-SEND] Conversa: ${conversation.id}`);
 
@@ -2602,7 +2609,7 @@ export function registerChatRoutes(app: Express): void {
               });
               console.log(`👤 [WHATSAPP-SEND] Conversa ${conversation.id} atribuida a ${_meu.name || _meu.id}`);
             }
-            await storage.updateChatConversation(conversation.id, { status: 'in-progress', lastAttendedAt: nowBrazil() } as any);
+            await storage.updateChatConversation(conversation.id, { status: 'in-progress', lastAttendedAt: agora() } as any);
             try { const { marcarAtendida } = await import('./ia-fila'); await marcarAtendida(conversation.id, _uid); } catch {}
           }
         } catch (e: any) { console.error('[WHATSAPP-SEND] atribuicao', e?.message || e); }
@@ -2674,7 +2681,7 @@ export function registerChatRoutes(app: Express): void {
       }
       
       job.status = 'paused';
-      job.pausedAt = nowBrazil();
+      job.pausedAt = agora();
       console.log(`⏸️ [BULK] Disparo pausado pelo usuário ${userId}`);
       
       res.json({ success: true, message: "Disparo pausado" });
@@ -2891,7 +2898,7 @@ export function registerChatRoutes(app: Express): void {
         sentCount: 0,
         successCount: 0,
         errorCount: 0,
-        startedAt: nowBrazil()
+        startedAt: agora()
       };
       bulkMessageJobs.set(userId, job);
 
@@ -3263,7 +3270,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_" + Date.now()
           },
           message: {
-            conversation: "Teste de resposta do webhook GET - " + nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            conversation: "Teste de resposta do webhook GET - " + agora().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
           },
           pushName: "Teste WhatsApp"
         }
@@ -3301,7 +3308,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_" + Date.now()
           },
           message: {
-            conversation: "Teste de resposta do webhook - " + nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            conversation: "Teste de resposta do webhook - " + agora().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
           },
           pushName: "Teste WhatsApp"
         }
@@ -3344,7 +3351,7 @@ export function registerChatRoutes(app: Express): void {
             id: "test_adv_" + Date.now()
           },
           message: {
-            conversation: message + ` (${nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`
+            conversation: message + ` (${agora().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`
           },
           pushName: fromMe ? "Sistema" : "Cliente Teste"
         }
@@ -3409,7 +3416,7 @@ export function registerChatRoutes(app: Express): void {
               id: `test_batch_${Date.now()}_${i}`
             },
             message: {
-              conversation: `Mensagem de teste #${i} - ${nowBrazil().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+              conversation: `Mensagem de teste #${i} - ${agora().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
             },
             pushName: "Teste Batch"
           }
@@ -3522,7 +3529,9 @@ export function registerChatRoutes(app: Express): void {
       // Dados por dia
       const messagesByDay: Record<string, number> = {};
       messages.forEach((msg: any) => {
-        const date = new Date(msg.timestamp || msg.createdAt).toISOString().split('T')[0];
+        // Dia no fuso do Brasil. Com toISOString() era o dia UTC e toda mensagem entre
+        // 21:00 e 24:00 BRT era contada no dia seguinte.
+        const date = diaBR(msg.timestamp || msg.createdAt);
         messagesByDay[date] = (messagesByDay[date] || 0) + 1;
       });
 
@@ -3855,7 +3864,7 @@ export function registerChatRoutes(app: Express): void {
         agentId,
         assignedAgentId: agentId,
         assignedAgentColor: agentColor,
-        lastAttendedAt: nowBrazil(),
+        lastAttendedAt: agora(),
         status: 'assigned'
       });
 
@@ -4082,7 +4091,7 @@ export function registerChatRoutes(app: Express): void {
       const { startDate, endDate, agentId } = req.query;
       
       // Default: últimos 30 dias se não especificado
-      const now = nowBrazil();
+      const now = agora();
       const defaultStartDate = new Date(now);
       defaultStartDate.setDate(defaultStartDate.getDate() - 30);
       
@@ -4216,7 +4225,7 @@ export function registerChatRoutes(app: Express): void {
         const agents = await storage.getChatAgents();
         const assignedAgent = agents.find(a => a.id === conversation.assignedAgentId);
         if (assignedAgent?.userId) {
-          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, nowBrazil());
+          await storage.logVirtualAttendance(conversationId, assignedAgent.userId, agora());
           console.log(`📊 [VIRTUAL-ATTENDANCE] Registrado atendimento: agente=${assignedAgent.userId}, conversa=${conversationId}`);
         }
       }
@@ -4439,7 +4448,7 @@ export function registerChatRoutes(app: Express): void {
             // Mesmo atendente - apenas atualizar lastAttendedAt
             await storage.updateChatConversation(conversation.id, {
               status: 'in-progress',
-              lastAttendedAt: nowBrazil()
+              lastAttendedAt: agora()
             });
             
             console.log(`🔄 [SEND-MESSAGE] Conversa ${conversation.id} atualizada pelo atendente ${userAgent.name}`);
@@ -4724,7 +4733,7 @@ export function registerChatRoutes(app: Express): void {
         agentId,
         assignedAgentId: agentId,
         assignedAgentColor: agentColor,
-        lastAttendedAt: nowBrazil(),
+        lastAttendedAt: agora(),
         status: 'assigned'
       });
 
@@ -5505,7 +5514,7 @@ export function registerChatRoutes(app: Express): void {
             const mediaInfo = evolutionAPIService.extractMediaInfo(msg.message);
             let finalMediaUrl = mediaInfo.mediaUrl;
             const finalMessageType = mediaInfo.messageType || 'text';
-            const messageTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : nowBrazil();
+            const messageTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : agora();
             
             if (finalMessageType !== 'text' && !finalMediaUrl && messageId) {
               try {
@@ -6238,7 +6247,7 @@ export function registerChatRoutes(app: Express): void {
         recentMessages: [{
           role: 'customer',
           content: message,
-          timestamp: nowBrazil()
+          timestamp: agora()
         }]
       }, settings);
       
