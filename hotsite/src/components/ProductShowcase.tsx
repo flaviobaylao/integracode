@@ -8,7 +8,7 @@ export default function ProductShowcase() {
     {
       image: '/shop/images/lifestyle-hand.jpg',
       title: 'Leve Onde Quiser',
-      description: 'Praticidade sem abrir mão do frescor. Seus sucos 100% naturais sempre à mão.'
+      description: 'Praticidade sem abrir mão do frescor. Seu suco natural sempre à mão.'
     },
     {
       image: '/shop/images/lifestyle-serving.jpg',
