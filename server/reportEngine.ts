@@ -1,5 +1,7 @@
 // redeploy: NF-e dedup por chave de acesso
 import { db } from './db';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { VIRADA_FUSO_UTC } from '@shared/tempo';
 import { sql } from 'drizzle-orm';
 import { savedReports } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -331,8 +333,45 @@ function fieldSql(field: ReportFieldDef): string | null {
   return null;
 }
 
+/** Colunas que guardam DATA DE CALENDARIO (o dia E a coluna, sem hora).
+ *  Agrupar por dia/mes/ano nelas NAO pode aplicar conversao de fuso nenhuma. */
+const COLUNAS_CALENDARIO = [
+  'due_date', 'issue_date', 'order_date', 'invoice_date', 'scheduled_date',
+  'route_date', 'last_visit_date', 'next_visit_date', 'data_vencimento',
+  'attendance_start_date', 'telemarketing_date', 'delivery_scheduled_date',
+  'scheduled_billing_date', 'next_contact_date', 'last_sale_date', 'service_start_date',
+];
+
+/** Colunas fiscais: gravadas em hora de Brasilia ATE a virada e em UTC a partir dela.
+ *  Mesma regra de faturamento-oficial.ts, para o relatorio nao mudar o passado. */
+const COLUNAS_FISCAIS = ['emission_date', 'authorization_date', 'cancellation_date'];
+
+function nomeDaColuna(col: string): string {
+  const semAlias = col.includes('.') ? col.split('.').pop()! : col;
+  return semAlias.trim().toLowerCase();
+}
+
+/** Expressao de agrupamento por periodo, JA no fuso do Brasil.
+ *
+ *  O codigo antigo usava `(col AT TIME ZONE 'America/Sao_Paulo')` para TODA coluna. Numa
+ *  coluna `timestamp` (sem fuso) essa forma de uma etapa nao subtrai 3h: ela INTERPRETA o
+ *  valor como se ja fosse hora de Brasilia e devolve timestamptz, que o to_char renderiza
+ *  de volta na sessao (UTC). O efeito liquido era col + 3h, quando o certo e col - 3h —
+ *  6 horas de erro em TODOS os relatorios agrupados por dia, mes ou ano. Ver shared/tempo.ts. */
 function bucketExpr(col: string, bucket: 'day' | 'month' | 'year'): string {
-  const local = `(${col} AT TIME ZONE 'America/Sao_Paulo')`;
+  const nome = nomeDaColuna(col);
+  let local: string;
+  if (COLUNAS_CALENDARIO.includes(nome)) {
+    // Data de calendario: sem conversao. O dia e o que esta gravado.
+    local = `(${col})`;
+  } else if (COLUNAS_FISCAIS.includes(nome)) {
+    local = `(CASE WHEN ${col} >= TIMESTAMP '${VIRADA_FUSO_UTC}'`
+      + ` THEN (${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`
+      + ` ELSE ${col} END)`;
+  } else {
+    // Instante em UTC: as DUAS etapas. A primeira rotula o naive como UTC.
+    local = `(${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`;
+  }
   if (bucket === 'year') return `to_char(${local}, 'YYYY')`;
   if (bucket === 'month') return `to_char(${local}, 'YYYY-MM')`;
   return `to_char(${local}, 'YYYY-MM-DD')`;
