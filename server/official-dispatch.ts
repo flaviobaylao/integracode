@@ -257,7 +257,7 @@ export function registerOfficialDispatch(app: any) {
   app.get('/api/admin/oficial/diag', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
     const mascara = (p: string) => p.length < 6 ? p : p.slice(0, 4) + '*'.repeat(p.length - 8) + p.slice(-4);
-    const casos = ['rota_do_dia','pipeline','cobranca','repescagem','sdr'];
+    const casos = ['rota_do_dia','pipeline','cobranca','repescagem','sdr','retomada','recompra'];
     const porCaso: any = {};
     for (const uc of casos) {
       porCaso[uc] = {

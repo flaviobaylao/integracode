@@ -20,7 +20,11 @@ async function setSetting(key: string, value: string): Promise<void> {
 
 // 'retomada' = o atendente reabrindo conversa fora da janela de 24h. Entra aqui para
 // herdar teto diario, limite por minuto e o liga/desliga do painel, como os demais.
-const USE_CASES = ['rota_do_dia','pipeline','cobranca','repescagem','sdr','retomada'];
+// 'recompra' = a regua de recompra (mkt-recompra.ts) enfileirando pelo canal oficial.
+// Sem ele nesta lista, `oficial_recompra` fica em 'off' por padrao e NAO HA COMO LIGAR:
+// /api/admin/oficial/set recusa a chave e o painel nem desenha o caso de uso.
+// Resultado: todo item do lote voltava 'desligado' em silencio.
+const USE_CASES = ['rota_do_dia','pipeline','cobranca','repescagem','sdr','retomada','recompra'];
 
 export function registerOfficialPanel(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
@@ -216,7 +220,7 @@ const PAGE_HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"
 const K = new URLSearchParams(location.search).get('k') || '';
 const q = s => '?k='+encodeURIComponent(K)+s;
 document.getElementById('lnkTpl').href = '/api/admin/oficial/templates/painel'+q('');
-const UC_LABEL = {rota_do_dia:'Rota do dia',pipeline:'Pipeline (pedido/entrega)',cobranca:'Cobrança',repescagem:'Repescagem (mkt)',sdr:'SDR (mkt)',retomada:'Retomada (atendente, fora da janela)'};
+const UC_LABEL = {rota_do_dia:'Rota do dia',pipeline:'Pipeline (pedido/entrega)',cobranca:'Cobrança',repescagem:'Repescagem (mkt)',sdr:'SDR (mkt)',retomada:'Retomada (atendente, fora da janela)',recompra:'Recompra (régua)'};
 async function load(){
   try{
     const r = await fetch('/api/admin/oficial/estado'+q(''));
