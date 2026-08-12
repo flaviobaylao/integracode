@@ -389,9 +389,80 @@ export default function GestaoCarteiras() {
                         : "Segmento de negócio informado no cadastro do cliente"}
                     </CardDescription>
                   </div>
-                  <div className="flex gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     <Button size="sm" variant={visao === "situacao" ? "default" : "outline"} onClick={() => setVisao("situacao")} data-testid="button-situacao">Situação</Button>
                     <Button size="sm" variant={visao === "segmento" ? "default" : "outline"} onClick={() => setVisao("segmento")} data-testid="button-segmento">Negócio</Button>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" aria-label="Como cada número é montado" data-testid="button-info-situacao">
+                          <Info className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-[440px] max-w-[92vw] text-sm space-y-3">
+                        {visao === "situacao" ? (
+                          <>
+                            <p className="text-muted-foreground">
+                              Tudo abaixo respeita os filtros de cima: o período de {labelMes(inicio)} a {labelMes(fim)}
+                              {filtrarVend ? `${rotuloCarteira}` : " e a carteira inteira"}. Cada cliente entra em um balde só.
+                            </p>
+                            <div>
+                              <p className="font-semibold flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COR_BARRA.faturamento }} />
+                                Faturamento — {BRL0(barras[0]?.valor)} por mês
+                              </p>
+                              <p className="text-muted-foreground mt-1">
+                                O que foi faturado no período dividido pelos {meses.length} meses dele. Entram só títulos de <b>venda</b>:
+                                ficam de fora cancelado, NF cancelada, devolução, troca, amostra, bonificação, remessa,
+                                transferência entre as empresas do grupo (PURO, BARUC), aporte de sócio, empréstimo,
+                                adiantamento e pedido mandado para a lixeira.
+                              </p>
+                            </div>
+                            <div>
+                              <p className="font-semibold flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COR_BARRA.debito }} />
+                                Débito da carteira — {BRL0(barras[1]?.valor)}
+                              </p>
+                              <p className="text-muted-foreground mt-1">
+                                Títulos <b>vencidos e ainda em aberto hoje</b> (valor do título menos o que já foi pago),
+                                pela mesma régua da aba Contas a Receber. É uma foto de hoje, não do período — o período
+                                define apenas de quais clientes estamos falando.
+                              </p>
+                            </div>
+                            <div>
+                              <p className="font-semibold flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COR_BARRA.inativos }} />
+                                Inativos — {BRL0(barras[2]?.valor)} por mês
+                              </p>
+                              <p className="text-muted-foreground mt-1">
+                                Clientes com o <b>cadastro inativado</b>. De cada um, o que ele faturava <b>nos meses em que
+                                comprava</b> (total dele ÷ meses com compra) — não diluímos pelos meses parados. É uma conta
+                                otimista: supõe que todos voltariam ao ritmo antigo.
+                              </p>
+                            </div>
+                            <div>
+                              <p className="font-semibold flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COR_BARRA.perdidos }} />
+                                Perdidos — {BRL0(barras[3]?.valor)} por mês
+                              </p>
+                              <p className="text-muted-foreground mt-1">
+                                Cadastro <b>ativo</b>, comprou em 3 meses ou mais e está <b>há 3 meses ou mais sem comprar</b> —
+                                o churn que ninguém marcou. Mesmo cálculo de potencial dos inativos.
+                                {meses.length < 6 ? " Atenção: com menos de 6 meses de período esta barra tende a zerar, porque não cabem 3 meses comprando mais 3 parado." : ""}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-semibold">Segmento de negócio</p>
+                            <p className="text-muted-foreground">
+                              Faturamento do período agrupado pelo segmento informado no cadastro do cliente
+                              (o mesmo campo do filtro de Clientes Ativos). Aparecem os 6 maiores; o resto vai para
+                              "Demais". Quem está sem o campo preenchido cai em "(Sem segmento)".
+                            </p>
+                          </>
+                        )}
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
               </CardHeader>
