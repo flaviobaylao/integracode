@@ -79,6 +79,96 @@ export async function pixLiberado(valor: number): Promise<VeredictoPix> {
   return { liberado: true, teto, valor: v };
 }
 
+/**
+ * A distribuicao REAL dos pedidos, para o teto sair de dado e nao de palpite.
+ * Olha primeiro os pedidos que a IA registrou (instagram_pix) - sao exatamente os que
+ * o teto afeta. Se ainda nao houver volume ali, cai para os pedidos do pipeline, que
+ * dao a ordem de grandeza do ticket.
+ */
+export async function distribuicaoPedidos(dias = 180): Promise<{
+  fonte: 'ia' | 'pipeline' | 'vazio'; n: number;
+  min: number; p50: number; p75: number; p90: number; p95: number; max: number; media: number;
+  simulacao: { teto: number; acima: number; percentual: number }[];
+  sugestao: number; recado: string;
+}> {
+  const vazio = {
+    fonte: 'vazio' as const, n: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, max: 0, media: 0,
+    simulacao: [] as any[], sugestao: TETO_PIX_PADRAO, recado: '',
+  };
+
+  const medir = async (tabela: 'ia' | 'pipeline') => {
+    const q = tabela === 'ia'
+      ? sql`SELECT total AS v FROM instagram_pix
+             WHERE created_at >= NOW() - (${dias}::text || ' days')::interval AND total > 0`
+      : sql`SELECT sale_value AS v FROM sales_cards
+             WHERE created_at >= NOW() - (${dias}::text || ' days')::interval AND sale_value > 0`;
+    const r: any = await db.execute(sql`
+      WITH base AS (${q})
+      SELECT COUNT(*)::int AS n,
+             COALESCE(MIN(v),0)::numeric AS minimo,
+             COALESCE(MAX(v),0)::numeric AS maximo,
+             COALESCE(AVG(v),0)::numeric AS media,
+             COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY v),0)::numeric AS p50,
+             COALESCE(percentile_cont(0.75) WITHIN GROUP (ORDER BY v),0)::numeric AS p75,
+             COALESCE(percentile_cont(0.90) WITHIN GROUP (ORDER BY v),0)::numeric AS p90,
+             COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY v),0)::numeric AS p95
+        FROM base`);
+    return r.rows?.[0] || null;
+  };
+
+  let linha: any = null;
+  let fonte: 'ia' | 'pipeline' | 'vazio' = 'vazio';
+  try {
+    const ia = await medir('ia');
+    if (ia && Number(ia.n) >= 10) { linha = ia; fonte = 'ia'; }
+  } catch { /* tabela pode nao existir ainda */ }
+  if (!linha) {
+    try {
+      const pipe = await medir('pipeline');
+      if (pipe && Number(pipe.n) > 0) { linha = pipe; fonte = 'pipeline'; }
+    } catch { /* ignora */ }
+  }
+  if (!linha) return vazio;
+
+  const n = Number(linha.n);
+  const p90 = Math.ceil(Number(linha.p90) / 50) * 50;   // arredonda para cima, de 50 em 50
+  const p95 = Math.ceil(Number(linha.p95) / 50) * 50;
+
+  // Quantos pedidos cairiam para humano com cada teto candidato.
+  const candidatos = Array.from(new Set([200, 300, 500, 750, 1000, 1500, 2000, p90, p95]))
+    .filter(v => v > 0).sort((a, b) => a - b);
+  const simulacao: { teto: number; acima: number; percentual: number }[] = [];
+  try {
+    const col = fonte === 'ia' ? 'total' : 'sale_value';
+    const tab = fonte === 'ia' ? 'instagram_pix' : 'sales_cards';
+    for (const t of candidatos) {
+      const r: any = await db.execute(sql.raw(
+        "SELECT COUNT(*)::int AS acima FROM " + tab +
+        " WHERE created_at >= NOW() - INTERVAL '" + Number(dias) + " days' AND " + col + " > " + Number(t)));
+      const acima = Number(r.rows?.[0]?.acima || 0);
+      simulacao.push({ teto: t, acima, percentual: n > 0 ? Number(((acima / n) * 100).toFixed(1)) : 0 });
+    }
+  } catch { /* simulacao e um extra */ }
+
+  // Sugestao: o p90 arredondado. Deixa ~10% indo para humano - o suficiente para
+  // pegar o pedido fora do padrao sem transformar a trava em gargalo.
+  const sugestao = p90 > 0 ? p90 : TETO_PIX_PADRAO;
+
+  const recado = fonte === 'ia'
+    ? n + ' pedido(s) registrados pela IA em ' + dias + ' dias. Metade fica abaixo de R$ '
+      + Number(linha.p50).toFixed(2) + ' e 9 em cada 10 abaixo de R$ ' + p90.toFixed(2) + '.'
+    : 'Ainda não há volume de pedido registrado pela IA. Usei os ' + n + ' pedidos do pipeline '
+      + 'para dar a ordem de grandeza — assim que a IA registrar pedidos, este número passa a sair deles.';
+
+  return {
+    fonte, n,
+    min: Number(linha.minimo), p50: Number(linha.p50), p75: Number(linha.p75),
+    p90: Number(linha.p90), p95: Number(linha.p95), max: Number(linha.maximo),
+    media: Number(linha.media),
+    simulacao, sugestao, recado,
+  };
+}
+
 /** Registra a tentativa barrada, para o teto ser auditavel e nao so um "nao". */
 export async function registrarPixBarrado(dados: {
   conversaId?: string | null; salesCardId?: string | null; pedido?: string | null;

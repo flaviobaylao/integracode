@@ -4246,6 +4246,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // A distribuicao real dos pedidos - para o teto sair de dado, nao de palpite
+  app.get("/api/mkt/fase0/distribuicao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { distribuicaoPedidos } = await import('./mkt-fase0'); res.json(await distribuicaoPedidos(Number(req.query?.dias || 180))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   // Cobrancas que a IA NAO gerou por estarem acima do teto - a fila que precisa de gente
   app.get("/api/mkt/fase0/pix-barrados", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try { const { pixBarrados } = await import('./mkt-fase0'); res.json(await pixBarrados(Number(req.query?.dias || 30))); }
