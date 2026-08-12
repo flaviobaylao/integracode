@@ -241,6 +241,12 @@ export async function editarPeca(id: string, campos: Partial<NovaPeca>): Promise
   // Peca publicada e historico: nao se reescreve o que ja foi ao ar.
   if (p.estado === 'publicado') return { ok: false, erro: 'peca ja publicada - o que foi ao ar nao muda' };
   try {
+    // Mexer no texto de uma peca barrada É o conserto: ela volta para producao
+    // sozinha. Sem isto ela ficava presa - 'bloqueado' nao vai direto para
+    // revisao, e nao existia nada que a tirasse de la. Achado em producao.
+    if (p.estado === 'bloqueado' || p.estado === 'reprovado') {
+      await mover(id, p.estado, 'em_producao', 'humano', null, undefined, { motivo: 'peca editada' });
+    }
     if (campos.copy !== undefined) await db.execute(sql`UPDATE mkt_pieces SET copy = ${String(campos.copy)} WHERE id = ${id}`);
     if (campos.titulo !== undefined) await db.execute(sql`UPDATE mkt_pieces SET titulo = ${campos.titulo || null} WHERE id = ${id}`);
     if (campos.gancho !== undefined) await db.execute(sql`UPDATE mkt_pieces SET gancho = ${campos.gancho || null} WHERE id = ${id}`);
@@ -268,7 +274,15 @@ export async function enviarParaRevisao(id: string, atorId?: string | null): Pro
   if (!(await garantirSchema())) return { ok: false, erro: 'schema indisponivel' };
   const p = await verPeca(id);
   if (!p) return { ok: false, erro: 'peca nao encontrada' };
-  if (!podeIr(p.estado, 'em_revisao_ia')) return { ok: false, erro: 'transicao invalida: ' + p.estado + ' -> em_revisao_ia' };
+  if (!podeIr(p.estado, 'em_revisao_ia')) {
+    // Mensagem que diz o que fazer, nao so o que deu errado.
+    const dica = p.estado === 'bloqueado'
+      ? 'peca barrada pelo revisor: corrija o texto (isso ja devolve ela para producao) e mande revisar de novo'
+      : p.estado === 'aguardando_aprovacao' ? 'esta peca ja esta na fila esperando decisao'
+      : p.estado === 'publicado' ? 'peca ja publicada'
+      : 'estado ' + p.estado + ' nao vai para revisao';
+    return { ok: false, erro: dica };
+  }
 
   const rodada = Number(p.rodada || 0) + 1;
   const mv = await mover(id, p.estado, 'em_revisao_ia', 'agente', atorId, { rodada }, { rodada });
