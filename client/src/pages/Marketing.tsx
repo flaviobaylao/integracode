@@ -832,6 +832,9 @@ export default function Marketing() {
         </CardContent>
       </Card>
 
+      {/* ── registro de post e série histórica (buraco 1) ── */}
+      <RegistroDePosts />
+
       {/* ── presença em Google (buraco 9) ── */}
       <PresencaGoogle />
 
@@ -2084,6 +2087,186 @@ function Fase0() {
             </table>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// BURACO 1 — Registro de post e série histórica
+// ----------------------------------------------------------------------------
+// "Análise vira print de celular; sem série histórica."
+// A coleta automática depende do App Review da Meta. Mas série começa com o
+// primeiro ponto — então dá para digitar os números do celular e começar hoje.
+// O coletor está escrito e desligado, esperando a liberação.
+// ============================================================================
+function RegistroDePosts() {
+  const { toast } = useToast();
+  const [novoLink, setNovoLink] = useState("");
+  const [medindo, setMedindo] = useState<string | null>(null);
+  const [nums, setNums] = useState<any>({});
+  const [salvando, setSalvando] = useState(false);
+
+  const pan = useQuery<any>({ queryKey: ["/api/mkt/posts/panorama"], queryFn: () => apiGet("/api/mkt/posts/panorama?dias=90") });
+  const lista = useQuery<any>({ queryKey: ["/api/mkt/posts"], queryFn: () => apiGet("/api/mkt/posts?dias=90") });
+  const p = pan.data || {};
+  const posts: any[] = lista.data || [];
+  const recarregar = () => { pan.refetch(); lista.refetch(); };
+
+  async function registrar() {
+    if (!novoLink.trim()) return;
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/posts", { permalink: novoLink.trim() });
+      if (!r.ok) throw new Error(r.erro || "não deu");
+      toast({ title: r.duplicado ? "Esse post já estava registrado" : "Post registrado",
+              description: r.duplicado ? "" : "Agora é só anotar os números quando quiser." });
+      setNovoLink(""); recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  async function anotar(id: string) {
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/posts/" + id + "/medicao", nums);
+      if (!r.ok) throw new Error(r.erro || "não deu");
+      toast({ title: r.atualizou ? "Números do dia atualizados" : "Números anotados",
+              description: "A série ganhou mais um ponto." });
+      setMedindo(null); setNums({}); recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  async function apagar(id: string) {
+    if (!window.confirm("Apagar este post e as medições dele?")) return;
+    try {
+      await fetch("/api/mkt/posts/" + id, { method: "DELETE", credentials: "include" });
+      recarregar();
+    } catch { /* a tela recarrega e mostra o estado real */ }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <i className="fas fa-chart-line text-muted-foreground" /> Posts e série histórica
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Sem isto, análise vira print de celular. A coleta automática depende do App Review da
+          Meta — mas <b>série começa com o primeiro ponto</b>: dê uma olhada no post e passe os
+          números. Peça publicada pela fila de aprovação já entra aqui sozinha.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            ["Posts registrados", num(p.posts), ""],
+            ["Sem nenhum número", num(p.sem_medicao), "são os que não contam ainda"],
+            ["Medições", num(p.medicoes), num(p.digitadas) + " digitadas · " + num(p.coletadas) + " coletadas"],
+            ["Dias de série", num(p.diasDeSerie), p.modoColeta === "off" ? "coleta automática desligada" : "coleta " + p.modoColeta],
+          ].map(([t, v, s]: any) => (
+            <div key={t} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{t}</div>
+              <div className="text-xl font-semibold">{v}</div>
+              {s ? <div className="text-[10px] text-muted-foreground">{s}</div> : null}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2 items-end">
+          <div className="flex-1 min-w-[240px]">
+            <Label className="text-xs">Cole o link de um post já publicado</Label>
+            <Input value={novoLink} onChange={(e) => setNovoLink(e.target.value)}
+              placeholder="https://www.instagram.com/p/..." />
+          </div>
+          <Button size="sm" className="h-9" onClick={registrar} disabled={salvando || !novoLink.trim()}>
+            Registrar
+          </Button>
+        </div>
+
+        {(p.faltaParaColetar || []).length > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            <i className="fas fa-circle-info mr-1" />
+            A coleta automática está pronta no código e desligada: falta{" "}
+            <b>{(p.faltaParaColetar || []).join(" e ")}</b>, que depende do App Review da Meta para
+            <code className="mx-1">instagram_manage_insights</code>. Quando sair, é uma chave — não um deploy.
+          </p>
+        )}
+
+        {posts.length === 0 && !lista.isLoading && (
+          <div className="text-center py-6 text-sm text-muted-foreground">
+            Nenhum post registrado ainda.
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {posts.map((x) => (
+            <div key={x.id} className="rounded-lg border p-3">
+              <div className="flex gap-3">
+                {x.miniaturas?.[0]
+                  ? <img src={x.miniaturas[0]} alt="" className="w-14 h-14 rounded object-cover shrink-0" loading="lazy" />
+                  : <div className="w-14 h-14 rounded bg-muted grid place-items-center shrink-0"><i className="fas fa-image text-muted-foreground text-xs" /></div>}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap gap-1 items-center mb-1">
+                    <Badge variant="outline" className="text-[10px] px-1 py-0">{x.plataforma}</Badge>
+                    {x.gancho && <Badge className="text-[10px] px-1 py-0" style={{ background: ROXO }}>{x.gancho}</Badge>}
+                    {x.campanha_codigo && <Badge variant="secondary" className="text-[10px] px-1 py-0">{x.campanha_codigo}</Badge>}
+                    {x.semMedicao && <Badge variant="destructive" className="text-[10px] px-1 py-0">sem números</Badge>}
+                    {x.permalink && (
+                      <a href={x.permalink} target="_blank" rel="noreferrer" className="text-[10px] underline text-muted-foreground">
+                        abrir
+                      </a>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate">{x.previa || "sem legenda"}</div>
+                  {!x.semMedicao && (
+                    <div className="flex flex-wrap gap-3 text-[11px] mt-1">
+                      <span>alcance <b>{num(x.alcance)}</b></span>
+                      <span>curtidas <b>{num(x.curtidas)}</b></span>
+                      <span>salvos <b>{num(x.salvos)}</b></span>
+                      {x.taxaEngajamento != null && <span>engajamento <b>{x.taxaEngajamento}%</b></span>}
+                      {Number(x.receita) > 0 && <span className="text-green-700">receita <b>{brl(x.receita)}</b></span>}
+                      <span className="text-muted-foreground">{num(x.medicoes)} medição(ões)</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <Button size="sm" className="h-8 text-[11px]"
+                    onClick={() => { setMedindo(medindo === x.id ? null : x.id); setNums({}); }}>
+                    {medindo === x.id ? "fechar" : "anotar números"}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-1" onClick={() => apagar(x.id)}>
+                    <i className="fas fa-trash text-[10px] text-muted-foreground" />
+                  </Button>
+                </div>
+              </div>
+
+              {medindo === x.id && (
+                <div className="mt-3 border-t pt-3 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Abra o post no celular e passe o que conseguir ver. Não precisa preencher tudo —
+                    o que ficar em branco mantém o último valor conhecido.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {(p.metricas || []).map((mt: any) => (
+                      <div key={mt.chave}>
+                        <Label className="text-[11px]">{mt.rotulo}</Label>
+                        <Input inputMode="numeric" className="h-9"
+                          value={nums[mt.chave] ?? ""} placeholder={mt.dica}
+                          onChange={(e) => setNums({ ...nums, [mt.chave]: e.target.value })} />
+                      </div>
+                    ))}
+                  </div>
+                  <Button size="sm" className="h-9" disabled={salvando} onClick={() => anotar(x.id)}>
+                    {salvando ? "Salvando…" : "Anotar"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
