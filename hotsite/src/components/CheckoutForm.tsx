@@ -4,6 +4,18 @@ import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { api } from '../utils/api';
 import type { Customer, CartItem } from '../types';
 import { Loader2, AlertCircle, Check } from 'lucide-react';
+// 🚚 ÁREA DE ENTREGA (frete grátis só para Grande Goiânia + Brasília/DF e entorno)
+import {
+  buscarCep,
+  formatarCep,
+  limparCep,
+  avaliarCobertura,
+  montarEnderecoCompleto,
+  TEXTO_AREA_ATENDIDA,
+  WHATSAPP_HONEST,
+  type EnderecoCep,
+  type ResultadoCobertura,
+} from '../utils/entrega';
 
 interface CheckoutFormProps {
   cartItems: CartItem[];
@@ -67,6 +79,75 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
       cpfCnpj: updates.cpfCnpj !== undefined ? updates.cpfCnpj : prev.cpfCnpj
     }));
   };
+
+  // ── 🚚 ENDEREÇO POR CEP + ÁREA DE ENTREGA ──────────────────────────────────
+  // O frete grátis (e a entrega) valem só para a Grande Goiânia e Brasília/DF
+  // e entorno do Plano Piloto. O CEP é consultado no ViaCEP; se a cidade estiver
+  // fora da área, abre o popup e o pedido NÃO pode ser finalizado.
+  const [cepInput, setCepInput] = useState('');
+  const [enderecoCep, setEnderecoCep] = useState<EnderecoCep | null>(null);
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [cepError, setCepError] = useState('');
+  const [numero, setNumero] = useState('');
+  const [complemento, setComplemento] = useState('');
+  // Alguns CEPs (gerais de cidade) vêm sem logradouro no ViaCEP — aí o cliente digita.
+  const [logradouroManual, setLogradouroManual] = useState('');
+  const [cobertura, setCobertura] = useState<ResultadoCobertura | null>(null);
+  const [modalForaArea, setModalForaArea] = useState(false);
+
+  const foraDaArea = cobertura !== null && !cobertura.atendido;
+
+  const handleBuscarCep = async (valorBruto: string) => {
+    const limpo = limparCep(valorBruto);
+    if (limpo.length !== 8) return;
+
+    setBuscandoCep(true);
+    setCepError('');
+    setEnderecoCep(null);
+    setCobertura(null);
+
+    try {
+      const endereco = await buscarCep(limpo);
+      const resultado = avaliarCobertura(endereco.cidade, endereco.uf);
+      setEnderecoCep(endereco);
+      setCobertura(resultado);
+      if (!resultado.atendido) setModalForaArea(true);
+    } catch (erro: any) {
+      setCepError(erro?.message || 'Não foi possível consultar o CEP');
+    } finally {
+      setBuscandoCep(false);
+    }
+  };
+
+  const limparEndereco = () => {
+    setCepInput('');
+    setEnderecoCep(null);
+    setCobertura(null);
+    setCepError('');
+    setNumero('');
+    setComplemento('');
+    setLogradouroManual('');
+    setModalForaArea(false);
+    updateFormData({ address: '' });
+  };
+
+  // Mantém o endereço do pedido sempre montado a partir do CEP + número.
+  useEffect(() => {
+    if (!enderecoCep || !cobertura?.atendido) return;
+    updateFormData({
+      address: montarEnderecoCompleto({
+        logradouro: enderecoCep.logradouro || logradouroManual,
+        numero,
+        complemento,
+        bairro: enderecoCep.bairro,
+        cidade: enderecoCep.cidade,
+        uf: enderecoCep.uf,
+        cep: enderecoCep.cep,
+      }),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enderecoCep, cobertura, numero, complemento, logradouroManual]);
+
 
   // Formatar CPF
   const formatCPF = (value: string) => {
@@ -298,6 +379,16 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
     if (!formData.name.trim()) newErrors.name = 'Nome é obrigatório';
     if (!formData.phone.trim()) newErrors.phone = 'Telefone é obrigatório';
     if (formData.phone.replace(/\D/g, '').length < 10) newErrors.phone = 'Telefone inválido';
+    // 🚚 ÁREA DE ENTREGA — sem CEP válido e dentro da área, não finaliza.
+    if (!enderecoCep) {
+      newErrors.cep = 'Informe o CEP de entrega';
+    } else if (!cobertura?.atendido) {
+      newErrors.cep = `Ainda não entregamos em ${enderecoCep.cidade}/${enderecoCep.uf}`;
+    } else if (!numero.trim()) {
+      newErrors.numero = 'Informe o número';
+    } else if (!enderecoCep.logradouro && !logradouroManual.trim()) {
+      newErrors.logradouro = 'Informe a rua e o bairro';
+    }
     if (!formData.address.trim()) newErrors.address = 'Endereço é obrigatório';
     if (formData.email && formData.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       newErrors.email = 'Email inválido';
@@ -309,7 +400,14 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    // 🚚 Trava dupla: mesmo que algo escape da validação, endereço fora da área
+    // não vira pedido — reabre o popup e para aqui.
+    if (foraDaArea) {
+      setModalForaArea(true);
+      return;
+    }
+
     if (validate()) {
       const customerWithLocation = {
         ...formData,
@@ -507,20 +605,142 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email}</p>}
                   </div>
 
+                  {/* 🚚 ENDEREÇO DE ENTREGA POR CEP */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">Endereço de Entrega *</label>
-                    <textarea
-                      value={formData.address}
-                      onChange={(e) => updateFormData({ address: e.target.value })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
-                        errors.address ? 'border-red-300' : 'border-gray-200'
-                      }`}
-                      placeholder="Rua, número, complemento, bairro, cidade"
-                      rows={3}
-                      data-testid="input-address"
-                    />
-                    {errors.address && <p className="text-red-500 text-sm mt-1">{errors.address}</p>}
+                    <label className="block text-sm font-medium mb-1">CEP de Entrega *</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={cepInput}
+                        onChange={(e) => {
+                          const formatado = formatarCep(e.target.value);
+                          setCepInput(formatado);
+                          setCepError('');
+                          if (limparCep(formatado).length === 8) {
+                            handleBuscarCep(formatado);
+                          } else {
+                            setEnderecoCep(null);
+                            setCobertura(null);
+                          }
+                        }}
+                        className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                          cepError || errors.cep || foraDaArea ? 'border-red-300' : 'border-gray-200'
+                        }`}
+                        placeholder="00000-000"
+                        maxLength={9}
+                        data-testid="input-cep"
+                      />
+                      {buscandoCep && (
+                        <Loader2 className="w-5 h-5 animate-spin text-rose-500 absolute right-4 top-1/2 -translate-y-1/2" />
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Entregamos em {TEXTO_AREA_ATENDIDA}.
+                    </p>
+                    {cepError && <p className="text-red-500 text-sm mt-1">{cepError}</p>}
+                    {errors.cep && <p className="text-red-500 text-sm mt-1">{errors.cep}</p>}
                   </div>
+
+                  {/* Endereço encontrado + fora de área */}
+                  {enderecoCep && cobertura?.atendido && (
+                    <>
+                      <div className="p-3 bg-green-50 border-2 border-green-300 rounded-xl" data-testid="endereco-encontrado">
+                        <p className="text-sm font-semibold text-green-900">
+                          ✅ Entregamos no seu endereço — frete grátis!
+                        </p>
+                        <p className="text-sm text-green-800 mt-1">
+                          {enderecoCep.logradouro ? `${enderecoCep.logradouro}, ` : ''}
+                          {enderecoCep.bairro ? `${enderecoCep.bairro} — ` : ''}
+                          {enderecoCep.cidade}/{enderecoCep.uf}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={limparEndereco}
+                          className="text-sm text-green-700 hover:text-green-900 underline mt-1"
+                        >
+                          Trocar CEP
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Número *</label>
+                          <input
+                            type="text"
+                            value={numero}
+                            onChange={(e) => setNumero(e.target.value)}
+                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                              errors.numero ? 'border-red-300' : 'border-gray-200'
+                            }`}
+                            placeholder="123"
+                            data-testid="input-numero"
+                          />
+                          {errors.numero && <p className="text-red-500 text-sm mt-1">{errors.numero}</p>}
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium mb-1">Complemento</label>
+                          <input
+                            type="text"
+                            value={complemento}
+                            onChange={(e) => setComplemento(e.target.value)}
+                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                            placeholder="Apto 101, Bloco B, ponto de referência"
+                            data-testid="input-complemento"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Rua não preenchida pelo ViaCEP (CEP geral de cidade) */}
+                      {!enderecoCep.logradouro && (
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Rua / Bairro *</label>
+                          <input
+                            type="text"
+                            value={logradouroManual}
+                            onChange={(e) => setLogradouroManual(e.target.value)}
+                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                              errors.logradouro ? 'border-red-300' : 'border-gray-200'
+                            }`}
+                            placeholder="Rua, bairro"
+                            data-testid="input-address"
+                          />
+                          {errors.logradouro && <p className="text-red-500 text-sm mt-1">{errors.logradouro}</p>}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {foraDaArea && enderecoCep && (
+                    <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl" data-testid="aviso-fora-area">
+                      <p className="text-sm font-bold text-red-800">
+                        😔 Ainda não entregamos em {enderecoCep.cidade}/{enderecoCep.uf}
+                      </p>
+                      <p className="text-sm text-red-700 mt-1">
+                        Nossa entrega cobre {TEXTO_AREA_ATENDIDA}.
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <a
+                          href={`https://wa.me/${WHATSAPP_HONEST}?text=${encodeURIComponent(
+                            `Olá! Meu CEP é ${cepInput} (${enderecoCep.cidade}/${enderecoCep.uf}) e gostaria de saber sobre entrega.`
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700"
+                        >
+                          Falar no WhatsApp
+                        </a>
+                        <button
+                          type="button"
+                          onClick={limparEndereco}
+                          className="px-4 py-2 bg-white border-2 border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-100"
+                        >
+                          Informar outro CEP
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {errors.address && <p className="text-red-500 text-sm mt-1">{errors.address}</p>}
                 </div>
               </div>
 
@@ -648,7 +868,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
               <button
                 type="submit"
-                disabled={isProcessing}
+                disabled={isProcessing || foraDaArea}
                 className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-4 rounded-xl font-bold text-lg hover:from-rose-600 hover:to-pink-600 transition-all disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed shadow-lg"
                 data-testid="btn-submit-order"
               >
@@ -657,6 +877,8 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     <Loader2 className="w-5 h-5 animate-spin" />
                     Processando...
                   </span>
+                ) : foraDaArea ? (
+                  'Endereço fora da área de entrega'
                 ) : (
                   `Confirmar Pedido - R$ ${total.toFixed(2)}`
                 )}
@@ -665,6 +887,63 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
           )}
         </form>
       </div>
+
+      {/* 🚚 POPUP — ENDEREÇO FORA DA ÁREA DE ENTREGA */}
+      {modalForaArea && enderecoCep && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+          data-testid="modal-fora-area"
+          onClick={() => setModalForaArea(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <div className="text-5xl mb-3">🚚</div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                Ainda não entregamos nesse endereço
+              </h3>
+              <p className="text-gray-700">
+                No momento entregamos apenas em <strong>{TEXTO_AREA_ATENDIDA}</strong>.
+              </p>
+              <p className="text-gray-600 text-sm mt-3">
+                O CEP informado é de <strong>{enderecoCep.cidade}/{enderecoCep.uf}</strong>, fora
+                da nossa área de cobertura — por isso não é possível finalizar o pedido.
+              </p>
+              <p className="text-gray-600 text-sm mt-2">
+                Fale com a nossa equipe pelo WhatsApp: podemos avaliar a entrega ou indicar um
+                revendedor perto de você.
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-2">
+              <a
+                href={`https://wa.me/${WHATSAPP_HONEST}?text=${encodeURIComponent(
+                  `Olá! Meu CEP é ${cepInput} (${enderecoCep.cidade}/${enderecoCep.uf}) e gostaria de saber sobre entrega.`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full text-center bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-colors"
+                data-testid="btn-whatsapp-fora-area"
+              >
+                Falar no WhatsApp
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalForaArea(false);
+                  limparEndereco();
+                }}
+                className="w-full py-3 rounded-xl font-bold border-2 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                data-testid="btn-trocar-cep"
+              >
+                Informar outro CEP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
