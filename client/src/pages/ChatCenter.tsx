@@ -1196,7 +1196,7 @@ function ChatCenterInner() {
     if (!j.aberta) {
       return (
         <Badge className="bg-amber-100 text-amber-800 border border-amber-300" title="Fora da janela de 24h: o WhatsApp so entrega template aprovado. A janela reabre quando o cliente responder.">
-          ⏳ Janela fechada — so template
+          ⏳ Janela fechada — só template
         </Badge>
       );
     }
@@ -2506,7 +2506,7 @@ function ChatCenterInner() {
                           <option value="">Escolha o template…</option>
                           {retomadaTemplates.map((t: any) => (
                             <option key={t.label} value={t.label}>
-                              {t.label} · {t.categoria}
+                              {t.nome || t.label}{t.categoria === 'MARKETING' ? ' (cobrado)' : ''}
                             </option>
                           ))}
                         </select>
