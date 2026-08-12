@@ -190,6 +190,35 @@ export async function sitemapXml(): Promise<string> {
 // Dado estruturado
 // ---------------------------------------------------------------------------
 
+/**
+ * Endereco publico da foto do produto.
+ * As fotos do catalogo estao gravadas como data: URL (base64 dentro do Postgres).
+ * Isso funciona dentro da loja, mas para o Google NAO existe: rich result de
+ * produto praticamente exige imagem, e imagem tem que ter endereco buscavel.
+ * Este caminho publica os bytes num endereco de verdade - sem copiar arquivo
+ * nenhum, so servindo o que ja esta no banco.
+ */
+export function urlPublicaDaFoto(cfg: ConfigGoogle, produtoId: string, imageUrl?: string | null): string | null {
+  const img = String(imageUrl || '');
+  if (!img) return null;
+  if (img.startsWith('data:')) return cfg.siteUrl + '/shop/foto/' + encodeURIComponent(String(produtoId));
+  if (img.startsWith('http')) return img;
+  return cfg.siteUrl + (img.startsWith('/') ? img : '/' + img);
+}
+
+/** Bytes da foto principal de um produto, para servir no endereco publico. */
+export async function fotoDoProduto(produtoId: string): Promise<{ mime: string; buf: Buffer } | null> {
+  const id = String(produtoId || '').trim();
+  if (!id || id.length > 64) return null;
+  try {
+    const r: any = await db.execute(sql`SELECT image_url FROM products WHERE id = ${id} AND is_active = true LIMIT 1`);
+    const img = String(r.rows?.[0]?.image_url || '');
+    const m = /^data:([^;,]*);base64,([\s\S]*)$/i.exec(img.trim());
+    if (!m) return null;
+    return { mime: m[1] || 'image/jpeg', buf: Buffer.from(m[2], 'base64') };
+  } catch { return null; }
+}
+
 async function produtosParaSchema(cfg: ConfigGoogle, limite = 20): Promise<any[]> {
   try {
     const r: any = await db.execute(sql`
@@ -204,10 +233,9 @@ async function produtosParaSchema(cfg: ConfigGoogle, limite = 20): Promise<any[]
         url: cfg.siteUrl + '/shop/produto/' + String(p.id),
       };
       if (p.description) item.description = String(p.description).slice(0, 400);
-      // Foto do catalogo e data: URL de centenas de KB - nao entra no JSON-LD.
-      // So imagem com endereco de verdade serve para rich result.
-      const img = String(p.image_url || '');
-      if (img && !img.startsWith('data:')) item.image = img.startsWith('http') ? img : cfg.siteUrl + img;
+      // A foto vira um endereco publico mesmo quando esta gravada como base64.
+      const foto = urlPublicaDaFoto(cfg, String(p.id), p.image_url);
+      if (foto) item.image = foto;
       if (preco > 0) {
         item.offers = {
           '@type': 'Offer',

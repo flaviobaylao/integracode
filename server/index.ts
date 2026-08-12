@@ -233,6 +233,24 @@ app.use((req, res, next) => {
       return res.sendFile(arquivo);
     }
   };
+  // Foto do produto num endereco PUBLICO. As fotos estao gravadas como base64
+  // dentro do banco: funciona dentro da loja, mas para o Google nao existe -
+  // rich result de produto praticamente exige imagem com endereco buscavel.
+  // Fica antes do express.static porque o /shop tem fallthrough desligado.
+  app.get('/shop/foto/:produtoId', async (req: any, res: any) => {
+    try {
+      const { fotoDoProduto } = await import('./mkt-google');
+      const f = await fotoDoProduto(String(req.params.produtoId));
+      if (!f) return res.status(404).type('text/plain').send('sem foto');
+      res.setHeader('Content-Type', f.mime);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.send(f.buf);
+    } catch (e: any) {
+      console.error('[MKT-GOOGLE] foto do produto falhou:', e?.message || e);
+      res.status(404).type('text/plain').send('sem foto');
+    }
+  });
+
   app.get(['/shop', '/shop/', '/shop/index.html'], (_req, res) => { void servirShop(res); });
 
   // Servir arquivos estáticos do hotsite com fallthrough disabled
