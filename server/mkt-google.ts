@@ -40,6 +40,12 @@ export type ConfigGoogle = {
   telefone: string;
   rua: string; cidade: string; uf: string; cep: string;
   areasAtendidas: string;
+  // Horario no formato do schema.org: "Mo-Fr 08:30-18:30, Sa 08:30-12:00".
+  // Vazio = nao entra no dado estruturado (mesma regra do endereco).
+  horario: string;
+  // Perfis oficiais, separados por virgula. O link do Perfil da Empresa no Google
+  // entra AQUI: e o que amarra o site ao perfil como sendo a mesma entidade.
+  redes: string;
   seoLigado: boolean;
 };
 
@@ -49,10 +55,13 @@ const PADROES: ConfigGoogle = {
   siteUrl: HOST_LOJA,
   nomeNegocio: 'Honest Sucos Naturais',
   // As palavras que a pessoa realmente digita. O titulo antigo nao tinha nenhuma.
-  descricao: 'Sucos naturais sem açúcar adicionado, produzidos em Bela Vista de Goiás. '
+  // "sem adicao de acucares" e a frase exata do rotulo. "sem acucar adicionado" dizia
+  // a mesma coisa com outras palavras, e o que vale aqui e bater com o rotulo.
+  descricao: 'Sucos naturais sem adição de açúcares, produzidos em Bela Vista de Goiás. '
     + 'Venda no atacado para revenda (padarias, mercados, lanchonetes) e entrega para consumidor em Goiânia e região.',
   telefone: '', rua: '', cidade: 'Bela Vista de Goiás', uf: 'GO', cep: '',
   areasAtendidas: 'Goiânia, Aparecida de Goiânia, Senador Canedo, Bela Vista de Goiás, Trindade',
+  horario: '', redes: '',
   seoLigado: true,
 };
 
@@ -84,6 +93,8 @@ export async function configGoogle(forcar = false): Promise<ConfigGoogle> {
     uf: await g('google_negocio_uf', PADROES.uf),
     cep: (await g('google_negocio_cep', PADROES.cep)).trim(),
     areasAtendidas: await g('google_areas_atendidas', PADROES.areasAtendidas),
+    horario: (await g('google_negocio_horario', PADROES.horario)).trim(),
+    redes: (await g('google_negocio_redes', PADROES.redes)).trim(),
     seoLigado: (await g('google_seo_modo', 'on')) !== 'off',
   };
   _cache = { em: Date.now(), cfg };
@@ -97,6 +108,7 @@ export async function salvarConfigGoogle(campos: Record<string, string>): Promis
     nomeNegocio: 'google_negocio_nome', descricao: 'google_negocio_descricao',
     telefone: 'google_negocio_telefone', rua: 'google_negocio_rua', cidade: 'google_negocio_cidade',
     uf: 'google_negocio_uf', cep: 'google_negocio_cep', areasAtendidas: 'google_areas_atendidas',
+    horario: 'google_negocio_horario', redes: 'google_negocio_redes',
     seoLigado: 'google_seo_modo',
   };
   const salvos: string[] = [];
@@ -275,6 +287,17 @@ export async function jsonLd(): Promise<any[]> {
   if (cfg.telefone) negocio.telephone = cfg.telefone;
   const areas = String(cfg.areasAtendidas || '').split(',').map(s => s.trim()).filter(Boolean);
   if (areas.length) negocio.areaServed = areas.map(a => ({ '@type': 'City', name: a }));
+  // Horario: so entra o que estiver no formato do schema.org ("Mo-Fr 08:30-18:30").
+  // Texto solto tipo "de segunda a sexta" o Google ignora — e um campo ignorado
+  // e pior que um campo vazio, porque parece preenchido na tela e nao vale nada.
+  const horarios = String(cfg.horario || '').split(',').map(s => s.trim())
+    .filter(s => /^(Mo|Tu|We|Th|Fr|Sa|Su)/.test(s));
+  if (horarios.length) negocio.openingHours = horarios;
+  // sameAs amarra o site aos perfis oficiais — inclusive ao Perfil da Empresa no
+  // Google. Sem isso, o Google trata site e perfil como dois negocios parecidos.
+  const perfis = String(cfg.redes || '').split(',').map(s => s.trim())
+    .filter(s => /^https?:\/\//i.test(s));
+  if (perfis.length) negocio.sameAs = perfis;
   blocos.push(negocio);
 
   blocos.push({
