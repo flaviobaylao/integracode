@@ -446,7 +446,7 @@ export default function GestaoCarteiras() {
                         <li>título cancelado ou excluído</li>
                         <li>NF-e cancelada, rejeitada ou de entrada</li>
                         <li>devolução, troca, amostra, bonificação, brinde e remessa</li>
-                        <li>transferência entre as empresas do grupo</li>
+                        <li>empresas do grupo e parceiros que não são cliente (PURO, BARUC)</li>
                         <li>aporte de sócio, empréstimo e adiantamento</li>
                         <li>pedido mandado para a lixeira do pipeline</li>
                       </ul>
