@@ -114,7 +114,7 @@ export async function ensureMktAssetsSchema(): Promise<{ ok: boolean; steps: { s
        id SERIAL PRIMARY KEY,
        asset_id INTEGER NOT NULL,
        canal VARCHAR(24),
-       campanha_id INTEGER,
+       campanha_id VARCHAR,
        campanha_codigo VARCHAR,
        link_slug VARCHAR,
        ref VARCHAR,
@@ -122,6 +122,9 @@ export async function ensureMktAssetsSchema(): Promise<{ ok: boolean; steps: { s
        criado_por VARCHAR,
        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
      )`,
+    // A primeira versao subiu com campanha_id INTEGER e o join com mkt_campanhas
+    // (id varchar) estourava em producao. Rodar de novo num varchar e no-op.
+    `ALTER TABLE mkt_asset_usos ALTER COLUMN campanha_id TYPE VARCHAR USING campanha_id::varchar`,
     `CREATE INDEX IF NOT EXISTS mkt_asset_usos_asset_idx ON mkt_asset_usos (asset_id)`,
     `CREATE INDEX IF NOT EXISTS mkt_asset_usos_camp_idx ON mkt_asset_usos (campanha_id)`,
     `CREATE INDEX IF NOT EXISTS mkt_asset_usos_slug_idx ON mkt_asset_usos (link_slug)`,
@@ -573,7 +576,7 @@ export async function elegivel(id: number, diasDescanso = DIAS_DESCANSO_PADRAO):
 }
 
 export type RegistroUso = {
-  assetId: number; canal?: string; campanhaId?: number | null; campanhaCodigo?: string | null;
+  assetId: number; canal?: string; campanhaId?: string | number | null; campanhaCodigo?: string | null;
   linkSlug?: string | null; ref?: string | null; gancho?: string | null; criadoPor?: string | null;
   ignorarDescanso?: boolean; diasDescanso?: number;
 };
@@ -587,7 +590,7 @@ export async function registrarUso(u: RegistroUso): Promise<{ ok: boolean; id?: 
     return { ok: false, motivo: el.motivo };
   }
 
-  let campanhaId = u.campanhaId ?? null;
+  let campanhaId: string | null = u.campanhaId == null ? null : String(u.campanhaId);
   let campanhaCodigo = u.campanhaCodigo ?? null;
   try {
     // Fecha o fio: se veio o slug do link curto, herda a campanha dele.
@@ -663,7 +666,7 @@ export async function desempenhoPorTag(eixo: EixoTag | 'gancho' = 'gancho', dias
                AND convertido_em >= NOW() - (${dias}::text || ' days')::interval
              GROUP BY campanha_id
           )`
-    : sql`receita AS (SELECT NULL::int AS campanha_id, 0::int AS pedidos, 0::numeric AS receita WHERE false)`;
+    : sql`receita AS (SELECT NULL::varchar AS campanha_id, 0::int AS pedidos, 0::numeric AS receita WHERE false)`;
 
   const r: any = await db.execute(sql`
     WITH ${receitaCte},
