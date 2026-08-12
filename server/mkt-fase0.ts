@@ -89,11 +89,12 @@ export async function distribuicaoPedidos(dias = 180): Promise<{
   fonte: 'ia' | 'pipeline' | 'vazio'; n: number;
   min: number; p50: number; p75: number; p90: number; p95: number; max: number; media: number;
   simulacao: { teto: number; acima: number; percentual: number }[];
-  sugestao: number; recado: string;
+  porFonte?: { ia: any; pipeline: any };
+  sugestao: number; recado: string; alerta?: string;
 }> {
   const vazio = {
     fonte: 'vazio' as const, n: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, max: 0, media: 0,
-    simulacao: [] as any[], sugestao: TETO_PIX_PADRAO, recado: '',
+    simulacao: [] as any[], porFonte: { ia: null, pipeline: null }, sugestao: TETO_PIX_PADRAO, recado: '', alerta: '',
   };
 
   const medir = async (tabela: 'ia' | 'pipeline') => {
@@ -116,19 +117,23 @@ export async function distribuicaoPedidos(dias = 180): Promise<{
     return r.rows?.[0] || null;
   };
 
+  // As DUAS distribuicoes, sempre. A da IA e o que o teto afeta hoje; a do pipeline
+  // e o que ele vai afetar quando a revenda comecar a passar pela IA - e revenda tem
+  // ticket de outra ordem. Escolher o teto so pela amostra da IA subestima o futuro.
+  let iaLinha: any = null, pipeLinha: any = null;
+  try { iaLinha = await medir('ia'); } catch { /* tabela pode nao existir */ }
+  try { pipeLinha = await medir('pipeline'); } catch { /* ignora */ }
+
   let linha: any = null;
   let fonte: 'ia' | 'pipeline' | 'vazio' = 'vazio';
-  try {
-    const ia = await medir('ia');
-    if (ia && Number(ia.n) >= 10) { linha = ia; fonte = 'ia'; }
-  } catch { /* tabela pode nao existir ainda */ }
-  if (!linha) {
-    try {
-      const pipe = await medir('pipeline');
-      if (pipe && Number(pipe.n) > 0) { linha = pipe; fonte = 'pipeline'; }
-    } catch { /* ignora */ }
-  }
+  if (iaLinha && Number(iaLinha.n) >= 10) { linha = iaLinha; fonte = 'ia'; }
+  else if (pipeLinha && Number(pipeLinha.n) > 0) { linha = pipeLinha; fonte = 'pipeline'; }
   if (!linha) return vazio;
+
+  const resumir = (l: any) => l && Number(l.n) > 0 ? {
+    n: Number(l.n), min: Number(l.minimo), p50: Number(l.p50), p75: Number(l.p75),
+    p90: Number(l.p90), p95: Number(l.p95), max: Number(l.maximo), media: Number(l.media),
+  } : null;
 
   const n = Number(linha.n);
   const p90 = Math.ceil(Number(linha.p90) / 50) * 50;   // arredonda para cima, de 50 em 50
@@ -160,12 +165,19 @@ export async function distribuicaoPedidos(dias = 180): Promise<{
     : 'Ainda não há volume de pedido registrado pela IA. Usei os ' + n + ' pedidos do pipeline '
       + 'para dar a ordem de grandeza — assim que a IA registrar pedidos, este número passa a sair deles.';
 
+  // Aviso honesto: amostra pequena nao decide teto.
+  const alerta = fonte === 'ia' && n < 30
+    ? 'Atenção: são só ' + n + ' pedidos registrados pela IA, e todos do padrão que ela atendeu até hoje. '
+      + 'Se a revenda passar a comprar pela IA, o ticket muda de ordem — olhe também a coluna do pipeline antes de fechar o número.'
+    : '';
+
   return {
     fonte, n,
     min: Number(linha.minimo), p50: Number(linha.p50), p75: Number(linha.p75),
     p90: Number(linha.p90), p95: Number(linha.p95), max: Number(linha.maximo),
     media: Number(linha.media),
-    simulacao, sugestao, recado,
+    porFonte: { ia: resumir(iaLinha), pipeline: resumir(pipeLinha) },
+    simulacao, sugestao, recado, alerta,
   };
 }
 
