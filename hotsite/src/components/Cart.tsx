@@ -1,5 +1,6 @@
 import { CartItem } from '../types';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
+import { TEXTO_AREA_ATENDIDA } from '../utils/entrega';
 
 interface CartProps {
   items: CartItem[];
@@ -124,11 +125,15 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
         {/* Footer */}
         {items.length > 0 && (
           <div className="border-t p-4 bg-gray-50">
-            {/* Frete Grátis */}
+            {/* Frete Grátis — SOMENTE na área atendida (Grande Goiânia + Brasília/DF e entorno) */}
             <div className="mb-3 p-3 bg-green-50 border-2 border-green-400 rounded-lg">
               <p className="text-sm font-bold text-green-700 flex items-center gap-2">
                 <span>🚚</span>
-                Frete Grátis em todos os pedidos!
+                Frete Grátis para {TEXTO_AREA_ATENDIDA}
+              </p>
+              <p className="text-xs text-green-600 mt-1">
+                Confirmamos o seu CEP na próxima etapa. Fora dessa região ainda não realizamos
+                entregas.
               </p>
             </div>
 
@@ -152,7 +157,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               </div>
               <div className="flex justify-between text-sm text-green-700">
                 <span>Frete:</span>
-                <span className="font-semibold">GRÁTIS</span>
+                <span className="font-semibold">GRÁTIS (área atendida)</span>
               </div>
               <div className="flex justify-between text-lg font-bold border-t pt-2">
                 <span>Total:</span>
