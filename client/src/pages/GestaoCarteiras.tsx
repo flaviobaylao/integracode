@@ -18,7 +18,6 @@ import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 const COR_ABC: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6ef" };
 // PJ/PF e categorico: slots 1 e 2 da ordem fixa; cinza para "nao identificado".
 const COR_TIPO: Record<string, string> = { PJ: "#2a78d6", PF: "#eb6834", "Não identificado": "#898781" };
-const CAT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"];
 const CINZA = "#898781";
 // Barras da situação da carteira — ordem importa: a validação é por par
 // adjacente (azul→vermelho→âmbar→violeta passa em todas as checagens).
@@ -71,7 +70,8 @@ export default function GestaoCarteiras() {
   const [inicio, setInicio] = useState("2025-01");
   const [fim, setFim] = useState(mesHoje);
   const [vendedores, setVendedores] = useState<string[]>([]); // vazio = todos
-  const [visao, setVisao] = useState<"situacao" | "segmento">("situacao");
+  const [visao, setVisao] = useState<"situacao" | "clientes">("situacao");
+  const [balde, setBalde] = useState<"inativos" | "perdidos" | "debito">("inativos");
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
   const [busca, setBusca] = useState("");
@@ -185,18 +185,20 @@ export default function GestaoCarteiras() {
     return Array.from(m.entries()).map(([tipo, a]) => ({ tipo, ...a })).sort((a, b) => b.clientes - a.clientes);
   }, [d, clientes, filtrarVend]);
 
-  const segmentos = useMemo(() => {
-    const m = new Map<string, { clientes: number; valor: number }>();
-    for (const c of clientes) {
-      const a = m.get(c.segmento) || { clientes: 0, valor: 0 };
-      a.clientes++; a.valor += c.total; m.set(c.segmento, a);
+  // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
+  // em cada um (potencial nos parados, valor em aberto no débito).
+  const listaSituacao = useMemo(() => {
+    if (balde === "debito") {
+      return clientes.filter((c) => (c.debito || 0) > 0).sort((a, b) => b.debito - a.debito);
     }
-    const arr = Array.from(m.entries()).map(([segmento, a]) => ({ segmento, ...a })).sort((a, b) => b.valor - a.valor);
-    if (arr.length <= 7) return arr;
-    const top = arr.slice(0, 6);
-    const resto = arr.slice(6).reduce((s, x) => ({ clientes: s.clientes + x.clientes, valor: s.valor + x.valor }), { clientes: 0, valor: 0 });
-    return [...top, { segmento: `Demais (${arr.length - 6})`, ...resto }];
-  }, [clientes]);
+    const alvo = balde === "inativos" ? "inativo" : "perdido";
+    return clientes.filter((c) => c.situacao === alvo).sort((a, b) => b.potencialMes - a.potencialMes);
+  }, [clientes, balde]);
+
+  const totalSituacao = useMemo(
+    () => listaSituacao.reduce((s, c) => s + (balde === "debito" ? c.debito : c.potencialMes), 0),
+    [listaSituacao, balde],
+  );
 
   // A série do gráfico segue o período; com filtro de vendedor ela é recomposta
   // a partir dos clientes daquela carteira (por isso o back manda porMes).
@@ -302,6 +304,8 @@ export default function GestaoCarteiras() {
           "Média ponderada/mês": Number(c.mediaPonderada.toFixed(2)),
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
           "Meses com compra": c.mesesComCompra, "Última compra": c.ultimaCompra || "",
+          Situação: c.situacao, "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
+          "Débito vencido": Number((c.debito || 0).toFixed(2)),
         })),
       `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
@@ -382,16 +386,16 @@ export default function GestaoCarteiras() {
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <CardTitle>{visao === "situacao" ? "Situação da carteira" : "Segmentos da carteira"}</CardTitle>
+                    <CardTitle>{visao === "situacao" ? "Situação da carteira" : "Clientes por situação"}</CardTitle>
                     <CardDescription>
                       {visao === "situacao"
                         ? "Quanto entra e quanto está parado. Valores por mês, menos o débito, que é o total vencido em aberto hoje."
-                        : "Segmento de negócio informado no cadastro do cliente"}
+                        : "Quem está por trás de cada barra — clique no balde para trocar a lista"}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <Button size="sm" variant={visao === "situacao" ? "default" : "outline"} onClick={() => setVisao("situacao")} data-testid="button-situacao">Situação</Button>
-                    <Button size="sm" variant={visao === "segmento" ? "default" : "outline"} onClick={() => setVisao("segmento")} data-testid="button-segmento">Negócio</Button>
+                    <Button size="sm" variant={visao === "clientes" ? "default" : "outline"} onClick={() => setVisao("clientes")} data-testid="button-lista-situacao">Clientes</Button>
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" aria-label="Como cada número é montado" data-testid="button-info-situacao">
@@ -453,11 +457,19 @@ export default function GestaoCarteiras() {
                           </>
                         ) : (
                           <>
-                            <p className="font-semibold">Segmento de negócio</p>
+                            <p className="font-semibold">Clientes por situação</p>
                             <p className="text-muted-foreground">
-                              Faturamento do período agrupado pelo segmento informado no cadastro do cliente
-                              (o mesmo campo do filtro de Clientes Ativos). Aparecem os 6 maiores; o resto vai para
-                              "Demais". Quem está sem o campo preenchido cai em "(Sem segmento)".
+                              A lista nominal por trás das barras, no mesmo recorte de período e vendedor.
+                            </p>
+                            <ul className="text-muted-foreground list-disc pl-4 space-y-1">
+                              <li><b>Inativos</b> — cadastro inativado. Mostra o potencial de cada um (o que faturava nos meses em que comprava) e há quanto tempo está parado.</li>
+                              <li><b>Perdidos</b> — cadastro ativo, comprou em 3 meses ou mais e está há 3+ meses sem comprar.</li>
+                              <li><b>Com débito</b> — quem tem título vencido em aberto hoje, do maior para o menor.</li>
+                            </ul>
+                            <p className="text-muted-foreground">
+                              Um cliente pode aparecer em "com débito" e também em inativos ou perdidos — os dois primeiros
+                              baldes é que são exclusivos entre si. O Exportar Excel lá em cima leva situação, potencial e
+                              débito de todos os clientes.
                             </p>
                           </>
                         )}
@@ -501,32 +513,73 @@ export default function GestaoCarteiras() {
                   </>
                 ) : (
                   <>
-                    <ResponsiveContainer width="100%" height={290}>
-                      <PieChart>
-                        <Pie
-                          data={segmentos.map((s2: any, i: number) => ({ nome: s2.segmento, valor: s2.valor, clientes: s2.clientes, cor: /^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length] }))}
-                          dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
-                          stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
+                    {/* Baldes: trocam a lista sem sair do card */}
+                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                      {([
+                        { k: "inativos", rotulo: "Inativos", cor: COR_BARRA.inativos, n: clientes.filter((c) => c.situacao === "inativo").length },
+                        { k: "perdidos", rotulo: "Perdidos", cor: COR_BARRA.perdidos, n: clientes.filter((c) => c.situacao === "perdido").length },
+                        { k: "debito", rotulo: "Com débito", cor: COR_BARRA.debito, n: clientes.filter((c) => (c.debito || 0) > 0).length },
+                      ] as const).map((b) => (
+                        <button
+                          key={b.k}
+                          onClick={() => setBalde(b.k as any)}
+                          data-testid={`chip-balde-${b.k}`}
+                          className={`px-2.5 py-1.5 rounded-md border text-sm transition flex items-center gap-2 ${balde === b.k ? "border-foreground/40 bg-muted font-semibold" : "border-transparent bg-muted/40 hover:bg-muted"}`}
                         >
-                          {segmentos.map((s2: any, i: number) => (
-                            <Cell key={i} fill={/^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(v: any, n: any, p: any) => [`${BRL(v)} · ${NUM(p?.payload?.clientes)} clientes`, p?.payload?.nome]} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="mt-2 border-t pt-2 text-sm">
-                      {segmentos.map((s2: any, i: number) => (
-                        <div key={s2.segmento} className="flex items-center justify-between py-0.5">
-                          <span className="flex items-center gap-2">
-                            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: /^Demais|Sem segmento/.test(s2.segmento) ? CINZA : CAT[i % CAT.length] }} />
-                            {s2.segmento} <span className="text-muted-foreground">({NUM(s2.clientes)} clientes)</span>
-                          </span>
-                          <span className="font-medium">{BRL0(s2.valor)}</span>
-                        </div>
+                          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: b.cor }} />
+                          {b.rotulo} <span className="text-muted-foreground">{NUM(b.n)}</span>
+                        </button>
                       ))}
+                      <span className="ml-auto text-sm font-semibold whitespace-nowrap">
+                        {BRL0(totalSituacao)}{balde === "debito" ? "" : "/mês"}
+                      </span>
                     </div>
+
+                    <div className="max-h-[268px] overflow-auto border rounded-md">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-8">#</TableHead>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">
+                              {balde === "debito" ? "Vencido em aberto" : "Potencial/mês"}
+                            </TableHead>
+                            <TableHead className="text-right w-20 whitespace-nowrap">Parado há</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {listaSituacao.slice(0, 200).map((c, i) => (
+                            <TableRow key={c.chave} data-testid={`row-situacao-${i}`}>
+                              <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                              <TableCell className="font-medium leading-tight">
+                                {c.nome}
+                                <span className="block text-xs text-muted-foreground">
+                                  {c.vendedor}{c.cidade ? ` · ${c.cidade}` : ""}
+                                  {balde === "debito" && c.situacao !== "ativo" ? ` · ${c.situacao}` : ""}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold whitespace-nowrap">
+                                {BRL(balde === "debito" ? c.debito : c.potencialMes)}
+                              </TableCell>
+                              <TableCell className="text-right text-sm whitespace-nowrap">
+                                {c.mesesSemComprar >= 99 ? "—" : c.mesesSemComprar === 0 ? "comprou agora" : `${c.mesesSemComprar} ${c.mesesSemComprar === 1 ? "mês" : "meses"}`}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {listaSituacao.length === 0 ? (
+                            <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">
+                              Nenhum cliente neste balde no recorte atual.
+                            </TableCell></TableRow>
+                          ) : null}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {listaSituacao.length > 200
+                        ? `Mostrando os 200 maiores de ${NUM(listaSituacao.length)} clientes.`
+                        : `${NUM(listaSituacao.length)} clientes neste balde.`}
+                      {" "}Use o Exportar Excel para a lista completa com situação, potencial e débito.
+                    </p>
                   </>
                 )}
               </CardContent>
