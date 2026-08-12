@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useMemo, Component, Fragment } from "react";
-import { nowBrazil } from '@/lib/brazilTimezone';
+import { hojeBR } from '@/lib/brazilTimezone';
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,12 +94,16 @@ interface VirtualAttendanceStat {
 // Componente para painel de estatísticas de atendimentos virtuais
 function VirtualAttendancePanel() {
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>(() => {
-    const now = nowBrazil();
-    const start = new Date(now);
-    start.setDate(start.getDate() - 30);
+    // A Fase 4 do fuso removeu nowBrazil() de proposito: ela devolvia um Date com o
+    // INSTANTE deslocado, e .toISOString() aqui virava o dia errado fora de Brasilia.
+    // Aqui so precisamos de datas de calendario 'YYYY-MM-DD', entao partimos de hojeBR()
+    // e andamos 30 dias em UTC — sem o fuso do navegador entrar na conta.
+    const fim = hojeBR();
+    const ini = new Date(fim + 'T00:00:00Z');
+    ini.setUTCDate(ini.getUTCDate() - 30);
     return {
-      start: start.toISOString().split('T')[0],
-      end: now.toISOString().split('T')[0]
+      start: ini.toISOString().slice(0, 10),
+      end: fim
     };
   });
 
