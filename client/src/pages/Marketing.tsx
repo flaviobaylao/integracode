@@ -12,7 +12,7 @@
 // As próximas seções da Central (Aprovações, Calendário, Criativos, Réguas)
 // entram aqui nos buracos seguintes.
 // ============================================================================
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -894,6 +894,11 @@ function SecaoCriativos() {
   const [novoPublico, setNovoPublico] = useState("");
   const [novaOrigem, setNovaOrigem] = useState("foto_real");
   const [salvando, setSalvando] = useState(false);
+  const [arrastando, setArrastando] = useState(false);
+  const [subindo, setSubindo] = useState(false);
+  const [recortes, setRecortes] = useState<string[]>(["feed_4x5"]);
+  const [logSubida, setLogSubida] = useState<{ texto: string; erro?: boolean }[]>([]);
+  const inputArquivo = useRef<HTMLInputElement>(null);
 
   const pan = useQuery<any>({
     queryKey: ["/api/mkt/assets/panorama"],
@@ -959,6 +964,113 @@ function SecaoCriativos() {
       recarregar();
     } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
     setSalvando(false);
+  }
+
+  // ── subida de foto ────────────────────────────────────────────────────────
+  // Foto de celular tem 4-8 MB e o /api/upload-image corta em 5 MB. Além do
+  // limite, a imagem acaba em base64 no Postgres — mandar o arquivo cru
+  // engordaria o banco à toa. Reduzir aqui resolve os dois de uma vez.
+  const LADO_MAXIMO = 1600;
+  const PROPORCAO: Record<string, number> = {
+    feed_4x5: 0.8, story_9x16: 0.5625, "paisagem_1.91x1": 1.91,
+  };
+
+  async function lerImagem(file: File): Promise<ImageBitmap | HTMLImageElement> {
+    // from-image respeita a rotação do EXIF — sem isso, foto de celular sobe deitada.
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" } as any); }
+    catch {
+      return await new Promise((ok, err) => {
+        const img = new Image();
+        img.onload = () => ok(img);
+        img.onerror = err;
+        img.src = URL.createObjectURL(file);
+      });
+    }
+  }
+
+  function desenhar(src: any, lw: number, lh: number, sx: number, sy: number, sw: number, sh: number): Promise<Blob | null> {
+    const c = document.createElement("canvas");
+    c.width = lw; c.height = lh;
+    c.getContext("2d")!.drawImage(src, sx, sy, sw, sh, 0, 0, lw, lh);
+    return new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.85));
+  }
+
+  async function reduzir(src: any): Promise<Blob | null> {
+    const w = src.width, h = src.height;
+    const escala = Math.min(1, LADO_MAXIMO / Math.max(w, h));
+    return desenhar(src, Math.round(w * escala), Math.round(h * escala), 0, 0, w, h);
+  }
+
+  /** Recorte centralizado na proporção pedida — nunca deforma, sempre corta. */
+  async function recortar(src: any, proporcao: number): Promise<Blob | null> {
+    const w = src.width, h = src.height;
+    let sw = w, sh = Math.round(w / proporcao);
+    if (sh > h) { sh = h; sw = Math.round(h * proporcao); }
+    const sx = Math.round((w - sw) / 2), sy = Math.round((h - sh) / 2);
+    const escala = Math.min(1, LADO_MAXIMO / Math.max(sw, sh));
+    return desenhar(src, Math.round(sw * escala), Math.round(sh * escala), sx, sy, sw, sh);
+  }
+
+  async function subirBlob(blob: Blob, nome: string): Promise<string> {
+    const fd = new FormData();
+    fd.append("image", new File([blob], nome, { type: "image/jpeg" }));
+    const r = await fetch("/api/upload-image", { method: "POST", credentials: "include", body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.url) throw new Error(j.message || "falha ao subir (" + r.status + ")");
+    return j.url;
+  }
+
+  const tagsDoLote = () => ({
+    gancho: novoGancho ? [novoGancho] : [],
+    cenario: novoCenario ? [novoCenario] : [],
+    publico: novoPublico ? [novoPublico] : [],
+  });
+
+  async function enviarArquivos(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setSubindo(true);
+    setLogSubida([]);
+    const registra = (texto: string, erro?: boolean) => setLogSubida((l) => [...l, { texto, erro }]);
+    let novos = 0;
+
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/")) { registra(file.name + ": não é imagem", true); continue; }
+      try {
+        const src = await lerImagem(file);
+        const base = await reduzir(src);
+        if (!base) throw new Error("não consegui processar a imagem");
+
+        const url = await subirBlob(base, file.name);
+        const r = await apiPost("/api/mkt/assets", {
+          url, titulo: (novoTitulo.trim() || file.name.replace(/\.[^.]+$/, "")).slice(0, 120),
+          origem: "foto_real", direitosOk: true, tags: tagsDoLote(),
+        });
+        if (r.duplicado) registra(file.name + ": já estava na biblioteca — tags somadas");
+        else { novos++; registra(file.name + ": entrou como " + r.formato + " (" + r.largura + "x" + r.altura + ")"); }
+
+        // Recortes: é o que a biblioteca apontou como faltando para anunciar.
+        for (const f of recortes) {
+          const p = PROPORCAO[f];
+          if (!p) continue;
+          const blob = await recortar(src, p);
+          if (!blob) continue;
+          const urlR = await subirBlob(blob, f + "-" + file.name);
+          const rr = await apiPost("/api/mkt/assets", {
+            url: urlR,
+            titulo: ((novoTitulo.trim() || file.name.replace(/\.[^.]+$/, "")) + " (" + f + ")").slice(0, 120),
+            origem: "ia_moldura", direitosOk: true, tags: tagsDoLote(),
+          });
+          if (!rr.duplicado) novos++;
+          registra("   ↳ recorte " + f + ": " + (rr.duplicado ? "já existia" : "criado"));
+        }
+      } catch (e: any) {
+        registra(file.name + ": " + (e?.message || "erro"), true);
+      }
+    }
+
+    setSubindo(false);
+    if (novos) toast({ title: novos + " criativo(s) na biblioteca", description: "Confira as tags no acervo abaixo." });
+    recarregar();
   }
 
   async function marcarUso(id: number) {
@@ -1103,9 +1215,61 @@ function SecaoCriativos() {
           </div>
         </div>
 
+        {/* ── subir foto do computador/celular ── */}
+        <div className="rounded-lg border p-3 space-y-3">
+          <div className="text-sm font-semibold">Subir fotos</div>
+          <p className="text-[11px] text-muted-foreground">
+            Escolha várias de uma vez. Cada foto é reduzida aqui no navegador antes de subir
+            (o limite do sistema é 5 MB e foto de celular passa disso), e o gancho/cenário/público
+            escolhidos abaixo valem para todas do lote.
+          </p>
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
+            onDragLeave={() => setArrastando(false)}
+            onDrop={(e) => { e.preventDefault(); setArrastando(false); enviarArquivos(e.dataTransfer.files); }}
+            className={"rounded-lg border-2 border-dashed p-6 text-center " + (arrastando ? "bg-muted" : "")}
+          >
+            <i className="fas fa-camera text-2xl text-muted-foreground" />
+            <div className="text-sm mt-2">Arraste as fotos aqui</div>
+            <div className="text-[11px] text-muted-foreground mb-3">ou</div>
+            <input ref={inputArquivo} type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => { enviarArquivos(e.target.files); e.currentTarget.value = ""; }} />
+            <Button size="sm" variant="outline" disabled={subindo}
+              onClick={() => inputArquivo.current?.click()}>
+              {subindo ? "Subindo…" : "Escolher arquivos"}
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-center text-xs">
+            <span className="text-muted-foreground">Gerar também recorte em:</span>
+            {(["feed_4x5", "story_9x16", "paisagem_1.91x1"] as const).map((f) => (
+              <label key={f} className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={recortes.includes(f)}
+                  onChange={() => setRecortes(recortes.includes(f) ? recortes.filter(x => x !== f) : [...recortes, f])} />
+                {f}
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            O recorte é <b>centralizado</b> e entra como <code>ia_moldura</code> — corte de foto real, que a regra da casa
+            permite. O que a IA nunca faz é inventar a cena.
+          </p>
+
+          {logSubida.length > 0 && (
+            <ul className="text-[11px] space-y-1 max-h-40 overflow-y-auto">
+              {logSubida.map((l, i) => (
+                <li key={i} className={l.erro ? "text-destructive" : "text-muted-foreground"}>
+                  <i className={"fas mr-1 " + (l.erro ? "fa-xmark" : "fa-check")} />{l.texto}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {/* ── cadastro avulso ── */}
         <div className="rounded-lg border p-3 space-y-3">
-          <div className="text-sm font-semibold">Cadastrar um criativo</div>
+          <div className="text-sm font-semibold">Cadastrar um criativo por endereço</div>
           <div className="grid md:grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Endereço da imagem</Label>
