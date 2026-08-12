@@ -1082,6 +1082,22 @@ function SecaoCriativos() {
     } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
   }
 
+  async function remover(a: any) {
+    const nome = a.titulo || a.produto_nome || ("criativo " + a.id);
+    if (!window.confirm('Apagar "' + nome + '" da biblioteca?')) return;
+    try {
+      let r = await (await fetch("/api/mkt/assets/" + a.id, { method: "DELETE", credentials: "include" })).json();
+      if (!r.ok && r.usos) {
+        // Já foi ao ar: apagar tira do histórico de desempenho. Pergunta de novo.
+        if (!window.confirm(r.erro + ". Apagar mesmo assim?")) return;
+        r = await (await fetch("/api/mkt/assets/" + a.id + "?confirmar=true", { method: "DELETE", credentials: "include" })).json();
+      }
+      if (!r.ok) { toast({ title: "Não deu para apagar", description: r.erro, variant: "destructive" }); return; }
+      toast({ title: "Apagado", description: nome });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+
   async function alternarDireitos(a: any) {
     try {
       await fetch("/api/mkt/assets/" + a.id, {
@@ -1370,6 +1386,10 @@ function SecaoCriativos() {
                     <Button size="sm" className="h-6 text-[10px] px-2 flex-1"
                       disabled={!a.elegivel} onClick={() => marcarUso(a.id)}>
                       usei
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 px-1" title="apagar"
+                      onClick={() => remover(a)}>
+                      <i className="fas fa-trash text-[10px] text-muted-foreground" />
                     </Button>
                   </div>
                 </div>
