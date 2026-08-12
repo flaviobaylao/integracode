@@ -48,9 +48,15 @@ const KEYS: Record<string, string> = {
   chat_close_atendente_min: '60',          // prazo proprio da conversa em andamento com atendente
   ia_respeita_atendente: 'on',             // atendente atuando na conversa: a IA nao interfere
   ia_respeita_atendente_min: '60',         // minutos desde a ultima fala do humano p/ considerar "atuando"
+  // Migracao "atender so pelo 1841" — ver RESTAURACAO_MARCO_ZERO_HONEST.md.
+  // Cada etapa tem a sua chave para que o rollback seja configuracao, nao deploy.
+  chat_mostra_janela: 'on',                // etapa 1: indicador da janela de 24h na tela
+  chat_bloqueia_fora_janela: 'off',        // etapa 3: trava o texto livre fora da janela
+  envio_so_oficial: 'off',                 // etapa 3: corta a escada de canais (so 1841)
 };
 const MODES = ['agents_runtime_mode', 'agents_ig_mode'];
-const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841', 'ia_wpp_vendas', 'ia_front_line', 'ia_notifica_wa', 'ia_trava_admin', 'ia_lembrete_on', 'ia_respeita_atendente'];
+const TOGGLES = ['ia_regra_responder_novas', 'ia_regra_timeout_on', 'ia_regra_finalizar_on', 'ia_canal_2630', 'ia_canal_1841', 'ia_wpp_vendas', 'ia_front_line', 'ia_notifica_wa', 'ia_trava_admin', 'ia_lembrete_on', 'ia_respeita_atendente',
+  'chat_mostra_janela', 'chat_bloqueia_fora_janela', 'envio_so_oficial'];
 const NUMS = ['ia_timeout_min', 'ia_finalizar_min', 'ia_pausa_horas', 'chat_auto_close_min', 'ia_handoff_min', 'ia_lembrete_min', 'ia_lembrete_repete_h', 'chat_close_atendente_min', 'ia_respeita_atendente_min'];
 
 export function registerIaAtendimento(app: any) {
