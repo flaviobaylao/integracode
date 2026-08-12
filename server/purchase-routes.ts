@@ -3,7 +3,8 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { purchaseInvoices, omieInstances, payables, chartOfAccounts, digitalCertificates } from "@shared/schema";
 import { eq, desc, and, sql, ilike, or } from "drizzle-orm";
-import { nowBrazil } from "./brazilTimezone";
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora, hojeBR, dataCalendario } from "@shared/tempo";
 import * as xmlJs from "xml-js";
 
 interface NFeItem {
@@ -223,7 +224,7 @@ export async function runRadarScan(createdBy: string = "radar-auto"): Promise<an
                   items: [],
                   status: "detected",
                   omieInstanceId: inst.id,
-                  detectedAt: nowBrazil(),
+                  detectedAt: agora(),
                   createdBy,
                 });
                 found++; totalFound++;
@@ -416,8 +417,8 @@ export function registerPurchaseRoutes(app: Express) {
           cfop: parsed.cfop,
           natureOfOperation: parsed.natureOfOperation,
           omieInstanceId: matchedInstanceId || existing.omieInstanceId,
-          importedAt: nowBrazil(),
-          updatedAt: nowBrazil(),
+          importedAt: agora(),
+          updatedAt: agora(),
         }).where(eq(purchaseInvoices.id, existing.id)).returning();
         return res.json(invoice);
       }
@@ -438,7 +439,7 @@ export function registerPurchaseRoutes(app: Express) {
         omieInstanceId: matchedInstanceId,
         cfop: parsed.cfop,
         natureOfOperation: parsed.natureOfOperation,
-        importedAt: nowBrazil(),
+        importedAt: agora(),
         createdBy: req.userId,
       }).returning();
 
@@ -460,8 +461,8 @@ export function registerPurchaseRoutes(app: Express) {
           isStockPurchase: isStockPurchase || false,
           notes,
           status: "classified",
-          classifiedAt: nowBrazil(),
-          updatedAt: nowBrazil(),
+          classifiedAt: agora(),
+          updatedAt: agora(),
         })
         .where(eq(purchaseInvoices.id, req.params.id))
         .returning();
@@ -496,7 +497,7 @@ export function registerPurchaseRoutes(app: Express) {
             supplierName: invoice.supplierName,
             supplierDocument: invoice.supplierDocument,
             description: parc.length > 1 ? `${baseDesc} - Parcela ${i + 1}/${parc.length}` : baseDesc,
-            issueDate: invoice.issueDate || nowBrazil(),
+            issueDate: invoice.issueDate || dataCalendario(hojeBR()),
             dueDate: new Date(p.dueDate),
             amount: String(p.amount),
             amountPaid: "0",
@@ -511,7 +512,7 @@ export function registerPurchaseRoutes(app: Express) {
           created.push(pay);
         }
         const [updatedInvoiceP] = await db.update(purchaseInvoices)
-          .set({ payableId: created[0].id, status: "linked", updatedAt: nowBrazil() })
+          .set({ payableId: created[0].id, status: "linked", updatedAt: agora() })
           .where(eq(purchaseInvoices.id, req.params.id))
           .returning();
         return res.json({ invoice: updatedInvoiceP, payables: created, count: created.length });
@@ -524,8 +525,8 @@ export function registerPurchaseRoutes(app: Express) {
         supplierName: invoice.supplierName,
         supplierDocument: invoice.supplierDocument,
         description: baseDesc,
-        issueDate: invoice.issueDate || nowBrazil(),
-        dueDate: dueDate ? new Date(dueDate) : nowBrazil(),
+        issueDate: invoice.issueDate || dataCalendario(hojeBR()),
+        dueDate: dueDate ? new Date(dueDate) : dataCalendario(hojeBR()),
         amount: invoice.totalValue,
         amountPaid: "0",
         status: "a_vencer",
@@ -541,7 +542,7 @@ export function registerPurchaseRoutes(app: Express) {
         .set({
           payableId: payable.id,
           status: "linked",
-          updatedAt: nowBrazil(),
+          updatedAt: agora(),
         })
         .where(eq(purchaseInvoices.id, req.params.id))
         .returning();
@@ -602,7 +603,7 @@ export function registerPurchaseRoutes(app: Express) {
       }
 
       const [updatedInvoice] = await db.update(purchaseInvoices)
-        .set({ stockProcessed: true, updatedAt: nowBrazil() })
+        .set({ stockProcessed: true, updatedAt: agora() })
         .where(eq(purchaseInvoices.id, req.params.id))
         .returning();
 
@@ -634,7 +635,7 @@ export function registerPurchaseRoutes(app: Express) {
       }
 
       const [updated] = await db.update(purchaseInvoices)
-        .set({ status, updatedAt: nowBrazil() })
+        .set({ status, updatedAt: agora() })
         .where(eq(purchaseInvoices.id, req.params.id))
         .returning();
 
@@ -685,7 +686,7 @@ export function registerPurchaseRoutes(app: Express) {
       }
       if (results.length === 0) return res.status(400).json({ error: "Nenhum item válido para dar entrada" });
       const [updatedInvoice] = await db.update(purchaseInvoices)
-        .set({ stockProcessed: true, updatedAt: nowBrazil() })
+        .set({ stockProcessed: true, updatedAt: agora() })
         .where(eq(purchaseInvoices.id, req.params.id))
         .returning();
       res.json({ invoice: updatedInvoice, entries: results });
@@ -859,8 +860,8 @@ export function registerPurchaseRoutes(app: Express) {
           xmlContent: result.fullXml,
           cfop: parsed.cfop,
           natureOfOperation: parsed.natureOfOperation,
-          importedAt: nowBrazil(),
-          updatedAt: nowBrazil(),
+          importedAt: agora(),
+          updatedAt: agora(),
         }).where(eq(purchaseInvoices.id, existing.id)).returning();
         enriched = true;
       } else {
@@ -880,7 +881,7 @@ export function registerPurchaseRoutes(app: Express) {
           omieInstanceId: instanceId,
           cfop: parsed.cfop,
           natureOfOperation: parsed.natureOfOperation,
-          importedAt: nowBrazil(),
+          importedAt: agora(),
           createdBy: req.userId,
         }).returning();
       }

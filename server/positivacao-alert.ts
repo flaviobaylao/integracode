@@ -22,13 +22,17 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
   // 2) Positivação do mês (billing_pipeline OU receivable)
   const bp = rowsOf(await db.execute(sql`
     SELECT DISTINCT customer_id AS cid FROM billing_pipeline
-    WHERE created_at >= date_trunc('month',(now() at time zone 'America/Sao_Paulo'))
-      AND created_at < date_trunc('month',(now() at time zone 'America/Sao_Paulo')) + interval '1 month'
+    -- created_at e INSTANTE em UTC; date_trunc('month', now() BR) e hora de parede BR.
+    -- Comparados crus, a fronteira do mes caia as 21:00 BRT do dia 31 e o pedido do fim da
+    -- noite entrava no mes seguinte. Converte o instante para BR antes de comparar.
+    WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month',(now() at time zone 'America/Sao_Paulo'))
+      AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') < date_trunc('month',(now() at time zone 'America/Sao_Paulo')) + interval '1 month'
       AND COALESCE(sale_value,0) > 0`));
   const rc = rowsOf(await db.execute(sql`
     SELECT customer_id AS cid, customer_document AS doc FROM receivables
-    WHERE issue_date >= date_trunc('month',(now() at time zone 'America/Sao_Paulo'))
-      AND issue_date < date_trunc('month',(now() at time zone 'America/Sao_Paulo')) + interval '1 month'
+    -- issue_date e DATA DE CALENDARIO: compara dia com dia, sem fuso no meio.
+    WHERE issue_date::date >= date_trunc('month',(now() at time zone 'America/Sao_Paulo'))::date
+      AND issue_date::date < (date_trunc('month',(now() at time zone 'America/Sao_Paulo')) + interval '1 month')::date
       AND COALESCE(amount,0) > 0 AND status <> 'cancelada'`));
   const posById = new Set<string>(); const posByDoc = new Set<string>();
   for (const r of bp) if (r.cid) posById.add(String(r.cid));

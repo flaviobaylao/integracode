@@ -1,4 +1,6 @@
 import { Express } from 'express';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { dataCalendario } from '@shared/tempo';
 import { storage } from './storage';
 import { authenticateUser } from './authMiddleware';
 import { nowBrazil } from './brazilTimezone';
@@ -104,10 +106,18 @@ function isFinancialReadAuthorized(req: any, res: any, next: any) {
 function normalizeFinancialBody(body: any): any {
   const out: any = { ...body };
   const isoRe = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  // Todos estes sao DATA DE CALENDARIO: gravam meia-noite UTC, sem hora. Antes o regex
+  // aceitava ISO completo, entao um cliente que mandasse toISOString() de um <input
+  // type="date"> gravava um instante deslocado e o titulo escapava dos filtros por faixa
+  // de vencimento. Truncar no dia elimina isso. Ver shared/tempo.ts.
   const dateFields = ['dueDate', 'issueDate', 'paidDate', 'paidAt', 'emissionDate', 'expectedSettlementDate'];
   for (const k of dateFields) {
     if (out[k] === '' || out[k] === null) { out[k] = null; }
-    else if (typeof out[k] === 'string') { const d = new Date(out[k]); if (!isNaN(d.getTime())) out[k] = d; }
+    else if (typeof out[k] === 'string') {
+      const d = new Date(out[k]);
+      // dataCalendario() ja trunca no dia: aceita 'YYYY-MM-DD' e ISO completo do mesmo jeito.
+      if (!isNaN(d.getTime())) out[k] = dataCalendario(out[k]);
+    }
   }
   // genérico: qualquer string em formato ISO de data vira Date (cobre createdAt/updatedAt/etc. carregados no form de edição)
   for (const k of Object.keys(out)) {

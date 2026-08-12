@@ -5,7 +5,8 @@ import { sql } from 'drizzle-orm';
 import { storage } from './storage';
 import { lancarNaConta } from './account-ledger';
 import type { FinancialAccount } from '@shared/schema';
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { hojeBR as hojeBRStr, dataCalendario } from '@shared/tempo';
 
 // ============================================================================
 // BB Boleto (API Cobranca v2) — registro de boleto hibrido (boleto + PIX).
@@ -229,7 +230,9 @@ export async function registrarBoleto(
   // BB rejeita dataEmissao > dataVencimento. Para titulos vencidos, o vencimento
   // e reajustado para hoje (fuso BR) para permitir a (re)emissao do boleto/PIX;
   // o valor original e mantido e juros/multa passam a contar do novo vencimento.
-  const hojeBR = nowBrazil();
+  // Hoje no Brasil como DATA DE CALENDARIO: dataEmissao/dataVencimento do BB sao datas
+  // puras (dd.mm.aaaa) e a comparacao abaixo ja e feita por dia, via Date.UTC.
+  const hojeBR = dataCalendario(hojeBRStr());
   const dueMs = Date.UTC(params.dueDate.getFullYear(), params.dueDate.getMonth(), params.dueDate.getDate());
   const hojeMs = Date.UTC(hojeBR.getFullYear(), hojeBR.getMonth(), hojeBR.getDate());
   const effectiveDueDate = dueMs < hojeMs ? hojeBR : params.dueDate;

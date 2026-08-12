@@ -184,7 +184,6 @@ import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNu
 let __lixeiraEnumReady = false;
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
-import { nowBrazil } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
 
@@ -6251,10 +6250,9 @@ export class DatabaseStorage implements IStorage {
         }
       } catch { /* mantém o padrão */ }
       if (!(timeoutMinutes > 0)) return { count: 0, conversations: [] };
-      // ⏰ last_message_time / last_attended_at sao gravados com nowBrazil() (hora de parede
-      // de Brasilia). O corte tem que sair do MESMO relogio — com new Date() a conversa
-      // parecia 3h parada e era encerrada logo depois de o atendente escrever.
-      const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
+      // ⏰ last_message_time guarda o INSTANTE em UTC (Fase 3 do fuso): o corte sai do
+      // relogio real, sem deslocamento. Ver shared/tempo.ts.
+      const cutoffTime = new Date(agora().getTime() - timeoutMinutes * 60 * 1000);
 
 
       // Encerrar todas as conversas não finalizadas que estão inativas há X minutos
@@ -6551,7 +6549,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertChatConversation(conversationData: InsertChatConversation): Promise<ChatConversation> {
-    const now = nowBrazil();
+    const now = agora();
     // Se customerPhone está definido, tenta buscar conversa existente
     if (conversationData.customerPhone) {
       // 🔧 UNIFICAÇÃO: Buscar por variações do número (com/sem 9)
@@ -7961,8 +7959,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getConversationsAwaitingResponse(timeoutMinutes: number): Promise<ChatConversation[]> {
-    // ⏰ mesmo relogio de lastMessageTime (nowBrazil), senao tudo parece 3h parado.
-    const cutoffTime = new Date(nowBrazil().getTime() - timeoutMinutes * 60 * 1000);
+    // ⏰ last_message_time guarda o INSTANTE em UTC (Fase 3 do fuso). Ver shared/tempo.ts.
+    const cutoffTime = new Date(agora().getTime() - timeoutMinutes * 60 * 1000);
     
     const conversations = await db
       .select()

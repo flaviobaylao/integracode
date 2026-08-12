@@ -1163,21 +1163,22 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
     // Registro de atendimento (virtual): virtual_service_logs (inclui 'não venda').
     const vlogs = await db.execute(sql`
       SELECT customer_id, attendant_id FROM virtual_service_logs
-      WHERE DATE(attendance_date) = ${date}::date
+      WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of vlogs.rows as any[]) mark(r.customer_id, r.attendant_id);
 
     // Registro de atendimento (presencial): check-in de rota.
     const cps = await db.execute(sql`
       SELECT customer_id, seller_id FROM route_checkpoints
-      WHERE checkpoint_type = 'check_in' AND DATE(checkpoint_time) = ${date}::date
+      WHERE checkpoint_type = 'check_in' AND (checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of cps.rows as any[]) mark(r.customer_id, r.seller_id);
 
     // Pedido: billing_pipeline no dia.
     const orders = await db.execute(sql`
       SELECT customer_id FROM billing_pipeline
-      WHERE DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) = ${date}::date
+      WHERE COALESCE(scheduled_billing_date::date,
+                     (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of orders.rows as any[]) mark(r.customer_id, null);
 
@@ -1187,7 +1188,8 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
     const orderBySeller = new Set<string>();
     const implOrders = await db.execute(sql`
       SELECT customer_id, seller_id FROM billing_pipeline
-      WHERE DATE(COALESCE(scheduled_billing_date::timestamp, created_at)) = ${date}::date
+      WHERE COALESCE(scheduled_billing_date::date,
+                     (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) = ${date}::date
         AND COALESCE(operation_type,'venda') = 'venda'
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of implOrders.rows as any[]) { if (r.seller_id) orderBySeller.add(`${r.customer_id}|${r.seller_id}`); }

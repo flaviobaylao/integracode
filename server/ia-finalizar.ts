@@ -66,14 +66,15 @@ async function sendDespedida(convId: string, toPhone: string, text: string): Pro
   }
 }
 
-// ⏰ RELOGIO CERTO — a causa da "IA encerrando em 1 minuto".
-// chat_conversations.last_message_time / last_attended_at sao gravados com nowBrazil(),
-// que devolve a hora de Brasilia como se fosse local: a coluna (timestamp SEM fuso) guarda
-// 16:03 quando em UTC sao 19:03. Comparar essa coluna com now() do Postgres (UTC) fazia
-// TODA conversa parecer 3 horas parada — o lembrete de 15 min e a finalizacao de 120 min
-// disparavam no minuto seguinte a mensagem do atendente. Aqui a comparacao usa o mesmo
-// relogio da coluna: hora de parede de Brasilia.
-const AGORA_BR = sql`(now() AT TIME ZONE 'America/Sao_Paulo')`;
+// ⏰ RELOGIO UNIFICADO (Fase 3 do fuso). chat_conversations.last_message_time,
+// .last_attended_at e .updated_at ERAM gravados com nowBrazil() — hora de parede de
+// Brasilia numa coluna sem fuso — e por isso todo leitor tinha de comparar com
+// (now() AT TIME ZONE 'America/Sao_Paulo') em vez de now(). Isso quebrava com quem
+// gravava certo: o Instagram gravava new Date() (UTC) na mesma coluna, e a conversa
+// nascia 3h "no futuro" — nunca era lembrada nem finalizada.
+// Agora a coluna guarda o INSTANTE em UTC, como todo o resto do sistema, e a comparacao
+// e com now() puro. Ver shared/tempo.ts.
+const AGORA_BR = sql`now()`;
 
 // Consulta as conversas elegíveis para finalização (WhatsApp, inativas, sem humano).
 async function selectElegiveis(mins: number, limit: number, minsAtendente: number): Promise<Array<{ id: string; customer_phone: string }>> {
@@ -238,7 +239,7 @@ export function registerIaFinalizar(app: any) {
         to_char(now(), 'DD/MM HH24:MI') AS now_utc,
         to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS now_br,
         to_char(max(c.last_message_time), 'DD/MM HH24:MI') AS msg_mais_recente,
-        round(EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'America/Sao_Paulo') - max(c.last_message_time))) / 60) AS defasagem_min
+        round(EXTRACT(EPOCH FROM (now() - max(c.last_message_time))) / 60) AS defasagem_min
         FROM chat_conversations c WHERE c.last_message_time IS NOT NULL`);
       relogio = t.rows?.[0] || null;
     } catch {}

@@ -86,7 +86,8 @@ export function registerCanaisRoutes(app: Express): void {
       const q: any = await db.execute(sql`
         SELECT sc.source AS canal,
                COUNT(*)::int AS total,
-               COUNT(*) FILTER (WHERE sc.created_at >= (now() AT TIME ZONE 'America/Sao_Paulo')::date)::int AS hoje,
+               COUNT(*) FILTER (WHERE (sc.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date
+                                      = (now() AT TIME ZONE 'America/Sao_Paulo')::date)::int AS hoje,
                COUNT(*) FILTER (WHERE sc.created_at > now() - interval '7 days')::int AS sete_dias,
                COUNT(*) FILTER (WHERE sc.created_at > now() - interval '30 days')::int AS trinta_dias,
                COALESCE(SUM(sc.sale_value::numeric) FILTER (WHERE sc.created_at > now() - interval '30 days'), 0)::float AS valor_30d,

@@ -3,7 +3,8 @@ import { BOLETO_DAYS_TO_PARCELA_CODE, Billing, type OmieInstance } from '@shared
 import { db } from './db';
 import { customers, users, billings } from '@shared/schema';
 import { eq, sql, isNotNull, isNull, or, and } from 'drizzle-orm';
-import { nowBrazil } from './brazilTimezone';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { hojeBR, dataCalendario, fmtCalendarioBR } from '@shared/tempo';
 
 // Schemas para validação das respostas da API Omie
 const OmieClientSchema = z.object({
@@ -630,7 +631,7 @@ export class OmieService {
       const customerDocument = order.cliente?.cnpj_cpf || '';
 
       const cfop = order.det?.[0]?.produto?.cfop || '';
-      const orderDate = order.cabecalho?.data_previsao ? this.parseOmieDate(order.cabecalho.data_previsao) : nowBrazil();
+      const orderDate = order.cabecalho?.data_previsao ? this.parseOmieDate(order.cabecalho.data_previsao) : dataCalendario(hojeBR());
       const totalValue = order.total_pedido?.valor_total_pedido || order.total_pedido?.valor_mercadorias || order.cabecalho?.valor_total || 0;
       const dueDate = order.lista_parcelas?.parcela?.[0]?.data_vencimento ? this.parseOmieDate(order.lista_parcelas.parcela[0].data_vencimento) : null;
 
@@ -1261,7 +1262,7 @@ export class OmieService {
       // Se não fornecer data, usar últimos 60 dias por padrão
       let effectiveDateFrom = dateFrom;
       if (!effectiveDateFrom) {
-        const sixtyDaysAgo = nowBrazil();
+        const sixtyDaysAgo = dataCalendario(hojeBR());
         sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
         const day = String(sixtyDaysAgo.getDate()).padStart(2, '0');
         const month = String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0');
@@ -2040,7 +2041,7 @@ export class OmieService {
       // Data do pedido
       const orderDate = order.cabecalho?.data_previsao ? 
         this.parseOmieDate(order.cabecalho.data_previsao) : 
-        nowBrazil();
+        dataCalendario(hojeBR());
       
       // Valor total do pedido
       const totalValue = order.total_pedido?.valor_total_pedido || 
@@ -2665,7 +2666,7 @@ export class OmieService {
           
           if (conta.data_vencimento) {
             const vencimento = new Date(conta.data_vencimento);
-            const hoje = nowBrazil();
+            const hoje = dataCalendario(hojeBR());
             const diffTime = hoje.getTime() - vencimento.getTime();
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             
@@ -3187,7 +3188,7 @@ export class OmieService {
       const cabecalho: any = {
         codigo_pedido_integracao: integrationCode,
         codigo_cliente: Number(omieClientCode),
-        data_previsao: nowBrazil().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+        data_previsao: fmtCalendarioBR(dataCalendario(hojeBR())),
         etapa: "50",
         numero_pedido: orderNumber.slice(0, 15),
         codigo_parcela: parcelaCode,
@@ -3773,8 +3774,7 @@ export class OmieService {
       console.log(`[EXEC-${executionId}] Starting comprehensive overdue debts query with strict filters...`);
       
       // CRÍTICO: Data atual com horas zeradas para comparação correta de datas
-      const hoje = nowBrazil();
-      hoje.setHours(0, 0, 0, 0);
+      const hoje = dataCalendario(hojeBR());
       
       const debtorsMap = new Map();
       let totalAmount = 0;
@@ -4207,7 +4207,7 @@ export class OmieService {
       options?.onProgress?.({ processed: 0, total: 0, message: 'Caches carregados! Buscando notas fiscais...' });
       
       // Calcular data de início: 60 dias atrás no fuso de Brasília
-      const sixtyDaysAgo = nowBrazil();
+      const sixtyDaysAgo = dataCalendario(hojeBR());
       sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
       sixtyDaysAgo.setHours(0, 0, 0, 0);
       const startDay = String(sixtyDaysAgo.getDate()).padStart(2, '0');
@@ -5868,7 +5868,7 @@ export async function createOmieOrder(orderData: {
     const hotsiteCabecalho: any = {
       numero_pedido: orderData.orderNumber.slice(0, 15),
       codigo_cliente: Number(omieCustomerId),
-      data_previsao: nowBrazil().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+      data_previsao: fmtCalendarioBR(dataCalendario(hojeBR())),
       etapa: '50',
       codigo_parcela: parcelaCode,
       origem_pedido: 'CRM-HonestSucos'

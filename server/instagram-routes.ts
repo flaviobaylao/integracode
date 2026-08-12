@@ -13,6 +13,8 @@
 //   POST /api/instagram/webhook  -> recebimento de mensagens.
 //   GET  /api/instagram/health   -> diagnostico (nao expoe segredos).
 import type { Express, Request, Response } from "express";
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { agora } from '@shared/tempo';
 import crypto from "crypto";
 import { storage } from "./storage";
 import { db } from "./db";
@@ -89,6 +91,11 @@ function validSignature(req: Request, rawBody: string): boolean {
 
 // Processa 1 mensagem recebida (fire-and-forget; nao segura a resposta do webhook).
 async function handleInbound(igsid: string, text: string, mid: string, referral?: any): Promise<void> {
+  // Carimbo de ORIGEM da mensagem (a Meta manda epoch em MILISSEGUNDOS no evento). Usar a
+  // hora de RECEBIMENTO do webhook faz uma reentrega/retry gravar a mensagem com a hora do
+  // retry, e nao a do envio. Cai para agora() quando o payload nao traz timestamp.
+  const _ts = Number(referral && referral.timestamp);
+  const quando = Number.isFinite(_ts) && _ts > 0 ? new Date(_ts) : agora();
   try {
     if (!igsid || !text || !text.trim()) return;
     // dedup por message id da Meta
@@ -121,7 +128,7 @@ async function handleInbound(igsid: string, text: string, mid: string, referral?
       try {
         await storage.updateChatConversation(existing.id, {
           ...(wasResolved ? { status: "new" } : {}),
-          lastMessageTime: new Date(),
+          lastMessageTime: quando,
           unreadCount: _unr(existing) + 1,
         } as any);
       } catch {}
@@ -146,7 +153,7 @@ async function handleInbound(igsid: string, text: string, mid: string, referral?
       convCustomerId = customerId;
       // Cria a conversa; se colidir no unique (corrida com outro webhook), reabre a existente.
       try {
-        const created: any = await storage.createChatConversation({ customerId, customerName, customerPhone: phoneKey, status: "new", agentId: null, lastMessageTime: new Date(), unreadCount: 1 } as any);
+        const created: any = await storage.createChatConversation({ customerId, customerName, customerPhone: phoneKey, status: "new", agentId: null, lastMessageTime: quando, unreadCount: 1 } as any);
         convId = created.id;
         convCustomerId = created.customerId || customerId;
       } catch {
@@ -154,7 +161,7 @@ async function handleInbound(igsid: string, text: string, mid: string, referral?
         if (again) {
           convId = again.id;
           convCustomerId = _cid(again) || customerId;
-          try { await storage.updateChatConversation(again.id, { status: "new", lastMessageTime: new Date() } as any); } catch {}
+          try { await storage.updateChatConversation(again.id, { status: "new", lastMessageTime: quando } as any); } catch {}
         }
       }
     }

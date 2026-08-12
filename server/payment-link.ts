@@ -19,6 +19,8 @@
 // junto com o deploy do servidor, sem rebuild manual.
 // ============================================================================
 import type { Express } from 'express';
+// Hora oficial do Brasil — regra unica em shared/tempo.ts.
+import { diaBR, hojeBR, dataCalendario } from '@shared/tempo';
 import crypto from 'crypto';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
@@ -200,7 +202,10 @@ export async function createPaymentLink(args: CreatePaymentLinkArgs): Promise<{
         amount,
         orderNumber: merchantOrderId,
         description: args.description || (args.customerName ? `Cliente: ${args.customerName}` : null),
-        expirationDate: new Date(Date.now() + ttl * 3600 * 1000).toISOString().slice(0, 10),
+        // A Cielo interpreta expirationDate como data LOCAL do lojista (BRT). Com
+        // toISOString() ia o dia UTC: um TTL que termina entre 21:00 e 00:00 BRT fazia
+        // o link expirar um dia DEPOIS do pretendido.
+        expirationDate: diaBR(Date.now() + ttl * 3600 * 1000),
         softDescriptor: 'HONEST',
         sku: args.orderNumber || null,
       });
@@ -353,7 +358,11 @@ async function settleReceivableByLink(link: any, sale: any, opts: { last4?: stri
     try {
       await storage.createReceivablePayment({
         receivableId,
-        paidAt: new Date(),
+        // receivable_payments.paid_at e DATA DE CALENDARIO em todo o sistema (a baixa manual
+        // grava meia-noite UTC e a conciliacao compara paid_at::date com o extrato).
+        // Com new Date() o webhook gravava um instante e o pagamento confirmado entre
+        // 21:00 e 00:00 BRT caia no dia seguinte no DRE e na conciliacao.
+        paidAt: dataCalendario(hojeBR()),
         amount: paid.toFixed(2),
         paymentMethod: 'cartao_credito' as any,
         financialAccountId: account?.id || receivable.financialAccountId || null,
