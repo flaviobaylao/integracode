@@ -1141,6 +1141,47 @@ function ChatCenterInner() {
     }
   });
 
+  // 🔓 RETOMADA DE CONTATO — etapa 2. Fora da janela de 24h, o unico caminho que a Meta
+  // permite e um template aprovado. Sem isto, a etapa 1 so avisava o atendente de que ele
+  // nao podia falar; agora ele tem o que fazer. O template nao abre a janela: quem abre e
+  // a RESPOSTA do cliente — por isso os templates de retomada tem botao.
+  const [showRetomada, setShowRetomada] = useState(false);
+  const [retomadaLabel, setRetomadaLabel] = useState<string>("");
+  const [retomadaParams, setRetomadaParams] = useState<string[]>([]);
+
+  const { data: retomadaTemplates = [] } = useQuery<any[]>({
+    queryKey: ["/api/chat/retomada/templates"],
+    queryFn: async () => {
+      const r = await fetch('/api/chat/retomada/templates', { credentials: 'include' });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return d.itens || [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const retomarMutation = useMutation({
+    mutationFn: async ({ id, label, params }: { id: string; label: string; params: string[] }) => {
+      const r = await fetch(`/api/chat/conversations/${id}/retomar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ label, params }),
+      });
+      const d = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error((d as any)?.error || 'Não foi possível enviar a retomada');
+      return d;
+    },
+    onSuccess: (d: any) => {
+      setShowRetomada(false);
+      setRetomadaLabel(""); setRetomadaParams([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations", selectedConversation, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/conversations"] });
+      toast({ title: "Retomada enviada", description: "A janela reabre quando o cliente responder." });
+    },
+    onError: (e: any) => toast({ title: "Não enviou", description: e?.message, variant: "destructive" }),
+  });
+
   // ⏳ JANELA DE 24h DA META — etapa 1 da migracao para atender so pelo 1841.
   // No canal oficial, texto livre so e entregue ate 24h depois da ULTIMA mensagem do
   // CLIENTE; fora disso o WhatsApp recusa. O atendente descobria isso depois de escrever
@@ -2425,6 +2466,69 @@ function ChatCenterInner() {
                           <b>Fora da janela de 24h.</b> O WhatsApp só entrega mensagem livre até 24h depois da última
                           mensagem do cliente. Agora só passa <b>template aprovado</b> — ou espere o cliente escrever.
                         </span>
+                        {retomadaTemplates.length > 0 && (
+                          <Button size="sm" variant="outline" className="text-xs ml-auto shrink-0 border-amber-400 text-amber-800 hover:bg-amber-100"
+                            onClick={() => { setShowRetomada(v => !v); setRetomadaLabel(""); setRetomadaParams([]); }}
+                            data-testid="button-retomar">
+                            Retomar contato
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {showRetomada && (
+                      <div className="rounded border border-amber-200 bg-white p-3 mb-2 text-xs space-y-2" data-testid="painel-retomada">
+                        <div className="font-semibold text-gray-700">Reabrir a conversa com um template aprovado</div>
+                        <select
+                          className="w-full border rounded px-2 py-1"
+                          value={retomadaLabel}
+                          onChange={(e) => {
+                            const lb = e.target.value;
+                            setRetomadaLabel(lb);
+                            const t = retomadaTemplates.find((x: any) => x.label === lb);
+                            setRetomadaParams(Array.from({ length: t?.variaveis || 0 }, () => ""));
+                          }}
+                          data-testid="select-retomada"
+                        >
+                          <option value="">Escolha o template…</option>
+                          {retomadaTemplates.map((t: any) => (
+                            <option key={t.label} value={t.label}>
+                              {t.label} · {t.categoria}
+                            </option>
+                          ))}
+                        </select>
+                        {(() => {
+                          const t = retomadaTemplates.find((x: any) => x.label === retomadaLabel);
+                          if (!t) return null;
+                          // Prévia com os campos já no lugar: o atendente lê o que o cliente vai ler.
+                          let previa = String(t.corpo || '');
+                          retomadaParams.forEach((p, i) => { previa = previa.split('{{' + (i + 1) + '}}').join(p || '…'); });
+                          return (
+                            <>
+                              {retomadaParams.map((p, i) => (
+                                <input key={i} className="w-full border rounded px-2 py-1"
+                                  placeholder={`Campo {{${i + 1}}}`} value={p}
+                                  onChange={(e) => setRetomadaParams(prev => prev.map((x, j) => j === i ? e.target.value : x))}
+                                  data-testid={`retomada-param-${i}`} />
+                              ))}
+                              <div className="bg-gray-50 border rounded p-2 whitespace-pre-wrap text-gray-700">{previa}</div>
+                              {t.categoria === 'MARKETING' && (
+                                <div className="text-amber-700">
+                                  Template de <b>marketing</b>: sempre cobrado e só vai para quem não pediu descadastro.
+                                </div>
+                              )}
+                              <div className="flex gap-2 justify-end">
+                                <Button size="sm" variant="ghost" className="text-xs" onClick={() => setShowRetomada(false)}>Cancelar</Button>
+                                <Button size="sm" className="text-xs"
+                                  disabled={retomarMutation.isPending || retomadaParams.some(x => !x.trim())}
+                                  onClick={() => selectedConversation && retomarMutation.mutate({ id: selectedConversation, label: retomadaLabel, params: retomadaParams })}
+                                  data-testid="button-enviar-retomada">
+                                  {retomarMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                                  Enviar retomada
+                                </Button>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                     <div className="flex gap-2 items-end">
