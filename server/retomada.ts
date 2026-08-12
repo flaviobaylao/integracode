@@ -28,8 +28,25 @@ import { sql } from 'drizzle-orm';
 // esses são disparados por acontecimento, não por gente.
 const MARCA_RETOMADA = '[retomada]';
 
+// O rotulo tecnico ("retomada_pedido · UTILITY") nao diz nada para um vendedor. O nome
+// amigavel vem do que estiver DEPOIS da marca na observacao:
+//     [retomada] Falar sobre um pedido
+// Assim da para renomear pelo cadastro do template, sem deploy e sem nova aprovacao na
+// Meta — o label continua sendo a chave do disparo, so a leitura muda.
+function nomeAmigavel(label: string, observacao: string): string {
+  const i = String(observacao || '').toLowerCase().indexOf(MARCA_RETOMADA);
+  if (i >= 0) {
+    const resto = String(observacao).slice(i + MARCA_RETOMADA.length).trim();
+    if (resto) return resto.slice(0, 60);
+  }
+  // Sem nome no cadastro: pelo menos tira o underline e a cara de banco de dados.
+  const limpo = String(label).replace(/_/g, ' ').trim();
+  return limpo.charAt(0).toUpperCase() + limpo.slice(1);
+}
+
 export type TemplateRetomada = {
   label: string;
+  nome: string;          // como o atendente le na lista
   umblerId: string | null;
   categoria: string;
   corpo: string;
@@ -71,6 +88,7 @@ export async function templatesDeRetomada(): Promise<TemplateRetomada[]> {
       ORDER BY label`);
     return (r.rows || []).map((t: any) => ({
       label: String(t.label),
+      nome: nomeAmigavel(String(t.label), String(t.observacao || '')),
       umblerId: t.umbler_id || null,
       categoria: String(t.categoria || 'UTILITY').toUpperCase(),
       corpo: String(t.corpo || ''),
