@@ -53,7 +53,10 @@ const PADROES: ConfigGoogle = {
   ga4Id: '', adsId: '', adsRotuloConversao: 'Pedido no site',
   verificacaoSearchConsole: '',
   siteUrl: HOST_LOJA,
-  nomeNegocio: 'Honest Sucos Naturais',
+  // TEM que ser igual, caractere por caractere, ao nome do Perfil da Empresa no
+  // Google. Nome divergente faz o Google tratar o site e o perfil como dois
+  // negocios parecidos em vez do mesmo — e ai o sameAs nao adianta.
+  nomeNegocio: 'HONEST - Sucos e bebidas naturais',
   // As palavras que a pessoa realmente digita. O titulo antigo nao tinha nenhuma.
   // "sem adicao de acucares" e a frase exata do rotulo. "sem acucar adicionado" dizia
   // a mesma coisa com outras palavras, e o que vale aqui e bater com o rotulo.
@@ -327,10 +330,20 @@ export async function jsonLd(): Promise<any[]> {
 // O bloco que entra no <head> do /shop
 // ---------------------------------------------------------------------------
 
+/** "HONEST - Sucos e bebidas naturais" -> "HONEST". Sem separador, devolve igual. */
+export function marcaCurta(nome: string): string {
+  const s = String(nome || '').trim();
+  const m = s.split(/\s+[-–—]\s+/)[0].trim();
+  return m || s;
+}
+
 export async function blocoSeo(): Promise<string> {
   const cfg = await configGoogle();
   const url = cfg.siteUrl + '/shop';
-  const titulo = cfg.nomeNegocio + ' — sucos naturais em Goiânia | atacado e revenda';
+  // O nome do negocio agora carrega o descritivo ("HONEST - Sucos e bebidas
+  // naturais") porque precisa bater com o Perfil no Google. No <title> isso ficaria
+  // repetido; entao o titulo usa so a marca — o que vem antes do primeiro " - ".
+  const titulo = marcaCurta(cfg.nomeNegocio) + ' — sucos naturais em Goiânia | atacado e revenda';
   const desc = String(cfg.descricao).slice(0, 300);
   const img = cfg.siteUrl + '/shop/images/hero-linha-produtos.jpg';
   const e = escaparXml;
@@ -343,7 +356,7 @@ export async function blocoSeo(): Promise<string> {
   }
   partes.push('<meta property="og:url" content="' + e(url) + '" />');
   partes.push('<meta property="og:image" content="' + e(img) + '" />');
-  partes.push('<meta property="og:site_name" content="' + e(cfg.nomeNegocio) + '" />');
+  partes.push('<meta property="og:site_name" content="' + e(marcaCurta(cfg.nomeNegocio)) + '" />');
   partes.push('<meta property="og:locale" content="pt_BR" />');
   partes.push('<meta property="twitter:image" content="' + e(img) + '" />');
   partes.push('<meta name="geo.region" content="BR-GO" />');
@@ -391,7 +404,7 @@ export async function injetarSeo(html: string): Promise<string> {
     const cfg = await configGoogle();
     let saida = html.replace(
       /<title>[\s\S]*?<\/title>/i,
-      '<title>' + escaparXml(cfg.nomeNegocio + ' — sucos naturais em Goiânia | atacado e revenda') + '</title>'
+      '<title>' + escaparXml(marcaCurta(cfg.nomeNegocio) + ' — sucos naturais em Goiânia | atacado e revenda') + '</title>'
     );
     const j = saida.indexOf('</head>');
     if (j < 0) return html;
