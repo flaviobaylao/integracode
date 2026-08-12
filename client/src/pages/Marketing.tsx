@@ -1869,6 +1869,7 @@ function PresencaGoogle() {
           </div>
           <div className="grid md:grid-cols-3 gap-3">
             {[
+              ["nomeNegocio", "Nome do negócio", "igual ao do Perfil no Google"],
               ["rua", "Endereço", "Rua, número"],
               ["cep", "CEP", "00000-000"],
               ["telefone", "Telefone público", "+55 62 ..."],
@@ -1893,6 +1894,8 @@ function PresencaGoogle() {
           <p className="text-[11px] text-muted-foreground">
             Endereço em branco fica <b>fora</b> do dado estruturado de propósito: endereço inventado é pior
             que endereço nenhum, porque o Google cruza com o Perfil da Empresa e desconfia do resto.
+            O <b>nome do negócio</b> precisa ser igual, caractere por caractere, ao do Perfil da Empresa
+            no Google — nome diferente faz o Google tratar site e perfil como dois negócios parecidos.
             O horário só vale no formato <code>Mo-Fr 08:30-18:30</code> — texto solto o Google ignora.
             Em <b>perfis oficiais</b>, o link do Perfil da Empresa no Google é o mais importante: é ele
             que diz ao Google que o site e o perfil são o mesmo negócio.
