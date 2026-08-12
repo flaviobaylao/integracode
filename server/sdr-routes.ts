@@ -157,7 +157,7 @@ Somos a *Honest Sucos*, especialistas em sucos naturais e bebidas saudáveis! �
 Estamos entrando em contato porque acreditamos que seu estabelecimento *${leadName || 'seu negócio'}* pode se beneficiar dos nossos produtos de alta qualidade.
 
 ✨ *Por que escolher a Honest?*
-• Sucos 100% naturais
+• Suco natural, sem adição de açúcares
 • Entrega rápida e confiável
 • Preços competitivos
 • Atendimento personalizado
