@@ -235,6 +235,9 @@ export default function Marketing() {
         </div>
       </div>
 
+      {/* ── Fase 0: os riscos abertos, antes de tudo ── */}
+      <Fase0 />
+
       {/* ── fila de aprovação (buraco 6) — vem primeira porque é a ação do dia ── */}
       <FilaAprovacao />
 
@@ -1911,6 +1914,115 @@ function PresencaGoogle() {
                 <pre className="text-[10px] bg-muted/60 rounded p-2 overflow-x-auto max-h-60">{JSON.stringify(previa.data.jsonLd, null, 2)}</pre>
               </>
             )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// FASE 0 — os riscos que o plano manda fechar ANTES de jogar tráfego
+// ----------------------------------------------------------------------------
+// "Nada da Central sobe antes da Fase 0 fechar esses cinco itens." Oito buracos
+// subiram e ela nunca tinha sido feita. Esta seção mostra o estado MEDIDO de cada
+// um — não o que o plano supunha.
+// ============================================================================
+function Fase0() {
+  const { toast } = useToast();
+  const [teto, setTeto] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const q = useQuery<any>({ queryKey: ["/api/mkt/fase0"], queryFn: () => apiGet("/api/mkt/fase0") });
+  const barrados = useQuery<any>({ queryKey: ["/api/mkt/fase0/pix-barrados"], queryFn: () => apiGet("/api/mkt/fase0/pix-barrados") });
+  const d = q.data || {};
+  const abertos = (d.itens || []).filter((i: any) => i.estado !== "fechado");
+
+  async function salvar() {
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/fase0", { tetoPix: Number(teto) });
+      if (!r.ok) throw new Error(r.erro || "não deu");
+      toast({ title: "Teto salvo", description: "Vale na próxima cobrança, sem deploy." });
+      setTeto(null); q.refetch();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  async function limpar() {
+    try {
+      const r = await apiPost("/api/mkt/fase0/limpar-pausas", {});
+      toast({ title: (r.apagadas || 0) + " pausa(s) vencida(s) limpas" });
+      q.refetch();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+
+  const COR: Record<string, string> = { fechado: "#16a34a", atencao: "#d97706", aberto: "#dc2626" };
+  const ICONE: Record<string, string> = { fechado: "fa-check", atencao: "fa-triangle-exclamation", aberto: "fa-xmark" };
+
+  return (
+    <Card className={abertos.length ? "border-destructive/40" : undefined}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <i className="fas fa-shield-halved text-muted-foreground" /> Fase 0 — antes de jogar tráfego
+          {abertos.length > 0 && <Badge variant="destructive">{abertos.length} aberto(s)</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          O plano diz: <b>“nada da Central sobe antes da Fase 0 fechar esses cinco itens”</b>. Oito buracos
+          subiram e ela nunca foi feita. Aqui está o estado <b>medido</b> de cada um — dois estavam piores
+          do que o plano dizia, e um já estava resolvido.
+        </p>
+
+        <div className="space-y-1">
+          {(d.itens || []).map((i: any) => (
+            <div key={i.risco} className="flex gap-2 items-start rounded-md border p-2">
+              <i className={"fas " + ICONE[i.estado] + " mt-0.5 text-xs"} style={{ color: COR[i.estado] }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium">{i.risco}</div>
+                <div className="text-[11px] text-muted-foreground">{i.detalhe}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-3 items-end">
+          <div>
+            <Label className="text-xs">Teto do PIX que a IA pode gerar sozinha</Label>
+            <Input value={teto ?? (d.tetoPix ?? "")} onChange={(e) => setTeto(e.target.value)} placeholder="300" />
+          </div>
+          <Button size="sm" onClick={salvar} disabled={salvando || teto === null}>
+            {salvando ? "Salvando…" : "Salvar teto"}
+          </Button>
+          {d.pausasVencidas > 0 && (
+            <Button size="sm" variant="outline" onClick={limpar}>
+              Limpar {d.pausasVencidas} pausa(s) vencida(s)
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Acima do teto a IA <b>não gera a cobrança</b>: registra e passa para uma pessoa. Zero desliga a trava
+          — não recomendado no piloto.
+        </p>
+
+        {(barrados.data || []).length > 0 && (
+          <div className="rounded-lg border p-3 space-y-2">
+            <div className="text-sm font-semibold">Cobranças que ficaram esperando uma pessoa</div>
+            <table className="w-full text-xs">
+              <thead className="text-muted-foreground border-b">
+                <tr><th className="text-left py-1">Pedido</th><th className="text-right">Valor</th><th className="text-right">Teto</th><th className="text-left pl-3">Quando</th></tr>
+              </thead>
+              <tbody>
+                {(barrados.data || []).slice(0, 10).map((b: any) => (
+                  <tr key={b.id} className="border-b last:border-0">
+                    <td className="py-1">{b.pedido || "—"}</td>
+                    <td className="text-right font-semibold">{brl(b.valor)}</td>
+                    <td className="text-right text-muted-foreground">{brl(b.teto)}</td>
+                    <td className="pl-3 text-muted-foreground">{new Date(b.criado_em).toLocaleString("pt-BR")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </CardContent>
