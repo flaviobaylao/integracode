@@ -715,7 +715,7 @@ export default function PedidoRapido() {
         ) : null}
 
         <p className="text-center text-white/70 text-sm mt-8">
-          Sucos 100% naturais • Entrega rápida • Frete grátis
+          Suco natural sem adição de açúcares • Entrega rápida • Frete grátis
         </p>
       </div>
     </div>
