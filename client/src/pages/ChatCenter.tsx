@@ -72,6 +72,8 @@ interface Conversation {
   hasUnread?: boolean;
   messages?: ChatMessage[];
   createdAt?: string;
+  // null quando a conversa nao entrou pelo canal oficial (sem trava de 24h da Meta).
+  janela24h?: { oficial: boolean; aberta: boolean; restamMin: number } | null;
 }
 
 interface Agent {
@@ -570,9 +572,7 @@ function ChatCenterInner() {
     try { localStorage.setItem('chatSoundConvs', JSON.stringify(next)); } catch {}
     return next;
   });
-  const [replyAlerts, setReplyAlerts] = useState<Array<{ key: string; convId: string; name: string }>>([]);
   const audioCtxRef = useRef<any>(null);
-  // 🔔 Campainha: 'ding-dong' repetido 2x, mais alto, timbre de sino (mais alarmante).
   const playBeep = () => {
     try {
       const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -580,18 +580,10 @@ function ChatCenterInner() {
       if (!audioCtxRef.current) audioCtxRef.current = new AC();
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') ctx.resume();
-      const bell = (freq: number, t0: number, dur: number) => {
-        const o = ctx.createOscillator(); const g = ctx.createGain();
-        o.type = 'triangle'; o.frequency.value = freq;
-        o.connect(g); g.connect(ctx.destination);
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(0.42, t0 + 0.012);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-        o.start(t0); o.stop(t0 + dur + 0.03);
-      };
-      const t = ctx.currentTime;
-      bell(880, t, 0.5); bell(659, t + 0.28, 0.6);
-      bell(880, t + 0.95, 0.5); bell(659, t + 1.23, 0.6);
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.06;
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + 0.18);
     } catch {}
   };
   const prevUnreadRef = useRef<Record<string, number>>({});
@@ -600,26 +592,14 @@ function ChatCenterInner() {
     const prev = prevUnreadRef.current;
     const cur: Record<string, number> = {};
     let beep = false;
-    // Som e bandeira SOMENTE para o dono da conversa (ou quem recebeu por transferencia).
-    const myAgentId = agents.find((a: any) => a.userId === (user as any)?.id)?.id;
-    const novos: Array<{ key: string; convId: string; name: string }> = [];
     for (const c of conversations as any[]) {
       const u = (c.unreadCount as number) || 0;
       cur[c.id] = u;
-      const minha = !!myAgentId && (c as any).assignedAgentId === myAgentId;
-      if (soundBaselineRef.current && u > (prev[c.id] ?? 0) && minha) {
-        if (isSoundOn(c.id)) beep = true;
-        novos.push({ key: c.id + ':' + Date.now(), convId: c.id, name: (c as any).customerName || (c as any).customerPhone || 'Cliente' });
-      }
+      if (soundBaselineRef.current && u > (prev[c.id] ?? 0) && isSoundOn(c.id)) beep = true;
     }
     prevUnreadRef.current = cur;
     soundBaselineRef.current = true;
     if (beep) playBeep();
-    if (novos.length) {
-      setReplyAlerts((prevA) => [...prevA.slice(-4), ...novos]);
-      const keys = novos.map((n) => n.key);
-      setTimeout(() => setReplyAlerts((prevA) => prevA.filter((a) => !keys.includes(a.key))), 8000);
-    }
   }, [conversations, soundConvs]);
 
   // 🎯 Selecionar conversa automaticamente se vindo de um botão WhatsApp ou Clientes Ativos
@@ -1161,6 +1141,34 @@ function ChatCenterInner() {
     }
   });
 
+  // ⏳ JANELA DE 24h DA META — etapa 1 da migracao para atender so pelo 1841.
+  // No canal oficial, texto livre so e entregue ate 24h depois da ULTIMA mensagem do
+  // CLIENTE; fora disso o WhatsApp recusa. O atendente descobria isso depois de escrever
+  // e ver "nao entregue". Aqui ele ve ANTES de digitar. Por enquanto so informa.
+  const janelaBadge = (conv: any) => {
+    const j = conv?.janela24h;
+    if (!j || !j.oficial) return null;
+    if (!j.aberta) {
+      return (
+        <Badge className="bg-amber-100 text-amber-800 border border-amber-300" title="Fora da janela de 24h: o WhatsApp so entrega template aprovado. A janela reabre quando o cliente responder.">
+          ⏳ Janela fechada — so template
+        </Badge>
+      );
+    }
+    const h = Math.floor(j.restamMin / 60);
+    const m = j.restamMin % 60;
+    const tempo = h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m} min`;
+    // Menos de uma hora: o atendente precisa saber que esta acabando.
+    const cor = j.restamMin < 60
+      ? 'bg-orange-100 text-orange-800 border border-orange-300'
+      : 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+    return (
+      <Badge className={cor} title="Dentro da janela de 24h: texto livre e entregue normalmente. O relogio reinicia a cada mensagem do cliente.">
+        ⏳ Janela aberta · faltam {tempo}
+      </Badge>
+    );
+  };
+
   const selectedChat = conversations.find((c: Conversation) => c.id === selectedConversation);
   // 🔐 Trava de propriedade: se a conversa já tem um dono humano diferente do usuário atual
   // (e o usuário não é gestor), o envio fica bloqueado até transferência/finalização.
@@ -1170,6 +1178,8 @@ function ChatCenterInner() {
   // 🤖 IA conduzindo: ninguem escreve por cima dela (o servidor tambem bloqueia com 403
   // IA_ATENDENDO; aqui e so para o atendente ver antes de digitar).
   const iaAtendendo = !!(selectedChat as any)?.iaAtendendo;
+  const conversationLocked = iaAtendendo || (!isLockManager && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
+  const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   const setChannelMutation = useMutation({
     mutationFn: async ({ id, channelPhone }: { id: string; channelPhone: string }) => {
@@ -1298,22 +1308,6 @@ function ChatCenterInner() {
     return null;
   })();
   const displaySellerName = registrySellerName || sellerName;
-  // 🎯 O DONO DA CARTEIRA (vendedor do cliente) sempre pode escrever, mesmo com a conversa atribuida a outro.
-  const ehDonoCarteira = !!(sellerInfoData as any)?.sellerId && String((sellerInfoData as any).sellerId) === String((user as any)?.id);
-  // 🕒 Libera apos inatividade: a trava so vale se o dono da conversa falou nos ultimos 10 min.
-  const donoAtivoRecente = (() => {
-    if (!selectedChat?.assignedAgentId) return false;
-    let latest = 0;
-    for (const m of (messages as any[])) {
-      if (m?.senderType === 'agent' && m?.senderId && !String(m.senderId).startsWith('agent:') && !['system','bot','chatgpt'].includes(String(m.senderId))) {
-        const t = m.createdAt ? new Date(m.createdAt).getTime() : 0;
-        if (t > latest) latest = t;
-      }
-    }
-    return latest > 0 && (Date.now() - latest) < 10 * 60 * 1000;
-  })();
-  const conversationLocked = iaAtendendo || (!isLockManager && !ehDonoCarteira && donoAtivoRecente && !!selectedChat?.assignedAgentId && selectedChat.assignedAgentId !== 'chatgpt' && selectedChat.assignedAgentId !== currentAgentId && ownerOnline);
-  const lockedOwnerName = iaAtendendo ? 'IA de Atendimento' : (conversationLocked ? (agents.find((a: any) => a.id === selectedChat?.assignedAgentId)?.name || 'outro atendente') : null);
 
   // Atendente = e-mail do atendente que está conversando
   const resolveAgentLabel = (idOrUserId: any): string | null => {
@@ -2082,11 +2076,14 @@ function ChatCenterInner() {
                         })()}
                       </div>
                       <div className="flex flex-col gap-2 items-end">
-                        <Badge className={getStatusColor(selectedChat.status)}>
-                          {selectedChat.status === "new" ? "Novo" : 
-                           selectedChat.status === "assigned" ? "Atribuído" :
-                           selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {janelaBadge(selectedChat)}
+                          <Badge className={getStatusColor(selectedChat.status)}>
+                            {selectedChat.status === "new" ? "Novo" : 
+                             selectedChat.status === "assigned" ? "Atribuído" :
+                             selectedChat.status === "in-progress" ? "Em andamento" : "Resolvido"}
+                          </Badge>
+                        </div>
                         <div className="flex gap-1">
                           <Button size="sm" variant="outline" className="text-xs" onClick={() => setShowLabelsModal(true)} data-testid="button-open-labels" title="Etiquetas da conversa">🏷️ Etiquetas</Button>
                           <TooltipProvider>
@@ -2192,7 +2189,7 @@ function ChatCenterInner() {
                 </Card>
 
                 {/* Área de Chat + Input de Mensagem - Tudo junto */}
-                <Card className="flex flex-col" style={{ height: 'calc(100vh - 215px)', minHeight: '400px' }}>
+                <Card className="flex flex-col" style={{ height: 'calc(100vh - 300px)', minHeight: '400px' }}>
                   <CardContent className="flex-1 overflow-hidden p-4 flex flex-col">
                     <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
                       <div className="space-y-4">
@@ -2327,7 +2324,7 @@ function ChatCenterInner() {
                                           </button>
                                         </span>
                                       );
-                                      if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-700 font-bold" data-testid="ack-read">✓✓</span>;
+                                      if (ackv >= 3) return <span title="Lida pelo cliente" className="text-blue-500" data-testid="ack-read">✓✓</span>;
                                       if (ackv >= 2) return <span title="Entregue no WhatsApp" className="text-gray-500" data-testid="ack-delivered">✓✓</span>;
                                       if (ackv >= 1) return <span title="Enviada" className="text-gray-400" data-testid="ack-sent">✓</span>;
                                       return <span title="Enviando…" className="text-gray-400" data-testid="ack-pending">🕓</span>;
@@ -2417,6 +2414,17 @@ function ChatCenterInner() {
                         ) : (
                           <span>Conversa em atendimento por <b>{lockedOwnerName}</b>. Você não pode enviar mensagens até que o responsável transfira a conversa ou um administrador finalize/transfira.</span>
                         )}
+                      </div>
+                    )}
+                    {/* Aviso da janela de 24h: aparece ONDE a pessoa digita, que e onde ela
+                        descobria o problema tarde demais. Etapa 1 nao bloqueia o envio. */}
+                    {!conversationLocked && (selectedChat as any)?.janela24h?.oficial && !(selectedChat as any)?.janela24h?.aberta && (
+                      <div className="flex items-center gap-2 text-xs rounded px-3 py-2 mb-1 border text-amber-700 bg-amber-50 border-amber-200" data-testid="janela-fechada-banner">
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          <b>Fora da janela de 24h.</b> O WhatsApp só entrega mensagem livre até 24h depois da última
+                          mensagem do cliente. Agora só passa <b>template aprovado</b> — ou espere o cliente escrever.
+                        </span>
                       </div>
                     )}
                     <div className="flex gap-2 items-end">
@@ -2782,18 +2790,6 @@ function ChatCenterInner() {
           </div>
         )}
       </div>
-      {replyAlerts.length > 0 && (
-        <div className="fixed bottom-4 right-4 z-[80] flex flex-col gap-2 max-w-xs" data-testid="reply-alerts">
-          {replyAlerts.map((a) => (
-            <div key={a.key} onClick={() => { setSelectedConversation(a.convId); setReplyAlerts((prev) => prev.filter((x) => x.key !== a.key)); }}
-              className="cursor-pointer bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-2xl px-4 py-3 flex items-center gap-2 animate-bounce">
-              <span className="text-xl">🔔</span>
-              <div className="text-sm leading-tight flex-1"><b>{a.name}</b> respondeu<br /><span className="opacity-90 text-xs">clique para abrir</span></div>
-              <button onClick={(e) => { e.stopPropagation(); setReplyAlerts((prev) => prev.filter((x) => x.key !== a.key)); }} className="ml-1 text-white/80 hover:text-white text-sm">✕</button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
