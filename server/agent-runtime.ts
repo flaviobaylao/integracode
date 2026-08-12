@@ -201,12 +201,18 @@ async function existeNoErp(id: string): Promise<boolean> {
 // (padrao 24h). Valores legados ('1') seguem pausados ate serem limpos pela rota
 // /api/admin/ia-atendimento/retomar.
 export async function iaPausada(conversationId: string): Promise<boolean> {
-  const v = await getSetting('chat_ai_paused:' + conversationId, '');
-  if (!v) return false;
-  const t = Date.parse(v);
-  if (isNaN(t)) return true; // legado '1'
-  const horas = Math.max(1, parseInt(await getSetting('ia_pausa_horas', '24'), 10) || 24);
-  return (Date.now() - t) < horas * 3600 * 1000;
+  // FASE 0: uma leitura so, para todo o sistema (ver server/mkt-fase0.ts).
+  // Delegar aqui tambem conserta um defeito que estava no ar: a versao anterior usava
+  // isNaN(Date.parse(v)) para reconhecer o valor legado '1' — e Date.parse('1') NAO e
+  // NaN, vale 2001-01-01. Toda pausa legada era lida como vencida e a IA voltava a
+  // responder exatamente nas conversas marcadas para ficarem paradas.
+  try {
+    const { iaPausadaConsistente } = await import('./mkt-fase0');
+    return await iaPausadaConsistente(conversationId);
+  } catch {
+    // Sem o modulo, o seguro e considerar pausada quando existe qualquer marca.
+    return (await getSetting('chat_ai_paused:' + conversationId, '')) !== '';
+  }
 }
 
 // CONTEXTO DO AVISO QUE ORIGINOU A CONVERSA
@@ -564,6 +570,29 @@ async function gerarPix(_input: any, ctx: any): Promise<string> {
     if (!row) return 'Não há pedido registrado nesta conversa para gerar o PIX. Registre o pedido primeiro (registrar_pedido) e depois gere o PIX.';
     const total = Number(row.total);
     if (!(total > 0)) return 'O valor do pedido está indefinido. Transfira para um atendente para gerar a cobrança.';
+
+    // FASE 0 — teto de valor. Ate aqui a unica checagem era `total > 0`: a IA podia
+    // gerar cobranca de qualquer valor sozinha. Um anuncio que traga 300 DMs/dia
+    // transforma isso em caixa registradora sem auditoria. Acima do teto ela NAO gera,
+    // registra a tentativa e passa para uma pessoa. Teto ajustavel sem deploy.
+    try {
+      const { pixLiberado, registrarPixBarrado } = await import('./mkt-fase0');
+      const v = await pixLiberado(total);
+      if (!v.liberado) {
+        await registrarPixBarrado({
+          conversaId: ctx.conversationId, salesCardId: row.sales_card_id,
+          pedido: row.order_number, valor: total, teto: v.teto, canal: String(ctx?.channel || ''),
+        });
+        console.warn('[IG-PIX] BARRADO pelo teto conv=' + ctx.conversationId + ' total=' + total.toFixed(2) + ' teto=' + v.teto.toFixed(2));
+        return 'NAO gere o PIX. Este pedido esta acima do valor que voce pode cobrar sozinha. '
+          + 'Diga ao cliente, de forma natural e sem citar limite interno, que para um pedido desse tamanho '
+          + 'uma pessoa da equipe vai confirmar os dados e enviar a cobranca em seguida — e chame transferir_humano.';
+      }
+    } catch (e: any) {
+      // Sem conseguir avaliar o teto, o seguro e NAO cobrar.
+      console.error('[IG-PIX] teto indisponivel, barrando por seguranca:', e?.message || e);
+      return 'NAO gere o PIX agora. Peca desculpas ao cliente e chame transferir_humano para uma pessoa concluir o pagamento.';
+    }
 
     const { createImmediateCharge } = await import('./bb-pix-service');
     // Conta financeira com PIX BB habilitado.
@@ -1017,6 +1046,25 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
       }
     }
     if (!opts.incomingText || !opts.incomingText.trim()) return;
+
+    // FASE 0 — opt-out em QUALQUER canal. Ate aqui "SAIR" so era registrado dentro do
+    // if do canal 1841 (chat-routes): quem escrevia pelo 2630 ou pelo Instagram nao
+    // entrava na lista. Aqui e o caminho por onde TODA mensagem recebida passa, entao
+    // e o lugar certo para capturar - uma vez, para todos os canais.
+    try {
+      const { pediuParaSair, registrarOptOut } = await import('./mkt-fase0');
+      if (pediuParaSair(opts.incomingText)) {
+        const c: any = await db.execute(sql`SELECT customer_id FROM chat_conversations WHERE id = ${opts.conversationId} LIMIT 1`);
+        const cid = c.rows?.[0]?.customer_id;
+        if (cid && await registrarOptOut(String(cid), channel)) {
+          await _t('agente:opt_out_registrado', channel);
+          // Confirmar e obrigacao, nao cortesia: sem resposta a pessoa nao sabe se saiu.
+          try { await opts.sendText(opts.phone, 'Pronto, você não vai mais receber nossas mensagens de campanha. Se um dia quiser voltar, é só escrever aqui.'); } catch {}
+          return;
+        }
+      }
+    } catch (e: any) { console.error('[FASE0] opt-out:', e?.message || e); }
+
     // se a conversa foi transferida p/ humano, não responder mais (expira em ia_pausa_horas).
     // EXCECAO: o cliente esta respondendo a um DISPARO nosso. Quem recebe "recebemos seu
     // pedido" e toca no botao esta falando com a maquina, nao continuando o assunto que foi

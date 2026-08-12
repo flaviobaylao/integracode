@@ -137,9 +137,21 @@ export async function enqueueOfficialDispatch(item: {
     if (!(await templateLiberado(item.templateLabel)).ok) return 'desligado';
   } catch {}
   const phone = normalizeBrPhone(item.customerPhone); if (!phone) return 'invalido';
-  if ((item.category || 'UTILITY') === 'MARKETING') {
-    const o: any = await db.execute(sql`SELECT 1 FROM chat_customers WHERE phone = ${'+'+phone} AND whatsapp_opt_out = true LIMIT 1`);
-    if (o.rows?.length) return 'optout';
+  // FASE 0 — opt-out vale para TODA categoria, nao so MARKETING.
+  // Antes, qualquer template UTILITY passava por cima de quem pediu para sair.
+  // O que continua passando sao os casos genuinamente transacionais (pedido, entrega,
+  // boleto, cobranca) - sao sobre algo que a PESSOA fez, nao sobre vender mais.
+  // A lista e editavel sem deploy em optout_casos_transacionais.
+  try {
+    const { podeFalarAtivamente } = await import('./mkt-fase0');
+    const v = await podeFalarAtivamente({ telefone: phone, useCase: item.useCase, categoria: item.category });
+    if (!v.pode) return 'optout';
+  } catch {
+    // Sem conseguir avaliar, mantem ao menos a regra antiga (nunca menos que antes).
+    if ((item.category || 'UTILITY') === 'MARKETING') {
+      const o: any = await db.execute(sql`SELECT 1 FROM chat_customers WHERE phone = ${'+'+phone} AND whatsapp_opt_out = true LIMIT 1`);
+      if (o.rows?.length) return 'optout';
+    }
   }
   // Antirrepeticao: com `campaign`, a chave e o EVENTO (ex.: card:<id>:debito) — assim o
   // mesmo cliente pode receber "pedido confirmado" e "saiu para entrega" no mesmo dia.

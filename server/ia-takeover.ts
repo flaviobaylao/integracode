@@ -81,7 +81,9 @@ export async function iaAssumeSozinha(conversationId: string, phone: string): Pr
       const allow = (await getSetting('agents_test_numbers', '')).split(/[,;\s]+/).map(x => x.replace(/\D/g, '')).filter(Boolean);
       if (!allow.includes(d)) return false;
     }
-    if ((await getSetting('chat_ai_paused:' + conversationId, '')) !== '') return false; // ja transferida
+    // FASE 0: mesma leitura de pausa que o resto do sistema (ver mkt-fase0.ts).
+    { const { iaPausadaConsistente } = await import('./mkt-fase0');
+      if (await iaPausadaConsistente(conversationId)) return false; } // ja transferida
     // Humano falando ha pouco nesta conversa: ela e dele, vai para a fila humana.
     if (await atendenteAtuando(conversationId)) return false;
     const { avaliarCanal } = await import('./canais-gestao');

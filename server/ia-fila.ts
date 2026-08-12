@@ -504,7 +504,11 @@ async function iaComAConversa(conversationId: string): Promise<boolean> {
   if ((await getSetting('agents_runtime_mode', 'off')) === 'off') return false;
   // A pausa (setada pelo transferir_humano) e o que tira a conversa da IA. Ela expira em
   // ia_pausa_horas — quando expirar, a IA volta a ser a linha de frente daquela conversa.
-  if ((await getSetting('chat_ai_paused:' + conversationId, '')) !== '') return false;
+  // FASE 0: leitura UNICA da pausa. Antes aqui era `!== ''`, que trata qualquer valor
+  // como pausa eterna - enquanto o agente ja voltava a responder apos ia_pausa_horas.
+  // As duas partes discordavam sobre a mesma conversa, e ninguem conseguia depurar.
+  { const { iaPausadaConsistente } = await import('./mkt-fase0');
+    if (await iaPausadaConsistente(conversationId)) return false; }
   // A IA so "esta com" a conversa quando ninguem assumiu e ela esta aberta.
   // Sem esta checagem, QUALQUER conversa sem pausa era considerada da IA — inclusive
   // as ja FINALIZADAS e as que tem um atendente atribuido — e o atendente levava
