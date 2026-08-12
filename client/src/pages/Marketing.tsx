@@ -235,6 +235,9 @@ export default function Marketing() {
         </div>
       </div>
 
+      {/* ── fila de aprovação (buraco 6) — vem primeira porque é a ação do dia ── */}
+      <FilaAprovacao />
+
       {/* ── termômetro do fio ── */}
       <Card>
         <CardHeader className="pb-3">
@@ -1399,5 +1402,364 @@ function SecaoCriativos() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ============================================================================
+// BURACO 6 — Fila de aprovação
+// ----------------------------------------------------------------------------
+// A regra 3 do plano é requisito, não detalhe: "aprovar duas semanas de conteúdo
+// tem que caber em 5 minutos no celular". Por isso:
+//   • cartão empilhado, alvo de toque grande, nada de tabela larga
+//   • seleção múltipla e barra fixa embaixo, ao alcance do polegar
+//   • "aprovar tudo exceto as marcadas" — o gesto de quem confia no revisor
+//   • peça que o revisor bloqueou NÃO passa de raspão: exige assumir por escrito
+// ============================================================================
+function FilaAprovacao() {
+  const { toast } = useToast();
+  const [sel, setSel] = useState<string[]>([]);
+  const [comentario, setComentario] = useState("");
+  const [assumir, setAssumir] = useState(false);
+  const [agindo, setAgindo] = useState(false);
+  const [abertos, setAbertos] = useState<string[]>([]);
+
+  const q = useQuery<any>({ queryKey: ["/api/mkt/fila-aprovacao"], queryFn: () => apiGet("/api/mkt/fila-aprovacao") });
+  const pan = useQuery<any>({ queryKey: ["/api/mkt/esteira/panorama"], queryFn: () => apiGet("/api/mkt/esteira/panorama") });
+
+  const pecas: any[] = q.data?.pecas || [];
+  const p = pan.data || {};
+  const recarregar = () => { q.refetch(); pan.refetch(); setSel([]); setComentario(""); setAssumir(false); };
+  const alternar = (id: string) => setSel(sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]);
+  const abrir = (id: string) => setAbertos(abertos.includes(id) ? abertos.filter(x => x !== id) : [...abertos, id]);
+
+  async function decidir(decisao: "aprovar" | "reprovar" | "devolver", ids?: string[]) {
+    const alvo = ids || sel;
+    if (!alvo.length) return;
+    if (decisao !== "aprovar" && !comentario.trim()) {
+      toast({ title: "Escreva o motivo", description: "Devolver sem dizer o que está errado joga o problema de volta sem informação.", variant: "destructive" });
+      return;
+    }
+    setAgindo(true);
+    try {
+      const r = await apiPost("/api/mkt/pieces/decisao", { ids: alvo, decisao, comentario: comentario || null, assumirBloqueio: assumir });
+      const recusadas = (r.itens || []).filter((i: any) => !i.ok);
+      toast({
+        title: r.aplicados + " peça(s) " + (decisao === "aprovar" ? "aprovada(s)" : decisao === "reprovar" ? "reprovada(s)" : "devolvida(s)"),
+        description: recusadas.length ? recusadas.length + " não passaram: " + recusadas[0].motivo : "Tudo certo.",
+        variant: recusadas.length ? "destructive" : undefined,
+      });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setAgindo(false);
+  }
+
+  async function aprovarExceto() {
+    setAgindo(true);
+    try {
+      const r = await apiPost("/api/mkt/pieces/aprovar-exceto", { excecoes: sel, assumirBloqueio: assumir });
+      const recusadas = (r.itens || []).filter((i: any) => !i.ok);
+      toast({
+        title: r.aplicados + " peça(s) aprovada(s)",
+        description: recusadas.length ? recusadas.length + " ficaram na fila: " + recusadas[0].motivo : "A fila ficou só com o que você marcou.",
+      });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setAgindo(false);
+  }
+
+  async function publicar(id: string) {
+    try {
+      const r = await apiPost("/api/mkt/pieces/" + id + "/publicada", {});
+      toast({
+        title: r.ok ? "Marcada como publicada" : "Não deu",
+        description: r.ok ? (r.usosRegistrados || 0) + " criativo(s) passaram a contar no desempenho" : r.erro,
+        variant: r.ok ? undefined : "destructive",
+      });
+      recarregar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+
+  const temBloqueadaSelecionada = pecas.some(x => sel.includes(x.id) && x.precisaAtencao);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <i className="fas fa-circle-check text-muted-foreground" /> Fila de aprovação
+          {q.data?.total > 0 && (
+            <Badge className="ml-1" style={{ background: ROXO }}>{q.data.total}</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Nada vai ao ar sem você. O revisor de marca lê cada peça antes de chegar aqui — e o que
+          ele bloqueou <b>não passa no “aprovar tudo”</b>: exige você assumir. Feita para o celular:
+          aprovar duas semanas de conteúdo tem que caber em cinco minutos.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            ["Esperando você", num(p.na_fila), p.escaladas > 0 ? p.escaladas + " escalada(s)" : ""],
+            ["Publicadas", num(p.publicadas), "últimos " + (p.dias || 30) + " dias"],
+            ["Barradas pelo revisor", num(p.bloqueadas), "voltaram para ajuste"],
+            ["Espera média", (p.horasMediasAteDecisao ?? 0) + "h", "da criação até sua decisão"],
+          ].map(([t, v, s]: any) => (
+            <div key={t} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{t}</div>
+              <div className="text-xl font-semibold">{v}</div>
+              {s ? <div className="text-[10px] text-muted-foreground">{s}</div> : null}
+            </div>
+          ))}
+        </div>
+
+        {q.isLoading && <div className="text-xs text-muted-foreground">Carregando…</div>}
+        {q.error && <div className="text-xs text-destructive">{String((q.error as any).message)}</div>}
+
+        {!q.isLoading && pecas.length === 0 && (
+          <div className="text-center py-8 text-sm text-muted-foreground">
+            <i className="fas fa-mug-hot text-2xl block mb-2" />
+            Nada esperando por você.
+          </div>
+        )}
+
+        {pecas.length > 0 && (
+          <>
+            <div className="flex flex-wrap gap-2 items-center text-xs">
+              <Button size="sm" variant="outline" onClick={() => setSel(pecas.map(x => x.id))}>marcar todas</Button>
+              <Button size="sm" variant="outline" onClick={() => setSel([])}>limpar</Button>
+              <span className="text-muted-foreground">{sel.length} marcada(s)</span>
+            </div>
+
+            <div className="space-y-3">
+              {pecas.map((x) => {
+                const marcada = sel.includes(x.id);
+                const aberto = abertos.includes(x.id);
+                return (
+                  <div key={x.id}
+                    className={"rounded-lg border p-3 " + (marcada ? "ring-2" : "") + (x.precisaAtencao ? " border-destructive/50" : "")}
+                    style={marcada ? { borderColor: ROXO } : undefined}>
+                    <div className="flex gap-3">
+                      <label className="flex items-start pt-1 cursor-pointer">
+                        <input type="checkbox" className="w-5 h-5" checked={marcada} onChange={() => alternar(x.id)} />
+                      </label>
+                      {x.miniaturas?.[0] && (
+                        <img src={x.miniaturas[0]} alt="" className="w-16 h-16 rounded object-cover shrink-0" loading="lazy" />
+                      )}
+                      <div className="min-w-0 flex-1" onClick={() => abrir(x.id)}>
+                        <div className="flex flex-wrap gap-1 items-center mb-1">
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">{x.canal}</Badge>
+                          {x.gancho && <Badge className="text-[10px] px-1 py-0" style={{ background: ROXO }}>{x.gancho}</Badge>}
+                          {x.campanha_codigo && <Badge variant="secondary" className="text-[10px] px-1 py-0">{x.campanha_codigo}</Badge>}
+                          {x.origem === "agente" && <Badge variant="outline" className="text-[10px] px-1 py-0">IA</Badge>}
+                          {x.escalado && <Badge variant="destructive" className="text-[10px] px-1 py-0">escalada</Badge>}
+                        </div>
+                        <div className="text-sm leading-snug">
+                          {aberto ? x.copy : x.previa}{!aberto && String(x.copy || "").length > 180 ? "…" : ""}
+                        </div>
+                        {x.bloqueios?.length > 0 && (
+                          <div className="mt-2 text-[11px] text-destructive">
+                            <i className="fas fa-triangle-exclamation mr-1" />
+                            {x.bloqueios.join(" · ")}
+                          </div>
+                        )}
+                        {x.avisos?.length > 0 && (
+                          <div className="mt-1 text-[11px] text-amber-600">confira: {x.avisos.join(" · ")}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="space-y-2 border-t pt-3">
+              <Textarea rows={2} value={comentario} onChange={(e) => setComentario(e.target.value)}
+                placeholder="Motivo (obrigatório para devolver ou reprovar) — ex.: trocar a foto pela da prateleira" />
+              {temBloqueadaSelecionada && (
+                <label className="flex items-center gap-2 text-xs cursor-pointer rounded-md bg-destructive/10 p-2">
+                  <input type="checkbox" className="w-4 h-4" checked={assumir} onChange={(e) => setAssumir(e.target.checked)} />
+                  <span>Assumo o bloqueio do revisor nas peças marcadas — fica registrado no meu nome</span>
+                </label>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button className="flex-1 min-w-[120px] h-11" disabled={agindo || !sel.length} onClick={() => decidir("aprovar")}>
+                  <i className="fas fa-check mr-2" />Aprovar {sel.length || ""}
+                </Button>
+                <Button variant="outline" className="flex-1 min-w-[120px] h-11" disabled={agindo || !sel.length} onClick={() => decidir("devolver")}>
+                  <i className="fas fa-rotate-left mr-2" />Devolver
+                </Button>
+                <Button variant="ghost" className="h-11" disabled={agindo || !sel.length} onClick={() => decidir("reprovar")}>
+                  Reprovar
+                </Button>
+              </div>
+              <Button variant="secondary" className="w-full h-11" disabled={agindo} onClick={aprovarExceto}>
+                Aprovar tudo {sel.length ? "exceto as " + sel.length + " marcadas" : "que está na fila"}
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Marcar e usar “aprovar tudo exceto” é o caminho rápido: você olha só o que quer segurar.
+              </p>
+            </div>
+          </>
+        )}
+
+        <NovaPeca aoCriar={recarregar} publicar={publicar} />
+      </CardContent>
+    </Card>
+  );
+}
+
+// Existe para a esteira poder ser usada hoje: os agentes que escrevem (bloco CRIAR)
+// entram nos próximos passos e vão criar peça pela mesma rota.
+function NovaPeca({ aoCriar, publicar }: { aoCriar: () => void; publicar: (id: string) => void }) {
+  const { toast } = useToast();
+  const [aberto, setAberto] = useState(false);
+  const [canal, setCanal] = useState("instagram");
+  const [gancho, setGancho] = useState("");
+  const [campanhaId, setCampanhaId] = useState("");
+  const [copy, setCopy] = useState("");
+  const [assetIds, setAssetIds] = useState<string[]>([]);
+  const [salvando, setSalvando] = useState(false);
+
+  const camps = useQuery<any>({ queryKey: ["/api/mkt/campanhas"], queryFn: () => apiGet("/api/mkt/campanhas") });
+  const assets = useQuery<any>({ queryKey: ["/api/mkt/assets", "peca"], queryFn: () => apiGet("/api/mkt/assets?soElegiveis=true&limite=24") });
+  const pan = useQuery<any>({ queryKey: ["/api/mkt/assets/panorama", "peca"], queryFn: () => apiGet("/api/mkt/assets/panorama") });
+
+  const aprovadas = useQuery<any>({ queryKey: ["/api/mkt/esteira/panorama", "aprovadas"], queryFn: () => apiGet("/api/mkt/esteira/panorama") });
+  const nAprovadas = (aprovadas.data?.porEstado || []).find((e: any) => e.estado === "aprovado")?.n || 0;
+
+  async function criar() {
+    if (!copy.trim()) return;
+    setSalvando(true);
+    try {
+      const r = await apiPost("/api/mkt/pieces", {
+        canal, gancho: gancho || null, campanhaId: campanhaId || null, copy, assetIds,
+      });
+      if (!r.ok) throw new Error(r.erro || "não deu para criar");
+      const rev = await apiPost("/api/mkt/pieces/" + r.id + "/revisar", {});
+      toast({
+        title: rev.veredito === "bloqueado"
+          ? (rev.escalado ? "Bloqueada — e escalada para você decidir" : "Bloqueada pelo revisor")
+          : "Peça na fila de aprovação",
+        description: rev.veredito === "bloqueado"
+          ? (rev.achados || []).filter((a: any) => a.gravidade === "bloqueio").map((a: any) => a.regra).join(" · ")
+          : "Passou no revisor de marca.",
+        variant: rev.veredito === "bloqueado" ? "destructive" : undefined,
+      });
+      setCopy(""); setAssetIds([]);
+      aoCriar();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setSalvando(false);
+  }
+
+  if (!aberto) {
+    return (
+      <div className="flex flex-wrap gap-2 items-center border-t pt-3">
+        <Button size="sm" variant="outline" onClick={() => setAberto(true)}>
+          <i className="fas fa-plus mr-2" />Nova peça
+        </Button>
+        {nAprovadas > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            {nAprovadas} peça(s) aprovada(s) esperando você postar — marque como publicada depois para o criativo contar no desempenho.
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const vocab = pan.data?.vocabulario || {};
+  const lista: any[] = assets.data || [];
+  const campanhas: any[] = camps.data?.campanhas || camps.data || [];
+
+  return (
+    <div className="border-t pt-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="text-sm font-semibold">Nova peça</div>
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setAberto(false)}>fechar</Button>
+      </div>
+      <div className="grid md:grid-cols-3 gap-3">
+        <div>
+          <Label className="text-xs">Canal</Label>
+          <select className="w-full h-9 rounded-md border bg-background px-2 text-sm" value={canal} onChange={(e) => setCanal(e.target.value)}>
+            {["instagram", "facebook", "whatsapp", "google", "hotsite"].map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <Label className="text-xs">Gancho</Label>
+          <select className="w-full h-9 rounded-md border bg-background px-2 text-sm" value={gancho} onChange={(e) => setGancho(e.target.value)}>
+            <option value="">—</option>
+            {(vocab.gancho || []).map((g: string) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div>
+          <Label className="text-xs">Campanha</Label>
+          <select className="w-full h-9 rounded-md border bg-background px-2 text-sm" value={campanhaId} onChange={(e) => setCampanhaId(e.target.value)}>
+            <option value="">sem campanha (orgânico)</option>
+            {campanhas.map((c: any) => <option key={c.id} value={c.id}>{c.codigo}</option>)}
+          </select>
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs">Texto</Label>
+        <Textarea rows={4} value={copy} onChange={(e) => setCopy(e.target.value)}
+          placeholder="Escreva a peça. Com campanha escolhida, o revisor exige o código de atribuição (/r/slug, cupom ou palavra-chave)." />
+      </div>
+      {lista.length > 0 && (
+        <div>
+          <Label className="text-xs">Criativo (opcional) — só os prontos para hoje</Label>
+          <div className="flex gap-2 overflow-x-auto pb-1 mt-1">
+            {lista.map((a: any) => (
+              <button key={a.id} type="button"
+                onClick={() => setAssetIds(assetIds.includes(String(a.id)) ? assetIds.filter(x => x !== String(a.id)) : [...assetIds, String(a.id)])}
+                className={"shrink-0 w-16 h-16 rounded overflow-hidden border-2 " + (assetIds.includes(String(a.id)) ? "" : "border-transparent")}
+                style={assetIds.includes(String(a.id)) ? { borderColor: ROXO } : undefined}>
+                {a.url ? <img src={a.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                       : <i className="fas fa-image text-muted-foreground" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <Button size="sm" disabled={salvando || !copy.trim()} onClick={criar}>
+        {salvando ? "Enviando…" : "Criar e mandar para o revisor"}
+      </Button>
+      <p className="text-[11px] text-muted-foreground">
+        A peça passa pelo revisor de marca antes de chegar na fila. Bloqueada duas vezes, ela sobe
+        escalada para você decidir — em vez de ficar em looping queimando token.
+      </p>
+      <PecasAprovadas publicar={publicar} />
+    </div>
+  );
+}
+
+function PecasAprovadas({ publicar }: { publicar: (id: string) => void }) {
+  // Enquanto o App Review da Meta não sai, quem posta é você — e marcar aqui é o
+  // que faz o criativo contar uso e entrar no desempenho por gancho.
+  const q = useQuery<any>({ queryKey: ["/api/mkt/pieces", "aprovado"], queryFn: () => apiGet("/api/mkt/pieces?estado=aprovado") });
+  const lista: any[] = q.data || [];
+  if (!lista.length) return null;
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <div className="text-sm font-semibold">Aprovadas, esperando ir ao ar</div>
+      <p className="text-[11px] text-muted-foreground">
+        Enquanto o App Review da Meta não sai, quem posta é você. Depois de postar, marque aqui —
+        é isso que põe o criativo em descanso e faz ele contar no desempenho por gancho.
+      </p>
+      {lista.map((x: any) => (
+        <div key={x.id} className="flex gap-3 items-center rounded-lg border p-2">
+          {x.miniaturas?.[0]
+            ? <img src={x.miniaturas[0]} alt="" className="w-12 h-12 rounded object-cover shrink-0" loading="lazy" />
+            : <div className="w-12 h-12 rounded bg-muted grid place-items-center shrink-0"><i className="fas fa-image text-muted-foreground text-xs" /></div>}
+          <div className="min-w-0 flex-1">
+            <div className="flex gap-1 flex-wrap mb-0.5">
+              <Badge variant="outline" className="text-[10px] px-1 py-0">{x.canal}</Badge>
+              {x.campanha_codigo && <Badge variant="secondary" className="text-[10px] px-1 py-0">{x.campanha_codigo}</Badge>}
+            </div>
+            <div className="text-xs truncate">{x.previa}</div>
+          </div>
+          <Button size="sm" className="h-9 shrink-0" onClick={() => publicar(x.id)}>postei</Button>
+        </div>
+      ))}
+    </div>
   );
 }
