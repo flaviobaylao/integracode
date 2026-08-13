@@ -20657,8 +20657,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         visitAgendaByEntityId.set(va.customerId, va);
       });
       
-      // Montar visitas na ordem do optimizedOrder com suporte a customers e leads
-      const visits = (route.optimizedOrder || [])
+      // Montar visitas na ordem do optimizedOrder com suporte a customers e leads.
+      // Usa o `optimizedOrder` JA DEDUPLICADO (Array.from(new Set(...)) acima) — o
+      // route.optimizedOrder cru pode ter o mesmo stopId repetido (dado historico),
+      // o que fazia o MESMO cliente aparecer 2x na rota e, por consequencia, 2x na
+      // lista de "sem atendimento" do Fechar Rota.
+      const visits = optimizedOrder
         .map((stopId: string) => {
           // Resolver stopId
           let visitType: 'customer' | 'lead' = 'customer';
