@@ -10,7 +10,7 @@
 //   webhook  →  mkt_toques (tipo='ctwa')  →  agente qualifica/registra pedido
 //        │                                          │
 //        │                                          ▼
-//        └───────────────────────────────►  CAPI: Lead / Purchase + valor
+//        └───────────────────────────────►  CAPI: LeadSubmitted / Purchase + valor
 //                                            (a Meta passa a otimizar por
 //                                             QUEM COMPRA, nao por quem clica)
 //
@@ -51,7 +51,7 @@ export async function ensureMktCtwaSchema(): Promise<{ ok: boolean; steps: any[]
   await run('create_capi',
     "CREATE TABLE IF NOT EXISTS mkt_capi_eventos (" +
     "id varchar PRIMARY KEY DEFAULT gen_random_uuid(), " +
-    "event_name varchar NOT NULL, " +            // Lead | Purchase
+    "event_name varchar NOT NULL, " +            // LeadSubmitted | Purchase
     "event_id varchar NOT NULL UNIQUE, " +       // dedup na Meta E aqui
     "ctwa_clid varchar, " +
     "canal varchar, " +                          // whatsapp | instagram
@@ -192,9 +192,12 @@ export async function registrarToqueDeConversa(opts: {
     const toqueId = ins.rows?.[0]?.id;
     console.log('🎯 [CTWA] conversa veio de anuncio:', { canal: opts.canal, ctwaClid: (r.ctwaClid || '').slice(0, 12) + '...', adId: r.adId });
 
-    // Lead: a conversa existir JÁ é o evento de lead do CTWA.
+    // A conversa existir JA e o evento de lead do CTWA.
+    // 'LeadSubmitted', e nao 'Lead': com action_source='business_messaging' a
+    // Meta so aceita um vocabulario proprio, e 'Lead' nao esta nele (subcodigo
+    // 2804066). Medido contra a Graph API, nao deduzido da documentacao.
     void enfileirarEvento({
-      eventName: 'Lead', ctwaClid: r.ctwaClid, canal: opts.canal,
+      eventName: 'LeadSubmitted', ctwaClid: r.ctwaClid, canal: opts.canal,
       conversaId: opts.conversaId || null, telefone: opts.telefone || null,
     });
 
@@ -262,12 +265,46 @@ function telefoneHash(tel?: string | null): string | null {
   return sha256(d.startsWith('55') ? d : '55' + d);
 }
 
+/**
+ * A CAIXA DE ORIGEM DA CONVERSA.
+ *
+ * Com action_source='business_messaging' a Meta exige, dentro de user_data, a
+ * conta por onde a conversa entrou: whatsapp_business_account_id no WhatsApp,
+ * page_id no Instagram/Messenger. Sem isso ela recusa o evento inteiro
+ * (subcodigo 2804116) — e recusa DEPOIS de validar tudo o mais, entao o erro
+ * so aparece quando ja e tarde.
+ *
+ * Fica em variavel de ambiente, e nao chumbado, porque um dia a Honest pode ter
+ * mais de um numero (hoje: 1841 na WABA "BM - Honest").
+ */
+function identificadorDaConta(canal?: string | null): { chave: string; valor: string } | null {
+  if (canal === 'instagram') {
+    const v = (process.env.META_PAGE_ID || '').trim();
+    return v ? { chave: 'page_id', valor: v } : null;
+  }
+  const v = (process.env.META_WABA_ID || '').trim();
+  return v ? { chave: 'whatsapp_business_account_id', valor: v } : null;
+}
+
+/** Avisa uma vez por canal. Log diario repetido vira ruido e ninguem le. */
+const _jaAvisou = new Set<string>();
+function avisarFaltaConta(canal?: string | null): void {
+  const c = canal === 'instagram' ? 'instagram' : 'whatsapp';
+  if (_jaAvisou.has(c)) return;
+  _jaAvisou.add(c);
+  console.warn('⚠️  [CAPI] evento de ' + c + ' nao enfileirado: falta '
+    + (c === 'instagram' ? 'META_PAGE_ID' : 'META_WABA_ID')
+    + ' nas variaveis do Railway. A Meta recusa evento de business_messaging sem o id da conta.');
+}
+
 export function montarPayloadCapi(e: {
   eventName: string; eventId: string; ctwaClid?: string | null; canal?: string | null;
   valor?: number | null; telefone?: string | null; quando?: number;
 }): any {
   const user_data: any = {};
   if (e.ctwaClid) user_data.ctwa_clid = e.ctwaClid;
+  const conta = identificadorDaConta(e.canal);
+  if (conta) user_data[conta.chave] = conta.valor;
   const ph = telefoneHash(e.telefone);
   if (ph) user_data.ph = [ph];
 
@@ -290,13 +327,21 @@ export function montarPayloadCapi(e: {
  * estiver 'on' E as credenciais existirem. Nunca lança.
  */
 export async function enfileirarEvento(e: {
-  eventName: 'Lead' | 'Purchase'; ctwaClid?: string | null; canal?: string | null;
+  eventName: 'LeadSubmitted' | 'Purchase'; ctwaClid?: string | null; canal?: string | null;
   conversaId?: string | null; salesCardId?: string | null; valor?: number | null;
   telefone?: string | null;
 }): Promise<{ status: string; eventId?: string }> {
   try {
     if (!(await garantirSchema())) return { status: 'sem-schema' };
     if (!e.ctwaClid) return { status: 'sem-ctwa_clid' }; // orgânico: não reportar à Meta
+
+    // Recusa na porta, e nao na fila. Sem o id da conta a Meta rejeita o evento
+    // com 2804116; enfileirar mesmo assim renderia 5 tentativas fadadas ao erro
+    // e um contador parado no zero sem ninguem entender por que.
+    if (!identificadorDaConta(e.canal)) {
+      avisarFaltaConta(e.canal);
+      return { status: 'sem-id-da-conta' };
+    }
 
     // event_id determinístico = dedup na Meta e aqui. Purchase é por pedido;
     // Lead é por conversa. Reprocessar o mesmo fato nunca gera evento duplicado.
