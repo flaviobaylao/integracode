@@ -384,6 +384,35 @@ export async function blocoSeo(): Promise<string> {
     );
   }
 
+  // Pixel da Meta. Mesma regra do GA4: sem ID, nenhum script sai.
+  //
+  // Por que ele precisa existir, agora que o CAPI esta de pe: os dois NAO cobrem
+  // o mesmo caminho. O CAPI (buraco 3) reporta o que acontece no WhatsApp
+  // (action_source=business_messaging); o Pixel reporta o que acontece AQUI, na
+  // loja. Sem ele nao existe publico de remarketing, campanha que aponta para o
+  // site nao tem por onde otimizar, e publico semelhante nasce sem lastro.
+  // Medido em 13/ago/2026: o conjunto de dados estava ha 290 dias sem receber
+  // nada, e 'Nenhum site encontrado' - porque o Pixel nunca foi instalado.
+  //
+  // Sai do ENV, e nao de system_settings, de proposito: e o mesmo META_PIXEL_ID
+  // que o CAPI usa. Dois lugares para o mesmo numero e pedir para divergirem.
+  const pixelId = String(process.env.META_PIXEL_ID || '').replace(/\D/g, '');
+  if (pixelId) {
+    partes.push(
+      '<script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?'
+      + 'n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;'
+      + 'n.push=n;n.loaded=!0;n.version=\'2.0\';n.queue=[];t=b.createElement(e);t.async=!0;'
+      + 't.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'
+      + '\'script\',\'https://connect.facebook.net/en_US/fbevents.js\');'
+      + 'fbq(\'init\',\'' + pixelId + '\');fbq(\'track\',\'PageView\');</script>'
+    );
+    // Quem entra com JavaScript desligado ainda conta como visita.
+    partes.push(
+      '<noscript><img height="1" width="1" style="display:none" alt="" '
+      + 'src="https://www.facebook.com/tr?id=' + pixelId + '&amp;ev=PageView&amp;noscript=1" /></noscript>'
+    );
+  }
+
   return partes.join('\n    ');
 }
 
