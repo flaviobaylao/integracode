@@ -2367,6 +2367,27 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
 
+  // FECHAMENTO — HISTORICO DE JUSTIFICATIVAS (um registro por linha).
+  // Lista cada justificativa (visit_justifications) com data, cliente, vendedor,
+  // motivo e a observacao da caixa de texto. Filtro por vendedor (sellerId) e
+  // busca por cliente (busca, no nome). Opcionalmente por mes. Limite de 500.
+  app.get('/api/admin/fechamento/historico', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
+    try {
+      await ensureJustifTable();
+      const sid = String(req.query.sellerId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const busca = String(req.query.busca || '').trim().slice(0, 60);
+      const mesF = String(req.query.mes || '').replace(/[^0-9-]/g, '');
+      const fSid = sid ? sql` AND vj.seller_id = ${sid}` : sql``;
+      const fBusca = busca ? sql` AND lower(COALESCE(c.name, '')) LIKE ${'%' + busca.toLowerCase() + '%'}` : sql``;
+      const fMes = /^\d{4}-\d{2}$/.test(mesF) ? sql` AND to_char(vj.visit_date, 'YYYY-MM') = ${mesF}` : sql``;
+      const rh: any = await db.execute(sql`SELECT to_char(vj.visit_date, 'YYYY-MM-DD') AS data, vj.customer_id AS cid, vj.seller_id AS sid, COALESCE(c.name, vj.customer_id) AS cliente, c.city AS cidade, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id, ''), 'omie-vendor-', '') OR u.id = vj.seller_id LIMIT 1) AS vendedor, vj.reason AS motivo, vj.notes AS obs FROM visit_justifications vj LEFT JOIN customers c ON c.id = vj.customer_id WHERE vj.reason <> 'removido'${fSid}${fBusca}${fMes} ORDER BY vj.visit_date DESC, cliente ASC LIMIT 500`);
+      const registros = ((rh.rows || rh) as any[]).map((x: any) => ({ data: String(x.data || ''), customerId: String(x.cid), sellerId: String(x.sid || ''), cliente: x.cliente || x.cid, cidade: x.cidade || '', vendedor: x.vendedor || '', motivo: x.motivo, obs: String(x.obs || '').trim() }));
+      const rvd: any = await db.execute(sql.raw("SELECT vj.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor FROM visit_justifications vj WHERE vj.reason <> 'removido' GROUP BY vj.seller_id ORDER BY vendedor"));
+      const vendedores = ((rvd.rows || rvd) as any[]).map((x: any) => ({ sellerId: String(x.sid || ''), vendedor: x.vendedor || x.sid })).filter((v: any) => v.sellerId);
+      res.json({ ok: true, sellerId: sid || null, busca, registros, vendedores, total: registros.length });
+    } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+  });
+
   // FECHAMENTO — SUSPENSAO DE JUSTIFICATIVA (gestao admin, por mes vigente).
   // O admin marca "Visita" e/ou "Debito" para um cliente: enquanto marcado, aquele
   // motivo NAO precisa ser justificado pelo vendedor naquele mes (o cliente sai da
