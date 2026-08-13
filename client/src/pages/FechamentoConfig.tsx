@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardCheck, Lock, BarChart3, Flag } from "lucide-react";
+import { ClipboardCheck, Lock, BarChart3, Flag, History, Search } from "lucide-react";
 
 type Cfg = {
   travaObrigatoria: boolean;
@@ -179,14 +179,123 @@ function RegrasTab() {
   );
 }
 
-type Tab = "fechar" | "painel" | "regras";
+// ---------------------------------------------------------------------------
+// HISTORICO DE JUSTIFICATIVAS — lista cada justificativa (um registro por linha)
+// com data, cliente, vendedor, motivo e a observacao da caixa de texto.
+// Filtro por vendedor + busca por cliente. Fonte: /api/admin/fechamento/historico.
+// ---------------------------------------------------------------------------
+const HIST_MOTIVO_LABEL: Record<string, string> = {
+  sem_tempo: "Não deu tempo / rota grande",
+  remarcou: "Cliente avisou / remarcou",
+  fechado: "Cliente fechado temporariamente",
+  rota_inviavel: "Rota/distância inviável",
+  imprevisto: "Imprevisto (veículo/pessoal)",
+  cancelou: "Cliente cancelou fornecimento",
+  debito: "Débito",
+  ausente: "Responsável ausente",
+  ja_comprou: "Já comprou / não precisa",
+  endereco: "Endereço errado",
+  sem_interesse: "Sem interesse",
+  outro: "Outro",
+};
+function fmtDataBR(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || "—";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function HistoricoTab() {
+  const [sellerId, setSellerId] = useState<string>("__all__");
+  const [busca, setBusca] = useState<string>("");
+  const [buscaAtiva, setBuscaAtiva] = useState<string>("");
+  // Debounce simples da busca por cliente para nao consultar a cada tecla.
+  useEffect(() => { const t = setTimeout(() => setBuscaAtiva(busca.trim()), 350); return () => clearTimeout(t); }, [busca]);
+  const params = new URLSearchParams();
+  if (sellerId && sellerId !== "__all__") params.set("sellerId", sellerId);
+  if (buscaAtiva) params.set("busca", buscaAtiva);
+  const qs = params.toString();
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/fechamento/historico", sellerId, buscaAtiva],
+    queryFn: () => apiRequest("GET", `/api/admin/fechamento/historico${qs ? "?" + qs : ""}`),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const registros = (data?.registros || []) as any[];
+  const vendedores = (data?.vendedores || []) as any[];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><History className="w-4 h-4" /> Histórico de justificativas</CardTitle>
+          <div className="text-xs text-muted-foreground mt-1">Cada linha é uma justificativa registrada pelo vendedor no fechamento da rota: a data, o motivo e a observação escrita na caixa de texto. Use o filtro por vendedor e a busca por cliente.</div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+            <div className="sm:w-64">
+              <label className="block text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Vendedor</label>
+              <select value={sellerId} onChange={(e) => setSellerId(e.target.value)} className="w-full rounded-lg border bg-background px-3 py-2 text-sm">
+                <option value="__all__">Todos os vendedores</option>
+                {vendedores.map((v: any) => (<option key={v.sellerId} value={v.sellerId}>{v.vendedor}</option>))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="block text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Buscar cliente</label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do cliente…" className="w-full rounded-lg border bg-background pl-9 pr-8 py-2 text-sm" />
+                {busca ? <button onClick={() => setBusca("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">✕</button> : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="text-xs text-muted-foreground mb-2">{isLoading ? "Carregando…" : `${registros.length} justificativa(s)${registros.length >= 500 ? " (exibindo as 500 mais recentes)" : ""}.`}</div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-muted-foreground border-b">
+                  <th className="text-left font-bold pb-2 px-2 whitespace-nowrap">Data</th>
+                  <th className="text-left font-bold pb-2 px-2">Cliente</th>
+                  <th className="text-left font-bold pb-2 px-2">Vendedor</th>
+                  <th className="text-left font-bold pb-2 px-2">Motivo</th>
+                  <th className="text-left font-bold pb-2 px-2">Observações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(!isLoading && registros.length === 0) ? (
+                  <tr><td colSpan={5} className="text-sm text-muted-foreground py-6 px-2 text-center">Nenhuma justificativa encontrada com os filtros atuais.</td></tr>
+                ) : registros.map((r: any, i: number) => (
+                  <tr key={`${r.customerId}-${r.sellerId}-${r.data}-${i}`} className="border-t align-top">
+                    <td className="py-2 px-2 whitespace-nowrap tabular-nums">{fmtDataBR(r.data)}</td>
+                    <td className="py-2 px-2">
+                      <div className="font-semibold">{r.cliente}</div>
+                      {r.cidade ? <div className="text-[11px] text-muted-foreground">{r.cidade}</div> : null}
+                    </td>
+                    <td className="py-2 px-2">{r.vendedor || "—"}</td>
+                    <td className="py-2 px-2">
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold ${r.motivo === "debito" ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>{HIST_MOTIVO_LABEL[r.motivo] || r.motivo}</span>
+                    </td>
+                    <td className="py-2 px-2 text-muted-foreground whitespace-pre-wrap max-w-md">{r.obs ? r.obs : <span className="italic text-gray-300">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+type Tab = "fechar" | "painel" | "regras" | "historico";
 
 export default function FechamentoConfig() {
   const { role } = usePermissions();
   const isAdmin = role === "admin";
   const isReports = ["admin", "coordinator", "administrative"].includes(role);
   const [tab, setTab] = useState<Tab | null>(null);
-  const allowed = (t: Tab) => t === "fechar" || (t === "painel" && isReports) || (t === "regras" && isAdmin);
+  const allowed = (t: Tab) => t === "fechar" || (t === "painel" && isReports) || (t === "historico" && isReports) || (t === "regras" && isAdmin);
   const defaultTab: Tab = isReports ? "painel" : "fechar";
   const active: Tab = tab && allowed(tab) ? tab : defaultTab;
 
@@ -215,6 +324,11 @@ export default function FechamentoConfig() {
             <BarChart3 className="w-4 h-4" /> Painel de Gestão
           </button>
         )}
+        {isReports && (
+          <button onClick={() => setTab("historico")} className={tabCls(active === "historico")}>
+            <History className="w-4 h-4" /> Histórico
+          </button>
+        )}
         {isAdmin && (
           <button onClick={() => setTab("regras")} className={tabCls(active === "regras")}>
             <Lock className="w-4 h-4" /> Regras
@@ -222,7 +336,7 @@ export default function FechamentoConfig() {
         )}
       </div>
 
-      {active === "fechar" ? <FecharRota embedded /> : active === "painel" ? <FechamentoPainel embedded /> : <RegrasTab />}
+      {active === "fechar" ? <FecharRota embedded /> : active === "painel" ? <FechamentoPainel embedded /> : active === "historico" ? <HistoricoTab /> : <RegrasTab />}
     </div>
   );
 }
