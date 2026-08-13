@@ -4,6 +4,7 @@ import ImageGallery from './ImageGallery';
 import ProductReviews from './ProductReviews';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { getProductPrice } from '../utils/pricing';
+import { pixel } from '../utils/pixel';
 import { X } from 'lucide-react';
 
 interface ProductCardProps {
@@ -59,7 +60,20 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
           
           <div className="flex gap-2">
             <button
-              onClick={() => setShowDetails(true)}
+              onClick={() => {
+                // ViewContent = interesse de verdade. Abrir os detalhes e o unico
+                // sinal honesto que a loja tem: o card sozinho aparece na grade
+                // para todo mundo que rola a pagina, e disparar por isso encheria
+                // o publico de quem nem olhou.
+                pixel('ViewContent', {
+                  content_type: 'product',
+                  content_ids: [String(product.id)],
+                  content_name: product.name,
+                  value: displayPrice,
+                  currency: 'BRL',
+                });
+                setShowDetails(true);
+              }}
               className="flex-1 border border-honest-green text-honest-green py-2 px-3 rounded-lg text-sm font-semibold hover:bg-green-50 transition-colors"
               data-testid={`btn-details-${product.id}`}
             >
