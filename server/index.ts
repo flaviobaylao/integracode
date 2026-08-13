@@ -2635,7 +2635,14 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
         }
         try {
           if (targetId) {
-            const setCols = cols.filter((c) => c !== 'cpf' && c !== 'cnpj');
+            // NAO sobrescrever seller_id de cliente EXISTENTE: a carteira (vendedor) e' gerida
+            // no 2.0 (rezoneamento manual/edicao/bulk). Este import por documento trazia o
+            // seller_id do 1.0 (fonte antiga) e revertia SILENCIOSAMENTE o vendedor ajustado a
+            // mao no 2.0 (sem historico, sem a protecao de rezoneamento) — ex.: cliente volta
+            // de "Honest 3" para o vendedor antigo do 1.0. O sync de vendedor por documento tem
+            // endpoints proprios COM protecao (seller-by-doc / reconcile-customers). Aqui, so
+            // atualiza os demais campos; seller_id de quem ja existe fica intocado.
+            const setCols = cols.filter((c) => c !== 'cpf' && c !== 'cnpj' && c !== 'seller_id');
             const setSql = setCols.map((c, i) => '"' + c + '" = $' + (i + 1) + (enumCols.has(c) ? '::text::"' + tc.find((x)=>x.column_name===c)!.udt_name + '"' : '')).join(', ');
             const vals = setCols.map((c) => enc(row, c)); vals.push(targetId);
             await tgt.query('UPDATE customers SET ' + setSql + ' WHERE id = $' + (setCols.length + 1), vals);
