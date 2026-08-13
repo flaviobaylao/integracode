@@ -14,6 +14,9 @@ import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
 // Central de Marketing (buraco 2): captura a origem do visitante (UTM + cid do /r/<slug>)
 import { capturarOrigem, origemDoPedido } from './utils/origem';
+// Central de Marketing: eventos do Pixel. No-op se o Pixel nao foi injetado.
+import { pixel, pixelUmaVez, conteudos } from './utils/pixel';
+import { useRef } from 'react';
 import type { Product, CartItem, Customer } from './types';
 
 type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
@@ -51,6 +54,27 @@ function HotsiteContent() {
   // de qualquer navegação. Guarda em sessionStorage e limpa os utm_* da barra de
   // endereço. Sem parâmetro na URL, não faz nada — visita direta continua igual.
   useEffect(() => { capturarOrigem(); }, []);
+
+  // 🎯 Pixel: o carrinho é esvaziado ANTES da tela de sucesso aparecer, nos quatro
+  // caminhos (pedido direto, PIX, cartão, Google Pay). Guardar a última foto do
+  // carrinho aqui evita ter que instrumentar os quatro — e evita que um deles
+  // seja esquecido no dia em que aparecer um quinto.
+  const ultimoCarrinhoRef = useRef<{ valor: number; itens: CartItem[] }>({ valor: 0, itens: [] });
+
+  // 🎯 Pixel: Purchase. UM lugar só, ouvindo o resultado, em vez de quatro
+  // lugares disparando. A trava é o número do pedido e vive em localStorage:
+  // um F5 na tela de sucesso não vira uma segunda venda. Contar a mesma compra
+  // duas vezes ensina a Meta que o anúncio rende o dobro — e ela gasta de acordo.
+  useEffect(() => {
+    if (view !== 'success' || !orderNumber) return;
+    const foto = ultimoCarrinhoRef.current;
+    if (!foto.valor) return; // sem valor não há o que reportar
+    pixelUmaVez('purchase:' + orderNumber, 'Purchase', {
+      ...conteudos(foto.itens),
+      value: foto.valor,
+      currency: 'BRL',
+    });
+  }, [view, orderNumber]);
 
   // Contagem regressiva da expiração do PIX (1s)
   useEffect(() => {
@@ -115,6 +139,14 @@ function HotsiteContent() {
 
   // Salvar carrinho no localStorage sempre que mudar (formato compacto)
   useEffect(() => {
+    // Só memoriza carrinho com item. Quando ele é esvaziado para a tela de
+    // sucesso, a última foto boa precisa continuar de pé.
+    if (cart.length) {
+      ultimoCarrinhoRef.current = {
+        valor: cart.reduce((s, i) => s + i.price * i.quantity, 0),
+        itens: cart,
+      };
+    }
     try {
       // Salvar apenas dados essenciais: id, name, price, quantity
       const compactCart = cart.map(item => ({
@@ -164,6 +196,17 @@ function HotsiteContent() {
       setCart([...cart, { ...product, price: correctPrice, quantity: 1 }]);
     }
     
+    // 🎯 Pixel: AddToCart com o preço da TABELA do visitante (revenda paga
+    // diferente de consumidor). Mandar o preço de balcão para todo mundo faria a
+    // Meta otimizar por um ticket que não existe.
+    pixel('AddToCart', {
+      content_type: 'product',
+      content_ids: [String(product.id)],
+      content_name: product.name,
+      value: correctPrice,
+      currency: 'BRL',
+    });
+
     // Abrir carrinho (permanece aberto até cliente fechar)
     setIsCartOpen(true);
   };
@@ -653,6 +696,10 @@ function HotsiteContent() {
           onUpdateQuantity={updateQuantity}
           onRemoveItem={removeFromCart}
           onCheckout={() => {
+            // 🎯 Pixel: InitiateCheckout. É o sinal que separa "colocou no
+            // carrinho" de "foi preencher o endereço" — e é dele que sai o
+            // público de carrinho abandonado.
+            pixel('InitiateCheckout', { ...conteudos(cart), value: calculateTotal(), currency: 'BRL' });
             setIsCartOpen(false);
             setView('checkout');
           }}
