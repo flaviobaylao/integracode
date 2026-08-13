@@ -2308,10 +2308,16 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); }
       const cfg = await getFechamentoConfig();
       if (!seller || !cfg.bloqueioDiaSeguinte) return res.json({ ok: true, blocked: false });
-      const desde = (typeof cfg.bloqueioDesde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cfg.bloqueioDesde)) ? cfg.bloqueioDesde : date;
-      const r: any = await db.execute(sql`SELECT to_char(dr.route_date::date, 'YYYY-MM-DD') AS d FROM daily_routes dr WHERE dr.seller_id = ${seller} AND dr.route_date::date < ${date}::date AND dr.route_date::date >= ${desde}::date AND NOT EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = dr.route_date::date AND COALESCE(rc.closed_by, '') <> 'auto') ORDER BY dr.route_date DESC LIMIT 1`);
+      // Bloqueio ABSOLUTO pelo dia anterior (nao depende de bloqueioDesde): a rota de
+      // HOJE fica travada enquanto a ULTIMA rota anterior do vendedor (route_date < hoje)
+      // nao estiver fechada. "Fechada" = existe um fechamento MANUAL (route_closures com
+      // closed_by <> 'auto') — e fechar so e permitido com TUDO justificado (nao-visitas
+      // e debitos), pela trava do Fechar Rota (travaObrigatoria + exigirDebito). Se a
+      // ultima rota anterior ja esta fechada, nao bloqueia (dias mais antigos nao travam).
+      const r: any = await db.execute(sql`SELECT to_char(dr.route_date::date, 'YYYY-MM-DD') AS d, EXISTS (SELECT 1 FROM route_closures rc WHERE rc.seller_id = dr.seller_id AND rc.close_date = dr.route_date::date AND COALESCE(rc.closed_by, '') <> 'auto') AS fechada FROM daily_routes dr WHERE dr.seller_id = ${seller} AND dr.route_date::date < ${date}::date ORDER BY dr.route_date DESC LIMIT 1`);
       const row = ((r.rows || r) as any[])[0];
-      res.json({ ok: true, blocked: !!row, pendingDate: row ? row.d : null });
+      const blocked = !!row && !row.fechada;
+      res.json({ ok: true, blocked, pendingDate: blocked ? row.d : null });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
   });
   app.post('/api/admin/fechamento/liberar', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: Request, res: Response) => {
