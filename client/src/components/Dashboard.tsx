@@ -494,8 +494,9 @@ export default function Dashboard() {
                   {monthWeeks.map((wk: any, i: number) => (
                     <th key={i} colSpan={7} className="py-1 px-2 font-semibold text-center border-l bg-gray-50 sticky top-0 z-10">Semana {i + 1}{wk.label ? " (" + wk.label + ")" : ""}</th>
                   ))}
-                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-indigo-50 text-indigo-700">Projeção</th>
-                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-white"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700 w-full justify-end" title="Ordenar">Mensal{sortArrow("fatMes")}</button></th>
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-white"><div className="inline-flex items-center gap-1 justify-end"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar">Total Mensal{sortArrow("fatMes")}</button><InfoDot text="Faturamento efetivo já realizado no mês: NF-e de venda autorizada (faturada), já excluindo pedidos bloqueados, cancelamentos, devoluções, trocas, transferências, remessas, bonificações e amostras." /></div></th>
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-indigo-50 text-indigo-700"><div className="inline-flex items-center gap-1 justify-end">Projeção histórico de vendas<InfoDot text="Realizado + previsão por cliente da carteira: para cada cliente calculamos a periodicidade de compra, o dia da semana mais frequente e o ticket médio (ponderados por recência) dos últimos ~3 meses, e somamos os pedidos previstos até o fim do mês." /></div></th>
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-sky-50 text-sky-700"><div className="inline-flex items-center gap-1 justify-end">Projeção Linear do Mês<InfoDot text="Projeção linear pelo ritmo dos dias úteis (seg-sex): realizado dividido pelos dias úteis já decorridos no mês, multiplicado pelo total de dias úteis do mês." /></div></th>
                 </tr>
                 <tr className="border-b text-gray-400">
                   {monthWeeks.flatMap((wk: any, i: number) => [
@@ -519,12 +520,13 @@ export default function Dashboard() {
                       }),
                       <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.map[x.sellerId] || {}, wi); return t ? nfmt(t) : ""; })()}</td>
                     ])}
-                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
                     <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
+                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
+                    <td className="py-1 px-2 text-right tabular-nums font-semibold text-sky-700 border-l bg-sky-50">{brl(businessDays.elapsed > 0 ? (x.mensal / businessDays.elapsed) * businessDays.total : x.mensal)}</td>
                   </tr>
                 ))}
                 {sortedSellerDaily.length === 0 && (
-                  <tr><td colSpan={monthWeeks.length * 7 + 3} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                  <tr><td colSpan={monthWeeks.length * 7 + 4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
@@ -539,8 +541,9 @@ export default function Dashboard() {
                     }),
                     <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.byDate, wi); return t ? nfmt(t) : ""; })()}</td>
                   ])}
+                  <td className="py-1 px-2 text-right tabular-nums font-bold border-l">{brl(grandTotals.mensal)}</td>
                   <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(projTotal)}</td>
-                  <td className="py-1 px-2 text-right tabular-nums border-l">{brl(grandTotals.mensal)}</td>
+                  <td className="py-1 px-2 text-right tabular-nums font-semibold text-sky-700 border-l bg-sky-50">{brl(projLinear)}</td>
                 </tr>
               </tfoot>
             </table>
