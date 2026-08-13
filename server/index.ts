@@ -51,6 +51,38 @@ import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
 import { calculateNextVisitDate } from "../shared/visitSchedule";
 
 const app = express();
+
+// ---------------------------------------------------------------------------
+// O hash da senha NUNCA sai em resposta de API
+// ---------------------------------------------------------------------------
+//
+// /api/auth/user e /api/users devolviam a linha inteira do banco, hash bcrypt
+// junto. Ia para o navegador em toda carga de pagina, e /api/users devolve TODOS
+// os usuarios - qualquer vendedor logado conseguia o hash do admin. Hash nao e a
+// senha em claro, mas e material para quebra offline, e nao ha um so motivo para
+// ele sair do servidor.
+//
+// Por que aqui e nao em cada rota: consertar as rotas de hoje nao protege a que
+// alguem escrever amanha. Este e o unico ponto por onde toda resposta JSON passa.
+//
+// Por que nao em storage: o hash e legitimamente lido de la - o login compara com
+// bcrypt e a troca de senha confere a atual. Tirar na origem quebraria os dois.
+//
+// Custo: nenhuma passada extra. Em vez de varrer o objeto e depois serializar, a
+// propria serializacao (que ja aconteceria dentro do res.json) recebe o filtro.
+app.use((_req, res, next) => {
+  const jsonOriginal = res.json.bind(res);
+  (res as any).json = (corpo: any) => {
+    // A chave cai fora em qualquer profundidade: objeto solto, item de lista, aninhado.
+    const texto = JSON.stringify(corpo, (chave, valor) => (chave === 'password' ? undefined : valor));
+    // stringify devolve undefined para undefined/function no topo; ai deixa o express decidir.
+    if (texto === undefined) return jsonOriginal(corpo);
+    if (!res.get('Content-Type')) res.type('application/json');
+    return res.send(texto);
+  };
+  next();
+});
+
 registerOfficialDispatch(app);
 registerOfficialPanel(app);
 registerIaAtendimento(app);
