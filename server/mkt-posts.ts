@@ -439,3 +439,152 @@ export async function coletarTodos(dias = 30): Promise<{ ok: boolean; modo: stri
   } catch { erros++; }
   return { ok: true, modo: st.modo, tentados, gravados, erros };
 }
+
+// ---------------------------------------------------------------------------
+// Sonda: a pergunta "precisa de App Review?" respondida com fato, nao com palpite
+// ---------------------------------------------------------------------------
+//
+// coletarInsights() so funciona em post JA registrado e COM external_media_id, e
+// hoje nao existe jeito de descobrir esse id sem sair catando na mao. Entao ligar
+// a coleta em 'test' nao testa nada: ela nao tem em que bater.
+//
+// Esta sonda faz a pergunta direto na API, em tres degraus, e diz em qual degrau
+// parou. Cada degrau depende de uma permissao diferente - e e exatamente isso que
+// separa "acesso padrao ja basta" de "tem que protocolar App Review":
+//
+//   1. a conta responde?            -> instagram_business_basic
+//   2. da para listar as midias?    -> instagram_business_basic
+//   3. da para ler os Insights?     -> instagram_business_manage_insights  <- item 16
+//
+// Nao grava nada e nao depende do modo de coleta. E leitura pura, de proposito:
+// serve para decidir, e decisao errada aqui custa semanas de espera.
+
+/** Metricas que a sonda tenta ler, do mais ambicioso para o mais conservador. */
+const TENTATIVAS_METRICAS = [
+  Object.keys(DE_PARA_GRAPH),                                  // tudo (inclui impressions)
+  ['reach', 'likes', 'comments', 'saved', 'shares'],           // sem impressions (deprecada em v22+)
+  ['reach'],                                                   // o minimo que prova a permissao
+];
+
+function baseGraph(): string {
+  return `${process.env.IG_GRAPH_BASE || 'https://graph.facebook.com'}/${process.env.GRAPH_VERSION || 'v21.0'}`;
+}
+
+/** GET na Graph API devolvendo corpo + erro normalizado, sem nunca vazar o token. */
+async function pegarGraph(caminho: string, params: Record<string, string>): Promise<{ ok: boolean; corpo: any; erro?: string; codigo?: number; subcodigo?: number; http?: number }> {
+  const token = String(process.env.IG_PAGE_TOKEN || '');
+  const qs = new URLSearchParams({ ...params, access_token: token }).toString();
+  try {
+    const r = await fetch(`${baseGraph()}/${caminho}?${qs}`);
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok || j?.error) {
+      return {
+        ok: false, corpo: j, http: r.status,
+        erro: j?.error?.message || `HTTP ${r.status}`,
+        codigo: j?.error?.code, subcodigo: j?.error?.error_subcode,
+      };
+    }
+    return { ok: true, corpo: j, http: r.status };
+  } catch (e: any) {
+    return { ok: false, corpo: null, erro: String(e?.message || e) };
+  }
+}
+
+export type SondaInstagram = {
+  ok: boolean;
+  falta: string[];
+  degrau: 'credenciais' | 'conta' | 'midias' | 'insights' | 'completo';
+  conta?: { id?: string; username?: string; media_count?: number };
+  midias?: { id: string; permalink?: string; media_type?: string; timestamp?: string; legenda?: string }[];
+  insights?: { mediaId: string; metricas: string[]; dados?: Record<string, number>; erro?: string; codigo?: number; subcodigo?: number };
+  precisaAppReview?: boolean;
+  veredito: string;
+};
+
+/**
+ * Sonda o Instagram e devolve ate onde deu. `limite` = quantas midias listar.
+ * Nunca escreve. Nunca devolve o token.
+ */
+export async function sondarInstagram(limite = 5): Promise<SondaInstagram> {
+  const st = await modoColeta();
+  if (!st.pronto) {
+    return {
+      ok: false, falta: st.falta, degrau: 'credenciais',
+      veredito: 'Falta ' + st.falta.join(' e ') + ' no Railway. Sem isso nao da nem para perguntar.',
+    };
+  }
+  const contaId = String(process.env.IG_BUSINESS_ID);
+  const n = Math.min(Math.max(Number(limite) || 5, 1), 25);
+
+  // Degrau 1 - a conta responde?
+  const c = await pegarGraph(contaId, { fields: 'id,username,media_count' });
+  if (!c.ok) {
+    return {
+      ok: false, falta: [], degrau: 'conta',
+      veredito: 'A conta nao respondeu: ' + (c.erro || 'erro desconhecido')
+        + '. Antes de pensar em App Review, confira o IG_BUSINESS_ID e a validade do IG_PAGE_TOKEN.',
+    };
+  }
+  const conta = { id: c.corpo?.id, username: c.corpo?.username, media_count: c.corpo?.media_count };
+
+  // Degrau 2 - da para listar as midias?
+  const m = await pegarGraph(`${contaId}/media`, {
+    fields: 'id,permalink,media_type,timestamp,caption', limit: String(n),
+  });
+  if (!m.ok) {
+    return {
+      ok: false, falta: [], degrau: 'midias', conta,
+      veredito: 'A conta responde, mas a lista de midias nao: ' + (m.erro || 'erro desconhecido')
+        + '. Isso e instagram_business_basic, nao insights.',
+    };
+  }
+  const midias = (m.corpo?.data || []).map((x: any) => ({
+    id: String(x.id), permalink: x.permalink, media_type: x.media_type,
+    timestamp: x.timestamp, legenda: String(x.caption || '').slice(0, 140),
+  }));
+  if (!midias.length) {
+    return {
+      ok: true, falta: [], degrau: 'midias', conta, midias: [],
+      veredito: 'Credenciais boas e a conta responde, mas nao ha midia publicada para medir. '
+        + 'Publique um post e rode a sonda de novo.',
+    };
+  }
+
+  // Degrau 3 - da para ler os Insights? (a pergunta do item 16)
+  const alvo = midias[0];
+  let ultimo: { ok: boolean; corpo: any; erro?: string; codigo?: number; subcodigo?: number } | null = null;
+  for (const metricas of TENTATIVAS_METRICAS) {
+    const r = await pegarGraph(`${alvo.id}/insights`, { metric: metricas.join(',') });
+    ultimo = r;
+    if (r.ok) {
+      const dados: Record<string, number> = {};
+      for (const item of (r.corpo?.data || [])) {
+        const col = DE_PARA_GRAPH[String(item.name)];
+        if (col) dados[col] = Number(item.values?.[0]?.value ?? 0);
+      }
+      const completo = metricas.length === Object.keys(DE_PARA_GRAPH).length;
+      return {
+        ok: true, falta: [], degrau: 'completo', conta, midias,
+        insights: { mediaId: alvo.id, metricas, dados },
+        precisaAppReview: false,
+        veredito: completo
+          ? 'Os Insights vieram com o acesso padrao. O item 16 nao precisa de App Review — pode ligar a coleta.'
+          : 'Os Insights vieram, mas so com ' + metricas.join(', ') + '. A permissao esta OK; '
+            + 'o que sobrou de fora e metrica que a versao da API nao serve mais (impressions saiu na v22).',
+      };
+    }
+  }
+
+  // Nenhuma combinacao passou: agora sim a resposta e App Review.
+  const permissao = /permission|scope|OAuth|autoriza/i.test(String(ultimo?.erro || ''));
+  return {
+    ok: false, falta: [], degrau: 'insights', conta, midias,
+    insights: { mediaId: alvo.id, metricas: TENTATIVAS_METRICAS[TENTATIVAS_METRICAS.length - 1], erro: ultimo?.erro, codigo: ultimo?.codigo, subcodigo: ultimo?.subcodigo },
+    precisaAppReview: permissao,
+    veredito: permissao
+      ? 'A conta e as midias respondem, mas os Insights nao: "' + (ultimo?.erro || '') + '". '
+        + 'E erro de permissao — o item 16 precisa mesmo do App Review de instagram_business_manage_insights.'
+      : 'Os Insights falharam por outro motivo: "' + (ultimo?.erro || '') + '". '
+        + 'Nao parece permissao; vale resolver isso antes de protocolar App Review.',
+  };
+}
