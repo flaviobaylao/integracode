@@ -2123,6 +2123,10 @@ function RegistroDePosts() {
   const [medindo, setMedindo] = useState<string | null>(null);
   const [nums, setNums] = useState<any>({});
   const [salvando, setSalvando] = useState(false);
+  // Resultado da sonda (item 16): fica na tela até sair dela, porque é o que
+  // decide se vale ou não protocolar App Review.
+  const [sonda, setSonda] = useState<any>(null);
+  const [sondando, setSondando] = useState(false);
 
   const pan = useQuery<any>({ queryKey: ["/api/mkt/posts/panorama"], queryFn: () => apiGet("/api/mkt/posts/panorama?dias=90") });
   const lista = useQuery<any>({ queryKey: ["/api/mkt/posts"], queryFn: () => apiGet("/api/mkt/posts?dias=90") });
@@ -2153,6 +2157,17 @@ function RegistroDePosts() {
       setMedindo(null); setNums({}); recarregar();
     } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
     setSalvando(false);
+  }
+
+  // Pergunta na Graph API se o acesso padrão já lê Insights. Não grava nada.
+  async function rodarSonda() {
+    setSondando(true); setSonda(null);
+    try {
+      setSonda(await apiGet("/api/mkt/posts/coleta/sonda?limite=5"));
+    } catch (e: any) {
+      setSonda({ ok: false, veredito: "A sonda não respondeu: " + (e?.message || e) });
+    }
+    setSondando(false);
   }
 
   async function apagar(id: string) {
@@ -2208,9 +2223,70 @@ function RegistroDePosts() {
             <i className="fas fa-circle-info mr-1" />
             A coleta automática está pronta no código e desligada: falta{" "}
             <b>{(p.faltaParaColetar || []).join(" e ")}</b>, que depende do App Review da Meta para
-            <code className="mx-1">instagram_manage_insights</code>. Quando sair, é uma chave — não um deploy.
+            <code className="mx-1">instagram_business_manage_insights</code>. Quando sair, é uma chave — não um deploy.
           </p>
         )}
+
+        {/* A pergunta "precisa de App Review?" respondida com fato, não com palpite.
+            Ligar a coleta em 'test' não testa nada enquanto não houver post com id de
+            mídia da Meta — a sonda pergunta direto na API e diz em que degrau parou. */}
+        <div className="rounded-lg border p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Isto precisa mesmo de App Review?</div>
+              <div className="text-[11px] text-muted-foreground">
+                Pergunta na Graph API: a conta responde, as mídias aparecem, os Insights vêm?
+                Só lê — não grava nem publica nada.
+              </div>
+            </div>
+            <Button size="sm" variant="outline" className="h-9" onClick={rodarSonda} disabled={sondando}>
+              {sondando ? "Perguntando…" : "Testar agora"}
+            </Button>
+          </div>
+
+          {sonda && (
+            <div className="space-y-2">
+              <div className={"text-xs rounded-md p-2 " + (sonda.ok ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
+                {sonda.veredito}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  ["credenciais", "Credenciais"],
+                  ["conta", "Conta responde"],
+                  ["midias", "Lista mídias"],
+                  ["completo", "Lê Insights"],
+                ].map(([chave, rot]: any) => {
+                  const ordem = ["credenciais", "conta", "midias", "insights", "completo"];
+                  const passou = ordem.indexOf(sonda.degrau) > ordem.indexOf(chave)
+                    || (sonda.degrau === "completo" && chave === "completo")
+                    || (sonda.degrau === "midias" && chave === "midias" && sonda.ok);
+                  return (
+                    <span key={chave} className={"text-[10px] px-2 py-0.5 rounded-full border " + (passou ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400" : "border-muted text-muted-foreground")}>
+                      {passou ? "✓ " : "· "}{rot}
+                    </span>
+                  );
+                })}
+              </div>
+              {sonda.conta?.username && (
+                <div className="text-[11px] text-muted-foreground">
+                  Conta <b>@{sonda.conta.username}</b> · {num(sonda.conta.media_count)} publicações
+                </div>
+              )}
+              {sonda.insights?.dados && (
+                <div className="text-[11px] text-muted-foreground">
+                  Última publicação:{" "}
+                  {Object.entries(sonda.insights.dados).map(([k, v]: any) => k + " " + v).join(" · ")}
+                </div>
+              )}
+              {sonda.insights?.erro && (
+                <div className="text-[11px] text-muted-foreground">
+                  Erro da API: <code>{sonda.insights.erro}</code>
+                  {sonda.insights.codigo ? " (código " + sonda.insights.codigo + ")" : ""}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {posts.length === 0 && !lista.isLoading && (
           <div className="text-center py-6 text-sm text-muted-foreground">
