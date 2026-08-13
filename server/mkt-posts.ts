@@ -379,8 +379,11 @@ export async function definirModoColeta(modo: string, quem?: string): Promise<{ 
 }
 
 // Nomes das metricas na Graph API -> nossas colunas.
+// 'views' e 'impressions' caem na MESMA coluna de proposito: sao a mesma ideia com
+// nomes de epocas diferentes (a Meta aposentou impressions na v22 e chamou o
+// substituto de views). A tela ja rotula essa coluna como "Visualizacoes".
 const DE_PARA_GRAPH: Record<string, string> = {
-  reach: 'alcance', impressions: 'impressoes', likes: 'curtidas',
+  reach: 'alcance', impressions: 'impressoes', views: 'impressoes', likes: 'curtidas',
   comments: 'comentarios', saved: 'salvos', shares: 'compartilhamentos',
 };
 
@@ -398,18 +401,12 @@ export async function coletarInsights(postId: string): Promise<{ ok: boolean; gr
   if (!mediaId) return { ok: false, erro: 'post sem id de midia da Meta - so da para coletar em post publicado pela API' };
 
   try {
-    const base = `${process.env.IG_GRAPH_BASE || 'https://graph.facebook.com'}/${process.env.GRAPH_VERSION || 'v21.0'}`;
-    const metricas = Object.keys(DE_PARA_GRAPH).join(',');
-    const url = `${base}/${encodeURIComponent(mediaId)}/insights?metric=${metricas}&access_token=${encodeURIComponent(String(process.env.IG_PAGE_TOKEN))}`;
-    const resp = await fetch(url);
-    const j: any = await resp.json().catch(() => ({}));
-    if (!resp.ok) return { ok: false, modo: st.modo, erro: j?.error?.message || ('HTTP ' + resp.status), dados: j };
-
-    const valores: any = {};
-    for (const item of (j.data || [])) {
-      const col = DE_PARA_GRAPH[String(item.name)];
-      if (col) valores[col] = Number(item.values?.[0]?.value ?? 0);
-    }
+    // Pede pela escada de metricas, nao pela lista inteira de uma vez. A sonda de
+    // 13/ago provou o motivo: com 'impressions' junto, a Meta devolve 400 e a coleta
+    // perderia TODAS as metricas do post por causa de uma so que a v22 aposentou.
+    const r0 = await lerInsights(mediaId);
+    if (!r0.ok) return { ok: false, modo: st.modo, erro: r0.erro, dados: r0.corpo };
+    const valores: any = r0.dados;
     if (st.modo === 'test') return { ok: true, gravou: false, modo: 'test', dados: valores };
 
     const r = await anotarMedicao(postId, { ...valores, origem: 'coletado', criadoPor: 'coletor' });
@@ -459,12 +456,53 @@ export async function coletarTodos(dias = 30): Promise<{ ok: boolean; modo: stri
 // Nao grava nada e nao depende do modo de coleta. E leitura pura, de proposito:
 // serve para decidir, e decisao errada aqui custa semanas de espera.
 
-/** Metricas que a sonda tenta ler, do mais ambicioso para o mais conservador. */
+/**
+ * A escada de metricas, do mais completo para o mais conservador.
+ *
+ * Pedir a lista inteira de uma vez e tentador e errado: a Graph API responde 400
+ * para o LOTE se UMA metrica nao existir mais naquela versao, e ai o post inteiro
+ * volta sem numero nenhum. Foi o que a sonda de 13/ago mostrou - 'impressions' saiu
+ * na v22, e com ela na lista nao vinha nada.
+ *
+ * Cada degrau abaixo tira o que a Meta pode ter aposentado, ate sobrar o que prova
+ * que a permissao esta de pe. Quem chama fica com o degrau mais alto que passou.
+ */
 const TENTATIVAS_METRICAS = [
-  Object.keys(DE_PARA_GRAPH),                                  // tudo (inclui impressions)
-  ['reach', 'likes', 'comments', 'saved', 'shares'],           // sem impressions (deprecada em v22+)
-  ['reach'],                                                   // o minimo que prova a permissao
+  ['reach', 'views', 'likes', 'comments', 'saved', 'shares'],       // v22+ (views substituiu impressions)
+  ['reach', 'impressions', 'likes', 'comments', 'saved', 'shares'], // ate a v21
+  ['reach', 'likes', 'comments', 'saved', 'shares'],                // sem visualizacoes
+  ['reach'],                                                        // o minimo que prova a permissao
 ];
+
+/** Quantas metricas o degrau mais completo entrega. Serve so para dizer "veio tudo". */
+const METRICAS_COMPLETAS = TENTATIVAS_METRICAS[0].length;
+
+/**
+ * Le os Insights de UMA midia descendo a escada de metricas. Devolve o que veio
+ * ja traduzido para as nossas colunas, mais qual degrau passou. Nao grava nada.
+ */
+async function lerInsights(mediaId: string): Promise<{
+  ok: boolean; dados?: Record<string, number>; metricas?: string[];
+  erro?: string; codigo?: number; subcodigo?: number; corpo?: any;
+}> {
+  let ultimo: { ok: boolean; corpo: any; erro?: string; codigo?: number; subcodigo?: number } | null = null;
+  for (const metricas of TENTATIVAS_METRICAS) {
+    const r = await pegarGraph(`${encodeURIComponent(mediaId)}/insights`, { metric: metricas.join(',') });
+    ultimo = r;
+    if (!r.ok) continue;
+    const dados: Record<string, number> = {};
+    for (const item of (r.corpo?.data || [])) {
+      const col = DE_PARA_GRAPH[String(item.name)];
+      if (col) dados[col] = Number(item.values?.[0]?.value ?? 0);
+    }
+    return { ok: true, dados, metricas };
+  }
+  return {
+    ok: false, erro: ultimo?.erro, codigo: ultimo?.codigo,
+    subcodigo: ultimo?.subcodigo, corpo: ultimo?.corpo,
+    metricas: TENTATIVAS_METRICAS[TENTATIVAS_METRICAS.length - 1],
+  };
+}
 
 function baseGraph(): string {
   return `${process.env.IG_GRAPH_BASE || 'https://graph.facebook.com'}/${process.env.GRAPH_VERSION || 'v21.0'}`;
@@ -551,40 +589,33 @@ export async function sondarInstagram(limite = 5): Promise<SondaInstagram> {
   }
 
   // Degrau 3 - da para ler os Insights? (a pergunta do item 16)
+  // Usa a MESMA escada da coleta de verdade, de proposito: sonda que testa um
+  // caminho diferente do que roda em producao nao prova nada.
   const alvo = midias[0];
-  let ultimo: { ok: boolean; corpo: any; erro?: string; codigo?: number; subcodigo?: number } | null = null;
-  for (const metricas of TENTATIVAS_METRICAS) {
-    const r = await pegarGraph(`${alvo.id}/insights`, { metric: metricas.join(',') });
-    ultimo = r;
-    if (r.ok) {
-      const dados: Record<string, number> = {};
-      for (const item of (r.corpo?.data || [])) {
-        const col = DE_PARA_GRAPH[String(item.name)];
-        if (col) dados[col] = Number(item.values?.[0]?.value ?? 0);
-      }
-      const completo = metricas.length === Object.keys(DE_PARA_GRAPH).length;
-      return {
-        ok: true, falta: [], degrau: 'completo', conta, midias,
-        insights: { mediaId: alvo.id, metricas, dados },
-        precisaAppReview: false,
-        veredito: completo
-          ? 'Os Insights vieram com o acesso padrao. O item 16 nao precisa de App Review — pode ligar a coleta.'
-          : 'Os Insights vieram, mas so com ' + metricas.join(', ') + '. A permissao esta OK; '
-            + 'o que sobrou de fora e metrica que a versao da API nao serve mais (impressions saiu na v22).',
-      };
-    }
+  const ins = await lerInsights(alvo.id);
+  if (ins.ok) {
+    const completo = (ins.metricas || []).length >= METRICAS_COMPLETAS;
+    return {
+      ok: true, falta: [], degrau: 'completo', conta, midias,
+      insights: { mediaId: alvo.id, metricas: ins.metricas || [], dados: ins.dados },
+      precisaAppReview: false,
+      veredito: completo
+        ? 'Os Insights vieram com o acesso padrao. O item 16 nao precisa de App Review — pode ligar a coleta.'
+        : 'Os Insights vieram, mas so com ' + (ins.metricas || []).join(', ') + '. A permissao esta OK; '
+          + 'o que sobrou de fora e metrica que esta versao da API nao serve mais.',
+    };
   }
 
-  // Nenhuma combinacao passou: agora sim a resposta e App Review.
-  const permissao = /permission|scope|OAuth|autoriza/i.test(String(ultimo?.erro || ''));
+  // Nenhum degrau passou: agora sim a resposta pode ser App Review.
+  const permissao = /permission|scope|OAuth|autoriza/i.test(String(ins.erro || ''));
   return {
     ok: false, falta: [], degrau: 'insights', conta, midias,
-    insights: { mediaId: alvo.id, metricas: TENTATIVAS_METRICAS[TENTATIVAS_METRICAS.length - 1], erro: ultimo?.erro, codigo: ultimo?.codigo, subcodigo: ultimo?.subcodigo },
+    insights: { mediaId: alvo.id, metricas: ins.metricas || [], erro: ins.erro, codigo: ins.codigo, subcodigo: ins.subcodigo },
     precisaAppReview: permissao,
     veredito: permissao
-      ? 'A conta e as midias respondem, mas os Insights nao: "' + (ultimo?.erro || '') + '". '
+      ? 'A conta e as midias respondem, mas os Insights nao: "' + (ins.erro || '') + '". '
         + 'E erro de permissao — o item 16 precisa mesmo do App Review de instagram_business_manage_insights.'
-      : 'Os Insights falharam por outro motivo: "' + (ultimo?.erro || '') + '". '
+      : 'Os Insights falharam por outro motivo: "' + (ins.erro || '') + '". '
         + 'Nao parece permissao; vale resolver isso antes de protocolar App Review.',
   };
 }
