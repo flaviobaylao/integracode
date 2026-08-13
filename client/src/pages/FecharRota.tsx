@@ -103,7 +103,18 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined });
     }
   }
-  return out;
+  // Rede de segurança: garante 1 card por cliente. A rota pode trazer o mesmo
+  // customerId em mais de uma parada (dado histórico / stopIds diferentes p/ o
+  // mesmo cliente), o que fazia o cliente aparecer duplicado para justificar.
+  // A justificativa é única por (dia, cliente, vendedor), então basta 1 card.
+  const dedup = new Map<string, NaoVisitado>();
+  for (const o of out) {
+    const ex = dedup.get(o.customerId);
+    if (!ex) { dedup.set(o.customerId, o); continue; }
+    // Mantém o débito (maior) caso uma das paradas tenha trazido o valor.
+    if (o.debito && (!ex.debito || o.debito > ex.debito)) ex.debito = o.debito;
+  }
+  return Array.from(dedup.values());
 }
 
 export default function FecharRota({ embedded = false }: { embedded?: boolean }) {
