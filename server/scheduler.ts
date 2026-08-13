@@ -1096,3 +1096,66 @@ cron.schedule('20 3 * * *', async () => {
     console.error('[MKT-INSIGHTS] cron falhou:', e?.message || e);
   }
 }, { timezone: 'America/Sao_Paulo' });
+
+// ---------------------------------------------------------------------------
+// Recompra: o lote do dia fica pronto antes de voce acordar
+// ---------------------------------------------------------------------------
+//
+// montarLote() era chamada de um lugar so: o botao da /marketing. O motor de
+// maior retorno da Central — e o unico que nao depende da Meta, de App Review
+// nem de verba — dependia de alguem lembrar de entrar e clicar todo dia. Auto-
+// macao que depende de memoria humana nao sobrevive a uma semana corrida.
+//
+// Este job SO PREPARA. A liberacao continua sua: o lote nasce 'previsto', com
+// custo estimado e receita esperada na tela, e fica esperando. Nenhuma mensagem
+// entra na fila do 1841 sem alguem apertar Liberar.
+//
+// Tres guardas, nesta ordem:
+//
+//   1. So monta se o canal oficial estiver de pe (oficial_dispatch_mode != off
+//      E oficial_recompra != off). Sem isso o lote nasceria natimorto: liberado,
+//      todo item voltaria 'desligado' e ninguem receberia nada. De quebra, evita
+//      lote de lixo enquanto os templates nao foram aprovados no Umbler — e
+//      dispensa inventar mais uma chave para voce lembrar de ligar.
+//   2. Nao monta se ja existe lote 'previsto' esperando decisao. Sem isso, uma
+//      semana sem olhar o painel viraria 7 lotes empilhados, e o teto de 1 toque
+//      por cliente a cada 14 dias ficaria impossivel de raciocinar. Se o lote
+//      parado passar de 3 dias, avisa — represar em silencio seria pior.
+//   3. Lote vazio e descartado na hora. Dia sem candidato nao deve deixar cartao
+//      vazio na tela nem linha morta no historico.
+//
+// 06:40: depois da rajada das 6h, antes do comercial. Quando voce pega o
+// celular, o lote ja esta la esperando o sim.
+cron.schedule('40 6 * * *', async () => {
+  try {
+    const chave = async (k: string): Promise<string> => {
+      try {
+        const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${k} LIMIT 1`);
+        const v = r.rows?.[0]?.value;
+        return v == null ? 'off' : String(v).replace(/^"|"$/g, '');
+      } catch { return 'off'; }
+    };
+    if ((await chave('oficial_dispatch_mode')) === 'off') return;
+    if ((await chave('oficial_recompra')) === 'off') return;
+
+    const p: any = await db.execute(sql`
+      SELECT id, criado_em, EXTRACT(EPOCH FROM (now() - criado_em)) / 86400 AS dias
+        FROM mkt_lotes WHERE status = 'previsto' ORDER BY criado_em ASC LIMIT 1`);
+    const parado = p.rows?.[0];
+    if (parado) {
+      if (Number(parado.dias) >= 3) {
+        console.warn('⚠️  [MKT-RECOMPRA] lote ' + parado.id + ' esperando decisao ha '
+          + Math.floor(Number(parado.dias)) + ' dia(s). Enquanto ele nao for liberado ou descartado, nao monto outro.');
+      }
+      return;
+    }
+
+    const { montarLote, descartarLote } = await import('./mkt-recompra');
+    const r = await montarLote({ criadoPor: 'cron' });
+    if (!r.total) { await descartarLote(r.loteId); return; }
+    console.log('[MKT-RECOMPRA] lote ' + r.loteId + ': ' + r.total + ' cliente(s), custo ~R$ '
+      + r.custoEstimado + ', receita esperada ~R$ ' + r.receitaEsperada + '. Esperando liberacao em /marketing.');
+  } catch (e: any) {
+    console.error('[MKT-RECOMPRA] cron falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
