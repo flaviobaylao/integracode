@@ -19,6 +19,7 @@ import crypto from "crypto";
 import { storage } from "./storage";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { authenticateUser, requireRole } from "./authMiddleware";
 
 const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
@@ -346,6 +347,21 @@ export function registerInstagram(app: Express) {
   // Diagnostico: ultimos payloads crus recebidos no webhook (sem segredos).
   app.get("/api/instagram/debug", (_req: Request, res: Response) => {
     res.json({ count: recentHooks.length, recent: recentHooks });
+  });
+
+  // Sonda dos Insights (Central de Marketing, item 16). Mora aqui, e nao no bloco
+  // /api/mkt do index.ts, porque tudo que ela usa - conta, midias, Graph API - e
+  // deste modulo. A rota mantem o prefixo /api/mkt para a tela nao precisar saber.
+  //
+  // Ao contrario de /health e /debug acima, esta expoe dado da conta (@, contagem
+  // de publicacoes, legendas) - entao vai atras de login e papel de admin.
+  app.get("/api/mkt/posts/coleta/sonda", authenticateUser, requireRole(["admin"]), async (req: any, res: Response) => {
+    try {
+      const { sondarInstagram } = await import("./mkt-posts");
+      res.json(await sondarInstagram(Number(req.query?.limite || 5)));
+    } catch (e: any) {
+      res.status(500).json({ error: (e && e.message) || String(e) });
+    }
   });
 
   // Politica de Privacidade (pagina publica; exigida pela Meta para publicar o app).
