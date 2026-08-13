@@ -1061,3 +1061,38 @@ console.log('⚠️  Jobs desativados após migração para cards permanentes:')
 console.log('   ✗ Sincronização de agenda futura (não necessário com cards permanentes)');
 console.log('   ✗ Processamento de cards atrasados (não necessário com cards permanentes)');
 console.log('   ✗ Geração de agenda de visitas (substituído por visit_schedule_history)');
+
+// ---------------------------------------------------------------------------
+// Insights do Instagram: uma leitura por dia, de madrugada
+// ---------------------------------------------------------------------------
+//
+// coletarTodos() dizia no comentario "Chamada pelo cron" — e o cron nunca existiu.
+// A coleta so rodava quando alguem apertava o botao na /marketing. Resultado: a
+// serie historica nascia com UM ponto e congelava ali, que e exatamente o buraco
+// que a Central foi feita para fechar ("analise vira print de celular").
+//
+// 03:20 e de proposito: fora do horario comercial, longe dos jobs das 6h, e ja
+// virou o dia no fuso de Sao Paulo — entao a medicao do dia anterior fecha com a
+// data certa (uma medicao por post por DIA e a regra do modulo).
+//
+// Inerte quando o modo esta 'off': coletarTodos devolve na hora, sem tocar na API
+// da Meta. Nao precisa de guarda aqui.
+//
+// 400 dias, e nao 30: a janela existe para nao varrer a conta inteira, mas posts
+// antigos continuam ganhando alcance por meses. Com ~2 publicacoes por mes, 400
+// dias sao poucas dezenas de chamadas — barato, e evita serie que morre cedo.
+cron.schedule('20 3 * * *', async () => {
+  try {
+    const { coletarTodos } = await import('./mkt-posts');
+    const r = await coletarTodos(400);
+    if (r.modo === 'off') return; // desligado: nem loga, para nao virar ruido diario
+    console.log(`[MKT-INSIGHTS] modo=${r.modo} tentados=${r.tentados} gravados=${r.gravados} erros=${r.erros}`);
+    if (r.erros > 0) {
+      // Quase sempre e token vencido ou permissao revogada. O diagnostico com
+      // nome e sobrenome esta em GET /api/mkt/posts/coleta/sonda.
+      console.warn('⚠️  [MKT-INSIGHTS] ' + r.erros + ' post(s) falharam. Rode a sonda: GET /api/mkt/posts/coleta/sonda');
+    }
+  } catch (e: any) {
+    console.error('[MKT-INSIGHTS] cron falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
