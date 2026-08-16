@@ -1655,7 +1655,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                    COUNT(DISTINCT to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS meses,
                    MAX(to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS ultimo
             FROM billing_pipeline
-            WHERE customer_id IS NOT NULL AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
+            WHERE customer_id IS NOT NULL
             GROUP BY customer_id
           )
           SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.seller_id
