@@ -88,6 +88,67 @@ export async function triggerPhoneConfirmation(
   }
 }
 
+/**
+ * O numero ATUAL do cliente ja foi confirmado?
+ * A confirmacao vale para o NUMERO, nao para o cliente: se o telefone mudar, o
+ * novo numero volta a precisar de confirmacao (inclusive quando a isencao foi
+ * marcada por um admin — a isencao e gravada com os digitos da epoca).
+ *  - confirmado  = o contato clicou no link  OU  um admin marcou isencao
+ *  - isento      = confirmacao gravada por um admin (created_by 'admin-exempt:*')
+ */
+export async function getPhoneConfirmation(
+  customerId: string | null,
+  digits: string
+): Promise<{ confirmed: boolean; exempt: boolean; confirmedAt: string | null }> {
+  const out = { confirmed: false, exempt: false, confirmedAt: null as string | null };
+  try {
+    if (!customerId || !digits) return out;
+    await ensurePhoneVerification();
+    const rows: any = await db.execute(sql`
+      SELECT status, created_by, confirmed_at
+      FROM phone_verifications
+      WHERE customer_id = ${customerId} AND phone_digits = ${digits} AND status = 'confirmed'
+      ORDER BY confirmed_at DESC NULLS LAST, sent_at DESC
+      LIMIT 1`);
+    const row = (rows.rows || rows)[0];
+    if (!row) return out;
+    out.confirmed = true;
+    out.exempt = String(row.created_by || '').startsWith('admin-exempt');
+    out.confirmedAt = row.confirmed_at || null;
+    return out;
+  } catch (e: any) {
+    // Nunca derruba o fluxo do pedido por causa da consulta de status.
+    console.warn('[PHONE-VERIF] getPhoneConfirmation erro (ignorado):', e && e.message ? e.message : e);
+    return out;
+  }
+}
+
+/** Marca/desmarca a isencao de confirmacao para o NUMERO ATUAL do cliente (admin). */
+export async function setPhoneExempt(
+  customerId: string,
+  digits: string,
+  phone: string,
+  name: string | null,
+  exempt: boolean,
+  actorId: string
+): Promise<void> {
+  await ensurePhoneVerification();
+  if (exempt) {
+    const ja = await getPhoneConfirmation(customerId, digits);
+    if (ja.confirmed && ja.exempt) return;
+    await db.execute(sql`UPDATE phone_verifications SET status='superseded' WHERE customer_id=${customerId} AND status='pending'`);
+    await db.execute(sql`
+      INSERT INTO phone_verifications (customer_id, phone, phone_digits, customer_name, token, status, created_by, confirmed_at)
+      VALUES (${customerId}, ${phone}, ${digits}, ${name}, ${randomUUID().replace(/-/g, '')}, 'confirmed', ${'admin-exempt:' + actorId}, now())`);
+    console.log(`[PHONE-VERIF] ISENCAO marcada por admin=${actorId} customer=${customerId} digits=${digits}`);
+  } else {
+    await db.execute(sql`
+      UPDATE phone_verifications SET status='revoked'
+      WHERE customer_id=${customerId} AND phone_digits=${digits} AND status='confirmed' AND created_by LIKE 'admin-exempt%'`);
+    console.log(`[PHONE-VERIF] ISENCAO removida por admin=${actorId} customer=${customerId} digits=${digits}`);
+  }
+}
+
 function pageHtml(title: string, body: string): string {
   return `<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
 <style>
@@ -177,21 +238,32 @@ export function registerPhoneVerification(
   app.get('/api/customers/phone-verification-status', authenticateUser, async (req: any, res) => {
     try {
       await ensurePhoneVerification();
+      // A confirmacao vale para o NUMERO: se o telefone do cliente mudou depois da
+      // confirmacao, o registro nao vale mais (numero_atual = false) e o cliente
+      // volta a contar como pendente.
       const rows: any = await db.execute(sql`
-        SELECT DISTINCT ON (customer_id) customer_id, status, sent_at, confirmed_at
-        FROM phone_verifications
-        WHERE customer_id IS NOT NULL
-        ORDER BY customer_id, sent_at DESC`);
+        SELECT DISTINCT ON (pv.customer_id) pv.customer_id, pv.status, pv.sent_at, pv.confirmed_at,
+               pv.created_by,
+               (pv.phone_digits = REGEXP_REPLACE(COALESCE(c.phone,''), '\\D', '', 'g')) AS numero_atual
+        FROM phone_verifications pv
+        LEFT JOIN customers c ON c.id = pv.customer_id
+        WHERE pv.customer_id IS NOT NULL
+        ORDER BY pv.customer_id, pv.sent_at DESC`);
       const list = rows.rows || rows;
       const now = Date.now();
       const out: Record<string, any> = {};
       for (const r of list) {
         const sentMs = r.sent_at ? new Date(r.sent_at).getTime() : 0;
-        const over24h = r.status === 'pending' && sentMs > 0 && (now - sentMs) > 24 * 60 * 60 * 1000;
+        // Confirmacao de um numero antigo nao conta: vira 'pending'.
+        const valeAinda = r.numero_atual !== false;
+        const status = r.status === 'confirmed' && !valeAinda ? 'pending' : r.status;
+        const over24h = status === 'pending' && sentMs > 0 && (now - sentMs) > 24 * 60 * 60 * 1000;
         out[r.customer_id] = {
-          status: r.status,
+          status,
           sentAt: r.sent_at,
-          confirmedAt: r.confirmed_at,
+          confirmedAt: valeAinda ? r.confirmed_at : null,
+          exempt: valeAinda && r.status === 'confirmed' && String(r.created_by || '').startsWith('admin-exempt'),
+          numeroAtual: valeAinda,
           over24h,
         };
       }
@@ -200,6 +272,67 @@ export function registerPhoneVerification(
     } catch (e: any) {
       console.error('[PHONE-VERIF] status erro:', e && e.message);
       res.status(500).json({ message: 'Falha ao buscar status' });
+    }
+  });
+
+  // Status de confirmacao do NUMERO ATUAL de UM cliente. Usado pela tela de pedido
+  // (para exigir a redigitacao enquanto nao confirmado) e pelo cadastro do cliente.
+  app.get('/api/customers/:id/phone-status', authenticateUser, async (req: any, res) => {
+    try {
+      await ensurePhoneVerification();
+      const id = String(req.params.id);
+      const cRes: any = await db.execute(sql`SELECT id, name, fantasy_name, phone FROM customers WHERE id = ${id} LIMIT 1`);
+      const cust = (cRes.rows || cRes)[0];
+      if (!cust) return res.status(404).json({ message: 'Cliente não encontrado' });
+      const phone = String(cust.phone || '');
+      const digits = phone.replace(/\D/g, '');
+      const conf = await getPhoneConfirmation(id, digits);
+      // Ultimo envio para este numero (para mostrar "link enviado em ...")
+      const uRes: any = await db.execute(sql`
+        SELECT status, sent_at FROM phone_verifications
+        WHERE customer_id = ${id} AND phone_digits = ${digits}
+        ORDER BY sent_at DESC LIMIT 1`);
+      const ult = (uRes.rows || uRes)[0] || null;
+      res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      return res.json({
+        customerId: id,
+        phone,
+        digits,
+        confirmed: conf.confirmed,
+        exempt: conf.exempt,
+        confirmedAt: conf.confirmedAt,
+        lastStatus: ult ? ult.status : null,
+        lastSentAt: ult ? ult.sent_at : null,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ message: 'Erro ao consultar confirmação', error: e && e.message });
+    }
+  });
+
+  // ISENCAO DE CONFIRMACAO (somente admin). Marca o numero ATUAL do cliente como
+  // confirmado sem depender do clique do contato no link. Se o telefone mudar
+  // depois, a isencao deixa de valer (ela e gravada com os digitos da epoca).
+  app.post('/api/customers/:id/phone-exempt', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!user || user.role !== 'admin') {
+        return res.status(403).json({ message: 'Apenas administradores podem isentar a confirmação de telefone.' });
+      }
+      const id = String(req.params.id);
+      const exempt = req.body?.exempt === true;
+      const cRes: any = await db.execute(sql`SELECT id, name, fantasy_name, phone FROM customers WHERE id = ${id} LIMIT 1`);
+      const cust = (cRes.rows || cRes)[0];
+      if (!cust) return res.status(404).json({ message: 'Cliente não encontrado' });
+      const phone = String(cust.phone || '');
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 10) {
+        return res.status(400).json({ message: 'Cadastre um telefone válido no cliente antes de isentar a confirmação.' });
+      }
+      await setPhoneExempt(id, digits, phone, cust.fantasy_name || cust.name || null, exempt, user.id);
+      const conf = await getPhoneConfirmation(id, digits);
+      return res.json({ ok: true, exempt: conf.exempt, confirmed: conf.confirmed, phone, digits });
+    } catch (e: any) {
+      return res.status(500).json({ message: 'Erro ao gravar isenção', error: e && e.message });
     }
   });
 

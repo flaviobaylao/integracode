@@ -19,6 +19,7 @@ import { registerOmieFinanceiroImportRoutes } from "./omie-financeiro-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
 import { registerCustomerStatementRoutes } from "./customer-statement-routes";
+import { registerTicketMedioRoutes } from "./ticket-medio-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { registerOrderJournal } from "./order-journal";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
@@ -731,6 +732,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Extrato do Cliente (Vendas) - historico de notas faturadas + pagamentos
   registerCustomerStatementRoutes(app);
+
+  // Clientes Ativos: quantidade de clientes por faixa de ticket medio
+  registerTicketMedioRoutes(app);
 
   // Confirmacao de telefone do comprador via link (WhatsApp) — nao bloqueia o pedido
   registerPhoneVerification(app, { authenticateUser, requireRole });
@@ -6324,30 +6328,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar card ANTES da atualização
       const cardBefore = await storage.getSalesCard(id);
 
-    // 🔒 TRAVA TELEFONE DO COMPRADOR: finalizar venda (status completed + valor) exige telefone válido do cliente no cadastro.
+    // 🔒 TRAVA TELEFONE DO COMPRADOR: finalizar venda (status completed + valor) exige telefone válido do comprador.
     // Fonte da verdade no servidor — bloqueia mesmo que a validação do front seja contornada.
+    //
+    // REGRA REFORCADA: enquanto o CONTATO nao confirmar o numero pelo link do WhatsApp,
+    // o vendedor tem de DIGITAR o telefone em TODO pedido (nao vale herdar o do cadastro).
+    // Isso obriga o vendedor a pedir a confirmacao ao contato. Um admin pode isentar o
+    // numero atual do cliente no cadastro — nesse caso ele ja entra como confirmado.
+    let _travaTelefoneErro: { message: string; code: string } | null = null;
     try {
       if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
         const _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
         const _custPh: any = await storage.getCustomer(cardBefore.customerId);
-        const _effPhone = _reqPhone || String((_custPh && _custPh.phone) || '');
+        const _cadPhone = String((_custPh && _custPh.phone) || '');
+        const _effPhone = _reqPhone || _cadPhone;
         const _phDigits = _effPhone.replace(/[^0-9]/g, '');
-        // Anti-numero-falso: rejeita digitos repetidos, sequencias obvias, placeholder (00)00000-0000 e o proprio celular do vendedor logado
+        // Anti-numero-falso: digitos repetidos, sequencias obvias, o placeholder da tela
+        // e o proprio celular do vendedor logado.
+        // (Antes bastava conter '00000' em qualquer posicao, o que derrubava numero real
+        //  como (62) 3000-0000. Agora so o placeholder exato e recusado.)
         const _sellerDigits = String((user && (user as any).phone) || '').replace(/[^0-9]/g, '');
-        const _isFakePhone = (d: string) => !d || /^(\d)\1+$/.test(d) || '01234567890123456789'.includes(d) || '98765432109876543210'.includes(d) || d.includes('00000') || (!!_sellerDigits && _sellerDigits.length >= 10 && d === _sellerDigits);
+        const _placeholders = new Set(['0000000000', '00000000000', '5500000000000']);
+        const _isFakePhone = (d: string) => !d
+          || /^(\d)\1+$/.test(d)
+          || '01234567890123456789'.includes(d)
+          || '98765432109876543210'.includes(d)
+          || _placeholders.has(d)
+          || /^(\d{2})?0{8,}$/.test(d)
+          || (!!_sellerDigits && _sellerDigits.length >= 10 && d === _sellerDigits);
         const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13 && !_isFakePhone(_phDigits);
         if (!_phValid) {
           console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- telefone ausente/invalido/falso:', JSON.stringify(_effPhone));
-          return res.status(400).json({ message: 'Para finalizar a venda é obrigatório um telefone de contato VÁLIDO do comprador (DDD + número real). Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos. Confira o campo "Telefone do comprador".', code: 'CUSTOMER_PHONE_REQUIRED' });
-        }
-        // Grava no cadastro do cliente quando veio um número novo válido pelo pedido
-        if (_reqPhone && _phValid && _effPhone !== String((_custPh && _custPh.phone) || '')) {
-          try { await storage.updateCustomer(cardBefore.customerId, { phone: _reqPhone }); console.log('🔒 [TRAVA-TELEFONE] telefone do cliente', cardBefore.customerId, 'atualizado ->', _reqPhone); } catch (_eup) {}
-          // 📲 Confirmacao de telefone (numero novo no pedido) — nao bloqueia
-          void triggerPhoneConfirmation(cardBefore.customerId, _reqPhone, (_custPh && (_custPh.fantasyName || _custPh.name)) || null, user?.id).catch(() => {});
+          _travaTelefoneErro = { message: 'Para finalizar a venda é obrigatório um telefone de contato VÁLIDO do comprador (DDD + número real). Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos. Confira o campo "Telefone do comprador".', code: 'CUSTOMER_PHONE_REQUIRED' };
+        } else {
+          const { getPhoneConfirmation } = await import('./phoneVerification.js');
+          const _conf = await getPhoneConfirmation(cardBefore.customerId, _phDigits);
+          if (!_conf.confirmed && !_reqPhone) {
+            // Numero ainda nao confirmado pelo contato: nao aceita herdar o cadastro.
+            console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, '- numero do cadastro ainda NAO confirmado pelo contato e nao foi redigitado no pedido');
+            _travaTelefoneErro = {
+              message: 'O contato ainda não confirmou este número pelo link enviado no WhatsApp. Digite o telefone do comprador novamente neste pedido e peça a ele para confirmar pelo link. (Um administrador pode isentar este cliente da confirmação no cadastro.)',
+              code: 'CUSTOMER_PHONE_UNCONFIRMED',
+            };
+          } else {
+            // Grava no cadastro do cliente quando veio um número novo válido pelo pedido
+            if (_reqPhone && _effPhone !== _cadPhone) {
+              try { await storage.updateCustomer(cardBefore.customerId, { phone: _reqPhone }); console.log('🔒 [TRAVA-TELEFONE] telefone do cliente', cardBefore.customerId, 'atualizado ->', _reqPhone); } catch (_eup) {}
+            }
+            // 📲 Enquanto NAO confirmado, todo pedido dispara um novo link de confirmação
+            // para o contato (decisão do Flavio: reforço a cada pedido). Nunca bloqueia.
+            if (!_conf.confirmed) {
+              void triggerPhoneConfirmation(cardBefore.customerId, _effPhone, (_custPh && (_custPh.fantasyName || _custPh.name)) || null, user?.id).catch(() => {});
+            }
+          }
         }
       }
     } catch (_etp) { console.warn('[TRAVA-TELEFONE] erro (ignorado):', (_etp as any)?.message); }
+    // O bloqueio fica FORA do try: uma exceção interna não pode virar "passou".
+    if (_travaTelefoneErro) return res.status(400).json(_travaTelefoneErro);
 
     // VIGIA CUPOM vendedor: cupom promocional (tabela coupons) no pedido do vendedor.
     // Um desconto por pedido, nesta ordem: cupom > codigo de indicacao > recompensa automatica.
