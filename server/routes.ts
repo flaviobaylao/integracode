@@ -1604,6 +1604,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', async (req: any, res) => {
     try {
+      // Situacao selecionada no mapa: 'ativos' (padrao), 'inativados' ou 'perdidos'.
+      // - inativados: cadastro desativado (customers.is_active=false).
+      // - perdidos: cadastro ATIVO em churn (mesma regua da Gestao de Carteiras:
+      //   comprou em 3+ meses distintos e esta ha 3+ meses sem comprar).
+      const situacao = String(req.query.situacao || 'ativos').toLowerCase();
+      const buildSellerMap = async () => {
+        const allSellers = await db.select().from(users);
+        const m = new Map<string, string>();
+        for (const s of allSellers) {
+          const fn = s.firstName?.trim() || ''; const ln = s.lastName?.trim() || '';
+          m.set(s.id, (fn || ln) ? `${fn} ${ln}`.trim() : (s.email?.split('@')[0] || s.email || 'Desconhecido'));
+        }
+        return m;
+      };
+      const parseWk = (wk: any): string[] => {
+        try {
+          if (Array.isArray(wk)) return wk as string[];
+          if (typeof wk === 'string') return wk.startsWith('[') ? JSON.parse(wk) : (wk ? [wk] : []);
+        } catch { /* noop */ }
+        return [];
+      };
+      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>) => {
+        const pw = parseWk(c.weekdays);
+        const sid = c.seller_id ?? null;
+        return {
+          id: c.id, name: c.fantasy_name || c.name || `Cliente ${c.document}`, fantasyName: c.fantasy_name ?? null,
+          phone: c.phone || '', address: c.address || '', neighborhood: c.neighborhood || '', document: c.document,
+          latitude: parseFloat(String(c.latitude)), longitude: parseFloat(String(c.longitude)),
+          weekdays: pw.join(', '), isActive: sit === 'ativo', visitDay: pw.length ? pw[0] : 'Seg',
+          customerId: c.id, sellerId: sid, sellerName: sid ? (sellerMap.get(String(sid)) || null) : null, situacao: sit,
+        };
+      };
+      if (situacao === 'inativados') {
+        const sellerMap = await buildSellerMap();
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0`);
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap));
+        console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
+        return res.json(rows);
+      }
+      if (situacao === 'perdidos') {
+        const sellerMap = await buildSellerMap();
+        const r: any = await db.execute(sql`
+          WITH buys AS (
+            SELECT customer_id,
+                   COUNT(DISTINCT to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS meses,
+                   MAX(to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS ultimo
+            FROM billing_pipeline
+            WHERE customer_id IS NOT NULL AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
+            GROUP BY customer_id
+          )
+          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.seller_id
+          FROM customers c JOIN buys b ON b.customer_id = c.id
+          WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
+            AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)
+            AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.latitude::float <> 0 AND c.longitude::float <> 0
+            AND b.meses >= 3
+            AND b.ultimo <= to_char(((now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '3 months'), 'YYYY-MM')`);
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
+        console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
+        return res.json(rows);
+      }
       // 🎯 Buscar clientes ativos COM coordenadas do customers table
       const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
       
@@ -1675,7 +1736,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             visitDay: visitDay,
             customerId: c.id,
             sellerId: c.sellerId || null,
-            sellerName: c.sellerId ? sellerMap.get(c.sellerId) : null
+            sellerName: c.sellerId ? sellerMap.get(c.sellerId) : null,
+            situacao: 'ativo'
           };
         });
       
