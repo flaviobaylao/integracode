@@ -1646,21 +1646,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (situacao === 'perdidos') {
         const sellerMap = await buildSellerMap();
         const r: any = await db.execute(sql`
-          WITH buys AS (
-            SELECT customer_id,
-                   COUNT(DISTINCT date_trunc('month', created_at)) AS meses,
-                   MAX(created_at) AS ultimo
-            FROM billing_pipeline
-            WHERE customer_id IS NOT NULL AND created_at IS NOT NULL
-            GROUP BY customer_id
+          WITH rec AS (
+            SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
+                   to_char(issue_date,'YYYY-MM') AS mes
+            FROM receivables
+            WHERE issue_date >= '2025-01-01'
+              AND issue_date < (date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')) + interval '1 month')
+              AND deleted_at IS NULL
+              AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+              AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+          ),
+          buys AS (
+            SELECT doc, COUNT(DISTINCT mes) AS meses, MAX(mes) AS ultimo_mes
+            FROM rec
+            WHERE doc IS NOT NULL AND length(doc) >= 11
+            GROUP BY doc
           )
           SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.seller_id
-          FROM customers c JOIN buys b ON b.customer_id = c.id
+          FROM customers c
+          JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
-            AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)
             AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+            AND c.latitude::float <> 0 AND c.longitude::float <> 0
+            AND b.doc NOT IN ('28295493000153','28295493000234','28295493000315','52921727000105','14877972000173')
             AND b.meses >= 3
-            AND b.ultimo < (now() - interval '3 months')`);
+            AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
+                  - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
