@@ -1652,19 +1652,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const r: any = await db.execute(sql`
           WITH buys AS (
             SELECT customer_id,
-                   COUNT(DISTINCT to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS meses,
-                   MAX(to_char((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')) AS ultimo
+                   COUNT(DISTINCT date_trunc('month', created_at)) AS meses,
+                   MAX(created_at) AS ultimo
             FROM billing_pipeline
-            WHERE customer_id IS NOT NULL
+            WHERE customer_id IS NOT NULL AND created_at IS NOT NULL
             GROUP BY customer_id
           )
           SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.seller_id
           FROM customers c JOIN buys b ON b.customer_id = c.id
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
             AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)
-            AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.latitude::float <> 0 AND c.longitude::float <> 0
+            AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
             AND b.meses >= 3
-            AND b.ultimo <= to_char(((now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '3 months'), 'YYYY-MM')`);
+            AND b.ultimo < (now() - interval '3 months')`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
