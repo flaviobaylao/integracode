@@ -254,22 +254,7 @@ export default function ActiveCustomers() {
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
   const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
-  // Antes aqui existia o recorte PJ / PF (selectedPersonType). Ele foi substituido
-  // pela faixa de TICKET MEDIO do cliente: quantos clientes existem em cada faixa,
-  // quanto representam da carteira e quanto cada faixa fatura por mes.
-  const [selectedTicket, setSelectedTicket] = useState<string>("");
   const [selectedPersonType, setSelectedPersonType] = useState<string>("");
-  const [showTicketPanel, setShowTicketPanel] = useState<boolean>(false);
-
-  // Faixas de ticket medio (ultimos 12 meses, faturamento efetivo por NF-e).
-  const ticketQuery = useQuery<any>({
-    queryKey: ['/api/customers/ticket-medio'],
-    queryFn: async () => apiRequest('GET', '/api/customers/ticket-medio?meses=12'),
-    staleTime: 10 * 60 * 1000,
-  });
-  const ticketMap: Record<string, { ticket: number; faixa: string }> = ticketQuery.data?.porCliente || {};
-  const ticketFaixas: any[] = ticketQuery.data?.faixas || [];
-  const fmtBRL = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -951,19 +936,14 @@ export default function ActiveCustomers() {
       const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
       
       const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId));
-      // Faixa de ticket medio (substituiu o filtro PJ / PF). Casa por documento e,
-      // na falta dele, pelo id do cliente — a NF nem sempre traz o customer_id.
       const ptDigits = (ac.document || '').replace(/\D/g, '');
-      const tk = ticketMap[ptDigits] || ticketMap[String(ac.customer?.id || '')] || null;
-      const matchesTicket = !selectedTicket || (tk ? tk.faixa === selectedTicket : selectedTicket === 'sem');
-      // PJ / PF continua disponível e combina com a faixa de ticket.
       const personType = (ac.customer as any)?.customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
       const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
       const matchesSegment = multiMatch(segmentMulti, ac.customer?.segmentoPrincipal || SEM_SEGMENTO);
       // Filtro de coordenadas (com/sem lat-long no cadastro)
       const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
       const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesTicket && matchesPersonType && matchesSegment && matchesCoords;
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -1329,21 +1309,6 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
               
-              {/* Substituiu o filtro PJ / PF: faixa de ticket médio do cliente. */}
-              <Select value={selectedTicket} onValueChange={setSelectedTicket}>
-                <SelectTrigger className="w-[220px] h-9" data-testid="select-ticket-filter">
-                  <SelectValue placeholder="Ticket médio" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ticketFaixas.map((f: any) => (
-                    <SelectItem key={f.chave} value={f.chave}>
-                      {f.label} ({f.clientes})
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="sem">Sem compra nos 12 meses</SelectItem>
-                </SelectContent>
-              </Select>
-
               <Select value={selectedPersonType} onValueChange={setSelectedPersonType}>
                 <SelectTrigger className="w-[120px] h-9" data-testid="select-persontype-filter">
                   <SelectValue placeholder="PJ / PF" />
@@ -1353,18 +1318,6 @@ export default function ActiveCustomers() {
                   <SelectItem value="pessoa_fisica">Pessoa Física</SelectItem>
                 </SelectContent>
               </Select>
-
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9"
-                onClick={() => setShowTicketPanel((v) => !v)}
-                data-testid="button-ticket-panel"
-                title="Quantidade de clientes por ticket médio"
-              >
-                <i className="fas fa-layer-group mr-2" />
-                {showTicketPanel ? 'Ocultar faixas' : 'Ver faixas de ticket'}
-              </Button>
 
               <MultiSelect label="Segmento" options={segmentFilterOptions} selected={segmentMulti} onChange={setSegmentMulti} testId="filter-segment-active" />
 
@@ -1447,7 +1400,6 @@ export default function ActiveCustomers() {
                   setSelectedPhone("");
                   setSelectedCity("");
                   setSelectedNeighborhood("");
-                  setSelectedTicket("");
                   setSelectedPersonType("");
                   setSelectedCustomerIds(new Set());
                 }}
@@ -1457,80 +1409,6 @@ export default function ActiveCustomers() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-
-            {/* QUANTIDADE DE CLIENTES POR TICKET MÉDIO — substituiu o recorte PJ / PF.
-                Ticket médio = faturado no cliente ÷ meses em que ele comprou (12 meses). */}
-            {showTicketPanel && (
-              <div className="w-full mt-3 border rounded-lg bg-white overflow-hidden" data-testid="panel-ticket-medio">
-                <div className="px-4 py-2 bg-gray-50 border-b flex items-center justify-between flex-wrap gap-2">
-                  <div className="font-semibold text-sm">Quantidade de clientes por ticket médio</div>
-                  <div className="text-[11px] text-gray-500">
-                    Últimos 12 meses · ticket médio = faturado ÷ meses em que o cliente comprou ·
-                    faturamento efetivo por NF-e de venda
-                  </div>
-                </div>
-                {ticketQuery.isLoading ? (
-                  <div className="p-4 text-sm text-gray-500">Calculando...</div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-white text-gray-600">
-                        <tr className="text-left border-b">
-                          <th className="px-4 py-2 text-right w-24">Clientes</th>
-                          <th className="px-4 py-2 text-right w-16">PJ</th>
-                          <th className="px-4 py-2 text-right w-16">PF</th>
-                          <th className="px-4 py-2">Ticket médio</th>
-                          <th className="px-4 py-2 text-right w-20">%</th>
-                          <th className="px-4 py-2 text-right w-44">Faturamento médio/mês</th>
-                          <th className="px-4 py-2 text-right w-24">% do fat.</th>
-                          <th className="px-4 py-2 w-20"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ticketFaixas.map((f: any) => (
-                          <tr
-                            key={f.chave}
-                            className={`border-b hover:bg-blue-50 ${selectedTicket === f.chave ? 'bg-blue-50' : ''}`}
-                            data-testid={`linha-faixa-${f.chave}`}
-                          >
-                            <td className="px-4 py-2 text-right font-semibold">{f.clientes}</td>
-                            <td className="px-4 py-2 text-right text-gray-600">{f.clientesPJ ?? 0}</td>
-                            <td className="px-4 py-2 text-right text-gray-600">{f.clientesPF ?? 0}</td>
-                            <td className="px-4 py-2">{f.label}</td>
-                            <td className="px-4 py-2 text-right">{(f.percentual || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</td>
-                            <td className="px-4 py-2 text-right font-medium">{fmtBRL(f.faturamentoMes)}</td>
-                            <td className="px-4 py-2 text-right text-gray-600">{(f.percentualFaturamento || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</td>
-                            <td className="px-4 py-2 text-right">
-                              <button
-                                type="button"
-                                className="text-xs text-blue-600 hover:underline"
-                                onClick={() => setSelectedTicket(selectedTicket === f.chave ? '' : f.chave)}
-                              >
-                                {selectedTicket === f.chave ? 'limpar' : 'filtrar'}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                        <tr className="bg-gray-50 font-semibold">
-                          <td className="px-4 py-2 text-right">{ticketQuery.data?.totalClientes ?? 0}</td>
-                          <td className="px-4 py-2 text-right">{ticketFaixas.reduce((a: number, f: any) => a + (f.clientesPJ || 0), 0)}</td>
-                          <td className="px-4 py-2 text-right">{ticketFaixas.reduce((a: number, f: any) => a + (f.clientesPF || 0), 0)}</td>
-                          <td className="px-4 py-2">Total com compra nos 12 meses</td>
-                          <td className="px-4 py-2 text-right">100,0%</td>
-                          <td className="px-4 py-2 text-right">{fmtBRL(ticketQuery.data?.faturamentoMesTotal || 0)}</td>
-                          <td className="px-4 py-2 text-right">100,0%</td>
-                          <td></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                    <div className="px-4 py-2 text-[11px] text-gray-500 border-t">
-                      Fora da conta: devolução, troca, transferência, remessa, bonificação, amostra, notas canceladas,
-                      PURO, BARUC e o CNPJ do próprio grupo.
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-base px-3 py-1" data-testid="badge-customer-count">
