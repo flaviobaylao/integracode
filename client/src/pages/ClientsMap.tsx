@@ -96,6 +96,14 @@ function getWeekdayName(weekdays: string): string {
   return 'N/A';
 }
 
+// Cor do pin por situação: inativado = cinza, perdido = cinza escuro; ativo = cor do dia.
+const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563' };
+function pinColorFor(c: any): string {
+  const s = c?.situacao;
+  if (s && SITUACAO_COLORS[s]) return SITUACAO_COLORS[s];
+  return getPinColor(c?.weekdays || '');
+}
+
 // Criar ícone customizado do Leaflet
 function createCustomIcon(color: string) {
   return L.divIcon({
@@ -135,6 +143,7 @@ export default function ClientsMap() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDay, setSelectedDay] = useState<string>("all");
   const [selectedSeller, setSelectedSeller] = useState<string>("all");
+  const [situacao, setSituacao] = useState<string>("ativos"); // ativos | inativados | perdidos
 
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
@@ -143,8 +152,8 @@ export default function ClientsMap() {
 
   // Query para buscar clientes mapeados (sincroniza Clientes Ativos com coordenadas)
   const { data: customers = [], isLoading } = useQuery<Customer[]>({
-    queryKey: ['/api/customers/map-data'],
-    queryFn: () => apiRequest('GET', '/api/customers/map-data'),
+    queryKey: ['/api/customers/map-data', situacao],
+    queryFn: () => apiRequest('GET', `/api/customers/map-data?situacao=${situacao}`),
     enabled: !!canAccess,
     refetchInterval: 30000,
   });
@@ -155,10 +164,9 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
-  // Filtrar apenas clientes ativos com coordenadas válidas
+  // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
   let activeCustomersWithCoords = customers.filter(
     (customer) =>
-      customer.isActive &&
       customer.latitude &&
       customer.longitude &&
       Number(customer.latitude) !== 0 &&
@@ -198,7 +206,7 @@ export default function ClientsMap() {
     Array.from(
       new Set(
         customers
-          .filter((c) => c.isActive && c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
+          .filter((c) => c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
           .map((c) => (c as any).sellerName)
       )
     ) as string[],
@@ -281,7 +289,7 @@ export default function ClientsMap() {
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               <span>
-                {activeCustomersWithCoords.length} clientes ativos mapeados
+                {activeCustomersWithCoords.length} clientes {situacao} mapeados
               </span>
             </div>
           </div>
@@ -296,6 +304,19 @@ export default function ClientsMap() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 data-testid="input-search-customers"
               />
+            </div>
+            <div className="flex-1 min-w-[150px]">
+              <label className="text-sm font-medium mb-2 block">Situação</label>
+              <Select value={situacao} onValueChange={setSituacao}>
+                <SelectTrigger data-testid="select-situacao-map">
+                  <SelectValue placeholder="Ativos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ativos">Ativos</SelectItem>
+                  <SelectItem value="inativados">Inativados</SelectItem>
+                  <SelectItem value="perdidos">Perdidos</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {!isVendedor && (
               <div className="flex-1 min-w-[150px]">
@@ -331,7 +352,7 @@ export default function ClientsMap() {
                 </SelectContent>
               </Select>
             </div>
-            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all")) && (
+            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all") || situacao !== "ativos") && (
               <Button
                 variant="outline"
                 size="sm"
@@ -339,6 +360,7 @@ export default function ClientsMap() {
                   setSearchTerm("");
                   setSelectedDay("all");
                   setSelectedSeller("all");
+                  setSituacao("ativos");
                 }}
                 data-testid="button-clear-filters"
               >
@@ -353,46 +375,47 @@ export default function ClientsMap() {
       {/* Legenda */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Legenda - Dias de Visita</CardTitle>
+          <CardTitle className="text-base">
+            {situacao === 'inativados' ? 'Legenda - Inativados' : situacao === 'perdidos' ? 'Legenda - Perdidos' : 'Legenda - Dias de Visita'}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-3">
-            <Badge
-              className="flex items-center gap-2 px-3 py-1.5"
-              style={{ backgroundColor: '#22c55e', color: 'white' }}
-            >
-              <div className="w-3 h-3 rounded-full bg-white"></div>
-              Segunda ({customersByDay.Segunda.length})
-            </Badge>
-            <Badge
-              className="flex items-center gap-2 px-3 py-1.5"
-              style={{ backgroundColor: '#3b82f6', color: 'white' }}
-            >
-              <div className="w-3 h-3 rounded-full bg-white"></div>
-              Terça ({customersByDay.Terça.length})
-            </Badge>
-            <Badge
-              className="flex items-center gap-2 px-3 py-1.5"
-              style={{ backgroundColor: '#eab308', color: 'white' }}
-            >
-              <div className="w-3 h-3 rounded-full bg-white"></div>
-              Quarta ({customersByDay.Quarta.length})
-            </Badge>
-            <Badge
-              className="flex items-center gap-2 px-3 py-1.5"
-              style={{ backgroundColor: '#ef4444', color: 'white' }}
-            >
-              <div className="w-3 h-3 rounded-full bg-white"></div>
-              Quinta ({customersByDay.Quinta.length})
-            </Badge>
-            <Badge
-              className="flex items-center gap-2 px-3 py-1.5"
-              style={{ backgroundColor: '#a855f7', color: 'white' }}
-            >
-              <div className="w-3 h-3 rounded-full bg-white"></div>
-              Sexta ({customersByDay.Sexta.length})
-            </Badge>
-          </div>
+          {situacao === 'ativos' ? (
+            <div className="flex flex-wrap gap-3">
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#22c55e', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                Segunda ({customersByDay.Segunda.length})
+              </Badge>
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#3b82f6', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                Terça ({customersByDay.Terça.length})
+              </Badge>
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#eab308', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                Quarta ({customersByDay.Quarta.length})
+              </Badge>
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#ef4444', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                Quinta ({customersByDay.Quinta.length})
+              </Badge>
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#a855f7', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                Sexta ({customersByDay.Sexta.length})
+              </Badge>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: situacao === 'perdidos' ? '#4b5563' : '#9ca3af', color: 'white' }}>
+                <div className="w-3 h-3 rounded-full bg-white"></div>
+                {situacao === 'perdidos' ? 'Perdidos' : 'Inativados'} ({activeCustomersWithCoords.length})
+              </Badge>
+              <span className="text-xs text-muted-foreground self-center">
+                {situacao === 'perdidos'
+                  ? 'Cadastro ativo, mas há 3+ meses sem comprar (comprava com regularidade).'
+                  : 'Clientes com cadastro desativado.'}
+              </span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -417,7 +440,7 @@ export default function ClientsMap() {
               {activeCustomersWithCoords.map((customer) => {
                 const lat = Number(customer.latitude);
                 const lng = Number(customer.longitude);
-                const color = getPinColor(customer.weekdays);
+                const color = pinColorFor(customer);
                 const dayName = getWeekdayName(customer.weekdays);
 
                 return (
@@ -471,7 +494,7 @@ export default function ClientsMap() {
               <div className="text-center space-y-2">
                 <MapPin className="h-12 w-12 mx-auto text-gray-300" />
                 <p className="text-muted-foreground">
-                  Nenhum cliente ativo com coordenadas disponíveis
+                  Nenhum cliente {situacao} com coordenadas disponíveis
                 </p>
               </div>
             </div>
