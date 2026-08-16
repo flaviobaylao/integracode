@@ -1155,7 +1155,54 @@ cron.schedule('40 6 * * *', async () => {
     if (!r.total) { await descartarLote(r.loteId); return; }
     console.log('[MKT-RECOMPRA] lote ' + r.loteId + ': ' + r.total + ' cliente(s), custo ~R$ '
       + r.custoEstimado + ', receita esperada ~R$ ' + r.receitaEsperada + '. Esperando liberacao em /marketing.');
+    if ((r.templatesFaltando || []).length) {
+      console.warn('⚠️  [MKT-RECOMPRA] template(s) sem cadastro: ' + r.templatesFaltando.join(', ')
+        + '. O lote monta, mas a liberacao vai falhar item a item — e o custo acima e palpite,'
+        + ' porque a categoria aprovada pela Meta e que define R$ 0,04 (UTILITY) ou R$ 0,34 (MARKETING).');
+    }
   } catch (e: any) {
     console.error('[MKT-RECOMPRA] cron falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
+// ---------------------------------------------------------------------------
+// Esteira: peca agendada que passou da hora e ninguem publicou
+// ---------------------------------------------------------------------------
+//
+// 'agendado' e um estado real da esteira, e a UNICA saida dele e alguem marcar
+// como publicada — nao existe publicacao automatica no Instagram (nem a permissao
+// instagram_content_publish foi concedida ao app). Isso e desenho, nao defeito:
+// voce publica na mao e registra.
+//
+// O defeito seria o silencio. Sem ninguem olhando, uma peca agendada para ontem
+// simplesmente para de existir: nao esta na fila de aprovacao, nao esta publicada,
+// nao aparece em lugar nenhum como pendencia. Mesma familia do cron que nunca
+// existiu e do 'Lead' que a Meta nao aceita — motor construido, resultado nenhum.
+//
+// So avisa. Nao publica, nao muda estado, nao decide nada.
+// 09:00: depois do comercial abrir, quando ainda da tempo de publicar no dia.
+cron.schedule('0 9 * * *', async () => {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT id, titulo, canal, agendado_para,
+             EXTRACT(EPOCH FROM (now() - agendado_para)) / 86400 AS dias
+        FROM mkt_pieces
+       WHERE estado = 'agendado' AND agendado_para IS NOT NULL AND agendado_para < now()
+       ORDER BY agendado_para ASC LIMIT 20`);
+    const vencidas = r.rows || [];
+    if (!vencidas.length) return; // dia normal nao vira log
+
+    console.warn('⚠️  [MKT-ESTEIRA] ' + vencidas.length + ' peca(s) agendada(s) passaram da data e ninguem publicou:');
+    for (const p of vencidas) {
+      console.warn('   • ' + String(p.titulo || p.id).slice(0, 60)
+        + ' (' + (p.canal || 'sem canal') + ') — atrasada ha ' + Math.floor(Number(p.dias) || 0) + ' dia(s)');
+    }
+    console.warn('   Publique e marque em /marketing, ou devolva para producao. Parada em "agendado" ela nao aparece em lugar nenhum.');
+  } catch (e: any) {
+    // Schema da esteira pode nao existir ainda: nao e erro que mereca alarme.
+    const m = String(e?.message || e);
+    if (!/does not exist|relation .* does not exist/i.test(m)) {
+      console.error('[MKT-ESTEIRA] vigia das agendadas falhou:', m);
+    }
   }
 }, { timezone: 'America/Sao_Paulo' });
