@@ -143,6 +143,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           setCustomerWeekdays([]);
         }
         setCustomerVisitPeriodicity((card.customer as any).visitPeriodicity || '');
+        // O telefone só vem preenchido depois que o CONTATO confirmou o número pelo
+        // link. Enquanto não confirmar, o campo abre VAZIO de propósito: o vendedor
+        // tem de digitar de novo a cada pedido e pedir a confirmação ao contato.
+        // (o efeito que zera está logo abaixo, quando o status chega do servidor)
         setCustomerPhone(card.customer.phone || '');
         setLatitude(card.customer.latitude || '');
         setLongitude(card.customer.longitude || '');
@@ -398,6 +402,23 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     return products.reduce((total, product) => total + product.totalPrice, 0);
   };
 
+  // Status de confirmação do telefone do cliente (link do WhatsApp / isenção do admin).
+  const phoneStatus = useQuery<any>({
+    queryKey: ['/api/customers', card?.customerId, 'phone-status'],
+    queryFn: async () => apiRequest('GET', `/api/customers/${card?.customerId}/phone-status`),
+    enabled: !!card?.customerId && isOpen,
+    staleTime: 0,
+  });
+  const telefoneConfirmado = phoneStatus.data?.confirmed === true;
+  const telefoneIsento = phoneStatus.data?.exempt === true;
+
+  // Número ainda não confirmado -> limpa o campo para forçar a redigitação.
+  useEffect(() => {
+    if (phoneStatus.data && phoneStatus.data.confirmed === false) {
+      setCustomerPhone('');
+    }
+  }, [phoneStatus.data]);
+
   const handleFinalizeSale = async () => {
     if (products.length === 0) {
       const error = new Error("Adicione pelo menos um produto para finalizar a venda.");
@@ -509,10 +530,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
     // Anti-número-falso: repetidos, sequências óbvias, placeholder (00)00000-0000 e o próprio celular do vendedor
     const _sellerDigits = String((user as any)?.phone || '').replace(/\D/g, '');
+    // Mesma regra do servidor. Só o placeholder é recusado — conter '00000' em
+    // qualquer posição derrubava número real, como (62) 3000-0000.
     const _isFakePhone = /^(\d)\1+$/.test(_phoneDigits)
       || '01234567890123456789'.includes(_phoneDigits)
       || '98765432109876543210'.includes(_phoneDigits)
-      || _phoneDigits.includes('00000')
+      || ['0000000000', '00000000000', '5500000000000'].includes(_phoneDigits)
+      || /^(\d{2})?0{8,}$/.test(_phoneDigits)
       || (_sellerDigits.length >= 10 && _phoneDigits === _sellerDigits);
     if (_isFakePhone) {
       toast({
@@ -719,12 +743,16 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const handleSaveCustomerInfo = async () => {
     if (!card?.customer?.id) return;
     
+    // O campo do telefone abre VAZIO quando o número ainda não foi confirmado pelo
+    // contato. Salvar '' aqui APAGARIA o telefone do cadastro — por isso só vai no
+    // patch quando o vendedor realmente digitou algo.
+    const _phonePatch = (customerPhone || '').trim() ? { phone: customerPhone } : {};
     await updateCustomerMutation.mutateAsync({
       id: card.customer.id,
       data: {
         weekdays: customerWeekdays,
         visitPeriodicity: customerVisitPeriodicity || null,
-        phone: customerPhone,
+        ..._phonePatch,
         latitude: latitude || null,
         longitude: longitude || null
       }
@@ -1346,9 +1374,23 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* 🔒 Telefone do comprador — obrigatório para finalizar a venda */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <Label className="font-semibold text-blue-900">Telefone do comprador *</Label>
+              {/* 🔒 Telefone do comprador — obrigatório para finalizar a venda.
+                  Enquanto o contato não confirmar o número pelo link, o campo abre
+                  vazio e tem de ser digitado a cada pedido. */}
+              <div className={`border rounded-lg p-3 ${telefoneConfirmado ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-300'}`}>
+                <Label className={`font-semibold ${telefoneConfirmado ? 'text-emerald-900' : 'text-amber-900'}`}>
+                  Telefone do comprador *
+                  {telefoneConfirmado && (
+                    <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                      {telefoneIsento ? 'confirmado (isento pelo admin)' : 'confirmado pelo contato'}
+                    </span>
+                  )}
+                  {phoneStatus.data && !telefoneConfirmado && (
+                    <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full bg-amber-600 text-white">
+                      aguardando confirmação
+                    </span>
+                  )}
+                </Label>
                 <Input
                   type="tel"
                   inputMode="numeric"
@@ -1358,9 +1400,17 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   data-testid="input-customer-phone"
                   className="mt-1"
                 />
-                <p className="text-xs text-blue-700 mt-1">
-                  Obrigatório para finalizar. É o contato do cliente para confirmação de pedido e entrega.
-                </p>
+                {telefoneConfirmado ? (
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Número já confirmado. Só altere se o contato tiver mudado de telefone.
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-800 mt-1">
+                    O contato <strong>ainda não confirmou</strong> este número pelo link do WhatsApp.
+                    Digite o telefone e <strong>peça ao contato para clicar no link</strong> que ele vai
+                    receber — enquanto não confirmar, será preciso digitar a cada pedido.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">

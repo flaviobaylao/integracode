@@ -240,6 +240,36 @@ export default function CustomerEditModal({
     }
   };
 
+  // ── CONFIRMAÇÃO DO TELEFONE ────────────────────────────────────────────────
+  // O contato confirma o próprio número clicando no link que recebe no WhatsApp.
+  // Enquanto não confirmar, o vendedor é obrigado a redigitar o telefone a cada
+  // pedido. Um ADMIN pode isentar o número atual deste cliente — aí ele já entra
+  // como confirmado. A isenção vale para o NÚMERO: se o telefone mudar, cai.
+  const isAdmin = (user as any)?.role === 'admin';
+  const phoneStatus = useQuery<any>({
+    queryKey: ['/api/customers', customer?.id, 'phone-status'],
+    queryFn: async () => apiRequest('GET', `/api/customers/${customer?.id}/phone-status`),
+    enabled: !!customer?.id && isOpen,
+    staleTime: 0,
+  });
+  const [showPhoneHelp, setShowPhoneHelp] = useState(false);
+  const exemptMutation = useMutation({
+    mutationFn: async (exempt: boolean) => apiRequest('POST', `/api/customers/${customer?.id}/phone-exempt`, { exempt }),
+    onSuccess: (_d: any, exempt: boolean) => {
+      phoneStatus.refetch();
+      queryClient.invalidateQueries({ queryKey: ['/api/customers/phone-verification-status'] });
+      toast({
+        title: exempt ? 'Confirmação dispensada' : 'Isenção removida',
+        description: exempt
+          ? 'Este número entra como confirmado — o contato não precisará clicar no link.'
+          : 'O número volta a depender da confirmação do contato pelo link.',
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: 'Não foi possível gravar', description: e?.message || 'Tente novamente.', variant: 'destructive' });
+    },
+  });
+
   // Telefone do Comprador: aceita APENAS um número (fixo ≤10 díg. ou celular 11 díg.).
   // Remove barra "/" e qualquer segundo número — só o primeiro telefone é mantido.
   const formatPhone = (value: string) => {
@@ -509,7 +539,20 @@ export default function CustomerEditModal({
               />
             </div>
             <div>
-              <Label htmlFor="phone">Telefone do Comprador *</Label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Label htmlFor="phone">Telefone do Comprador *</Label>
+                {phoneStatus.data && (
+                  phoneStatus.data.confirmed ? (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                      {phoneStatus.data.exempt ? 'confirmado (isento)' : 'confirmado pelo contato'}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-white">
+                      aguardando confirmação
+                    </span>
+                  )
+                )}
+              </div>
               <Input
                 id="phone"
                 name="phone"
@@ -519,6 +562,43 @@ export default function CustomerEditModal({
                 required
                 data-testid="input-customer-phone"
               />
+              {/* Flag SOMENTE PARA ADMIN: dispensa a confirmação do contato pelo link. */}
+              {isAdmin && customer?.id && (
+                <div className="mt-2 flex items-start gap-2">
+                  <Checkbox
+                    id="phone-exempt"
+                    checked={phoneStatus.data?.exempt === true}
+                    disabled={exemptMutation.isPending || phoneStatus.isLoading}
+                    onCheckedChange={(v) => exemptMutation.mutate(v === true)}
+                    data-testid="checkbox-phone-exempt"
+                  />
+                  <div className="text-xs leading-snug">
+                    <label htmlFor="phone-exempt" className="font-medium cursor-pointer">
+                      Dispensar confirmação deste número
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowPhoneHelp((v) => !v)}
+                      title="O que essa marcação faz"
+                      aria-label="O que essa marcação faz"
+                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border border-blue-500 text-blue-600 text-[10px] font-bold align-middle"
+                      data-testid="button-phone-exempt-info"
+                    >
+                      i
+                    </button>
+                    {showPhoneHelp && (
+                      <div className="mt-1 p-2 rounded border border-blue-200 bg-blue-50 text-blue-900">
+                        Por padrão, o contato precisa confirmar o próprio número clicando no link
+                        que recebe no WhatsApp — e, enquanto não confirmar, o vendedor é obrigado a
+                        digitar o telefone a cada pedido. Marcando esta caixa, <strong>este número
+                        entra como confirmado</strong> e o contato não precisa clicar em nada.
+                        A dispensa vale para o número atual: se o telefone for alterado, o novo
+                        número volta a precisar de confirmação. Só administradores veem esta opção.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
