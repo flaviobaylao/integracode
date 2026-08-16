@@ -94,6 +94,16 @@ function normSegmento(s: any): string {
     .join("");
 }
 
+/** Faixas de ticket medio. Contiguas e sem buraco: todo cliente cai em uma. */
+export const FAIXAS_TICKET: Array<{ chave: string; label: string; min: number; max: number | null }> = [
+  { chave: "f1", label: "Até R$ 299,99", min: 0, max: 299.99 },
+  { chave: "f2", label: "R$ 300,00 a R$ 500,00", min: 300, max: 500 },
+  { chave: "f3", label: "R$ 501,00 a R$ 799,00", min: 500.01, max: 799 },
+  { chave: "f4", label: "R$ 800,00 a R$ 1.500,00", min: 799.01, max: 1500 },
+  { chave: "f5", label: "R$ 1.501,00 a R$ 5.000,00", min: 1500.01, max: 5000 },
+  { chave: "f6", label: "Acima de R$ 5.000,00", min: 5000.01, max: null },
+];
+
 export function registerCarteira(app: Express) {
   // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
@@ -398,6 +408,27 @@ export function registerCarteira(app: Express) {
         .map((k) => ({ tipo: k, clientes: mapaTipo.get(k)?.clientes || 0, valor: mapaTipo.get(k)?.valor || 0 }))
         .filter((t) => t.clientes > 0);
 
+      // QUANTIDADE DE CLIENTES POR TICKET MEDIO — substituiu a pizza "PJ x PF".
+      // Ticket medio do cliente = `potencialMes` (total ÷ meses em que ele comprou),
+      // ou seja, o ritmo dele QUANDO compra — nao dilui pelos meses parados.
+      // O faturamento da faixa e a soma da media mensal (`mediaSimples`) dos clientes
+      // dela, entao a soma das faixas fecha com o faturamento medio/mes do periodo.
+      const faixasTicket = FAIXAS_TICKET.map((f) => {
+        const dentro = clientes.filter((c) => c.potencialMes >= f.min && (f.max === null || c.potencialMes <= f.max));
+        const fatMes = dentro.reduce((s, c) => s + c.mediaSimples, 0);
+        return {
+          chave: f.chave,
+          label: f.label,
+          min: f.min,
+          max: f.max,
+          clientes: dentro.length,
+          pj: dentro.filter((c) => c.tipo === "PJ").length,
+          pf: dentro.filter((c) => c.tipo === "PF").length,
+          valor: dentro.reduce((s, c) => s + c.total, 0),
+          faturamentoMes: fatMes,
+        };
+      });
+
       const segmentos = Array.from(somaPor((c) => c.segmento).entries())
         .map(([segmento, a]) => ({ segmento, ...a }))
         .sort((a, b) => b.valor - a.valor);
@@ -464,6 +495,7 @@ export function registerCarteira(app: Express) {
         serie,
         abc,
         tipos,
+        faixasTicket,
         segmentos,
         vendedores,
         debitoTotal,

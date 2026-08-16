@@ -19,7 +19,6 @@ import { registerOmieFinanceiroImportRoutes } from "./omie-financeiro-import";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
 import { registerCustomerStatementRoutes } from "./customer-statement-routes";
-import { registerTicketMedioRoutes } from "./ticket-medio-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { registerOrderJournal } from "./order-journal";
 import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
@@ -732,9 +731,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Extrato do Cliente (Vendas) - historico de notas faturadas + pagamentos
   registerCustomerStatementRoutes(app);
-
-  // Clientes Ativos: quantidade de clientes por faixa de ticket medio
-  registerTicketMedioRoutes(app);
 
   // Confirmacao de telefone do comprador via link (WhatsApp) — nao bloqueia o pedido
   registerPhoneVerification(app, { authenticateUser, requireRole });
