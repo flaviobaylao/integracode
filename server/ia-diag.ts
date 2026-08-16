@@ -305,5 +305,26 @@ export function registerIaDiag(app: any) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  console.log('[IA-DIAG] registrado (diag-webhooks + porque-nao-respondeu + testar-resposta + trilha + relogio-disparos)');
+  // Notificacoes internas (vendedor: pedido, bloqueio, debito). Mostra o que falhou e por que.
+  app.get('/api/admin/ia-atendimento/automacoes-falhas', async (req: any, res: any) => {
+    if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
+    try {
+      const n = Math.min(100, Math.max(5, parseInt(String(req.query.n || '25'), 10) || 25));
+      const r: any = await db.execute(sql`SELECT
+          to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando,
+          automation_name AS automacao, trigger_event AS evento, recipient_phone AS fone,
+          status, mode AS modo, LEFT(coalesce(error,''), 160) AS erro
+        FROM automation_dispatch_log ORDER BY created_at DESC LIMIT ${n}`);
+      const linhas = r.rows || [];
+      const porStatus: Record<string, number> = {};
+      const porErro: Record<string, number> = {};
+      for (const l of linhas as any[]) {
+        porStatus[String(l.status)] = (porStatus[String(l.status)] || 0) + 1;
+        if (l.erro) { const k = String(l.erro).slice(0, 70); porErro[k] = (porErro[k] || 0) + 1; }
+      }
+      res.json({ total: linhas.length, porStatus, porErro, linhas });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  console.log('[IA-DIAG] registrado (+ automacoes-falhas)');
 }

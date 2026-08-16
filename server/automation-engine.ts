@@ -125,7 +125,11 @@ export async function fireAutomation(triggerEvent: string, ctx: any): Promise<vo
       for (const phone of recipients) {
         let ok = false, err: string | null = null;
         try {
-          const r = await sendUmblerTalkText(phone, msg);
+          // Aviso interno vai pelos canais COMUNS primeiro. Sem isso ele saia pelo canal
+          // de saida padrao — que virou o 1841 — e o WhatsApp recusava tudo: vendedor nao
+          // tem janela de 24h aberta com o numero oficial.
+          const { enviarInterno } = await import('./envio-texto');
+          const r = await enviarInterno(phone, msg);
           ok = !!r?.success;
           err = r?.error || null;
         } catch (e: any) {

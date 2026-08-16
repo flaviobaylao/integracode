@@ -160,6 +160,55 @@ export async function enviarTexto(conversationId: string, toPhone: string, texto
            error: explicaFalha(algumaJanela ? 'ContactInactiveTemplateRequired' : ultimo, fila[0] || 'padrao') };
 }
 
+
+/**
+ * Aviso INTERNO (vendedor, coordenacao) — nao e conversa com cliente.
+ *
+ * Estas mensagens sairam do ar quando o canal de saida padrao virou o 1841: aviso de
+ * pedido, bloqueio e debito passaram a tentar o canal OFICIAL, onde texto livre so passa
+ * dentro da janela de 24h. Vendedor nao "conversa" com o numero oficial, entao a janela
+ * dele esta sempre fechada e TODA notificacao era recusada em silencio (confirmado pelo
+ * teste da automacao: ContactCannotReceiveMessages / ContactInactiveTemplateRequired).
+ *
+ * Aqui a ordem e o contrario da conversa com cliente: os canais comuns primeiro, e o
+ * oficial so como ultimo recurso. Aviso interno nunca deveria depender de janela.
+ */
+export async function enviarInterno(toPhone: string, texto: string): Promise<Envio> {
+  const destino = so(toPhone);
+  if (!destino) return { success: false, error: 'Telefone vazio' };
+  if (!texto || !texto.trim()) return { success: false, error: 'Mensagem vazia' };
+
+  const { sendUmblerTalkText } = await import('./chat-routes');
+  const { canalAtivoPorTelefone } = await import('./canais-gestao');
+
+  // Preferencia configuravel; sem ela, os comuns na ordem e o oficial por ultimo.
+  const preferido = so(await getSetting('canal_saida_interna', ''));
+  const fila: string[] = [];
+  const põe = (f: string) => { const d = so(f); if (d && !fila.includes(d)) fila.push(d); };
+  põe(preferido);
+  for (const c of CANAIS) if (c.fone !== FONE_1841) põe(c.fone);
+  põe(FONE_1841);
+
+  const tentativas: any[] = [];
+  for (const fone of fila) {
+    if (!(await canalAtivoPorTelefone(fone).catch(() => true))) {
+      tentativas.push({ canal: fone, resultado: 'desligado no painel' });
+      continue;
+    }
+    try {
+      const r = await sendUmblerTalkText(destino, texto, fone);
+      tentativas.push({ canal: fone, resultado: r?.success ? 'entregue' : (r?.error || 'falhou') });
+      if (r?.success) {
+        const nome = CANAIS.find(c => c.fone === fone)?.nome || fone;
+        return { success: true, messageId: r.messageId, via: fone, rota: 'aviso interno pelo ' + nome, tentativas };
+      }
+    } catch (e: any) { tentativas.push({ canal: fone, resultado: e?.message || String(e) }); }
+  }
+  const ultimo = tentativas.length ? String(tentativas[tentativas.length - 1].resultado || '') : '';
+  return { success: false, tentativas, rota: 'tentou ' + fila.length + ' número(s)',
+           error: explicaFalha(ultimo, fila[0] || 'padrao') };
+}
+
 export function registerEnvioTexto(app: any) {
   // Reenviar uma mensagem que nao chegou. Nao cria mensagem nova: reaproveita a que ja
   // esta na conversa e atualiza o status dela — assim o historico nao enche de repetidas.
