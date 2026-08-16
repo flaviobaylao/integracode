@@ -541,6 +541,48 @@ export type ItemDiagnostico = {
   item: string; estado: 'ok' | 'falta' | 'atencao'; detalhe: string; quemResolve: 'sistema' | 'voce';
 };
 
+/**
+ * Procura o TXT `google-site-verification=` no DNS. Tenta o host do site e depois
+ * o dominio raiz, porque a verificacao por DNS mora no raiz e vale para todos os
+ * subdominios (loja.bebahonest.com.br herda de bebahonest.com.br).
+ *
+ * A PROVA DE FALHA: DNS fora do ar, sem rede, timeout — nada disso pode derrubar
+ * o diagnostico inteiro. Na duvida devolve "nao verificado", que e o estado
+ * anterior. Cache de 1h: e um dado que muda uma vez na vida.
+ */
+let _dnsCache: { em: number; chave: string; r: { verificado: boolean; dominio: string } } | null = null;
+
+export async function verificacaoPorDns(siteUrl: string): Promise<{ verificado: boolean; dominio: string }> {
+  const nada = { verificado: false, dominio: '' };
+  try {
+    const host = new URL(siteUrl).hostname.replace(/^www\./, '');
+    if (!host) return nada;
+    if (_dnsCache && _dnsCache.chave === host && Date.now() - _dnsCache.em < 3600_000) return _dnsCache.r;
+
+    // host completo e, depois, o dominio registravel (ultimos 3 rotulos em .com.br,
+    // 2 nos demais). Ex.: loja.bebahonest.com.br -> bebahonest.com.br
+    const p = host.split('.');
+    const raiz = p.length > 2 ? p.slice(p.length - (/\.(com|net|org|gov|edu)\.[a-z]{2}$/.test(host) ? 3 : 2)).join('.') : host;
+    const candidatos = Array.from(new Set([host, raiz]));
+
+    const { promises: dnsp } = await import('dns');
+    for (const d of candidatos) {
+      try {
+        const registros = await Promise.race([
+          dnsp.resolveTxt(d),
+          new Promise<string[][]>((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+        ]);
+        const achou = (registros || []).some(linha => /google-site-verification=/i.test((linha || []).join('')));
+        if (achou) { const r = { verificado: true, dominio: d }; _dnsCache = { em: Date.now(), chave: host, r }; return r; }
+      } catch { /* proximo candidato */ }
+    }
+    _dnsCache = { em: Date.now(), chave: host, r: nada };
+    return nada;
+  } catch {
+    return nada;
+  }
+}
+
 export async function diagnosticoGoogle(): Promise<{
   itens: ItemDiagnostico[]; prontos: number; pendentes: number;
   seoLigado: boolean; medindo: boolean; conversoes: any;
@@ -565,10 +607,20 @@ export async function diagnosticoGoogle(): Promise<{
     cfg.ga4Id || 'Sem ID. Crie a propriedade em analytics.google.com e cole o G-XXXXXXX aqui — a tag entra sozinha, sem deploy.', 'voce');
   add('Google Ads', cfg.adsId ? 'ok' : 'falta',
     cfg.adsId || 'Sem conta. Sem ela não há anúncio de busca — e quem procura "suco natural atacado Goiânia" continua não achando.', 'voce');
-  add('Search Console', cfg.verificacaoSearchConsole ? 'ok' : 'falta',
-    cfg.verificacaoSearchConsole
-      ? 'Verificado por meta tag.'
-      : 'Sem verificação. É o que mostra quais buscas trazem gente, e onde se envia o sitemap. Cole o código da meta tag aqui.', 'voce');
+  // O painel so sabia conferir UM dos tres metodos de verificacao do Google
+  // (meta tag). Quem verifica por DNS — o metodo que o proprio Google recomenda,
+  // porque cobre o dominio inteiro e todos os subdominios — via "falta" para
+  // sempre, mandando fazer o que ja estava feito. Alarme falso e pior que
+  // silencio: ensina a ignorar o painel.
+  //
+  // Medido em 16/ago/2026: bebahonest.com.br ja tinha o TXT no ar.
+  // Agora o diagnostico pergunta ao DNS em vez de supor.
+  const dns = await verificacaoPorDns(cfg.siteUrl);
+  add('Search Console',
+    (cfg.verificacaoSearchConsole || dns.verificado) ? 'ok' : 'falta',
+    cfg.verificacaoSearchConsole ? 'Verificado por meta tag.'
+      : dns.verificado ? 'Verificado por DNS (registro TXT em ' + dns.dominio + '), o que cobre o dominio e todos os subdominios. Nao precisa da meta tag.'
+      : 'Sem verificação por meta tag, e sem registro TXT no DNS. É o que mostra quais buscas trazem gente, e onde se envia o sitemap.', 'voce');
   add('Perfil da Empresa no Google', 'falta',
     'Não dá para criar por API sem sua conta. É o item de maior retorno para busca local: sem ele, a Honest não aparece no mapa nem no "perto de mim".', 'voce');
   add('Conversões offline para o Ads', 'ok',
