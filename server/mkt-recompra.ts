@@ -305,6 +305,34 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
     for (const x of (r.rows || [])) recentes.add(String(x.cliente_id));
   } catch {}
 
+  // A CATEGORIA REAL DO TEMPLATE, e nao a que a regua supoe.
+  //
+  // REGUAS declara todas como UTILITY (R$ 0,04). Se a Meta aprovar como MARKETING
+  // (R$ 0,34 - 8,5x mais caro), a tela mostraria "custo ~R$ 3,20" num lote que
+  // custa R$ 27, e a decisao de liberar seria tomada em cima de um numero errado.
+  // A categoria aprovada ja esta cadastrada em whatsapp_templates: e de la que ela
+  // tem que vir. Sem cadastro, cai na da regua — e o aviso diz que e um palpite.
+  const catDoTemplate = new Map<string, string>();
+  const templatesFaltando: string[] = [];
+  try {
+    const rotulos = Array.from(new Set(REGUAS.map(r => r.templateLabel)));
+    // IN com um parametro por rotulo, e nao `= ANY(${array})`: o drizzle manda o
+    // array JS como texto e o Postgres recusa com "requires array on right side".
+    // O erro morreria neste try/catch e a categoria cairia no palpite da regua em
+    // silencio — a correcao pareceria funcionar sem fazer nada.
+    const t: any = await db.execute(sql`
+      SELECT label, categoria FROM whatsapp_templates
+       WHERE label IN (${sql.join(rotulos.map(l => sql`${l}`), sql`, `)})`);
+    for (const row of (t.rows || [])) {
+      const cat = String(row.categoria || '').toUpperCase();
+      if (cat) catDoTemplate.set(String(row.label), cat);
+    }
+    for (const l of rotulos) if (!catDoTemplate.has(l)) templatesFaltando.push(l);
+  } catch {
+    // Sem a tabela nao da para saber: segue com a categoria da regua. Faltar o
+    // cadastro nao e motivo para nao montar o lote — e motivo para avisar.
+  }
+
   const loteId: string = (await db.execute(sql`
     INSERT INTO mkt_lotes (regua, status) VALUES (${opts.regua || 'todas'}, 'previsto') RETURNING id`) as any)
       .rows?.[0]?.id;
@@ -322,7 +350,8 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
 
     const ticket = Number(c.ticket_medio || 0);
     const receitaEsperada = bloqueio ? 0 : ticket * regua.conversaoEsperada;
-    const custoUnit = regua.categoria === 'MARKETING' ? 0.34 : 0.04;
+    const categoria = catDoTemplate.get(regua.templateLabel) || regua.categoria;
+    const custoUnit = categoria === 'MARKETING' ? 0.34 : 0.04;
 
     await db.execute(sql`
       INSERT INTO mkt_fila_toques
@@ -357,6 +386,10 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
     })),
     baseAnalisada: retrato.length,
     candidatos: candidatos.length,
+    // Sem estes rotulos cadastrados, o lote monta e a liberacao falha item a item
+    // la na frente. Melhor dizer aqui, com o lote na tela, do que depois.
+    templatesFaltando,
+    custoConfiavel: templatesFaltando.length === 0,
   };
 }
 
@@ -381,6 +414,21 @@ export async function liberarLote(loteId: string, por: string): Promise<any> {
   const itens: any = await db.execute(sql`SELECT * FROM mkt_fila_toques WHERE lote_id = ${loteId} AND status = 'previsto'`);
   const { enqueueOfficialDispatch } = await import('./official-dispatch');
 
+  // Mesma regra do montarLote: a categoria que vai para o disparo e a APROVADA,
+  // nao a que a regua supoe. Mandar UTILITY num template que a Meta aprovou como
+  // MARKETING nao muda o que a Meta cobra — muda so a conta que a gente faz.
+  const catDoTemplate = new Map<string, string>();
+  try {
+    const rotulos = Array.from(new Set(REGUAS.map(r => r.templateLabel)));
+    const t: any = await db.execute(sql`
+      SELECT label, categoria FROM whatsapp_templates
+       WHERE label IN (${sql.join(rotulos.map(l => sql`${l}`), sql`, `)})`);
+    for (const row of (t.rows || [])) {
+      const cat = String(row.categoria || '').toUpperCase();
+      if (cat) catDoTemplate.set(String(row.label), cat);
+    }
+  } catch { /* cai na categoria da regua */ }
+
   const resultado: Record<string, number> = {};
   for (const it of (itens.rows || [])) {
     let r = 'erro';
@@ -392,7 +440,7 @@ export async function liberarLote(loteId: string, por: string): Promise<any> {
         templateLabel: it.template_label,
         params: (it.params as string[]) || [],
         useCase: 'recompra',
-        category: regua?.categoria || 'UTILITY',
+        category: (catDoTemplate.get(String(it.template_label)) || regua?.categoria || 'UTILITY') as any,
         // O evento é o cliente + a régua + o lote: reprocessar o lote nunca duplica.
         campaign: 'recompra:' + it.regua + ':' + loteId,
       });
