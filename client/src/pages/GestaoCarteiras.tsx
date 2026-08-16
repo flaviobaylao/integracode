@@ -134,6 +134,8 @@ export default function GestaoCarteiras() {
   }, [opcoesVend]);
 
   const filtrarVend = nomesSel.size > 0;
+  // Filtro PJ / PF: vazio = todos. Recorta a carteira inteira (KPIs, ABC, faixas, listas).
+  const [tipoPessoa, setTipoPessoa] = useState<string>("");
   // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
   // vira "nas N carteiras selecionadas".
   const rotuloCarteira = !filtrarVend
@@ -142,14 +144,17 @@ export default function GestaoCarteiras() {
       ? ` na carteira de ${Array.from(nomesSel)[0]}`
       : ` nas ${nomesSel.size} carteiras selecionadas`;
 
-  const clientes = useMemo(
-    () => (filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos),
-    [todos, nomesSel, filtrarVend],
-  );
+  const filtrarTipo = tipoPessoa !== "";
+  const filtrando = filtrarVend || filtrarTipo;
+  const clientes = useMemo(() => {
+    let out = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
+    if (filtrarTipo) out = out.filter((c) => c.tipo === tipoPessoa);
+    return out;
+  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa]);
 
   // Com filtro de vendedor a curva ABC é recalculada só na carteira dele.
   const abc = useMemo(() => {
-    if (!filtrarVend) return d?.abc || [];
+    if (!filtrando) return d?.abc || [];
     const tot = clientes.reduce((s, c) => s + c.total, 0);
     const acc: Record<string, { clientes: number; valor: number }> = { A: { clientes: 0, valor: 0 }, B: { clientes: 0, valor: 0 }, C: { clientes: 0, valor: 0 } };
     let soma = 0;
@@ -160,10 +165,10 @@ export default function GestaoCarteiras() {
       acc[k].clientes++; acc[k].valor += c.total;
     }
     return (["A", "B", "C"] as const).map((k) => ({ classe: k, ...acc[k], pctValor: tot > 0 ? (acc[k].valor / tot) * 100 : 0 }));
-  }, [d, clientes, filtrarVend]);
+  }, [d, clientes, filtrando]);
 
   const classeDe = useMemo(() => {
-    if (!filtrarVend) return new Map(todos.map((c) => [c.chave, c.classe]));
+    if (!filtrando) return new Map(todos.map((c) => [c.chave, c.classe]));
     const tot = clientes.reduce((s, c) => s + c.total, 0);
     const m = new Map<string, "A" | "B" | "C">();
     let soma = 0;
@@ -173,17 +178,31 @@ export default function GestaoCarteiras() {
       m.set(c.chave, pct <= 0.8 ? "A" : pct <= 0.95 ? "B" : "C");
     }
     return m;
-  }, [todos, clientes, filtrarVend]);
+  }, [todos, clientes, filtrando]);
 
-  const tipos = useMemo(() => {
-    if (!filtrarVend) return d?.tipos || [];
-    const m = new Map<string, { clientes: number; valor: number }>();
-    for (const c of clientes) {
-      const a = m.get(c.tipo) || { clientes: 0, valor: 0 };
-      a.clientes++; a.valor += c.total; m.set(c.tipo, a);
-    }
-    return Array.from(m.entries()).map(([tipo, a]) => ({ tipo, ...a })).sort((a, b) => b.clientes - a.clientes);
-  }, [d, clientes, filtrarVend]);
+  // Quantidade de clientes por faixa de TICKET MEDIO (substituiu a pizza PJ x PF).
+  // Ticket medio = potencialMes: total do cliente ÷ meses em que ele comprou.
+  // Sem filtro usamos o calculo do servidor (a lista da tela vem truncada em 2000).
+  const faixas = useMemo(() => {
+    if (!filtrando) return d?.faixasTicket || [];
+    return (d?.faixasTicket || []).map((f: any) => {
+      const dentro = clientes.filter((c) => c.potencialMes >= f.min && (f.max == null || c.potencialMes <= f.max));
+      return {
+        ...f,
+        clientes: dentro.length,
+        pj: dentro.filter((c) => c.tipo === "PJ").length,
+        pf: dentro.filter((c) => c.tipo === "PF").length,
+        valor: dentro.reduce((s: number, c: any) => s + c.total, 0),
+        faturamentoMes: dentro.reduce((s: number, c: any) => s + c.mediaSimples, 0),
+      };
+    });
+  }, [d, clientes, filtrando]);
+  const faixasTotais = useMemo(() => ({
+    clientes: faixas.reduce((s: number, f: any) => s + (f.clientes || 0), 0),
+    pj: faixas.reduce((s: number, f: any) => s + (f.pj || 0), 0),
+    pf: faixas.reduce((s: number, f: any) => s + (f.pf || 0), 0),
+    faturamentoMes: faixas.reduce((s: number, f: any) => s + (f.faturamentoMes || 0), 0),
+  }), [faixas]);
 
   // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
   // em cada um (potencial nos parados, valor em aberto no débito).
@@ -353,6 +372,21 @@ export default function GestaoCarteiras() {
               onChange={setVendedores}
               testId="select-vendedor"
             />
+          </div>
+          {/* Recorte PJ / PF da carteira inteira: vale para KPIs, ABC, faixas e listas. */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Tipo</label>
+            <Select value={tipoPessoa || "todos"} onValueChange={(v) => setTipoPessoa(v === "todos" ? "" : v)}>
+              <SelectTrigger className="w-[150px]" data-testid="select-tipo-pessoa">
+                <SelectValue placeholder="PJ / PF" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">PJ e PF</SelectItem>
+                <SelectItem value="PJ">Somente PJ</SelectItem>
+                <SelectItem value="PF">Somente PF</SelectItem>
+                <SelectItem value="Não identificado">Não identificado</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="ml-auto">
             <Button variant="outline" onClick={exportar} data-testid="button-export">
@@ -585,36 +619,56 @@ export default function GestaoCarteiras() {
               </CardContent>
             </Card>
 
-            {/* Pizza 2 — PJ x PF */}
+            {/* Quantidade de clientes por ticket médio (substituiu a pizza PJ x PF) */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle>Tipo de cliente — PJ x PF</CardTitle>
-                <CardDescription>Classificado pelo CPF/CNPJ do título; sem documento, pelo tipo do cadastro</CardDescription>
+                <CardTitle>Quantidade de clientes por ticket médio</CardTitle>
+                <CardDescription>
+                  Ticket médio = faturado no cliente ÷ meses em que ele comprou (o ritmo dele quando compra).
+                  O faturamento da faixa é quanto ela entrega por mês no período.
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={290}>
-                  <PieChart>
-                    <Pie
-                      data={tipos.map((t: any) => ({ nome: t.tipo, valor: t.clientes, faturamento: t.valor }))}
-                      dataKey="valor" nameKey="nome" cx="50%" cy="50%" outerRadius={88}
-                      stroke="#ffffff" strokeWidth={2} label={rotuloFatia} labelLine={false} isAnimationActive={false}
-                    >
-                      {tipos.map((t: any, i: number) => <Cell key={i} fill={COR_TIPO[t.tipo] || CINZA} />)}
-                    </Pie>
-                    <Tooltip formatter={(v: any, n: any, p: any) => [`${NUM(v)} clientes · ${BRL(p?.payload?.faturamento)}`, p?.payload?.nome]} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="mt-2 border-t pt-2 text-sm">
-                  {tipos.map((t: any) => (
-                    <div key={t.tipo} className="flex items-center justify-between py-0.5">
-                      <span className="flex items-center gap-2">
-                        <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: COR_TIPO[t.tipo] || CINZA }} />
-                        {t.tipo} <span className="text-muted-foreground">({NUM(t.clientes)} clientes)</span>
-                      </span>
-                      <span className="font-medium">{BRL0(t.valor)}</span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-muted-foreground">
+                      <tr className="text-left border-b">
+                        <th className="py-2 pr-2 text-right w-20">Clientes</th>
+                        <th className="py-2 px-1 text-right w-14">PJ</th>
+                        <th className="py-2 px-1 text-right w-14">PF</th>
+                        <th className="py-2 px-2">Ticket médio</th>
+                        <th className="py-2 px-2 text-right w-16">%</th>
+                        <th className="py-2 pl-2 text-right w-32">Fat. médio/mês</th>
+                        <th className="py-2 pl-2 text-right w-20">% do fat.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {faixas.map((f: any) => (
+                        <tr key={f.chave} className="border-b last:border-0" data-testid={`faixa-${f.chave}`}>
+                          <td className="py-2 pr-2 text-right font-semibold">{NUM(f.clientes || 0)}</td>
+                          <td className="py-2 px-1 text-right text-muted-foreground">{NUM(f.pj || 0)}</td>
+                          <td className="py-2 px-1 text-right text-muted-foreground">{NUM(f.pf || 0)}</td>
+                          <td className="py-2 px-2 whitespace-nowrap">{f.label}</td>
+                          <td className="py-2 px-2 text-right">
+                            {faixasTotais.clientes ? ((f.clientes / faixasTotais.clientes) * 100).toFixed(1).replace(".", ",") : "0,0"}%
+                          </td>
+                          <td className="py-2 pl-2 text-right font-medium whitespace-nowrap">{BRL0(f.faturamentoMes || 0)}</td>
+                          <td className="py-2 pl-2 text-right text-muted-foreground">
+                            {faixasTotais.faturamentoMes ? ((f.faturamentoMes / faixasTotais.faturamentoMes) * 100).toFixed(1).replace(".", ",") : "0,0"}%
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-semibold">
+                        <td className="py-2 pr-2 text-right">{NUM(faixasTotais.clientes)}</td>
+                        <td className="py-2 px-1 text-right">{NUM(faixasTotais.pj)}</td>
+                        <td className="py-2 px-1 text-right">{NUM(faixasTotais.pf)}</td>
+                        <td className="py-2 px-2">Total</td>
+                        <td className="py-2 px-2 text-right">100,0%</td>
+                        <td className="py-2 pl-2 text-right whitespace-nowrap">{BRL0(faixasTotais.faturamentoMes)}</td>
+                        <td className="py-2 pl-2 text-right">100,0%</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </CardContent>
             </Card>
