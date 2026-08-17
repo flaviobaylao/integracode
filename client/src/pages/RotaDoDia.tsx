@@ -2129,6 +2129,17 @@ export default function RotaDoDia() {
                           >
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </Button>
+                          {/* 📋 Solicitar Alteração */}
+                          <ChangeRequestControl
+                            fullRow
+                            disabled={hasCheckinOrSale(visit.customerId)}
+                            entityType={isLead ? 'lead' : 'customer'}
+                            entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                            customerId={visit.customerId}
+                            entityName={visit.customerName}
+                            sellerId={selectedSellerId}
+                            state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                          />
                           {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
                           {isCheckinAdmin && !isLead && (
                             <Button
@@ -2197,17 +2208,6 @@ export default function RotaDoDia() {
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
-                          {/* 📋 Solicitar Alteração */}
-                          <ChangeRequestControl
-                            fullRow
-                            disabled={hasCheckinOrSale(visit.customerId)}
-                            entityType={isLead ? 'lead' : 'customer'}
-                            entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
-                            customerId={visit.customerId}
-                            entityName={visit.customerName}
-                            sellerId={selectedSellerId}
-                            state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
-                          />
                         </div>
                       </div>
 
