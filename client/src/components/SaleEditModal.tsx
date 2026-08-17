@@ -412,12 +412,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const telefoneConfirmado = phoneStatus.data?.confirmed === true;
   const telefoneIsento = phoneStatus.data?.exempt === true;
 
-  // Número ainda não confirmado -> limpa o campo para forçar a redigitação.
-  useEffect(() => {
-    if (phoneStatus.data && phoneStatus.data.confirmed === false) {
-      setCustomerPhone('');
-    }
-  }, [phoneStatus.data]);
+  // O telefone NÃO é mais apagado quando o contato ainda não confirmou.
+  // O campo permanece pré-preenchido com o número do cadastro (linha ~150),
+  // então o vendedor não precisa redigitar a cada pedido. Enquanto o contato
+  // não confirmar pelo link, o card exibe a tag "aguardando confirmação".
 
   const handleFinalizeSale = async () => {
     if (products.length === 0) {
@@ -1374,9 +1372,10 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* 🔒 Telefone do comprador — obrigatório para finalizar a venda.
-                  Enquanto o contato não confirmar o número pelo link, o campo abre
-                  vazio e tem de ser digitado a cada pedido. */}
+              {/* 🔒 Telefone do comprador — é obrigatório existir um número válido para
+                  finalizar a venda, mas o campo já vem pré-preenchido com o número do
+                  cadastro. Enquanto o contato não confirmar pelo link, mostramos a tag
+                  "aguardando confirmação" (sem exigir redigitação a cada pedido). */}
               <div className={`border rounded-lg p-3 ${telefoneConfirmado ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-300'}`}>
                 <Label className={`font-semibold ${telefoneConfirmado ? 'text-emerald-900' : 'text-amber-900'}`}>
                   Telefone do comprador *
@@ -1407,8 +1406,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 ) : (
                   <p className="text-xs text-amber-800 mt-1">
                     O contato <strong>ainda não confirmou</strong> este número pelo link do WhatsApp.
-                    Digite o telefone e <strong>peça ao contato para clicar no link</strong> que ele vai
-                    receber — enquanto não confirmar, será preciso digitar a cada pedido.
+                    O pedido segue <strong>normalmente</strong> — não é preciso redigitar o telefone a cada pedido.
+                    <strong> Peça ao contato para clicar no link</strong> que ele recebeu; enquanto não confirmar,
+                    o card fica com a tag <strong>"aguardando confirmação"</strong>.
                   </p>
                 )}
               </div>
