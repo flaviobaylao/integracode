@@ -114,6 +114,7 @@ export default function ResumoVisitas() {
   const [freq, setFreq] = useState("");
   const [segmento, setSegmento] = useState("");
   const [situacaoMulti, setSituacaoMulti] = useState<string[]>(SITUACAO_PADRAO);
+  const [cardFiltro, setCardFiltro] = useState<StatusKey | null>(null);
   const [infoSituacao, setInfoSituacao] = useState(false);
   const [sortBy, setSortBy] = useState<{ key: "cliente" | "cidade" | "efet" | "freq" | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
 
@@ -175,7 +176,10 @@ export default function ResumoVisitas() {
     return rows.some((r) => !(r.segmento || "").trim()) ? [...lista, SEM_SEGMENTO] : lista;
   }, [rows]);
 
-  const filtered = useMemo(() => {
+  // filteredBase = todos os filtros da barra, SEM o clique nos cards. É a base dos 8 cards
+  // e dos totais do topo, para que o painel continue mostrando o panorama enquanto a grade
+  // abaixo mostra só os clientes do card clicado.
+  const filteredBase = useMemo(() => {
     // Normaliza espaços repetidos: nomes vindos do Omie podem ter espaço duplo
     // (ex.: "EMPORIO NOBRE  SETOR OESTE"), então a busca digitada com 1 espaço não casava.
     const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -191,6 +195,13 @@ export default function ResumoVisitas() {
       return true;
     });
   }, [rows, search, sellerMulti, cityMulti, tipoMulti, freq, segmento, situacaoMulti, situacaoDe]);
+
+  // Clique num card = manter só os clientes que têm PELO MENOS UM dia naquela condição,
+  // dentro do período e dos demais filtros. Clicar de novo no mesmo card limpa.
+  const filtered = useMemo(() => {
+    if (!cardFiltro) return filteredBase;
+    return filteredBase.filter((r) => (r.visits || []).some((v) => cellStatus(v) === cardFiltro));
+  }, [filteredBase, cardFiltro]);
 
   // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
   const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
@@ -230,14 +241,14 @@ export default function ResumoVisitas() {
       orange: { n: 0, sale: 0, meta: 0 }, lilac: { n: 0, sale: 0, meta: 0 }, teal: { n: 0, sale: 0, meta: 0 },
       sky: { n: 0, sale: 0, meta: 0 }, blue: { n: 0, sale: 0, meta: 0 }, future: { n: 0, sale: 0, meta: 0 }, none: { n: 0, sale: 0, meta: 0 },
     };
-    for (const r of filtered) {
+    for (const r of filteredBase) {
       for (const v of r.visits || []) {
         const k = cellStatus(v);
         s[k].n++; s[k].sale += v.orderValue || 0; s[k].meta += v.metaValue || 0;
       }
     }
     return s;
-  }, [filtered]);
+  }, [filteredBase]);
 
   const agendadas = summary.green.n + summary.yellow.n + summary.orange.n + summary.red.n;
 
@@ -294,18 +305,39 @@ export default function ResumoVisitas() {
         {cards.map((c) => {
           const st = STATUS[c.key];
           const isAg = c.key === "green" || c.key === "yellow" || c.key === "orange" || c.key === "red";
+          const ativo = cardFiltro === c.key;
           return (
-            <div key={c.key} className="rounded-lg border p-3" style={{ borderLeft: `4px solid ${st.c}` }}>
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => setCardFiltro((p) => (p === c.key ? null : c.key))}
+              aria-pressed={ativo}
+              data-testid={`card-${c.key}`}
+              title={ativo ? "Clique para tirar o filtro deste card" : "Clique para ver só os clientes nesta condição"}
+              className="rounded-lg border p-3 text-left transition-colors hover:bg-muted/40"
+              style={{ borderLeft: `4px solid ${st.c}`, boxShadow: ativo ? `0 0 0 2px ${st.c}` : undefined, background: ativo ? st.bg : undefined }}
+            >
               <div className="text-xs text-muted-foreground">{c.label}</div>
               <div className="text-xl font-bold" style={{ color: st.c }}>
                 {summary[c.key].n}
                 {isAg && <span className="text-xs font-normal text-muted-foreground"> ({pct(summary[c.key].n, agendadas)})</span>}
               </div>
               <div className="text-[11px] text-muted-foreground">{c.sub}</div>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {cardFiltro && (
+        <div className="flex items-center gap-2 text-xs" data-testid="card-filtro-ativo">
+          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1" style={{ borderColor: STATUS[cardFiltro].c, color: STATUS[cardFiltro].c }}>
+            <b>{cards.find((c) => c.key === cardFiltro)?.label}</b>
+            <span className="text-muted-foreground">— {clientesCount} {clientesCount === 1 ? "cliente" : "clientes"}</span>
+          </span>
+          <button type="button" onClick={() => setCardFiltro(null)} className="underline text-muted-foreground" data-testid="limpar-card-filtro">limpar</button>
+          <span className="text-muted-foreground">Os cards continuam mostrando o total do período, sem o recorte do card.</span>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 items-center">
