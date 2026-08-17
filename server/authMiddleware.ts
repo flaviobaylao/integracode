@@ -63,6 +63,12 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
       });
     }
     
+    // 🏭 Perfil "Indústria": acesso total — tratado como ADMIN em todas as rotinas do sistema.
+    if (user.role === 'industria') {
+      (req as any).perfilIndustria = true;
+      user = { ...user, role: 'admin' } as any;
+    }
+
     // 🔁 "Entrar como" (impersonação de ADMIN): permite ao admin ver o sistema com a visão de
     // outra função. Só se aplica quando a função REAL é admin (impede escalonamento de privilégio).
     const _impRole = (req.session as any)?.impersonateRole;
@@ -141,6 +147,11 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
       user = await storage.getUserByEmail(userEmail);
     }
     
+    // 🏭 Perfil "Indústria": acesso total — tratado como ADMIN também nas rotas administrativas.
+    if (user && user.role === 'industria') {
+      user = { ...user, role: 'admin' } as any;
+    }
+
     if (!user || !user.isActive || user.role !== 'admin') {
       return res.status(403).json({ message: "Admin access required" });
     }
