@@ -54,6 +54,7 @@ export default function LeadsManagement() {
     status: "pending" as const,
     assignedTo: "",
     temperature: "" as "" | "cold" | "warm" | "hot" | "very_hot",
+    nextContactDate: "",
   });
 
   // Filtros
@@ -171,6 +172,32 @@ export default function LeadsManagement() {
     },
   });
 
+  // Enviar o lead para a rota do vendedor obedecendo a data de próximo contato.
+  const enviarRotaMutation = useMutation({
+    mutationFn: async ({ id, date }: { id: string; date: string }) => {
+      return await apiRequest('PATCH', `/api/leads/${id}`, { status: 'scheduled', nextContactDate: date });
+    },
+    onSuccess: (_res: any, vars: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      setEditingLead(null);
+      resetForm();
+      const [yy, mm, dd] = String(vars?.date || '').split('-');
+      toast({
+        title: "Enviado para a rota",
+        description: (dd && mm && yy)
+          ? `O lead entrará na rota do vendedor em ${dd}/${mm}/${yy}.`
+          : "O lead entrará na rota do vendedor na data do próximo contato.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao enviar o lead para a rota",
+        variant: "destructive",
+      });
+    },
+  });
+
   const deleteLeadMutation = useMutation({
     mutationFn: async (id: string) => {
       return await apiRequest('DELETE', `/api/leads/${id}`);
@@ -281,6 +308,7 @@ export default function LeadsManagement() {
       status: "pending",
       assignedTo: "",
       temperature: "",
+      nextContactDate: "",
     });
   };
 
@@ -360,14 +388,31 @@ export default function LeadsManagement() {
       }
     }
 
+    const payload: any = { ...formData };
+    if (!payload.nextContactDate) delete payload.nextContactDate;
+
     if (editingLead) {
       updateLeadMutation.mutate({
         id: editingLead.id,
-        data: formData
+        data: payload
       });
     } else {
-      createLeadMutation.mutate(formData);
+      createLeadMutation.mutate(payload);
     }
+  };
+
+  const handleEnviarRota = () => {
+    if (!editingLead) return;
+    if (!formData.assignedTo) {
+      toast({
+        title: "Vendedor obrigatório",
+        description: "Atribua um vendedor responsável antes de enviar o lead para a rota.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const date = formData.nextContactDate || hojeBR();
+    enviarRotaMutation.mutate({ id: editingLead.id, date });
   };
 
   const handleEdit = (lead: Lead) => {
@@ -382,6 +427,7 @@ export default function LeadsManagement() {
       status: lead.status as any,
       assignedTo: lead.assignedTo || "",
       temperature: (lead.temperature || "") as "" | "cold" | "warm" | "hot" | "very_hot",
+      nextContactDate: lead.nextContactDate ? diaCalendario(lead.nextContactDate as any) : "",
     });
   };
 
@@ -1101,7 +1147,36 @@ export default function LeadsManagement() {
               </Select>
             </div>
 
+            {editingLead && isAdmin && (
+              <div>
+                <Label htmlFor="nextContactDate">Próximo Contato</Label>
+                <Input
+                  id="nextContactDate"
+                  type="date"
+                  value={formData.nextContactDate}
+                  onChange={(e) => setFormData({ ...formData, nextContactDate: e.target.value })}
+                  data-testid="input-next-contact-date"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Data em que o lead voltará a aparecer na rota do vendedor.
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
+              {editingLead && isAdmin && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mr-auto border-green-600 text-green-700 hover:bg-green-50"
+                  onClick={handleEnviarRota}
+                  disabled={enviarRotaMutation.isPending}
+                  data-testid="button-enviar-rota"
+                >
+                  <Navigation className="h-4 w-4 mr-2" />
+                  Enviar para Rota do dia
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => {
