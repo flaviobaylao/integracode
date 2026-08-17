@@ -28,11 +28,25 @@ type Row = {
   periodicity: string;
   weekdays: string;
   segmento?: string;
+  documento?: string;
+  cadastroAtivo?: boolean;
   cycles?: Cycle[];
   visits: Visit[];
 };
 
 const SEM_SEGMENTO = "(Sem segmento)";
+
+// Situação do cliente — MESMA regra da tela Gestão de Carteiras (server/carteira-routes.ts):
+// inativo = cadastro inativado; perdido = cadastro ativo, comprava em 3+ meses e está há
+// 3+ meses sem comprar; ativo = o resto. O "perdido" vem do endpoint da Gestão de Carteiras
+// para as duas telas nunca discordarem.
+const SITUACOES = ["Ativo", "Inativo", "Perdido"];
+const SITUACAO_PADRAO = ["Ativo", "Perdido"];
+const SITUACAO_AJUDA: { s: string; t: string }[] = [
+  { s: "Ativo", t: "Cadastro ativo e comprando dentro do ritmo esperado. É o que a tela sempre mostrou." },
+  { s: "Inativo", t: "Cadastro inativado no sistema, mas que ainda tem dia de rota. Não vem marcado — marque para vê-los." },
+  { s: "Perdido", t: "Cadastro ativo, comprava com regularidade (3+ meses com compra) e está há 3+ meses sem comprar." },
+];
 
 type StatusKey = "green" | "yellow" | "red" | "orange" | "lilac" | "teal" | "sky" | "blue" | "future" | "none";
 
@@ -97,6 +111,8 @@ export default function ResumoVisitas() {
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [freq, setFreq] = useState("");
   const [segmento, setSegmento] = useState("");
+  const [situacaoMulti, setSituacaoMulti] = useState<string[]>(SITUACAO_PADRAO);
+  const [infoSituacao, setInfoSituacao] = useState(false);
   const [sortBy, setSortBy] = useState<{ key: "cliente" | "cidade" | "efet" | "freq" | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
 
   const { data, isLoading } = useQuery<{ rows?: Row[]; today?: string }>({
@@ -125,6 +141,26 @@ export default function ResumoVisitas() {
   );
   // Ordem alfabética pt-BR: mantém juntas as variações do mesmo município que vêm do cadastro
   // com grafias diferentes (GOIANIA / Goiania / Goiânia / GOIANIA (GO)), facilitando marcar todas.
+  // Situação "perdido" vem da Gestão de Carteiras (mesma regra dos dois lados), casada por CNPJ/CPF.
+  const { data: carteira } = useQuery<any>({
+    queryKey: ["/api/reports/gestao-carteiras"],
+    queryFn: () => fetch("/api/reports/gestao-carteiras", { credentials: "include" }).then((r) => r.json()),
+    staleTime: 10 * 60 * 1000,
+  });
+  const situacaoPorDoc = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of (carteira?.clientes || [])) {
+      const d = String(c?.doc || "").replace(/\D/g, "");
+      if (d) m.set(d, String(c?.situacao || ""));
+    }
+    return m;
+  }, [carteira]);
+  const situacaoDe = useMemo(() => (r: Row) => {
+    if (r.cadastroAtivo === false) return "Inativo";
+    const d = String(r.documento || "").replace(/\D/g, "");
+    return situacaoPorDoc.get(d) === "perdido" ? "Perdido" : "Ativo";
+  }, [situacaoPorDoc]);
+
   const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
   const segmentos = useMemo(() => {
@@ -142,10 +178,11 @@ export default function ResumoVisitas() {
       if (!multiMatch(cityMulti, r.city || "")) return false;
       if (freq && r.periodicity !== freq) return false;
       if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
+      if (!multiMatch(situacaoMulti, situacaoDe(r))) return false;
       if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
-  }, [rows, search, seller, cityMulti, freq, segmento]);
+  }, [rows, search, seller, cityMulti, freq, segmento, situacaoMulti, situacaoDe]);
 
   // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
   const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
@@ -271,6 +308,30 @@ export default function ResumoVisitas() {
         <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={setCityMulti} testId="filter-city-resumo-visitas" />
         <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ maxWidth: 260 }} title="Segmento de negócio do cliente (derivado do CNAE)"><option value="">Todos os segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+        <div className="relative inline-block" data-testid="filter-situacao-wrap">
+          <MultiSelect label="Situação" options={SITUACOES} selected={situacaoMulti} onChange={setSituacaoMulti} testId="filter-situacao-resumo-visitas" />
+          <button
+            type="button"
+            onClick={() => setInfoSituacao((v) => !v)}
+            title="O que significa cada situação"
+            data-testid="info-situacao"
+            className="absolute -top-2 -right-2 z-10 h-4 w-4 rounded-full border bg-white dark:bg-gray-800 dark:border-gray-600 text-[10px] leading-none font-bold text-gray-600 dark:text-gray-300 shadow-sm"
+          >i</button>
+          {infoSituacao && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setInfoSituacao(false)} />
+              <div className="absolute z-50 right-0 top-full mt-1 w-80 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 shadow-lg p-3 text-xs space-y-2 text-left">
+                <div className="font-semibold">O que significa cada situação</div>
+                {SITUACAO_AJUDA.map((a) => (
+                  <div key={a.s}><b>{a.s}</b> — <span className="text-muted-foreground">{a.t}</span></div>
+                ))}
+                <div className="text-[11px] text-muted-foreground border-t pt-2 dark:border-gray-700">
+                  Mesma regra da tela Gestão de Carteiras. Nenhuma opção marcada = todas.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Legenda */}
