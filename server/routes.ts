@@ -22734,10 +22734,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let debtsMap: Record<string, number> = {};
       const DEBT_BADGE_TOLERANCE = 50;
 
-      if (documents.length > 0) {
+      {
+        // CASA POR customer_id (vínculo direto do título) OU por documento normalizado.
+        // ANTES casava SÓ por documento (cnpj/cpf do CADASTRO) — mas muitos cadastros estão
+        // sem cnpj/cpf (ou com documento divergente do título). Nesses casos o título vencido,
+        // embora ligado ao cliente por customer_id na própria Contas a Receber, NÃO aparecia
+        // no badge da Rota (o R$ 0,00 que o vendedor via mesmo com o cliente devendo).
+        // Régua "vencida" idêntica ao bloqueio + piso de R$50 por cliente.
         const debtsResult = await db.execute(sql`
-          SELECT REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') AS ndoc,
-                 SUM(amount - COALESCE(amount_paid, 0)) AS saldo
+          SELECT customer_id AS cid,
+                 REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') AS ndoc,
+                 (amount - COALESCE(amount_paid, 0)) AS saldo
           FROM receivables
           WHERE deleted_at IS NULL
             AND (amount - COALESCE(amount_paid, 0)) > 0
@@ -22746,23 +22753,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
               status IN ('a_vencer', 'vencida')
               AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
             )
-            AND REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))
-          GROUP BY 1
+            AND (
+              customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+              ${documents.length > 0
+                ? sql`OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))`
+                : sql``}
+            )
         `);
 
-        // Criar mapa de documento -> total de débito vencido (em aberto)
-        const documentToDebt: Record<string, number> = {};
+        // Documento normalizado -> customerId (para casar títulos que vêm SEM customer_id).
+        const docToCustomerId: Record<string, string> = {};
+        Object.entries(customerDocuments).forEach(([cid, doc]) => { if (doc) docToCustomerId[doc] = cid; });
+
+        // Cada título é atribuído a UM cliente: prioriza o vínculo direto (customer_id da rota);
+        // se o título não tiver customer_id na rota, cai para o cliente cujo documento bate.
+        const wanted = new Set(customerIds);
+        const saldoByCustomer: Record<string, number> = {};
         (debtsResult.rows as any[]).forEach(row => {
-          const normalizedDoc = (row.ndoc || '').replace(/\D/g, '');
-          if (normalizedDoc) documentToDebt[normalizedDoc] = parseFloat(row.saldo || '0');
+          const saldo = parseFloat(row.saldo || '0');
+          if (!(saldo > 0)) return;
+          let target: string | undefined;
+          if (row.cid && wanted.has(String(row.cid))) target = String(row.cid);
+          else {
+            const nd = (row.ndoc || '').replace(/\D/g, '');
+            if (nd && docToCustomerId[nd]) target = docToCustomerId[nd];
+          }
+          if (target) saldoByCustomer[target] = (saldoByCustomer[target] || 0) + saldo;
         });
 
-        // Mapear customerId -> débito total (só acima do piso de tolerância, igual ao bloqueio)
-        Object.entries(customerDocuments).forEach(([customerId, doc]) => {
-          const saldo = documentToDebt[doc];
-          if (saldo && saldo > DEBT_BADGE_TOLERANCE) {
-            debtsMap[customerId] = saldo;
-          }
+        // Só acima do piso de tolerância (igual ao bloqueio).
+        Object.entries(saldoByCustomer).forEach(([customerId, saldo]) => {
+          if (saldo > DEBT_BADGE_TOLERANCE) debtsMap[customerId] = saldo;
         });
       }
       
