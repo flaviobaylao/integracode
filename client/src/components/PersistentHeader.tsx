@@ -53,7 +53,7 @@ export default function PersistentHeader() {
   }, [user]);
 
   const u = user as any;
-  const roleLabel = u?.role ? (ROLE_LABELS[u.role] || u.role) : "";
+  const roleLabel = u?._perfilIndustria ? ROLE_LABELS.industria : (u?.role ? (ROLE_LABELS[u.role] || u.role) : "");
 
   // Atalhos exibidos no cabeçalho: fixa o Inbox de Solicitações de Alteração
   // (admin) sempre visível e limita a 10 atalhos no total.
