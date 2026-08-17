@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -365,40 +365,6 @@ export default function GestaoCarteiras() {
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
   const debitoFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + (c.debito || 0), 0), [listaFiltrada]);
-
-  // Barra de rolagem horizontal espelho, logo abaixo do último cliente da página.
-  const areaTabelaRef = useRef<HTMLDivElement>(null);
-  const barraRolagemRef = useRef<HTMLDivElement>(null);
-  const [larguraRolagem, setLarguraRolagem] = useState(0);
-  // SEM array de dependencias de proposito: remede a cada render (troca de filtro,
-  // de coluna, de pagina). ResizeObserver entra so como reforco — em aba de fundo
-  // ele nao entrega callback, e a medida na renderizacao cobre esse caso.
-  useEffect(() => {
-    const area = areaTabelaRef.current;
-    // O div de scroll e o wrapper que o proprio <Table> cria em volta do <table>.
-    const scroller = area?.querySelector<HTMLDivElement>(":scope > div");
-    const barra = barraRolagemRef.current;
-    if (!area || !scroller) return;
-    const medir = () => setLarguraRolagem(scroller.scrollWidth > scroller.clientWidth + 1 ? scroller.scrollWidth : 0);
-    medir();
-    const daTabela = () => { if (barra && barra.scrollLeft !== scroller.scrollLeft) barra.scrollLeft = scroller.scrollLeft; };
-    const daBarra = () => { if (barra && scroller.scrollLeft !== barra.scrollLeft) scroller.scrollLeft = barra.scrollLeft; };
-    scroller.addEventListener("scroll", daTabela, { passive: true });
-    barra?.addEventListener("scroll", daBarra, { passive: true });
-    window.addEventListener("resize", medir);
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(medir) : null;
-    if (ro) {
-      ro.observe(scroller);
-      const tabela = scroller.querySelector("table");
-      if (tabela) ro.observe(tabela);
-    }
-    return () => {
-      scroller.removeEventListener("scroll", daTabela);
-      barra?.removeEventListener("scroll", daBarra);
-      window.removeEventListener("resize", medir);
-      ro?.disconnect();
-    };
-  });
 
   // ── Situação da carteira (4 barras) ───────────────────────────────────────
   // Fluxos em R$/mês; o débito é estoque (total vencido em aberto hoje) e vai
@@ -1078,9 +1044,13 @@ export default function GestaoCarteiras() {
               </p>
             </CardHeader>
             <CardContent>
-              <div ref={areaTabelaRef}>
+              {/* Sem o teto de altura do design system (max-h-[75vh]): assim o div de
+                  scroll do <Table> termina na última linha e a barra de rolagem
+                  horizontal nativa fica exatamente ali, embaixo do último cliente da
+                  página. Em troca o cabeçalho vira sticky, para não sumir na rolagem. */}
+              <div className="[&>div]:max-h-none [&>div]:overflow-x-auto">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-10">#</TableHead>
                     {thOrdenavel("nome", "Cliente")}
@@ -1141,16 +1111,6 @@ export default function GestaoCarteiras() {
                 </TableBody>
               </Table>
               </div>
-              {larguraRolagem > 0 ? (
-                <div
-                  ref={barraRolagemRef}
-                  data-testid="barra-rolagem-clientes"
-                  aria-hidden="true"
-                  className="overflow-x-auto overflow-y-hidden h-4 mt-1 rounded bg-muted/30"
-                >
-                  <div style={{ width: larguraRolagem, height: 1 }} />
-                </div>
-              ) : null}
               <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
                 <p className="text-xs text-muted-foreground">
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
