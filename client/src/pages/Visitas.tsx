@@ -85,7 +85,13 @@ export default function Visitas() {
   // Regra: 1 por cliente em CADA dia de visita do cadastro (weekdays), independente da
   // periodicidade. Presencial vs Virtual = campo virtual_service do cliente.
   const calendario = useMemo(() => {
+    // Nome por TODOS os usuários (não só os vendedores ativos do filtro), para que clientes
+    // atribuídos a vendedores inativos/canais apareçam com o nome real em vez de "Sem vendedor".
     const nameOf = new Map<string, string>();
+    for (const u of (users || [])) {
+      const nm = (((u.firstName || "") + " " + (u.lastName || "")).trim()) || (u.email || "").split("@")[0] || "";
+      if (u.id && nm) nameOf.set(u.id, nm);
+    }
     sellers.forEach((s: any) => nameOf.set(s.id, s.name));
     const per = new Map<string, { name: string; days: Record<string, { p: number; v: number }> }>();
     const ensure = (uid: string, nm: string) => {
@@ -111,7 +117,7 @@ export default function Visitas() {
       .map(([uid, r]) => ({ uid, ...r }))
       .sort((a, b) => (a.uid === "__sem" ? 1 : b.uid === "__sem" ? -1 : a.name.localeCompare(b.name, "pt-BR")));
     return { dias, rows };
-  }, [customers, sellers, sellerIdToUser, selSellers]);
+  }, [customers, users, sellers, sellerIdToUser, selSellers]);
 
   const dayTotal = (days: Record<string, { p: number; v: number }>, dk: string, tipo: "p" | "v" | "t") => {
     const cell = days[dk] || { p: 0, v: 0 };
