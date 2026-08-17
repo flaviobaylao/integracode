@@ -26738,6 +26738,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`🔓 [COORD-UNLOCK] Lead ${id}: coordenada alterada manualmente → destravada para reverificação no próximo check-in`);
       }
 
+      // 📅 Normaliza próximo contato: 'YYYY-MM-DD' → instante ancorado ao meio-dia UTC
+      // (data de calendário estável na conversão de fuso, igual ao resto do sistema de rotas).
+      if (Object.prototype.hasOwnProperty.call(updateData, 'nextContactDate')) {
+        const _v = updateData.nextContactDate;
+        if (!_v) {
+          updateData.nextContactDate = null;
+        } else if (typeof _v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(_v)) {
+          const [_y, _m, _d] = _v.split('-').map(Number);
+          updateData.nextContactDate = new Date(Date.UTC(_y, _m - 1, _d, 12, 0, 0));
+        } else {
+          updateData.nextContactDate = new Date(_v);
+        }
+      }
+
       const lead = await storage.updateLead(id, updateData);
       res.json(lead);
     } catch (error) {
