@@ -3,6 +3,19 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { computeCycles, cyclesToShow } from "./repescagem-cycles";
 
+/** PJ/PF pelo documento; cai no customer_type quando o documento nao ajuda.
+ *  MESMA regra do classificaTipo de server/carteira-routes.ts — as duas telas
+ *  precisam contar PJ e PF do mesmo jeito. */
+function classificaTipoPessoa(doc: any, customerType: any): "PJ" | "PF" | "Não identificado" {
+  const d = String(doc || "").replace(/\D/g, "");
+  if (d.length === 14) return "PJ";
+  if (d.length === 11) return "PF";
+  const t = String(customerType || "").toLowerCase();
+  if (t.includes("juridica") || t.includes("jurídica")) return "PJ";
+  if (t.includes("fisica") || t.includes("física")) return "PF";
+  return "Não identificado";
+}
+
 // ====== RESUMO DE VISITAS E ATENDIMENTOS — paridade com o 1.0 (calendário por cliente) ======
 export function registerVisitSummary(app: Express) {
   app.get("/api/visit-summary", async (req: Request, res: Response) => {
@@ -24,6 +37,7 @@ export function registerVisitSummary(app: Express) {
                c.visit_periodicity AS periodicity, c.weekdays, c.segmento_principal AS segmento,
                COALESCE(c.is_active, false) AS cad_ativo,
                NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS documento,
+               c.customer_type,
                TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name
         FROM customers c
         LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', '') OR u.id = c.seller_id)
@@ -94,7 +108,7 @@ export function registerVisitSummary(app: Express) {
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
         const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
-        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, cycles, visits };
+        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, tipoPessoa: classificaTipoPessoa(cl.documento, cl.customer_type), cycles, visits };
       });
 
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
