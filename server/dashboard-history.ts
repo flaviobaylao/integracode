@@ -121,7 +121,7 @@ function diffDays(a: string, b: string): number { return Math.round((ymdToDate(b
 
 const CARTEIRA_SELLER = "(SELECT DISTINCT ON (doc) doc, seller FROM (SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') AS seller FROM customers c JOIN users u ON (u.omie_vendor_code=c.seller_id OR u.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id=c.seller_id) WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> '') s ORDER BY doc) cs";
 
-export async function computeForecast(): Promise<{ asOf: string; monthEnd: string; forecast: { seller: string; date: string; value: number }[]; total: number; clients: number }> {
+export async function computeForecast(only?: string): Promise<{ asOf: string; monthEnd: string; forecast: { seller: string; date: string; value: number }[]; total: number; clients: number }> {
   const today = todayBrt();
   const [Y, M] = today.split("-").map(Number);
   const monthEnd = dateToYmd(new Date(Date.UTC(Y, M, 0)));
@@ -160,6 +160,7 @@ export async function computeForecast(): Promise<{ asOf: string; monthEnd: strin
     const T = tw > 0 ? ts / tw : 0;
     if (T <= 0) continue;
     const seller = docSeller[doc] || "Sem vendedor";
+    if (only && seller !== only) continue;
     const L = rows[rows.length - 1].d;
     clients++;
     let cand = addDays(L, P); let guard = 0;
@@ -181,6 +182,25 @@ export async function computeForecast(): Promise<{ asOf: string; monthEnd: strin
   return { asOf: today, monthEnd, forecast, total, clients };
 }
 
+// Resolve o NOME do vendedor logado (para escopo de carteira) — vazio p/ admin e demais papeis.
+async function scopeSellerName(req: any): Promise<string> {
+  try {
+    const s: any = (req && req.session) || {};
+    let uid: any = s.userId || (s.user && s.user.claims && s.user.claims.sub) || ((req && req.isAuthenticated && req.isAuthenticated() && req.user && req.user.claims) ? req.user.claims.sub : null);
+    let umail: any = s.userEmail || (s.user && s.user.claims && s.user.claims.email) || ((req && req.user && req.user.claims) ? req.user.claims.email : null) || null;
+    let row: any = null;
+    const SID = uid ? String(uid).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+    if (SID) { const r = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE id='" + SID + "' LIMIT 1"); row = r[0]; }
+    if ((!row) && umail) { const M = String(umail).replace(/[']/g, ''); const r = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE lower(email)=lower('" + M + "') LIMIT 1"); row = r[0]; }
+    if (!row || row.is_active === false) return "";
+    let role = String(row.role || '');
+    const imp = s.impersonateRole;
+    if (imp && role === 'admin') role = String(imp);
+    if (role !== 'vendedor' && role !== 'telemarketing') return "";
+    return String(row.nome || '');
+  } catch (e) { return ""; }
+}
+
 export function registerDashboardHistoryRoutes(app: Express): void {
   // Garante tabela + backfill inicial (uma vez, em background) sem travar o boot.
   ensureDashboardHistoryTable().then(async () => {
@@ -193,17 +213,23 @@ export function registerDashboardHistoryRoutes(app: Express): void {
   }).catch(() => {});
 
   // Leitura do historico (publico, somente leitura).
-  app.get("/api/dashboard2/history", async (_req, res) => {
+  app.get("/api/dashboard2/history", async (req, res) => {
     try {
       await ensureDashboardHistoryTable();
+      const scopeName = await scopeSellerName(req);
       const snaps = await rawq("SELECT snapshot_date::text AS snapshot_date, day_sales, sellers, captured_at FROM dashboard_snapshots ORDER BY snapshot_date");
-      res.json({ snapshots: snaps.map((s) => ({ date: s.snapshot_date, daySales: Number(s.day_sales) || 0, sellers: s.sellers || [], capturedAt: s.captured_at })) });
+      res.json({ snapshots: snaps.map((s) => {
+        let sellers = (s.sellers || []) as any[];
+        let daySales = Number(s.day_sales) || 0;
+        if (scopeName) { sellers = sellers.filter((x: any) => String(x.seller) === scopeName); daySales = sellers.reduce((a: number, x: any) => a + (Number(x.total) || 0), 0); }
+        return { date: s.snapshot_date, daySales, sellers, capturedAt: s.captured_at };
+      }) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
   // Previsao de faturamento por cliente da carteira (periodicidade + dia da semana).
-  app.get("/api/dashboard2/forecast", async (_req, res) => {
-    try { const r = await computeForecast(); res.json(r); }
+  app.get("/api/dashboard2/forecast", async (req, res) => {
+    try { const scopeName = await scopeSellerName(req); const r = await computeForecast(scopeName || undefined); res.json(r); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
