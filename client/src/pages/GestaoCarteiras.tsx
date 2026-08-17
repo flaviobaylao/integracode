@@ -40,7 +40,14 @@ type Cliente = {
   mesesComCompra: number; primeiraCompra: string | null; ultimaCompra: string | null;
   mediaSimples: number; mediaPonderada: number; classe: "A" | "B" | "C";
   potencialMes: number; debito: number; situacao: "ativo" | "inativo" | "perdido"; mesesSemComprar: number;
+  // Nota do cliente: letra = nivel de faturamento, sinal = positivacao de pagamento.
+  nota?: string; pontualidade?: number | null; titulosMedidos?: number;
+  piorAtraso?: number; atrasoMedio?: number; diasVencido?: number;
 };
+
+/** As 8 notas na ordem da tela. Mesma lista do servidor (NOTAS_ORDEM). */
+const NOTAS_ORDEM = ["A+", "A-", "B+", "B-", "C+", "C-", "D+", "D-"];
+const NOTA_COR: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6ef", D: "#c8ddf8" };
 
 function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: string; cor?: string }) {
   const Icon = props.icon;
@@ -75,6 +82,8 @@ export default function GestaoCarteiras() {
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
   const [busca, setBusca] = useState("");
+  // Aba do quadro de ticket medio: a distribuicao crua ou a nota A+/A-/.../D-.
+  const [abaQuadro, setAbaQuadro] = useState<"ticket" | "notas">("ticket");
   const [visiveis, setVisiveis] = useState(50);
 
   const { data, isLoading, error } = useQuery<any>({
@@ -204,6 +213,36 @@ export default function GestaoCarteiras() {
     faturamentoMes: faixas.reduce((s: number, f: any) => s + (f.faturamentoMes || 0), 0),
   }), [faixas]);
 
+  // NOTA A+/A-/.../D- — mesma logica do servidor, so agrupando o campo `nota`
+  // que ja vem pronto em cada cliente (assim tela e API nunca divergem).
+  const notas = useMemo(() => {
+    if (!filtrando) return d?.notas || [];
+    const base: any[] = d?.notas || [];
+    return NOTAS_ORDEM.map((n) => {
+      const dentro = clientes.filter((c) => c.nota === n);
+      return {
+        nota: n,
+        letra: n[0],
+        sinal: n[1],
+        label: base.find((b: any) => b.nota === n)?.label || "",
+        clientes: dentro.length,
+        pj: dentro.filter((c) => c.tipo === "PJ").length,
+        pf: dentro.filter((c) => c.tipo === "PF").length,
+        valor: dentro.reduce((s: number, c: any) => s + c.total, 0),
+        faturamentoMes: dentro.reduce((s: number, c: any) => s + c.mediaSimples, 0),
+        debito: dentro.reduce((s: number, c: any) => s + (c.debito || 0), 0),
+        comDebito: dentro.filter((c) => (c.debito || 0) > 0).length,
+        semMedicao: dentro.filter((c) => c.pontualidade == null).length,
+      };
+    });
+  }, [d, clientes, filtrando]);
+  const notasTotais = useMemo(() => ({
+    clientes: notas.reduce((s: number, n: any) => s + (n.clientes || 0), 0),
+    faturamentoMes: notas.reduce((s: number, n: any) => s + (n.faturamentoMes || 0), 0),
+    debito: notas.reduce((s: number, n: any) => s + (n.debito || 0), 0),
+    semMedicao: notas.reduce((s: number, n: any) => s + (n.semMedicao || 0), 0),
+  }), [notas]);
+
   // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
   // em cada um (potencial nos parados, valor em aberto no débito).
   const listaSituacao = useMemo(() => {
@@ -318,13 +357,17 @@ export default function GestaoCarteiras() {
       listaFiltrada
         .map((c, i) => ({
           "#": i + 1, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: c.tipo, Classe: classeDe.get(c.chave) || c.classe,
-          Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
+          Nota: c.nota || "", Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
           "Faturamento no período": Number(c.total.toFixed(2)),
           "Média ponderada/mês": Number(c.mediaPonderada.toFixed(2)),
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
           "Meses com compra": c.mesesComCompra, "Última compra": c.ultimaCompra || "",
           Situação: c.situacao, "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
           "Débito vencido": Number((c.debito || 0).toFixed(2)),
+          "Dias vencido": c.diasVencido || 0,
+          "Pontualidade %": c.pontualidade == null ? "" : Number((c.pontualidade * 100).toFixed(1)),
+          "Títulos medidos": c.titulosMedidos || 0,
+          "Pior atraso (dias)": c.piorAtraso || 0,
         })),
       `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
@@ -619,17 +662,52 @@ export default function GestaoCarteiras() {
               </CardContent>
             </Card>
 
-            {/* Quantidade de clientes por ticket médio (substituiu a pizza PJ x PF) */}
+            {/* Quantidade de clientes por ticket médio + a nota A+/A-/.../D- */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle>Quantidade de clientes por ticket médio</CardTitle>
+                <CardTitle>
+                  {abaQuadro === "ticket" ? "Quantidade de clientes por ticket médio" : "Nota do cliente"}
+                </CardTitle>
                 <CardDescription>
-                  Ticket médio = faturado no cliente ÷ meses em que ele comprou (o ritmo dele quando compra).
-                  O faturamento da faixa é quanto ela entrega por mês no período.
+                  {abaQuadro === "ticket" ? (
+                    <>
+                      Ticket médio = faturado no cliente ÷ meses em que ele comprou (o ritmo dele quando compra).
+                      O faturamento da faixa é quanto ela entrega por mês no período.
+                    </>
+                  ) : (
+                    <>
+                      A <strong>letra</strong> é o nível de faturamento (o mesmo ticket médio ao lado, em 4 degraus).
+                      O <strong>sinal</strong> é a positivação de pagamento: <strong>+</strong> para quem pagou ao menos
+                      80% dos títulos em até 3 dias do vencimento <em>e</em> não deve nada hoje; <strong>−</strong> para
+                      o resto.
+                    </>
+                  )}
                 </CardDescription>
+                {/* Abas do quadro */}
+                <div className="flex gap-1 pt-2" role="tablist">
+                  {([
+                    { k: "ticket", t: "Ticket médio" },
+                    { k: "notas", t: "Nota A–D" },
+                  ] as const).map((a) => (
+                    <button
+                      key={a.k}
+                      role="tab"
+                      aria-selected={abaQuadro === a.k}
+                      onClick={() => setAbaQuadro(a.k)}
+                      data-testid={`tab-quadro-${a.k}`}
+                      className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                        abaQuadro === a.k
+                          ? "bg-primary text-primary-foreground border-primary font-medium"
+                          : "bg-background text-muted-foreground border-border hover:bg-muted"
+                      }`}
+                    >
+                      {a.t}
+                    </button>
+                  ))}
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
+                <div className={abaQuadro === "ticket" ? "overflow-x-auto" : "hidden"}>
                   <table className="w-full text-sm">
                     <thead className="text-muted-foreground">
                       <tr className="text-left border-b">
@@ -669,6 +747,84 @@ export default function GestaoCarteiras() {
                       </tr>
                     </tbody>
                   </table>
+                </div>
+
+                {/* ── Aba NOTA ─────────────────────────────────────────────── */}
+                <div className={abaQuadro === "notas" ? "overflow-x-auto" : "hidden"}>
+                  <table className="w-full text-sm">
+                    <thead className="text-muted-foreground">
+                      <tr className="text-left border-b">
+                        <th className="py-2 pr-2 w-14">Nota</th>
+                        <th className="py-2 px-2 text-right w-20">Clientes</th>
+                        <th className="py-2 px-2 text-right w-16">%</th>
+                        <th className="py-2 px-2">Nível de faturamento</th>
+                        <th className="py-2 pl-2 text-right w-32">Fat. médio/mês</th>
+                        <th className="py-2 pl-2 text-right w-28">Débito hoje</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notas.map((n: any) => (
+                        <tr
+                          key={n.nota}
+                          className={`border-b last:border-0 ${n.sinal === "-" ? "" : "bg-muted/20"}`}
+                          data-testid={`nota-${n.letra}${n.sinal === "+" ? "mais" : "menos"}`}
+                        >
+                          <td className="py-2 pr-2">
+                            <span
+                              className="inline-flex items-center justify-center min-w-[2.25rem] rounded px-1.5 py-0.5 text-xs font-bold text-white"
+                              style={{
+                                background: NOTA_COR[n.letra] || CINZA,
+                                color: n.letra === "D" ? "#0f172a" : "#ffffff",
+                                opacity: n.sinal === "-" ? 0.75 : 1,
+                              }}
+                            >
+                              {n.letra}
+                              {n.sinal === "+" ? "+" : "−"}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 text-right font-semibold">{NUM(n.clientes || 0)}</td>
+                          <td className="py-2 px-2 text-right text-muted-foreground">
+                            {notasTotais.clientes ? ((n.clientes / notasTotais.clientes) * 100).toFixed(1).replace(".", ",") : "0,0"}%
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {n.label}
+                            <span className="text-muted-foreground">
+                              {" · "}
+                              {n.sinal === "+" ? "paga em dia" : "atrasa ou está devendo"}
+                            </span>
+                          </td>
+                          <td className="py-2 pl-2 text-right font-medium whitespace-nowrap">{BRL0(n.faturamentoMes || 0)}</td>
+                          <td
+                            className={`py-2 pl-2 text-right whitespace-nowrap ${(n.debito || 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                          >
+                            {(n.debito || 0) > 0 ? BRL0(n.debito) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-semibold">
+                        <td className="py-2 pr-2">Total</td>
+                        <td className="py-2 px-2 text-right">{NUM(notasTotais.clientes)}</td>
+                        <td className="py-2 px-2 text-right">100,0%</td>
+                        <td className="py-2 px-2" />
+                        <td className="py-2 pl-2 text-right whitespace-nowrap">{BRL0(notasTotais.faturamentoMes)}</td>
+                        <td className="py-2 pl-2 text-right whitespace-nowrap text-destructive">{BRL0(notasTotais.debito)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
+                    A pontualidade é medida nos títulos do período que têm data de baixa registrada.
+                    {notasTotais.semMedicao > 0 && (
+                      <>
+                        {" "}
+                        <strong>{NUM(notasTotais.semMedicao)}</strong> cliente
+                        {notasTotais.semMedicao === 1 ? " não tem" : "s não têm"} nenhum título com data de pagamento
+                        (importação antiga trouxe o valor pago, mas não a data) — esse
+                        {notasTotais.semMedicao === 1 ? "" : "s"} entra
+                        {notasTotais.semMedicao === 1 ? "" : "m"} na nota só pelo débito de hoje.
+                      </>
+                    )}
+                    {" "}A coluna Nota também sai no Exportar Excel, cliente a cliente.
+                  </p>
                 </div>
               </CardContent>
             </Card>
