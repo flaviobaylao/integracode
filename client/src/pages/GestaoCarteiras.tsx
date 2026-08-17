@@ -14,8 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
-// ABC e ordinal: rampa de UM tom (azul), claro -> escuro.
-const COR_ABC: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6ef" };
+// Classe e ordinal: rampa de UM tom (azul), escuro (A) -> claro (D).
 // PJ/PF e categorico: slots 1 e 2 da ordem fixa; cinza para "nao identificado".
 const COR_TIPO: Record<string, string> = { PJ: "#2a78d6", PF: "#eb6834", "Não identificado": "#898781" };
 const CINZA = "#898781";
@@ -38,16 +37,16 @@ type Cliente = {
   chave: string; doc: string | null; nome: string; tipo: string; vendedor: string; cidade: string;
   segmento: string; cadastrado: boolean; ativo: boolean; total: number; titulos: number;
   mesesComCompra: number; primeiraCompra: string | null; ultimaCompra: string | null;
-  mediaSimples: number; mediaPonderada: number; classe: "A" | "B" | "C";
+  mediaSimples: number; mediaPonderada: number;
   potencialMes: number; debito: number; situacao: "ativo" | "inativo" | "perdido"; mesesSemComprar: number;
-  // Nota do cliente: letra = nivel de faturamento, sinal = positivacao de pagamento.
-  nota?: string; pontualidade?: number | null; titulosMedidos?: number;
+  // Classe do cliente: letra = nivel de faturamento, sinal = positivacao de pagamento.
+  classe?: string; pontualidade?: number | null; titulosMedidos?: number;
   piorAtraso?: number; atrasoMedio?: number; diasVencido?: number;
 };
 
-/** As 8 notas na ordem da tela. Mesma lista do servidor (NOTAS_ORDEM). */
-const NOTAS_ORDEM = ["A+", "A-", "B+", "B-", "C+", "C-", "D+", "D-"];
-const NOTA_COR: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6ef", D: "#c8ddf8" };
+/** As 8 classes na ordem da tela. Mesma lista do servidor (CLASSES_ORDEM). */
+const CLASSES_ORDEM = ["A+", "A-", "B+", "B-", "C+", "C-", "D+", "D-"];
+const CLASSE_COR: Record<string, string> = { A: "#184f95", B: "#3987e5", C: "#86b6ef", D: "#c8ddf8" };
 
 function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: string; cor?: string }) {
   const Icon = props.icon;
@@ -80,10 +79,11 @@ export default function GestaoCarteiras() {
   const [visao, setVisao] = useState<"situacao" | "clientes">("situacao");
   const [balde, setBalde] = useState<"inativos" | "perdidos" | "debito">("inativos");
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
-  const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C">("todas");
+  const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C" | "D">("todas");
+  const [sinalSel, setSinalSel] = useState<"todos" | "+" | "-">("todos");
   const [busca, setBusca] = useState("");
-  // Aba do quadro de ticket medio: a distribuicao crua ou a nota A+/A-/.../D-.
-  const [abaQuadro, setAbaQuadro] = useState<"ticket" | "notas">("ticket");
+  // Aba do quadro de ticket medio: a distribuicao crua ou a classe A+/A-/.../D-.
+  const [abaQuadro, setAbaQuadro] = useState<"ticket" | "classes">("ticket");
   const [visiveis, setVisiveis] = useState(50);
 
   const { data, isLoading, error } = useQuery<any>({
@@ -161,33 +161,13 @@ export default function GestaoCarteiras() {
     return out;
   }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa]);
 
-  // Com filtro de vendedor a curva ABC é recalculada só na carteira dele.
-  const abc = useMemo(() => {
-    if (!filtrando) return d?.abc || [];
-    const tot = clientes.reduce((s, c) => s + c.total, 0);
-    const acc: Record<string, { clientes: number; valor: number }> = { A: { clientes: 0, valor: 0 }, B: { clientes: 0, valor: 0 }, C: { clientes: 0, valor: 0 } };
-    let soma = 0;
-    for (const c of [...clientes].sort((a, b) => b.total - a.total)) {
-      soma += c.total;
-      const pct = tot > 0 ? soma / tot : 0;
-      const k = pct <= 0.8 ? "A" : pct <= 0.95 ? "B" : "C";
-      acc[k].clientes++; acc[k].valor += c.total;
-    }
-    return (["A", "B", "C"] as const).map((k) => ({ classe: k, ...acc[k], pctValor: tot > 0 ? (acc[k].valor / tot) * 100 : 0 }));
-  }, [d, clientes, filtrando]);
-
-  const classeDe = useMemo(() => {
-    if (!filtrando) return new Map(todos.map((c) => [c.chave, c.classe]));
-    const tot = clientes.reduce((s, c) => s + c.total, 0);
-    const m = new Map<string, "A" | "B" | "C">();
-    let soma = 0;
-    for (const c of [...clientes].sort((a, b) => b.total - a.total)) {
-      soma += c.total;
-      const pct = tot > 0 ? soma / tot : 0;
-      m.set(c.chave, pct <= 0.8 ? "A" : pct <= 0.95 ? "B" : "C");
-    }
-    return m;
-  }, [todos, clientes, filtrando]);
+  // A classe (A+/A-/.../D-) vem pronta do servidor em cada cliente: a letra e o
+  // nivel de faturamento (ticket medio) e o sinal e a positivacao de pagamento.
+  // Diferente da antiga curva ABC, ela NAO depende do recorte da tela — o mesmo
+  // cliente tem a mesma classe com ou sem filtro de vendedor.
+  const classeLabelDe = (c: Cliente) => String(c.classe || "");
+  const letraDe = (c: Cliente) => classeLabelDe(c).charAt(0) || "D";
+  const sinalDe = (c: Cliente) => (classeLabelDe(c).charAt(1) === "+" ? "+" : "-");
 
   // Quantidade de clientes por faixa de TICKET MEDIO (substituiu a pizza PJ x PF).
   // Ticket medio = potencialMes: total do cliente ÷ meses em que ele comprou.
@@ -212,19 +192,19 @@ export default function GestaoCarteiras() {
     pf: faixas.reduce((s: number, f: any) => s + (f.pf || 0), 0),
     faturamentoMes: faixas.reduce((s: number, f: any) => s + (f.faturamentoMes || 0), 0),
   }), [faixas]);
-
+  // CLASSE A+/A-/.../D- — mesma logica do servidor, so agrupando o campo `classe`
   // NOTA A+/A-/.../D- — mesma logica do servidor, so agrupando o campo `nota`
   // que ja vem pronto em cada cliente (assim tela e API nunca divergem).
-  const notas = useMemo(() => {
-    if (!filtrando) return d?.notas || [];
-    const base: any[] = d?.notas || [];
-    return NOTAS_ORDEM.map((n) => {
-      const dentro = clientes.filter((c) => c.nota === n);
+  const classes = useMemo(() => {
+    if (!filtrando) return d?.classes || [];
+    const base: any[] = d?.classes || [];
+    return CLASSES_ORDEM.map((n) => {
+      const dentro = clientes.filter((c) => c.classe === n);
       return {
-        nota: n,
+        classe: n,
         letra: n[0],
         sinal: n[1],
-        label: base.find((b: any) => b.nota === n)?.label || "",
+        label: base.find((b: any) => b.classe === n)?.label || "",
         clientes: dentro.length,
         pj: dentro.filter((c) => c.tipo === "PJ").length,
         pf: dentro.filter((c) => c.tipo === "PF").length,
@@ -236,12 +216,12 @@ export default function GestaoCarteiras() {
       };
     });
   }, [d, clientes, filtrando]);
-  const notasTotais = useMemo(() => ({
-    clientes: notas.reduce((s: number, n: any) => s + (n.clientes || 0), 0),
-    faturamentoMes: notas.reduce((s: number, n: any) => s + (n.faturamentoMes || 0), 0),
-    debito: notas.reduce((s: number, n: any) => s + (n.debito || 0), 0),
-    semMedicao: notas.reduce((s: number, n: any) => s + (n.semMedicao || 0), 0),
-  }), [notas]);
+  const classesTotais = useMemo(() => ({
+    clientes: classes.reduce((s: number, n: any) => s + (n.clientes || 0), 0),
+    faturamentoMes: classes.reduce((s: number, n: any) => s + (n.faturamentoMes || 0), 0),
+    debito: classes.reduce((s: number, n: any) => s + (n.debito || 0), 0),
+    semMedicao: classes.reduce((s: number, n: any) => s + (n.semMedicao || 0), 0),
+  }), [classes]);
 
   // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
   // em cada um (potencial nos parados, valor em aberto no débito).
@@ -287,25 +267,31 @@ export default function GestaoCarteiras() {
     };
   }, [d, clientes, serie, meses, filtrarVend]);
 
-  // Contagem por classe dentro do recorte atual (vendedor), para os chips.
-  const porClasse = useMemo(() => {
-    const acc: Record<string, { clientes: number; valor: number }> = { A: { clientes: 0, valor: 0 }, B: { clientes: 0, valor: 0 }, C: { clientes: 0, valor: 0 } };
+  // Contagem por letra da classe dentro do recorte atual (vendedor/PJ-PF), para os chips.
+  const porLetra = useMemo(() => {
+    const acc: Record<string, { clientes: number; valor: number; mais: number; menos: number }> = {
+      A: { clientes: 0, valor: 0, mais: 0, menos: 0 }, B: { clientes: 0, valor: 0, mais: 0, menos: 0 },
+      C: { clientes: 0, valor: 0, mais: 0, menos: 0 }, D: { clientes: 0, valor: 0, mais: 0, menos: 0 },
+    };
     for (const c of clientes) {
-      const k = classeDe.get(c.chave) || c.classe;
+      const k = letraDe(c);
       if (!acc[k]) continue;
       acc[k].clientes++; acc[k].valor += c.total;
+      if (sinalDe(c) === "+") acc[k].mais++; else acc[k].menos++;
     }
     return acc;
-  }, [clientes, classeDe]);
+  }, [clientes]);
+  const totalMais = useMemo(() => clientes.filter((c) => sinalDe(c) === "+").length, [clientes]);
 
-  // Relação completa: filtra por classe e por busca, e ordena pelo critério escolhido.
+  // Relação completa: filtra por classe (letra e sinal) e por busca, e ordena pelo critério escolhido.
   const listaFiltrada = useMemo(() => {
     const alvo = busca.trim().toLocaleLowerCase("pt-BR");
     // So-digitos da busca. Sem esse guarda, procurar por texto casaria com TODO
     // mundo: "moreira".replace(/\D/g,"") vira "" e includes("") e sempre true.
     const alvoDoc = alvo.replace(/\D/g, "");
     const arr = clientes.filter((c) => {
-      if (classeSel !== "todas" && (classeDe.get(c.chave) || c.classe) !== classeSel) return false;
+      if (classeSel !== "todas" && letraDe(c) !== classeSel) return false;
+      if (sinalSel !== "todos" && sinalDe(c) !== sinalSel) return false;
       if (!alvo) return true;
       return (
         c.nome.toLocaleLowerCase("pt-BR").includes(alvo) ||
@@ -316,10 +302,10 @@ export default function GestaoCarteiras() {
     });
     arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
     return arr;
-  }, [clientes, classeDe, classeSel, busca, ordem]);
+  }, [clientes, classeSel, sinalSel, busca, ordem]);
 
   // Mexeu no filtro, volta para o começo da lista.
-  useEffect(() => { setVisiveis(50); }, [classeSel, busca, ordem, vendedores, inicio, fim]);
+  useEffect(() => { setVisiveis(50); }, [classeSel, sinalSel, busca, ordem, vendedores, inicio, fim]);
 
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
@@ -356,8 +342,8 @@ export default function GestaoCarteiras() {
     exportToExcel(
       listaFiltrada
         .map((c, i) => ({
-          "#": i + 1, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: c.tipo, Classe: classeDe.get(c.chave) || c.classe,
-          Nota: c.nota || "", Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
+          "#": i + 1, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: c.tipo,
+          Classe: c.classe || "", Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
           "Faturamento no período": Number(c.total.toFixed(2)),
           "Média ponderada/mês": Number(c.mediaPonderada.toFixed(2)),
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
@@ -369,7 +355,7 @@ export default function GestaoCarteiras() {
           "Títulos medidos": c.titulosMedidos || 0,
           "Pior atraso (dias)": c.piorAtraso || 0,
         })),
-      `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
+      `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${sinalSel !== "todos" ? (sinalSel === "+" ? "_em-dia" : "_atrasa") : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
   };
 
@@ -384,7 +370,7 @@ export default function GestaoCarteiras() {
         <div>
           <h1 className="text-3xl font-bold">Gestão de Carteiras — Vendas</h1>
           <p className="text-muted-foreground">
-            Curva ABC, perfil de clientes e evolução do faturamento de {labelMes(inicio)} a {labelMes(fim)}
+            Classe do cliente, perfil da carteira e evolução do faturamento de {labelMes(inicio)} a {labelMes(fim)}
           </p>
         </div>
       </div>
@@ -453,8 +439,8 @@ export default function GestaoCarteiras() {
             <KpiCard icon={TrendingUp} titulo={`Faturamento ${labelMes(kpis?.mesAtualLabel || fim)}`} valor={BRL0(kpis?.mesAtual)}
               nota={`${(kpis?.mesAtualLabel || fim) === mesHoje ? "mês em curso · " : ""}${varPct === null || varPct === undefined ? "sem base de comparação" : `${varPct >= 0 ? "+" : ""}${varPct.toFixed(1)}% vs mês anterior`}`}
               cor={varPct === null || varPct === undefined ? "" : varPct >= 0 ? "text-emerald-600" : "text-red-600"} />
-            <KpiCard icon={Briefcase} titulo="Clientes classe A" valor={NUM(abc?.[0]?.clientes || 0)}
-              nota={`concentram ${(abc?.[0]?.pctValor || 0).toFixed(0)}% do faturamento`} cor="text-blue-700" />
+            <KpiCard icon={Briefcase} titulo="Clientes classe A" valor={NUM(porLetra.A.clientes)}
+              nota={`acima de R$ 1.501/mês · ${NUM(porLetra.A.mais)} pagam em dia`} cor="text-blue-700" />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -662,11 +648,11 @@ export default function GestaoCarteiras() {
               </CardContent>
             </Card>
 
-            {/* Quantidade de clientes por ticket médio + a nota A+/A-/.../D- */}
+            {/* Quantidade de clientes por ticket médio + a classe A+/A-/.../D- */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle>
-                  {abaQuadro === "ticket" ? "Quantidade de clientes por ticket médio" : "Nota do cliente"}
+                  {abaQuadro === "ticket" ? "Quantidade de clientes por ticket médio" : "Classe do cliente"}
                 </CardTitle>
                 <CardDescription>
                   {abaQuadro === "ticket" ? (
@@ -687,7 +673,7 @@ export default function GestaoCarteiras() {
                 <div className="flex gap-1 pt-2" role="tablist">
                   {([
                     { k: "ticket", t: "Ticket médio" },
-                    { k: "notas", t: "Nota A–D" },
+                    { k: "classes", t: "Classe A–D" },
                   ] as const).map((a) => (
                     <button
                       key={a.k}
@@ -749,12 +735,12 @@ export default function GestaoCarteiras() {
                   </table>
                 </div>
 
-                {/* ── Aba NOTA ─────────────────────────────────────────────── */}
-                <div className={abaQuadro === "notas" ? "overflow-x-auto" : "hidden"}>
+                {/* ── Aba CLASSE ─────────────────────────────────────────────── */}
+                <div className={abaQuadro === "classes" ? "overflow-x-auto" : "hidden"}>
                   <table className="w-full text-sm">
                     <thead className="text-muted-foreground">
                       <tr className="text-left border-b">
-                        <th className="py-2 pr-2 w-14">Nota</th>
+                        <th className="py-2 pr-2 w-14">Classe</th>
                         <th className="py-2 px-2 text-right w-20">Clientes</th>
                         <th className="py-2 px-2 text-right w-16">%</th>
                         <th className="py-2 px-2">Nível de faturamento</th>
@@ -763,17 +749,17 @@ export default function GestaoCarteiras() {
                       </tr>
                     </thead>
                     <tbody>
-                      {notas.map((n: any) => (
+                      {classes.map((n: any) => (
                         <tr
-                          key={n.nota}
+                          key={n.classe}
                           className={`border-b last:border-0 ${n.sinal === "-" ? "" : "bg-muted/20"}`}
-                          data-testid={`nota-${n.letra}${n.sinal === "+" ? "mais" : "menos"}`}
+                          data-testid={`classe-${n.letra}${n.sinal === "+" ? "mais" : "menos"}`}
                         >
                           <td className="py-2 pr-2">
                             <span
                               className="inline-flex items-center justify-center min-w-[2.25rem] rounded px-1.5 py-0.5 text-xs font-bold text-white"
                               style={{
-                                background: NOTA_COR[n.letra] || CINZA,
+                                background: CLASSE_COR[n.letra] || CINZA,
                                 color: n.letra === "D" ? "#0f172a" : "#ffffff",
                                 opacity: n.sinal === "-" ? 0.75 : 1,
                               }}
@@ -784,7 +770,7 @@ export default function GestaoCarteiras() {
                           </td>
                           <td className="py-2 px-2 text-right font-semibold">{NUM(n.clientes || 0)}</td>
                           <td className="py-2 px-2 text-right text-muted-foreground">
-                            {notasTotais.clientes ? ((n.clientes / notasTotais.clientes) * 100).toFixed(1).replace(".", ",") : "0,0"}%
+                            {classesTotais.clientes ? ((n.clientes / classesTotais.clientes) * 100).toFixed(1).replace(".", ",") : "0,0"}%
                           </td>
                           <td className="py-2 px-2 whitespace-nowrap">
                             {n.label}
@@ -803,27 +789,27 @@ export default function GestaoCarteiras() {
                       ))}
                       <tr className="font-semibold">
                         <td className="py-2 pr-2">Total</td>
-                        <td className="py-2 px-2 text-right">{NUM(notasTotais.clientes)}</td>
+                        <td className="py-2 px-2 text-right">{NUM(classesTotais.clientes)}</td>
                         <td className="py-2 px-2 text-right">100,0%</td>
                         <td className="py-2 px-2" />
-                        <td className="py-2 pl-2 text-right whitespace-nowrap">{BRL0(notasTotais.faturamentoMes)}</td>
-                        <td className="py-2 pl-2 text-right whitespace-nowrap text-destructive">{BRL0(notasTotais.debito)}</td>
+                        <td className="py-2 pl-2 text-right whitespace-nowrap">{BRL0(classesTotais.faturamentoMes)}</td>
+                        <td className="py-2 pl-2 text-right whitespace-nowrap text-destructive">{BRL0(classesTotais.debito)}</td>
                       </tr>
                     </tbody>
                   </table>
                   <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
                     A pontualidade é medida nos títulos do período que têm data de baixa registrada.
-                    {notasTotais.semMedicao > 0 && (
+                    {classesTotais.semMedicao > 0 && (
                       <>
                         {" "}
-                        <strong>{NUM(notasTotais.semMedicao)}</strong> cliente
-                        {notasTotais.semMedicao === 1 ? " não tem" : "s não têm"} nenhum título com data de pagamento
+                        <strong>{NUM(classesTotais.semMedicao)}</strong> cliente
+                        {classesTotais.semMedicao === 1 ? " não tem" : "s não têm"} nenhum título com data de pagamento
                         (importação antiga trouxe o valor pago, mas não a data) — esse
-                        {notasTotais.semMedicao === 1 ? "" : "s"} entra
-                        {notasTotais.semMedicao === 1 ? "" : "m"} na nota só pelo débito de hoje.
+                        {classesTotais.semMedicao === 1 ? "" : "s"} entra
+                        {classesTotais.semMedicao === 1 ? "" : "m"} na classe só pelo débito de hoje.
                       </>
                     )}
-                    {" "}A coluna Nota também sai no Exportar Excel, cliente a cliente.
+                    {" "}A coluna Classe também sai no Exportar Excel, cliente a cliente.
                   </p>
                 </div>
               </CardContent>
@@ -940,7 +926,7 @@ export default function GestaoCarteiras() {
                 </div>
               </div>
 
-              {/* Filtro por classe da curva ABC + busca */}
+              {/* Filtro pela CLASSE: a letra (nível de faturamento) e o sinal (pagamento) */}
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={() => setClasseSel("todas")}
@@ -949,20 +935,40 @@ export default function GestaoCarteiras() {
                 >
                   Todas as classes <span className="text-muted-foreground">({NUM(clientes.length)})</span>
                 </button>
-                {(["A", "B", "C"] as const).map((k) => (
+                {(["A", "B", "C", "D"] as const).map((k) => (
                   <button
                     key={k}
                     onClick={() => setClasseSel(classeSel === k ? "todas" : k)}
                     data-testid={`chip-classe-${k}`}
                     className={`px-3 py-1.5 rounded-md border text-sm transition flex items-center gap-2 ${classeSel === k ? "border-foreground/40 bg-muted font-semibold" : "border-transparent bg-muted/40 hover:bg-muted"}`}
                   >
-                    <span className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-white" style={{ background: COR_ABC[k] }}>{k}</span>
+                    <span
+                      className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold"
+                      style={{ background: CLASSE_COR[k], color: k === "D" ? "#0f172a" : "#ffffff" }}
+                    >{k}</span>
                     Classe {k}
                     <span className="text-muted-foreground">
-                      {NUM(porClasse[k]?.clientes || 0)} · {BRL0(porClasse[k]?.valor || 0)}
+                      {NUM(porLetra[k]?.clientes || 0)} · {BRL0(porLetra[k]?.valor || 0)}
                     </span>
                   </button>
                 ))}
+                {/* Sinal: paga em dia (+) x atrasa ou está devendo (-) */}
+                <div className="flex rounded-md border overflow-hidden">
+                  {([
+                    { k: "todos", t: `+ e −` },
+                    { k: "+", t: `Só + (${NUM(totalMais)})` },
+                    { k: "-", t: `Só − (${NUM(clientes.length - totalMais)})` },
+                  ] as const).map((o) => (
+                    <button
+                      key={o.k}
+                      onClick={() => setSinalSel(o.k)}
+                      data-testid={`chip-sinal-${o.k === "+" ? "mais" : o.k === "-" ? "menos" : "todos"}`}
+                      className={`px-3 py-1.5 text-sm transition ${sinalSel === o.k ? "bg-muted font-semibold" : "bg-background hover:bg-muted/60 text-muted-foreground"}`}
+                    >
+                      {o.t}
+                    </button>
+                  ))}
+                </div>
                 <div className="relative ml-auto w-[260px] max-w-full">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -976,14 +982,9 @@ export default function GestaoCarteiras() {
               </div>
 
               <p className="text-xs text-muted-foreground">
-                {classeSel === "todas"
-                  ? "A = clientes que somam 80% do faturamento · B = até 95% · C = o restante."
-                  : classeSel === "A"
-                    ? "Classe A — os clientes que somam os primeiros 80% do faturamento do período."
-                    : classeSel === "B"
-                      ? "Classe B — a faixa entre 80% e 95% do faturamento acumulado."
-                      : "Classe C — os últimos 5% do faturamento acumulado."}
-                {filtrarVend ? ` A curva está recalculada dentro do recorte${rotuloCarteira}.` : ""}
+                A letra é o nível de faturamento — A: acima de R$ 1.501/mês · B: R$ 800 a 1.500 · C: R$ 300 a 799 · D: até R$ 299,99.
+                O sinal é o pagamento — <strong>+</strong> pagou ao menos 80% dos títulos em até 3 dias do vencimento e não deve nada hoje;
+                {" "}<strong>−</strong> atrasa ou está devendo. A classe não muda com o filtro de vendedor: é a mesma do cliente em toda a empresa.
               </p>
             </CardHeader>
             <CardContent>
@@ -1004,7 +1005,8 @@ export default function GestaoCarteiras() {
                 </TableHeader>
                 <TableBody>
                   {listaVisivel.map((c, i) => {
-                    const cl = classeDe.get(c.chave) || c.classe;
+                    const letra = letraDe(c);
+                    const positivo = sinalDe(c) === "+";
                     return (
                       <TableRow key={c.chave} data-testid={`row-cliente-${i}`}>
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
@@ -1019,7 +1021,13 @@ export default function GestaoCarteiras() {
                           <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${COR_TIPO[c.tipo] || CINZA}1a`, color: COR_TIPO[c.tipo] || CINZA }}>{c.tipo === "Não identificado" ? "—" : c.tipo}</span>
                         </TableCell>
                         <TableCell>
-                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded text-white" style={{ background: COR_ABC[cl] }}>{cl}</span>
+                          <span
+                            className="text-xs font-bold px-1.5 py-0.5 rounded"
+                            title={positivo ? "Paga em dia e não deve nada hoje" : "Atrasa pagamentos ou está devendo hoje"}
+                            style={{ background: CLASSE_COR[letra] || CINZA, color: letra === "D" ? "#0f172a" : "#ffffff", opacity: positivo ? 1 : 0.75 }}
+                          >
+                            {letra}{positivo ? "+" : "−"}
+                          </span>
                         </TableCell>
                         <TableCell className="text-sm">{c.vendedor}</TableCell>
                         <TableCell className="text-right font-semibold">{BRL(c.total)}</TableCell>
@@ -1041,6 +1049,7 @@ export default function GestaoCarteiras() {
                 <p className="text-xs text-muted-foreground">
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
                   {classeSel !== "todas" ? ` da classe ${classeSel}` : ""}
+                  {sinalSel !== "todos" ? (sinalSel === "+" ? " que pagam em dia" : " que atrasam ou estão devendo") : ""}
                   {rotuloCarteira} · {BRL0(totalFiltrado)} no período.
                   {d?.clientesTruncado ? " Base limitada aos 2.000 maiores." : ""}
                 </p>
