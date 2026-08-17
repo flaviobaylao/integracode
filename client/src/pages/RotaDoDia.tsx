@@ -171,6 +171,7 @@ export default function RotaDoDia() {
   // Guardamos o conjunto de cards EXPANDIDOS; quem nao esta no set fica recolhido.
   const [presExpanded, setPresExpanded] = useState<Set<string>>(new Set());
   const [virtExpanded, setVirtExpanded] = useState<Set<string>>(new Set());
+  const [repExpanded, setRepExpanded] = useState<Set<string>>(new Set());
 
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
@@ -1082,6 +1083,10 @@ export default function RotaDoDia() {
   const collapseAllPres = () => setPresExpanded(new Set());
   const expandAllVirt = () => setVirtExpanded(new Set(visibleVirtualVisits.map((v: any) => virtCardKey(v))));
   const collapseAllVirt = () => setVirtExpanded(new Set());
+  const repCardKey = (r: any) => String(r?.assignmentId || '');
+  const toggleRepCard = (k: string) => setRepExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const expandAllRep = () => setRepExpanded(new Set(filteredRepescagem.map((r: any) => repCardKey(r))));
+  const collapseAllRep = () => setRepExpanded(new Set());
 
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
   const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
@@ -2669,13 +2674,40 @@ export default function RotaDoDia() {
           {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
             <Card className="border-[#d6c7a1]">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
-                  Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
-                </CardTitle>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
+                    Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                  </CardTitle>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={expandAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-expand-all-repescagem"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                      Expandir Tudo
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={collapseAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-collapse-all-repescagem"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                      Recolher Tudo
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="space-y-2">
-                {filteredRepescagem.map((r: any) => (
+                {filteredRepescagem.map((r: any) => {
+                  const repKey = String(r.assignmentId);
+                  const repIsExpanded = repExpanded.has(repKey);
+                  return (
                   <div
                     key={r.assignmentId}
                     className={`flex items-start justify-between p-2 rounded-lg border ${
@@ -2703,6 +2735,7 @@ export default function RotaDoDia() {
                         >
                           <Copy className="h-3 w-3" />
                         </button>
+                        {repIsExpanded && (<>
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
                           {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
@@ -2729,7 +2762,9 @@ export default function RotaDoDia() {
                             R$ {customerInfo.debts[r.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </Badge>
                         )}
+                        </>)}
                       </div>
+                      {repIsExpanded && (<>
                       <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                         <MapPin className="h-3 w-3" />
                         {r.address || 'Endereço não informado'}
@@ -2760,8 +2795,21 @@ export default function RotaDoDia() {
                       <p className="text-xs text-gray-500 dark:text-gray-400">
                         {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
                       </p>
+                      </>)}
                     </div>
                     <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
+                      {/* Botao Expandir/Recolher card */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        onClick={(e) => { e.stopPropagation(); toggleRepCard(repKey); }}
+                        title={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        aria-label={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        data-testid={`toggle-repescagem-${r.customerId || r.assignmentId}`}
+                      >
+                        {repIsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
                       {/* Botões só para repescagem que caiu no telemarketing */}
                       {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                         <Button
@@ -2815,7 +2863,6 @@ export default function RotaDoDia() {
                       )}
                       {/* 📋 Solicitar Alteração */}
                       <ChangeRequestControl
-                        fullRow
                         disabled={hasCheckinOrSale(r.customerId)}
                         entityType="repescagem"
                         entityId={String(r.assignmentId)}
@@ -2826,7 +2873,8 @@ export default function RotaDoDia() {
                       />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {filteredRepescagem.length === 0 && repescagemOverlay.length > 0 && (
                   <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400" data-testid="repescagem-empty">
                     Nenhum cliente de repescagem corresponde à busca.
