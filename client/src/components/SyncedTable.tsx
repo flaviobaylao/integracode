@@ -21,8 +21,8 @@ function fmt(v: any, col: string) {
 }
 
 export default function SyncedTable({
-  table, hideColumns = [], labels = {}, limit = 2000,
-}: { table: string; hideColumns?: string[]; labels?: Record<string, string>; limit?: number }) {
+  table, hideColumns = [], labels = {}, limit = 2000, rowFilter,
+}: { table: string; hideColumns?: string[]; labels?: Record<string, string>; limit?: number; rowFilter?: (row: any) => boolean }) {
   const [q, setQ] = useState("");
   const [sortCol, setSortCol] = useState<string>("");
   const [sortAsc, setSortAsc] = useState(true);
@@ -36,7 +36,8 @@ export default function SyncedTable({
   });
   const allCols: string[] = (data?.columns || []).map((c: any) => c.column_name);
   const cols = allCols.filter((c) => !hideColumns.includes(c));
-  const rows: any[] = data?.rows || [];
+  const rowsAll: any[] = data?.rows || [];
+  const rows = useMemo(() => (rowFilter ? rowsAll.filter(rowFilter) : rowsAll), [rowsAll, rowFilter]);
   const filtered = useMemo(() => {
     if (!q.trim()) return rows;
     const s = q.toLowerCase();
