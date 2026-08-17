@@ -336,6 +336,8 @@ export function registerCarteira(app: Express) {
                    'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),''),'?')
                  ) AS chave,
                  due_date::date AS venc,
+                 issue_date AS emissao,
+                 COALESCE(status::text,'') AS st,
                  COALESCE(
                    paid_date::date,
                    (SELECT MAX(p.paid_at)::date FROM receivable_payments p
@@ -349,14 +351,41 @@ export function registerCarteira(app: Express) {
             AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
             AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
             ${FILTRO_VENDA}
+        ), agg AS (
+          SELECT chave,
+                 COUNT(1) FILTER (WHERE pago IS NOT NULL)::int AS medidos,
+                 COUNT(1) FILTER (WHERE pago IS NOT NULL AND pago - venc <= ${CLASSE_DIAS_TOLERANCIA})::int AS pontuais,
+                 COALESCE(MAX(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::int AS pior_atraso,
+                 COALESCE(AVG(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::float AS atraso_medio
+          FROM pg GROUP BY 1
+        ), ult AS (
+          SELECT DISTINCT ON (chave) chave, venc, pago, st
+          FROM pg ORDER BY chave, emissao DESC NULLS LAST, venc DESC
         )
-        SELECT chave,
-               COUNT(1) FILTER (WHERE pago IS NOT NULL)::int AS medidos,
-               COUNT(1) FILTER (WHERE pago IS NOT NULL AND pago - venc <= ${CLASSE_DIAS_TOLERANCIA})::int AS pontuais,
-               COALESCE(MAX(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::int AS pior_atraso,
-               COALESCE(AVG(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::float AS atraso_medio
-        FROM pg GROUP BY 1`);
-      const pontPorChave = new Map<string, { medidos: number; pontuais: number; pior: number; medio: number }>(
+        SELECT a.chave, a.medidos, a.pontuais, a.pior_atraso, a.atraso_medio,
+               u.venc AS ult_venc,
+               CASE
+                 WHEN u.pago IS NOT NULL THEN GREATEST(u.pago - u.venc, 0)
+                 WHEN u.st IN ('a_vencer','vencida')
+                   THEN GREATEST((now() AT TIME ZONE 'America/Sao_Paulo')::date - u.venc, 0)
+                 ELSE NULL
+               END::int AS ult_atraso,
+               CASE
+                 WHEN u.pago IS NOT NULL AND u.pago <= u.venc THEN 'pago_em_dia'
+                 WHEN u.pago IS NOT NULL                      THEN 'pago_atrasado'
+                 WHEN u.st IN ('a_vencer','vencida')
+                      AND u.venc < (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN 'vencido'
+                 WHEN u.st IN ('a_vencer','vencida')          THEN 'a_vencer'
+                 ELSE 'sem_data'
+               END AS ult_situacao
+        FROM agg a LEFT JOIN ult u ON u.chave = a.chave`);
+      type Pont = {
+        medidos: number; pontuais: number; pior: number; medio: number;
+        // Ultimo titulo emitido para o cliente no periodo: quanto ele atrasou (ou
+        // esta atrasando, se ainda estiver vencido em aberto) e em que estado esta.
+        ultAtraso: number | null; ultSituacao: string; ultVenc: string | null;
+      };
+      const pontPorChave = new Map<string, Pont>(
         pontRows.map((r: any) => [
           String(r.chave),
           {
@@ -364,6 +393,9 @@ export function registerCarteira(app: Express) {
             pontuais: Number(r.pontuais) || 0,
             pior: Number(r.pior_atraso) || 0,
             medio: Number(r.atraso_medio) || 0,
+            ultAtraso: r.ult_atraso === null || r.ult_atraso === undefined ? null : Number(r.ult_atraso),
+            ultSituacao: String(r.ult_situacao || "sem_data"),
+            ultVenc: r.ult_venc ? String(r.ult_venc).slice(0, 10) : null,
           },
         ]),
       );
@@ -481,6 +513,10 @@ export function registerCarteira(app: Express) {
           titulosMedidos: pg?.medidos || 0,
           piorAtraso: pg?.pior || 0,
           atrasoMedio: pg?.medio || 0,
+          // Ultimo titulo do cliente: e o retrato mais recente do comportamento dele.
+          atrasoUltimo: pg?.ultAtraso ?? null,
+          situacaoUltimo: pg?.ultSituacao || "sem_data",
+          vencimentoUltimo: pg?.ultVenc || null,
           classe: `${letraDoTicket(ticketCli)}${sinalDePagamento(pontualidade, debitoCli)}`,
           situacao,
           mesesSemComprar,
