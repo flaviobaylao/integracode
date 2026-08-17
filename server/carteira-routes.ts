@@ -329,6 +329,12 @@ export function registerCarteira(app: Express) {
       //     (importacao antiga do Omie trouxe o valor pago, mas nao a data) — o
       //     cliente que so tem titulos assim fica com pontualidade `null` e e
       //     julgado apenas pelo debito de hoje.
+      // Guarda contra data de baixa impossivel: medido em 17/ago/2026, 470 das 6.442
+      // baixas do periodo (7,3%) tinham data ANTES da emissao do titulo (321) ou no
+      // FUTURO (149) — dia e mes trocados na entrada. Uma baixa fora do intervalo
+      // [emissao, hoje] e descartada: o titulo passa a contar como "sem data", que ja
+      // e um caso previsto, em vez de gerar um atraso inventado.
+      const HOJE_BR = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
       const pontRows = await q(`
         WITH pg AS (
           SELECT COALESCE(
@@ -339,9 +345,12 @@ export function registerCarteira(app: Express) {
                  issue_date AS emissao,
                  COALESCE(status::text,'') AS st,
                  COALESCE(
-                   paid_date::date,
+                   CASE WHEN paid_date::date BETWEEN issue_date::date AND ${HOJE_BR}
+                        THEN paid_date::date END,
                    (SELECT MAX(p.paid_at)::date FROM receivable_payments p
-                     WHERE p.receivable_id = receivables.id AND p.deleted_at IS NULL)
+                     WHERE p.receivable_id = receivables.id AND p.deleted_at IS NULL
+                       AND p.paid_at::date >= receivables.issue_date::date
+                       AND p.paid_at::date <= ${HOJE_BR})
                  ) AS pago
           FROM receivables
           WHERE issue_date >= '${iniDate}'
