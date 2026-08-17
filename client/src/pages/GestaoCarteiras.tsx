@@ -42,6 +42,8 @@ type Cliente = {
   // Classe do cliente: letra = nivel de faturamento, sinal = positivacao de pagamento.
   classe?: string; pontualidade?: number | null; titulosMedidos?: number;
   piorAtraso?: number; atrasoMedio?: number; diasVencido?: number;
+  // Último título emitido no período: atraso em dias e em que estado ele está.
+  atrasoUltimo?: number | null; situacaoUltimo?: string; vencimentoUltimo?: string | null;
 };
 
 /** As 8 classes na ordem da tela. Mesma lista do servidor (CLASSES_ORDEM). */
@@ -287,16 +289,17 @@ export default function GestaoCarteiras() {
   }, [clientes]);
   const totalMais = useMemo(() => clientes.filter((c) => sinalDe(c) === "+").length, [clientes]);
 
-  // MAIOR ATRASO do cliente: o pior atraso entre os títulos que ele já pagou no
-  // período e o atraso do título que está vencido AGORA (esse ainda está correndo,
-  // então também conta). `null` = nenhum título com data de baixa e nada vencido,
-  // ou seja, não há do que medir atraso.
-  const maiorAtraso = (c: Cliente): number | null => {
-    const pago = Number(c.piorAtraso || 0);
-    const correndo = Number(c.diasVencido || 0);
-    const pior = Math.max(pago, correndo);
-    if (pior > 0) return pior;
-    return (c.titulosMedidos || 0) > 0 ? 0 : null;
+  // ATRASO DO ÚLTIMO TÍTULO — o retrato mais recente do cliente, não o histórico.
+  // Vem pronto do servidor: se o último título já foi baixado, é a diferença entre
+  // pagamento e vencimento; se ainda está vencido em aberto, é o atraso que está
+  // correndo hoje; se ainda não venceu, é zero. `null` = título sem data de baixa
+  // registrada (importação antiga do Omie), aí não há o que medir.
+  const ATRASO_ROTULO: Record<string, string> = {
+    pago_em_dia: "Último título pago em dia",
+    pago_atrasado: "Último título pago com atraso",
+    vencido: "Último título vencido e ainda em aberto — o atraso está correndo",
+    a_vencer: "Último título ainda não venceu",
+    sem_data: "Último título sem data de baixa registrada — não dá para medir",
   };
 
   // Valor usado na ordenação de cada coluna clicável (texto ordena A-Z, número por valor).
@@ -308,7 +311,7 @@ export default function GestaoCarteiras() {
       case "vendedor": return c.vendedor || "";
       case "total": return c.total || 0;
       case "debito": return c.debito || 0;
-      case "atraso": return maiorAtraso(c) ?? -1;
+      case "atraso": return c.atrasoUltimo == null ? -1 : c.atrasoUltimo;
       default: return "";
     }
   };
@@ -423,7 +426,9 @@ export default function GestaoCarteiras() {
           "Pontualidade %": c.pontualidade == null ? "" : Number((c.pontualidade * 100).toFixed(1)),
           "Títulos medidos": c.titulosMedidos || 0,
           "Pior atraso pago (dias)": c.piorAtraso || 0,
-          "Maior atraso (dias)": maiorAtraso(c) ?? "",
+          "Atraso do último título (dias)": c.atrasoUltimo ?? "",
+          "Situação do último título": c.situacaoUltimo || "",
+          "Vencimento do último título": c.vencimentoUltimo || "",
         })),
       `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${sinalSel !== "todos" ? (sinalSel === "+" ? "_em-dia" : "_atrasa") : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
@@ -1077,7 +1082,7 @@ export default function GestaoCarteiras() {
                     <TableHead className="text-right w-24">Meses c/ compra</TableHead>
                     <TableHead className="w-24">Última compra</TableHead>
                     {thOrdenavel("debito", "Débito", "text-right w-28", true)}
-                    {thOrdenavel("atraso", "Maior atraso", "text-right w-28", true)}
+                    {thOrdenavel("atraso", "Atraso do último título", "text-right w-32", true)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1131,22 +1136,26 @@ export default function GestaoCarteiras() {
                           {(c.debito || 0) > 0 ? BRL(c.debito) : "—"}
                         </TableCell>
                         {(() => {
-                          const at = maiorAtraso(c);
-                          const correndo = (c.diasVencido || 0) > 0 && (c.diasVencido || 0) >= (c.piorAtraso || 0);
+                          const at = c.atrasoUltimo;
+                          const sit = c.situacaoUltimo || "sem_data";
+                          const venc = c.vencimentoUltimo ? c.vencimentoUltimo.split("-").reverse().join("/") : "";
+                          const texto =
+                            at == null ? "—"
+                            : sit === "a_vencer" ? "a vencer"
+                            : at === 0 ? "em dia"
+                            : `${NUM(at)} ${at === 1 ? "dia" : "dias"}`;
+                          const cor =
+                            at == null ? "text-muted-foreground"
+                            : sit === "vencido" ? "text-destructive font-medium"
+                            : at === 0 ? "text-emerald-600"
+                            : at > 15 ? "text-destructive font-medium"
+                            : "";
                           return (
                             <TableCell
-                              className={`text-right whitespace-nowrap ${at === null ? "text-muted-foreground" : at === 0 ? "text-emerald-600" : at > 15 ? "text-destructive font-medium" : ""}`}
-                              title={
-                                at === null
-                                  ? "Sem título com data de baixa e nada vencido — não há como medir atraso"
-                                  : at === 0
-                                    ? `${c.titulosMedidos} ${c.titulosMedidos === 1 ? "título pago" : "títulos pagos"} sem nenhum atraso`
-                                    : correndo
-                                      ? "Título vencido em aberto hoje — o atraso ainda está correndo"
-                                      : `Pior atraso entre os ${c.titulosMedidos} títulos pagos do período`
-                              }
+                              className={`text-right whitespace-nowrap ${cor}`}
+                              title={`${ATRASO_ROTULO[sit] || ""}${venc ? ` · venceu em ${venc}` : ""}`}
                             >
-                              {at === null ? "—" : at === 0 ? "em dia" : `${NUM(at)} ${at === 1 ? "dia" : "dias"}`}
+                              {texto}
                             </TableCell>
                           );
                         })()}
