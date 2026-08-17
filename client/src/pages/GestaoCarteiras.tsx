@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   LineChart, Line, BarChart, Bar, LabelList, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
-import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search } from "lucide-react";
+import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
@@ -82,6 +82,10 @@ export default function GestaoCarteiras() {
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C" | "D">("todas");
   const [sinalSel, setSinalSel] = useState<"todos" | "+" | "-">("todos");
   const [busca, setBusca] = useState("");
+  // Ordenacao por coluna (A-Z / Z-A). Vazio = manda o botao "Por faturamento
+  // total / Por media ponderada". Terceiro clique na mesma coluna desliga.
+  const [ordCol, setOrdCol] = useState("");
+  const [ordDir, setOrdDir] = useState<"asc" | "desc">("asc");
   // Aba do quadro de ticket medio: a distribuicao crua ou a classe A+/A-/.../D-.
   const [abaQuadro, setAbaQuadro] = useState<"ticket" | "classes">("ticket");
   const [visiveis, setVisiveis] = useState(50);
@@ -283,6 +287,47 @@ export default function GestaoCarteiras() {
   }, [clientes]);
   const totalMais = useMemo(() => clientes.filter((c) => sinalDe(c) === "+").length, [clientes]);
 
+  // Valor usado na ordenação de cada coluna clicável (texto ordena A-Z, número por valor).
+  const valorDaColuna = (c: Cliente, k: string): string | number => {
+    switch (k) {
+      case "nome": return c.nome || "";
+      case "tipo": return c.tipo || "";
+      case "classe": return c.classe || "";
+      case "vendedor": return c.vendedor || "";
+      case "total": return c.total || 0;
+      case "debito": return c.debito || 0;
+      default: return "";
+    }
+  };
+  // 1º clique = A-Z, 2º = Z-A, 3º volta para a ordem do botão.
+  const clicarColuna = (k: string) => {
+    if (ordCol !== k) { setOrdCol(k); setOrdDir("asc"); return; }
+    if (ordDir === "asc") { setOrdDir("desc"); return; }
+    setOrdCol(""); setOrdDir("asc");
+  };
+
+  const thOrdenavel = (k: string, label: string, cls = "", direita = false) => {
+    const ativa = ordCol === k;
+    return (
+      <TableHead
+        className={`cursor-pointer select-none group ${cls}`}
+        onClick={() => clicarColuna(k)}
+        title={ativa ? (ordDir === "asc" ? "Ordenado A-Z — clique para Z-A" : "Ordenado Z-A — clique para voltar ao padrão") : "Clique para ordenar A-Z"}
+        aria-sort={ativa ? (ordDir === "asc" ? "ascending" : "descending") : "none"}
+        data-testid={`th-ordenar-${k}`}
+      >
+        <span className={`inline-flex items-center gap-1 ${direita ? "flex-row-reverse" : ""}`}>
+          <span>{label}</span>
+          {ativa ? (
+            ordDir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 opacity-70" /> : <ArrowDown className="h-3 w-3 shrink-0 opacity-70" />
+          ) : (
+            <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-40 transition-opacity" />
+          )}
+        </span>
+      </TableHead>
+    );
+  };
+
   // Relação completa: filtra por classe (letra e sinal) e por busca, e ordena pelo critério escolhido.
   const listaFiltrada = useMemo(() => {
     const alvo = busca.trim().toLocaleLowerCase("pt-BR");
@@ -300,15 +345,53 @@ export default function GestaoCarteiras() {
         (alvoDoc.length >= 3 && (c.doc || "").includes(alvoDoc))
       );
     });
-    arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
+    if (ordCol) {
+      const dir = ordDir === "asc" ? 1 : -1;
+      arr.sort((a, b) => {
+        const va = valorDaColuna(a, ordCol);
+        const vb = valorDaColuna(b, ordCol);
+        if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+        return String(va).localeCompare(String(vb), "pt-BR") * dir;
+      });
+    } else {
+      arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
+    }
     return arr;
-  }, [clientes, classeSel, sinalSel, busca, ordem]);
+  }, [clientes, classeSel, sinalSel, busca, ordem, ordCol, ordDir]);
 
   // Mexeu no filtro, volta para o começo da lista.
-  useEffect(() => { setVisiveis(50); }, [classeSel, sinalSel, busca, ordem, vendedores, inicio, fim]);
+  useEffect(() => { setVisiveis(50); }, [classeSel, sinalSel, busca, ordem, ordCol, ordDir, vendedores, inicio, fim]);
 
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
+  const debitoFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + (c.debito || 0), 0), [listaFiltrada]);
+
+  // Barra de rolagem horizontal espelho, logo abaixo do último cliente da página.
+  const areaTabelaRef = useRef<HTMLDivElement>(null);
+  const barraRolagemRef = useRef<HTMLDivElement>(null);
+  const [larguraRolagem, setLarguraRolagem] = useState(0);
+  useEffect(() => {
+    const area = areaTabelaRef.current;
+    // O div de scroll e o wrapper que o proprio <Table> cria em volta do <table>.
+    const scroller = area?.querySelector<HTMLDivElement>(":scope > div");
+    const barra = barraRolagemRef.current;
+    if (!area || !scroller) return;
+    const medir = () => setLarguraRolagem(scroller.scrollWidth > scroller.clientWidth + 1 ? scroller.scrollWidth : 0);
+    medir();
+    const daTabela = () => { if (barra && barra.scrollLeft !== scroller.scrollLeft) barra.scrollLeft = scroller.scrollLeft; };
+    const daBarra = () => { if (barra && scroller.scrollLeft !== barra.scrollLeft) scroller.scrollLeft = barra.scrollLeft; };
+    scroller.addEventListener("scroll", daTabela, { passive: true });
+    barra?.addEventListener("scroll", daBarra, { passive: true });
+    const ro = new ResizeObserver(medir);
+    ro.observe(scroller);
+    const tabela = scroller.querySelector("table");
+    if (tabela) ro.observe(tabela);
+    return () => {
+      scroller.removeEventListener("scroll", daTabela);
+      barra?.removeEventListener("scroll", daBarra);
+      ro.disconnect();
+    };
+  }, [listaVisivel.length, larguraRolagem]);
 
   // ── Situação da carteira (4 barras) ───────────────────────────────────────
   // Fluxos em R$/mês; o débito é estoque (total vencido em aberto hoje) e vai
@@ -988,19 +1071,21 @@ export default function GestaoCarteiras() {
               </p>
             </CardHeader>
             <CardContent>
+              <div ref={areaTabelaRef}>
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10">#</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead className="w-16">Tipo</TableHead>
-                    <TableHead className="w-16">Classe</TableHead>
-                    <TableHead>Vendedor</TableHead>
-                    <TableHead className="text-right">Faturamento no período</TableHead>
+                    {thOrdenavel("nome", "Cliente")}
+                    {thOrdenavel("tipo", "Tipo", "w-16")}
+                    {thOrdenavel("classe", "Classe", "w-16")}
+                    {thOrdenavel("vendedor", "Vendedor")}
+                    {thOrdenavel("total", "Faturamento no período", "text-right", true)}
                     <TableHead className="text-right">Média ponderada/mês</TableHead>
                     <TableHead className="text-right">Média simples/mês</TableHead>
                     <TableHead className="text-right w-24">Meses c/ compra</TableHead>
                     <TableHead className="w-24">Última compra</TableHead>
+                    {thOrdenavel("debito", "Débito", "text-right w-28", true)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1035,22 +1120,37 @@ export default function GestaoCarteiras() {
                         <TableCell className="text-right text-muted-foreground">{BRL(c.mediaSimples)}</TableCell>
                         <TableCell className="text-right">{c.mesesComCompra}/{meses.length}</TableCell>
                         <TableCell className="text-sm">{labelMes(c.ultimaCompra || "")}</TableCell>
+                        <TableCell className={`text-right whitespace-nowrap ${(c.debito || 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                          {(c.debito || 0) > 0 ? BRL(c.debito) : "—"}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
                 </TableBody>
               </Table>
+              </div>
+              {larguraRolagem > 0 ? (
+                <div
+                  ref={barraRolagemRef}
+                  data-testid="barra-rolagem-clientes"
+                  aria-hidden="true"
+                  className="overflow-x-auto overflow-y-hidden h-4 mt-1 rounded bg-muted/30"
+                >
+                  <div style={{ width: larguraRolagem, height: 1 }} />
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
                 <p className="text-xs text-muted-foreground">
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
                   {classeSel !== "todas" ? ` da classe ${classeSel}` : ""}
                   {sinalSel !== "todos" ? (sinalSel === "+" ? " que pagam em dia" : " que atrasam ou estão devendo") : ""}
-                  {rotuloCarteira} · {BRL0(totalFiltrado)} no período.
+                  {rotuloCarteira} · {BRL0(totalFiltrado)} no período
+                  {debitoFiltrado > 0 ? <> · <span className="text-destructive font-medium">{BRL0(debitoFiltrado)} de débito vencido</span></> : " · sem débito vencido"}.
                   {d?.clientesTruncado ? " Base limitada aos 2.000 maiores." : ""}
                 </p>
                 {listaVisivel.length < listaFiltrada.length ? (
