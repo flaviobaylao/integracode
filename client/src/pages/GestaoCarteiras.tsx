@@ -370,6 +370,9 @@ export default function GestaoCarteiras() {
   const areaTabelaRef = useRef<HTMLDivElement>(null);
   const barraRolagemRef = useRef<HTMLDivElement>(null);
   const [larguraRolagem, setLarguraRolagem] = useState(0);
+  // SEM array de dependencias de proposito: remede a cada render (troca de filtro,
+  // de coluna, de pagina). ResizeObserver entra so como reforco — em aba de fundo
+  // ele nao entrega callback, e a medida na renderizacao cobre esse caso.
   useEffect(() => {
     const area = areaTabelaRef.current;
     // O div de scroll e o wrapper que o proprio <Table> cria em volta do <table>.
@@ -382,16 +385,20 @@ export default function GestaoCarteiras() {
     const daBarra = () => { if (barra && scroller.scrollLeft !== barra.scrollLeft) scroller.scrollLeft = barra.scrollLeft; };
     scroller.addEventListener("scroll", daTabela, { passive: true });
     barra?.addEventListener("scroll", daBarra, { passive: true });
-    const ro = new ResizeObserver(medir);
-    ro.observe(scroller);
-    const tabela = scroller.querySelector("table");
-    if (tabela) ro.observe(tabela);
+    window.addEventListener("resize", medir);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(medir) : null;
+    if (ro) {
+      ro.observe(scroller);
+      const tabela = scroller.querySelector("table");
+      if (tabela) ro.observe(tabela);
+    }
     return () => {
       scroller.removeEventListener("scroll", daTabela);
       barra?.removeEventListener("scroll", daBarra);
-      ro.disconnect();
+      window.removeEventListener("resize", medir);
+      ro?.disconnect();
     };
-  }, [listaVisivel.length, larguraRolagem]);
+  });
 
   // ── Situação da carteira (4 barras) ───────────────────────────────────────
   // Fluxos em R$/mês; o débito é estoque (total vencido em aberto hoje) e vai
