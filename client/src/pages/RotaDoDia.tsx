@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -166,6 +166,11 @@ export default function RotaDoDia() {
   // Busca e filtro das Visitas Presenciais
   const [presentialSearch, setPresentialSearch] = useState('');
   const [presentialFilter, setPresentialFilter] = useState<'todos' | 'atendidos' | 'pendentes'>('todos');
+
+  // Expandir/recolher dos cards de visita (padrao: TODOS recolhidos — so o nome).
+  // Guardamos o conjunto de cards EXPANDIDOS; quem nao esta no set fica recolhido.
+  const [presExpanded, setPresExpanded] = useState<Set<string>>(new Set());
+  const [virtExpanded, setVirtExpanded] = useState<Set<string>>(new Set());
 
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
@@ -1068,6 +1073,16 @@ export default function RotaDoDia() {
     let n = 0;
     return visibleVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
   })();
+  // Chave estavel de cada card (para o mapa de expandido/recolhido).
+  const presCardKey = (v: any) => String(v?.id || v?.customerId || v?.entityId || '');
+  const virtCardKey = (v: any) => String(v?.id || v?.customerId || '');
+  const togglePresCard = (k: string) => setPresExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleVirtCard = (k: string) => setVirtExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const expandAllPres = () => setPresExpanded(new Set(visiblePresentialVisits.map((v: any) => presCardKey(v))));
+  const collapseAllPres = () => setPresExpanded(new Set());
+  const expandAllVirt = () => setVirtExpanded(new Set(visibleVirtualVisits.map((v: any) => virtCardKey(v))));
+  const collapseAllVirt = () => setVirtExpanded(new Set());
+
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
   const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
   // ↩️ Solicitações REJEITADAS entre os cards da rota — para ciência do vendedor.
@@ -1712,6 +1727,28 @@ export default function RotaDoDia() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={expandAllPres}
+                    className="flex items-center gap-1"
+                    data-testid="button-expand-all-presential"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                    Expandir Tudo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={collapseAllPres}
+                    className="flex items-center gap-1"
+                    data-testid="button-collapse-all-presential"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                    Recolher Tudo
+                  </Button>
+                </div>
                 {(isAdmin || isVendedor || isTelemarketing) && route.id && (
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -1859,6 +1896,9 @@ export default function RotaDoDia() {
                   const crEntId = isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId;
                   const crEfetuada = crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(crEntId)));
 
+                  const cardKey = presCardKey(visit);
+                  const isExpanded = presExpanded.has(cardKey);
+
                   return (
                     <div
                       key={visit.id || visit.customerId || index}
@@ -1902,6 +1942,7 @@ export default function RotaDoDia() {
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
                               </p>
+                              {isExpanded && (<>
                               <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                               {(() => {
                                 const dec = decisaoDoCliente(visit.customerId);
@@ -1967,14 +2008,16 @@ export default function RotaDoDia() {
                                 </Badge>
                               )}
                               {checkInCheckpoint && checkInCheckpoint.photoUrl && (
-                                <Camera 
-                                  className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
+                                <Camera
+                                  className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors"
                                   data-testid={`camera-icon-${visit.customerId}`}
                                   onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
                                 />
                               )}
+                              </>)}
                             </div>
-                            
+
+                            {isExpanded && (<>
                             <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                               <MapPin className="h-3 w-3" />
                               {visit.customerAddress || 'Endereço não informado'}
@@ -2069,10 +2112,23 @@ export default function RotaDoDia() {
                                 ⚠️ {checkInOffsite && 'Check-in fora do local'}{checkInOffsite && checkOutOffsite && ' | '}{checkOutOffsite && 'Check-out fora do local'}
                               </div>
                             )}
+                            </>)}
                           </div>
                         </div>
-                        
+
                         <div className="flex items-center gap-1 flex-wrap justify-end shrink-0">
+                          {/* Botao Expandir/Recolher card */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                            onClick={(e) => { e.stopPropagation(); togglePresCard(cardKey); }}
+                            title={isExpanded ? 'Recolher' : 'Expandir'}
+                            aria-label={isExpanded ? 'Recolher' : 'Expandir'}
+                            data-testid={`toggle-presential-${visit.customerId || visit.id}`}
+                          >
+                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </Button>
                           {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
                           {isCheckinAdmin && !isLead && (
                             <Button
@@ -2187,10 +2243,34 @@ export default function RotaDoDia() {
 
                   return (
                     <div className="my-6 border-t-2 border-blue-300 dark:border-blue-700 pt-4">
-                      <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
-                        <Phone className="h-5 w-5" />
-                        Atendimentos Virtuais ({virtualActiveCount}{virtualActiveCount !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
-                      </h3>
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                        <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                          <Phone className="h-5 w-5" />
+                          Atendimentos Virtuais ({virtualActiveCount}{virtualActiveCount !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={expandAllVirt}
+                            className="flex items-center gap-1"
+                            data-testid="button-expand-all-virtual"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                            Expandir Tudo
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={collapseAllVirt}
+                            className="flex items-center gap-1"
+                            data-testid="button-collapse-all-virtual"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                            Recolher Tudo
+                          </Button>
+                        </div>
+                      </div>
                       {visibleVirtualVisits.length === 0 && (
                         <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="virtual-empty">
                           Nenhum atendimento virtual corresponde à busca/filtro.
@@ -2204,6 +2284,8 @@ export default function RotaDoDia() {
                           const isFinalized = !!(isAttended || hasOrderToday);
                           const isNaoVenda = !!(visit.customerId && isAttended && !hasOrderToday);
                           const crEfetuada = crEfetuadaByKey(crKey('customer', String(visit.customerId)));
+                          const vCardKey = virtCardKey(visit);
+                          const vExpanded = virtExpanded.has(vCardKey);
                           return (
                           <div
                             key={visit.id || visit.customerId}
@@ -2265,6 +2347,7 @@ export default function RotaDoDia() {
                                         <Copy className="h-3 w-3" />
                                       </button>
                                     </p>
+                                    {vExpanded && (<>
                                     <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                     {/* Mostrar pedidos do dia */}
                                     {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
@@ -2330,7 +2413,9 @@ export default function RotaDoDia() {
                                         Pedido Registrado
                                       </Badge>
                                     )}
+                                    </>)}
                                   </div>
+                                  {vExpanded && (<>
                                   {visit.customerAddress && (
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                       📍 {visit.customerAddress}
@@ -2350,10 +2435,23 @@ export default function RotaDoDia() {
                                       💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                     </p>
                                   )}
+                                  </>)}
                                 </div>
                               </div>
                               {/* Botões de ação para visitas virtuais */}
                               <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
+                                {/* Botao Expandir/Recolher card */}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                  onClick={(e) => { e.stopPropagation(); toggleVirtCard(vCardKey); }}
+                                  title={vExpanded ? 'Recolher' : 'Expandir'}
+                                  aria-label={vExpanded ? 'Recolher' : 'Expandir'}
+                                  data-testid={`toggle-virtual-${visit.customerId || visit.id}`}
+                                >
+                                  {vExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                </Button>
                                 {/* Botão WhatsApp → Central de Atendimento (apenas Admin e Telemarketing ativo) */}
                                 {visit.customerId && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                                   <Button
