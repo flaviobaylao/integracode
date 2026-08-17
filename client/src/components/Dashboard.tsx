@@ -441,23 +441,35 @@ export default function Dashboard() {
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Sem. Passada x Hoje)</CardTitle><InfoDot text="Compara o faturamento efetivo de hoje (NF-e de VENDA autorizadas) com o do mesmo dia da semana passada. Considera apenas vendas, excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. Fonte: notas fiscais (fiscal_invoices)." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">{`Faturamento Efetivo (${['Domingos','Segundas','Terças','Quartas','Quintas','Sextas','Sábados'][new Date(bounds.today + 'T12:00:00').getDay()]} do mês)`}</CardTitle><InfoDot text="Faturamento efetivo (NF-e de VENDA autorizadas, excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra) de cada ocorrencia deste dia da semana no mes vigente: 1a semana, 2a semana... ate hoje. A ultima barra (verde) e o dia de hoje. Fonte: visitSummary.sellerDaily." /></div></CardHeader>
           <CardContent>
             {(() => {
-              const pair = [
-                { label: "Sem. passada", v: dailyLastWeek, color: "#9ca3af" },
-                { label: "Hoje", v: dailyTodaySales, color: "#10b981" },
-              ];
-              const mx = Math.max(1, dailyLastWeek, dailyTodaySales);
+              const iso = bounds.today;
+              const base = new Date(iso + 'T12:00:00');
+              const wd = base.getDay();
+              const y = base.getFullYear(), mo = base.getMonth();
+              const occ: { iso: string; day: number }[] = [];
+              for (let day = 1; day <= base.getDate(); day++) {
+                const dt = new Date(y, mo, day, 12, 0, 0);
+                if (dt.getDay() === wd) occ.push({ iso: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, day });
+              }
+              const todayIdx = occ.length - 1;
+              const vals = occ.map((o) => pipelineDailyMap[o.iso] || 0);
+              const mx = Math.max(1, ...vals);
               return (
-                <div className="mt-3 flex items-end justify-around gap-6 h-28">
-                  {pair.map((p, i) => (
-                    <div key={i} className="flex flex-col items-center flex-1">
-                      <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(p.v)}</div>
-                      <div className="w-10 rounded-t" style={{ height: Math.max(6, Math.round((p.v / mx) * 72)), backgroundColor: p.color }} />
-                      <div className="text-[10px] text-gray-500 mt-1">{p.label}</div>
-                    </div>
-                  ))}
+                <div className="mt-3 flex items-end justify-around gap-3 h-28 overflow-x-auto">
+                  {occ.map((o, i) => {
+                    const v = vals[i];
+                    const isToday = i === todayIdx;
+                    return (
+                      <div key={i} className="flex flex-col items-center flex-1 min-w-[42px]">
+                        <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(v)}</div>
+                        <div className="w-9 rounded-t" style={{ height: Math.max(6, Math.round((v / mx) * 72)), backgroundColor: isToday ? "#10b981" : "#9ca3af" }} />
+                        <div className="text-[10px] text-gray-500 mt-1 whitespace-nowrap">{isToday ? "Hoje" : `${i + 1}ª sem.`}</div>
+                        <div className="text-[9px] text-gray-400 whitespace-nowrap">{`${String(o.day).padStart(2, '0')}/${String(mo + 1).padStart(2, '0')}`}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })()}
