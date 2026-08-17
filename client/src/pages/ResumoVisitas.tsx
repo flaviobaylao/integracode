@@ -30,6 +30,7 @@ type Row = {
   segmento?: string;
   documento?: string;
   cadastroAtivo?: boolean;
+  tipoPessoa?: string;
   cycles?: Cycle[];
   visits: Visit[];
 };
@@ -107,8 +108,9 @@ export default function ResumoVisitas() {
   const [startDate, setStartDate] = useState(addDays(t0, -30));
   const [endDate, setEndDate] = useState(addDays(t0, 30));
   const [search, setSearch] = useState("");
-  const [seller, setSeller] = useState("");
+  const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [cityMulti, setCityMulti] = useState<string[]>([]);
+  const [tipoMulti, setTipoMulti] = useState<string[]>([]);
   const [freq, setFreq] = useState("");
   const [segmento, setSegmento] = useState("");
   const [situacaoMulti, setSituacaoMulti] = useState<string[]>(SITUACAO_PADRAO);
@@ -163,6 +165,11 @@ export default function ResumoVisitas() {
 
   const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
+  // PJ / PF / Não identificado — na ordem fixa, só as opções que existem nos dados.
+  const tipos = useMemo(() => {
+    const presentes = new Set(rows.map((r) => r.tipoPessoa || "Não identificado"));
+    return ["PJ", "PF", "Não identificado"].filter((t) => presentes.has(t));
+  }, [rows]);
   const segmentos = useMemo(() => {
     const lista = Array.from(new Set(rows.map((r) => (r.segmento || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
     return rows.some((r) => !(r.segmento || "").trim()) ? [...lista, SEM_SEGMENTO] : lista;
@@ -174,15 +181,16 @@ export default function ResumoVisitas() {
     const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
     const q = norm(search);
     return rows.filter((r) => {
-      if (seller && r.sellerName !== seller) return false;
+      if (!multiMatch(sellerMulti, r.sellerName || "")) return false;
       if (!multiMatch(cityMulti, r.city || "")) return false;
+      if (!multiMatch(tipoMulti, r.tipoPessoa || "Não identificado")) return false;
       if (freq && r.periodicity !== freq) return false;
       if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
       if (!multiMatch(situacaoMulti, situacaoDe(r))) return false;
       if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
-  }, [rows, search, seller, cityMulti, freq, segmento, situacaoMulti, situacaoDe]);
+  }, [rows, search, sellerMulti, cityMulti, tipoMulti, freq, segmento, situacaoMulti, situacaoDe]);
 
   // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
   const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
@@ -304,8 +312,9 @@ export default function ResumoVisitas() {
         <input className="border rounded px-2 py-1 text-sm" placeholder="Nome ou cidade..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 220 }} />
         <input type="date" className="border rounded px-2 py-1 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         <input type="date" className="border rounded px-2 py-1 text-sm" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        <select className="border rounded px-2 py-1 text-sm" value={seller} onChange={(e) => setSeller(e.target.value)}><option value="">Todos os vendedores</option>{sellers.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+        <MultiSelect label="Vendedor" options={sellers} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-resumo-visitas" />
         <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={setCityMulti} testId="filter-city-resumo-visitas" />
+        <MultiSelect label="Tipo" options={tipos} selected={tipoMulti} onChange={setTipoMulti} testId="filter-tipo-resumo-visitas" />
         <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ maxWidth: 260 }} title="Segmento de negócio do cliente (derivado do CNAE)"><option value="">Todos os segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <div className="relative inline-block" data-testid="filter-situacao-wrap">
