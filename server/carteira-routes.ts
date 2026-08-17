@@ -4,7 +4,7 @@
 //
 // Um unico endpoint read-only que devolve tudo que o dashboard precisa:
 //   1. serie mensal de faturamento (jan/2025 -> mes corrente)
-//   2. curva ABC da carteira (segmentos)
+//   2. classe do cliente (A+/A-/.../D-)
 //   3. PJ x PF
 //   4. segmento de negocio (customers.segmento_principal)
 //   5. lista de clientes com total, media simples e MEDIA PONDERADA por mes
@@ -104,7 +104,7 @@ export const FAIXAS_TICKET: Array<{ chave: string; label: string; min: number; m
   { chave: "f6", label: "Acima de R$ 5.000,00", min: 5000.01, max: null },
 ];
 
-// ── NOTA DO CLIENTE (A+ / A- / B+ ... / D-) ───────────────────────────────────
+// ── CLASSE DO CLIENTE (A+ / A- / B+ ... / D-) ─────────────────────────────────
 // A LETRA e o nivel de faturamento: o ticket medio do cliente (o que ele fatura
 // por mes QUANDO compra) nas mesmas faixas do quadro de ticket medio, agrupadas
 // de 6 para 4:
@@ -118,20 +118,20 @@ export const FAIXAS_TICKET: Array<{ chave: string; label: string; min: number; m
 //   - = qualquer outro caso (nao chega aos 80% ou esta devendo hoje).
 // Os 3 dias de folga existem porque boleto que vence em fim de semana ou feriado
 // so compensa no dia util seguinte — atraso de 1 ou 2 dias raramente e o cliente.
-export const NOTA_LETRAS = ["A", "B", "C", "D"] as const;
-export type NotaLetra = (typeof NOTA_LETRAS)[number];
-export const NOTA_LABEL: Record<NotaLetra, string> = {
+export const CLASSE_LETRAS = ["A", "B", "C", "D"] as const;
+export type ClasseLetra = (typeof CLASSE_LETRAS)[number];
+export const CLASSE_LABEL: Record<ClasseLetra, string> = {
   A: "Acima de R$ 1.501,00/mês",
   B: "R$ 800,00 a R$ 1.500,00/mês",
   C: "R$ 300,00 a R$ 799,00/mês",
   D: "Até R$ 299,99/mês",
 };
 /** Tolerancia, em dias corridos apos o vencimento, que ainda conta como pago em dia. */
-export const NOTA_DIAS_TOLERANCIA = 3;
+export const CLASSE_DIAS_TOLERANCIA = 3;
 /** Fatia minima de titulos pagos dentro da tolerancia para o cliente ganhar o "+". */
-export const NOTA_PONTUALIDADE_MIN = 0.8;
+export const CLASSE_PONTUALIDADE_MIN = 0.8;
 
-export function letraDoTicket(ticket: number): NotaLetra {
+export function letraDoTicket(ticket: number): ClasseLetra {
   const t = Number(ticket) || 0;
   if (t > 1500) return "A";
   if (t > 799) return "B";
@@ -149,11 +149,11 @@ export function letraDoTicket(ticket: number): NotaLetra {
 export function sinalDePagamento(pontualidade: number | null, debito: number): "+" | "-" {
   if ((Number(debito) || 0) > 0) return "-";
   if (pontualidade === null) return "+";
-  return pontualidade >= NOTA_PONTUALIDADE_MIN ? "+" : "-";
+  return pontualidade >= CLASSE_PONTUALIDADE_MIN ? "+" : "-";
 }
 
-/** As 8 notas na ordem em que aparecem na tela: A+, A-, B+, B-, C+, C-, D+, D-. */
-export const NOTAS_ORDEM: string[] = NOTA_LETRAS.flatMap((l) => [`${l}+`, `${l}-`]);
+/** As 8 classes na ordem em que aparecem na tela: A+, A-, B+, B-, C+, C-, D+, D-. */
+export const CLASSES_ORDEM: string[] = CLASSE_LETRAS.flatMap((l) => [`${l}+`, `${l}-`]);
 
 export function registerCarteira(app: Express) {
   // ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ export function registerCarteira(app: Express) {
         )
         SELECT chave,
                COUNT(1) FILTER (WHERE pago IS NOT NULL)::int AS medidos,
-               COUNT(1) FILTER (WHERE pago IS NOT NULL AND pago - venc <= ${NOTA_DIAS_TOLERANCIA})::int AS pontuais,
+               COUNT(1) FILTER (WHERE pago IS NOT NULL AND pago - venc <= ${CLASSE_DIAS_TOLERANCIA})::int AS pontuais,
                COALESCE(MAX(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::int AS pior_atraso,
                COALESCE(AVG(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::float AS atraso_medio
         FROM pg GROUP BY 1`);
@@ -439,7 +439,7 @@ export function registerCarteira(app: Express) {
         //            silencioso, o balde que da para reagir;
         //  ativo   = o resto.
         const mesesSemComprar = r.ultimo_mes ? distanciaMeses(String(r.ultimo_mes), hoje) : 999;
-        // NOTA: letra pelo ticket medio, sinal pela pontualidade + debito de hoje.
+        // CLASSE: letra pelo ticket medio, sinal pela pontualidade + debito de hoje.
         const chaveCli = String(r.chave);
         const pg = pontPorChave.get(chaveCli);
         const pontualidade = pg && pg.medidos > 0 ? pg.pontuais / pg.medidos : null;
@@ -481,22 +481,14 @@ export function registerCarteira(app: Express) {
           titulosMedidos: pg?.medidos || 0,
           piorAtraso: pg?.pior || 0,
           atrasoMedio: pg?.medio || 0,
-          nota: `${letraDoTicket(ticketCli)}${sinalDePagamento(pontualidade, debitoCli)}`,
+          classe: `${letraDoTicket(ticketCli)}${sinalDePagamento(pontualidade, debitoCli)}`,
           situacao,
           mesesSemComprar,
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
-          classe: "C" as "A" | "B" | "C",
         };
       });
 
-      // Curva ABC sobre o faturamento do periodo: A ate 80%, B ate 95%, C o resto.
       const totalGeral = clientes.reduce((s, c) => s + c.total, 0);
-      let acum = 0;
-      for (const c of clientes) {
-        acum += c.total;
-        const pct = totalGeral > 0 ? acum / totalGeral : 0;
-        c.classe = pct <= 0.8 ? "A" : pct <= 0.95 ? "B" : "C";
-      }
 
       const somaPor = (chaveDe: (c: any) => string) => {
         const m = new Map<string, { clientes: number; valor: number }>();
@@ -509,14 +501,6 @@ export function registerCarteira(app: Express) {
         }
         return m;
       };
-
-      const mapaAbc = somaPor((c) => c.classe);
-      const abc = (["A", "B", "C"] as const).map((k) => ({
-        classe: k,
-        clientes: mapaAbc.get(k)?.clientes || 0,
-        valor: mapaAbc.get(k)?.valor || 0,
-        pctValor: totalGeral > 0 ? ((mapaAbc.get(k)?.valor || 0) / totalGeral) * 100 : 0,
-      }));
 
       const mapaTipo = somaPor((c) => c.tipo);
       const tipos = ["PJ", "PF", "Não identificado"]
@@ -544,17 +528,17 @@ export function registerCarteira(app: Express) {
         };
       });
 
-      // NOTA A+/A-/B+/.../D- — cruza o quadro de ticket medio com o debito da
-      // carteira. Uma linha por nota, na ordem A+, A-, B+, B-, C+, C-, D+, D-.
+      // CLASSE A+/A-/B+/.../D- — cruza o quadro de ticket medio com o debito da
+      // carteira. Uma linha por classe, na ordem A+, A-, B+, B-, C+, C-, D+, D-.
       // `faturamentoMes` usa a mesma base do quadro de ticket (media mensal do
-      // cliente no periodo), entao a soma das notas fecha com o total de la.
-      const notas = NOTAS_ORDEM.map((n) => {
-        const dentro = clientes.filter((c) => c.nota === n);
+      // cliente no periodo), entao a soma das classes fecha com o total de la.
+      const classes = CLASSES_ORDEM.map((n) => {
+        const dentro = clientes.filter((c) => c.classe === n);
         return {
-          nota: n,
+          classe: n,
           letra: n[0],
           sinal: n[1],
-          label: NOTA_LABEL[n[0] as NotaLetra],
+          label: CLASSE_LABEL[n[0] as ClasseLetra],
           clientes: dentro.length,
           pj: dentro.filter((c) => c.tipo === "PJ").length,
           pf: dentro.filter((c) => c.tipo === "PF").length,
@@ -565,10 +549,10 @@ export function registerCarteira(app: Express) {
           semMedicao: dentro.filter((c) => c.pontualidade === null).length,
         };
       });
-      const notaRegra = {
-        toleranciaDias: NOTA_DIAS_TOLERANCIA,
-        pontualidadeMin: NOTA_PONTUALIDADE_MIN,
-        letras: NOTA_LETRAS.map((l) => ({ letra: l, label: NOTA_LABEL[l] })),
+      const classeRegra = {
+        toleranciaDias: CLASSE_DIAS_TOLERANCIA,
+        pontualidadeMin: CLASSE_PONTUALIDADE_MIN,
+        letras: CLASSE_LETRAS.map((l) => ({ letra: l, label: CLASSE_LABEL[l] })),
         semMedicao: clientes.filter((c) => c.pontualidade === null).length,
       };
 
@@ -636,11 +620,10 @@ export function registerCarteira(app: Express) {
         },
         kpis,
         serie,
-        abc,
         tipos,
         faixasTicket,
-        notas,
-        notaRegra,
+        classes,
+        classeRegra,
         segmentos,
         vendedores,
         debitoTotal,
