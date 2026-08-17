@@ -457,14 +457,14 @@ export default function Dashboard() {
               const vals = occ.map((o) => pipelineDailyMap[o.iso] || 0);
               const mx = Math.max(1, ...vals);
               return (
-                <div className="mt-3 flex items-end justify-around gap-3 h-28 overflow-x-auto">
+                <div className="mt-4 flex items-end justify-around gap-3 h-36 overflow-x-auto">
                   {occ.map((o, i) => {
                     const v = vals[i];
                     const isToday = i === todayIdx;
                     return (
                       <div key={i} className="flex flex-col items-center flex-1 min-w-[42px]">
                         <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(v)}</div>
-                        <div className="w-9 rounded-t" style={{ height: Math.max(6, Math.round((v / mx) * 72)), backgroundColor: isToday ? "#10b981" : "#9ca3af" }} />
+                        <div className="w-9 rounded-t" style={{ height: Math.max(6, Math.round((v / mx) * 58)), backgroundColor: isToday ? "#10b981" : "#9ca3af" }} />
                         <div className="text-[10px] text-gray-500 mt-1 whitespace-nowrap">{isToday ? "Hoje" : `${i + 1}ª sem.`}</div>
                         <div className="text-[9px] text-gray-400 whitespace-nowrap">{`${String(o.day).padStart(2, '0')}/${String(mo + 1).padStart(2, '0')}`}</div>
                       </div>
