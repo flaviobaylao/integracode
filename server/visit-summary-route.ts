@@ -15,16 +15,24 @@ export function registerVisitSummary(app: Express) {
       const endDate = norm(req.query.endDate, dAdd(todayStr, 30));
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
-      // Clientes ativos "de rota" (com dia de visita), vendedor resolvido via users
+      // Clientes "de rota" (com dia de visita), vendedor resolvido via users.
+      // Traz tambem quem tem o CADASTRO INATIVADO mas ainda guarda dia de rota: a tela
+      // classifica cada linha em ativo/inativo/perdido e o filtro de Situacao ja abre
+      // marcado em Ativo+Perdido, entao o universo padrao continua o mesmo de antes.
       const clients = await q(`
         SELECT c.id AS customer_id, c.name AS customer_name, c.city, c.neighborhood,
                c.visit_periodicity AS periodicity, c.weekdays, c.segmento_principal AS segmento,
+               COALESCE(c.is_active, false) AS cad_ativo,
+               NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS documento,
                TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name
         FROM customers c
         LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', '') OR u.id = c.seller_id)
-        WHERE c.is_active = true AND c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE
+        WHERE c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE
           AND c.weekdays IS NOT NULL AND c.weekdays::text NOT IN ('', '[]', 'null')
-          AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)
+          AND (
+            (c.is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE))
+            OR c.is_active IS NOT TRUE
+          )
       `);
 
       // Fallback de vendedor pelo pedido mais recente (billing_pipeline)
@@ -86,7 +94,7 @@ export function registerVisitSummary(app: Express) {
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
         const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
-        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', cycles, visits };
+        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, cycles, visits };
       });
 
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
