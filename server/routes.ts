@@ -1020,12 +1020,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const userId = req.session.user.claims.sub;
         const user = await storage.getUser(userId);
         if (user) {
+          // 🏭 Perfil "Indústria": acesso total — o front recebe role 'admin' (crachá continua "Indústria" via _perfilIndustria).
+          const u: any = user.role === 'industria' ? { ...user, role: 'admin', _perfilIndustria: true } : user;
           // 🔁 "Entrar como": expõe a função impersonada + a real para o front (só admin real).
           const impRole = (req.session as any)?.impersonateRole;
-          if (impRole && user.role === 'admin') {
-            return res.json({ ...user, role: impRole, _impersonatingRole: impRole, _realRole: 'admin' });
+          if (impRole && u.role === 'admin') {
+            return res.json({ ...u, role: impRole, _impersonatingRole: impRole, _realRole: 'admin' });
           }
-          return res.json(user);
+          return res.json(u);
         }
       }
 
@@ -1061,6 +1063,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "User not found" });
       }
       
+      // 🏭 Perfil "Indústria": acesso total — o front recebe role 'admin' (crachá continua "Indústria").
+      if (user.role === 'industria') {
+        return res.json({ ...user, role: 'admin', _perfilIndustria: true });
+      }
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
@@ -17908,7 +17914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Only admin can update system settings
       const user = await storage.getUser(userId);
-      if (user?.role !== 'admin') {
+      if (!['admin', 'industria'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -18722,7 +18728,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Only admin can import products
       const user = await storage.getUser(userId);
-      if (user?.role !== 'admin') {
+      if (!['admin', 'industria'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Apenas administradores podem importar produtos" });
       }
 
@@ -23342,7 +23348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       
       // Apenas admin pode executar esta operação
-      if (user?.role !== 'admin') {
+      if (!['admin', 'industria'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Apenas administradores podem gerar agenda futura" });
       }
 
@@ -23368,7 +23374,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       
       // Apenas admin pode executar esta operação
-      if (user?.role !== 'admin') {
+      if (!['admin', 'industria'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Apenas administradores podem recalcular datas de visita" });
       }
 
