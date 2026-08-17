@@ -498,6 +498,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       vendedor: 'Vendedor',
       telemarketing: 'Telemarketing',
       motorista: 'Motorista',
+      industria: 'Indústria',
     };
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
@@ -926,7 +927,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                       {user?.firstName} {user?.lastName}
                     </p>
                     <p className="text-xs text-gray-600">
-                      {user?.role && getRoleLabel(user.role)}
+                      {user?.role && getRoleLabel((user as any)._perfilIndustria ? 'industria' : user.role)}
                     </p>
                   </div>
                 </div>
@@ -1050,7 +1051,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {user?.firstName} {user?.lastName}
               </p>
               <p className="text-xs text-gray-600">
-                {user?.role && getRoleLabel(user.role)}
+                {user?.role && getRoleLabel((user as any)._perfilIndustria ? 'industria' : user.role)}
               </p>
             </div>
             <Avatar>
