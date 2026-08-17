@@ -287,6 +287,18 @@ export default function GestaoCarteiras() {
   }, [clientes]);
   const totalMais = useMemo(() => clientes.filter((c) => sinalDe(c) === "+").length, [clientes]);
 
+  // MAIOR ATRASO do cliente: o pior atraso entre os títulos que ele já pagou no
+  // período e o atraso do título que está vencido AGORA (esse ainda está correndo,
+  // então também conta). `null` = nenhum título com data de baixa e nada vencido,
+  // ou seja, não há do que medir atraso.
+  const maiorAtraso = (c: Cliente): number | null => {
+    const pago = Number(c.piorAtraso || 0);
+    const correndo = Number(c.diasVencido || 0);
+    const pior = Math.max(pago, correndo);
+    if (pior > 0) return pior;
+    return (c.titulosMedidos || 0) > 0 ? 0 : null;
+  };
+
   // Valor usado na ordenação de cada coluna clicável (texto ordena A-Z, número por valor).
   const valorDaColuna = (c: Cliente, k: string): string | number => {
     switch (k) {
@@ -296,6 +308,7 @@ export default function GestaoCarteiras() {
       case "vendedor": return c.vendedor || "";
       case "total": return c.total || 0;
       case "debito": return c.debito || 0;
+      case "atraso": return maiorAtraso(c) ?? -1;
       default: return "";
     }
   };
@@ -409,7 +422,8 @@ export default function GestaoCarteiras() {
           "Dias vencido": c.diasVencido || 0,
           "Pontualidade %": c.pontualidade == null ? "" : Number((c.pontualidade * 100).toFixed(1)),
           "Títulos medidos": c.titulosMedidos || 0,
-          "Pior atraso (dias)": c.piorAtraso || 0,
+          "Pior atraso pago (dias)": c.piorAtraso || 0,
+          "Maior atraso (dias)": maiorAtraso(c) ?? "",
         })),
       `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${sinalSel !== "todos" ? (sinalSel === "+" ? "_em-dia" : "_atrasa") : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
@@ -1063,6 +1077,7 @@ export default function GestaoCarteiras() {
                     <TableHead className="text-right w-24">Meses c/ compra</TableHead>
                     <TableHead className="w-24">Última compra</TableHead>
                     {thOrdenavel("debito", "Débito", "text-right w-28", true)}
+                    {thOrdenavel("atraso", "Maior atraso", "text-right w-28", true)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1074,8 +1089,23 @@ export default function GestaoCarteiras() {
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
                           {c.nome}
-                          {c.cadastrado && !c.ativo ? (
-                            <span className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground align-middle">inativo</span>
+                          {/* Situacao da carteira, a mesma do gráfico de barras acima.
+                              INATIVO = cadastro desativado (a empresa já disse que ele saiu).
+                              PERDIDO = cadastro ativo, comprava com regularidade e parou —
+                              é o churn silencioso, o único balde em que dá para reagir. */}
+                          {c.situacao === "inativo" ? (
+                            <span
+                              className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground align-middle"
+                              title="Cadastro inativado"
+                              data-testid={`tag-inativo-${i}`}
+                            >inativo</span>
+                          ) : c.situacao === "perdido" ? (
+                            <span
+                              className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded align-middle font-semibold"
+                              style={{ background: `${COR_BARRA.perdidos}1a`, color: COR_BARRA.perdidos }}
+                              title={`Comprava com regularidade e está há ${c.mesesSemComprar} ${c.mesesSemComprar === 1 ? "mês" : "meses"} sem comprar`}
+                              data-testid={`tag-perdido-${i}`}
+                            >perdido</span>
                           ) : null}
                           {c.cidade ? <span className="block text-xs text-muted-foreground">{c.cidade}</span> : null}
                         </TableCell>
@@ -1100,11 +1130,31 @@ export default function GestaoCarteiras() {
                         <TableCell className={`text-right whitespace-nowrap ${(c.debito || 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
                           {(c.debito || 0) > 0 ? BRL(c.debito) : "—"}
                         </TableCell>
+                        {(() => {
+                          const at = maiorAtraso(c);
+                          const correndo = (c.diasVencido || 0) > 0 && (c.diasVencido || 0) >= (c.piorAtraso || 0);
+                          return (
+                            <TableCell
+                              className={`text-right whitespace-nowrap ${at === null ? "text-muted-foreground" : at === 0 ? "text-emerald-600" : at > 15 ? "text-destructive font-medium" : ""}`}
+                              title={
+                                at === null
+                                  ? "Sem título com data de baixa e nada vencido — não há como medir atraso"
+                                  : at === 0
+                                    ? `${c.titulosMedidos} ${c.titulosMedidos === 1 ? "título pago" : "títulos pagos"} sem nenhum atraso`
+                                    : correndo
+                                      ? "Título vencido em aberto hoje — o atraso ainda está correndo"
+                                      : `Pior atraso entre os ${c.titulosMedidos} títulos pagos do período`
+                              }
+                            >
+                              {at === null ? "—" : at === 0 ? "em dia" : `${NUM(at)} ${at === 1 ? "dia" : "dias"}`}
+                            </TableCell>
+                          );
+                        })()}
                       </TableRow>
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
