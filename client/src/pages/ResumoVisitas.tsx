@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
+import { MultiSelect, multiMatch } from "@/lib/tableTools";
 
 // Resumo de Visitas e Atendimentos — paridade com o 1.0 (calendário por cliente).
 // Fonte: GET /api/visit-summary?startDate&endDate
@@ -93,7 +94,7 @@ export default function ResumoVisitas() {
   const [endDate, setEndDate] = useState(addDays(t0, 30));
   const [search, setSearch] = useState("");
   const [seller, setSeller] = useState("");
-  const [city, setCity] = useState("");
+  const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [freq, setFreq] = useState("");
   const [segmento, setSegmento] = useState("");
   const [sortBy, setSortBy] = useState<{ key: "cliente" | "cidade" | "efet" | "freq" | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
@@ -122,7 +123,9 @@ export default function ResumoVisitas() {
     () => sortSellerNamesByType(Array.from(new Set(rows.map((r) => r.sellerName).filter(Boolean))) as string[], sellerTypeByName),
     [rows, sellerTypeByName],
   );
-  const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort(), [rows]);
+  // Ordem alfabética pt-BR: mantém juntas as variações do mesmo município que vêm do cadastro
+  // com grafias diferentes (GOIANIA / Goiania / Goiânia / GOIANIA (GO)), facilitando marcar todas.
+  const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
   const segmentos = useMemo(() => {
     const lista = Array.from(new Set(rows.map((r) => (r.segmento || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -136,13 +139,13 @@ export default function ResumoVisitas() {
     const q = norm(search);
     return rows.filter((r) => {
       if (seller && r.sellerName !== seller) return false;
-      if (city && r.city !== city) return false;
+      if (!multiMatch(cityMulti, r.city || "")) return false;
       if (freq && r.periodicity !== freq) return false;
       if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
       if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
-  }, [rows, search, seller, city, freq, segmento]);
+  }, [rows, search, seller, cityMulti, freq, segmento]);
 
   // Quantidade de clientes distintos considerando TODOS os filtros ativos (busca, vendedor, cidade, freq., período).
   const clientesCount = useMemo(() => new Set(filtered.map((r) => r.customerId)).size, [filtered]);
@@ -265,7 +268,7 @@ export default function ResumoVisitas() {
         <input type="date" className="border rounded px-2 py-1 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         <input type="date" className="border rounded px-2 py-1 text-sm" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         <select className="border rounded px-2 py-1 text-sm" value={seller} onChange={(e) => setSeller(e.target.value)}><option value="">Todos os vendedores</option>{sellers.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-        <select className="border rounded px-2 py-1 text-sm" value={city} onChange={(e) => setCity(e.target.value)}><option value="">Todas as cidades</option>{cities.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+        <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={setCityMulti} testId="filter-city-resumo-visitas" />
         <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select className="border rounded px-2 py-1 text-sm" value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ maxWidth: 260 }} title="Segmento de negócio do cliente (derivado do CNAE)"><option value="">Todos os segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select>
       </div>
