@@ -104,6 +104,57 @@ export const FAIXAS_TICKET: Array<{ chave: string; label: string; min: number; m
   { chave: "f6", label: "Acima de R$ 5.000,00", min: 5000.01, max: null },
 ];
 
+// ── NOTA DO CLIENTE (A+ / A- / B+ ... / D-) ───────────────────────────────────
+// A LETRA e o nivel de faturamento: o ticket medio do cliente (o que ele fatura
+// por mes QUANDO compra) nas mesmas faixas do quadro de ticket medio, agrupadas
+// de 6 para 4:
+//   A = acima de R$ 1.501/mes   (faixas f5+f6)
+//   B = R$ 800,00 a R$ 1.500,00 (faixa  f4)
+//   C = R$ 300,00 a R$ 799,00   (faixas f2+f3)
+//   D = ate R$ 299,99           (faixa  f1)
+// O SINAL e a positivacao de pagamento, medida em duas pernas:
+//   + = pagou pelo menos 80% dos titulos do periodo em ate 3 dias do vencimento
+//       E nao tem nada vencido em aberto hoje;
+//   - = qualquer outro caso (nao chega aos 80% ou esta devendo hoje).
+// Os 3 dias de folga existem porque boleto que vence em fim de semana ou feriado
+// so compensa no dia util seguinte — atraso de 1 ou 2 dias raramente e o cliente.
+export const NOTA_LETRAS = ["A", "B", "C", "D"] as const;
+export type NotaLetra = (typeof NOTA_LETRAS)[number];
+export const NOTA_LABEL: Record<NotaLetra, string> = {
+  A: "Acima de R$ 1.501,00/mês",
+  B: "R$ 800,00 a R$ 1.500,00/mês",
+  C: "R$ 300,00 a R$ 799,00/mês",
+  D: "Até R$ 299,99/mês",
+};
+/** Tolerancia, em dias corridos apos o vencimento, que ainda conta como pago em dia. */
+export const NOTA_DIAS_TOLERANCIA = 3;
+/** Fatia minima de titulos pagos dentro da tolerancia para o cliente ganhar o "+". */
+export const NOTA_PONTUALIDADE_MIN = 0.8;
+
+export function letraDoTicket(ticket: number): NotaLetra {
+  const t = Number(ticket) || 0;
+  if (t > 1500) return "A";
+  if (t > 799) return "B";
+  if (t >= 300) return "C";
+  return "D";
+}
+
+/**
+ * @param pontualidade fatia (0..1) de titulos pagos dentro da tolerancia, ou
+ *        `null` quando NENHUM titulo do cliente tem data de baixa registrada
+ *        (titulo antigo importado do Omie guarda o valor pago, mas nao a data);
+ *        nesse caso o cliente e julgado so pelo debito de hoje.
+ * @param debito valor vencido em aberto HOJE.
+ */
+export function sinalDePagamento(pontualidade: number | null, debito: number): "+" | "-" {
+  if ((Number(debito) || 0) > 0) return "-";
+  if (pontualidade === null) return "+";
+  return pontualidade >= NOTA_PONTUALIDADE_MIN ? "+" : "-";
+}
+
+/** As 8 notas na ordem em que aparecem na tela: A+, A-, B+, B-, C+, C-, D+, D-. */
+export const NOTAS_ORDEM: string[] = NOTA_LETRAS.flatMap((l) => [`${l}+`, `${l}-`]);
+
 export function registerCarteira(app: Express) {
   // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
@@ -255,7 +306,8 @@ export function registerCarteira(app: Express) {
                  NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),''),
                  'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),''),'?')
                ) AS chave,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0) - COALESCE(NULLIF(amount_paid::text,'')::numeric,0)),0)::float AS debito
+               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0) - COALESCE(NULLIF(amount_paid::text,'')::numeric,0)),0)::float AS debito,
+               COALESCE(MAX((now() AT TIME ZONE 'America/Sao_Paulo')::date - due_date::date),0)::int AS dias_vencido
         FROM receivables
         WHERE deleted_at IS NULL
           AND ${VENCIDO}
@@ -265,7 +317,56 @@ export function registerCarteira(app: Express) {
       const debitoPorChave = new Map<string, number>(
         debitoRows.map((r: any) => [String(r.chave), Number(r.debito) || 0]),
       );
+      const diasVencidoPorChave = new Map<string, number>(
+        debitoRows.map((r: any) => [String(r.chave), Number(r.dias_vencido) || 0]),
+      );
       const debitoTotal = debitoRows.reduce((s2: number, r: any) => s2 + (Number(r.debito) || 0), 0);
+
+      // 2c) PONTUALIDADE — a perna de historico da NOTA (o sinal + / -).
+      //     Para cada titulo do periodo procuramos a data em que ele foi baixado:
+      //     primeiro `paid_date` no proprio titulo, senao a ultima baixa lancada
+      //     em receivable_payments. Titulo sem nenhuma das duas nao entra na conta
+      //     (importacao antiga do Omie trouxe o valor pago, mas nao a data) — o
+      //     cliente que so tem titulos assim fica com pontualidade `null` e e
+      //     julgado apenas pelo debito de hoje.
+      const pontRows = await q(`
+        WITH pg AS (
+          SELECT COALESCE(
+                   NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),''),
+                   'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),''),'?')
+                 ) AS chave,
+                 due_date::date AS venc,
+                 COALESCE(
+                   paid_date::date,
+                   (SELECT MAX(p.paid_at)::date FROM receivable_payments p
+                     WHERE p.receivable_id = receivables.id AND p.deleted_at IS NULL)
+                 ) AS pago
+          FROM receivables
+          WHERE issue_date >= '${iniDate}'
+            AND issue_date <  '${fimDateExcl}'
+            AND deleted_at IS NULL
+            AND due_date IS NOT NULL
+            AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+            AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+            ${FILTRO_VENDA}
+        )
+        SELECT chave,
+               COUNT(1) FILTER (WHERE pago IS NOT NULL)::int AS medidos,
+               COUNT(1) FILTER (WHERE pago IS NOT NULL AND pago - venc <= ${NOTA_DIAS_TOLERANCIA})::int AS pontuais,
+               COALESCE(MAX(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::int AS pior_atraso,
+               COALESCE(AVG(GREATEST(pago - venc, 0)) FILTER (WHERE pago IS NOT NULL), 0)::float AS atraso_medio
+        FROM pg GROUP BY 1`);
+      const pontPorChave = new Map<string, { medidos: number; pontuais: number; pior: number; medio: number }>(
+        pontRows.map((r: any) => [
+          String(r.chave),
+          {
+            medidos: Number(r.medidos) || 0,
+            pontuais: Number(r.pontuais) || 0,
+            pior: Number(r.pior_atraso) || 0,
+            medio: Number(r.atraso_medio) || 0,
+          },
+        ]),
+      );
 
       // 3) Por cliente: total, titulos, meses com compra e o mapa mes -> valor.
       //    O cadastro entra por LEFT JOIN no documento (tipo, vendedor, cidade,
@@ -338,6 +439,12 @@ export function registerCarteira(app: Express) {
         //            silencioso, o balde que da para reagir;
         //  ativo   = o resto.
         const mesesSemComprar = r.ultimo_mes ? distanciaMeses(String(r.ultimo_mes), hoje) : 999;
+        // NOTA: letra pelo ticket medio, sinal pela pontualidade + debito de hoje.
+        const chaveCli = String(r.chave);
+        const pg = pontPorChave.get(chaveCli);
+        const pontualidade = pg && pg.medidos > 0 ? pg.pontuais / pg.medidos : null;
+        const debitoCli = debitoPorChave.get(chaveCli) || 0;
+        const ticketCli = mesesComCompra > 0 ? total / mesesComCompra : 0;
         const cadastroInativo = r.cad_nome ? r.is_active !== true : false;
         const situacao: "ativo" | "inativo" | "perdido" = cadastroInativo
           ? "inativo"
@@ -365,8 +472,16 @@ export function registerCarteira(app: Express) {
           mediaPonderada: ponderado / somaPesos,
           // Ritmo do cliente QUANDO ele compra (nao dilui pelos meses parados) —
           // e a base do "quanto deixaria de entrar se ele parar".
-          potencialMes: mesesComCompra > 0 ? total / mesesComCompra : 0,
-          debito: debitoPorChave.get(String(r.chave)) || 0,
+          potencialMes: ticketCli,
+          debito: debitoCli,
+          // Dias vencidos do titulo em aberto mais antigo (0 = nao deve nada hoje).
+          diasVencido: diasVencidoPorChave.get(chaveCli) || 0,
+          // Positivacao de pagamento: `null` = nenhum titulo com data de baixa.
+          pontualidade,
+          titulosMedidos: pg?.medidos || 0,
+          piorAtraso: pg?.pior || 0,
+          atrasoMedio: pg?.medio || 0,
+          nota: `${letraDoTicket(ticketCli)}${sinalDePagamento(pontualidade, debitoCli)}`,
           situacao,
           mesesSemComprar,
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
@@ -428,6 +543,34 @@ export function registerCarteira(app: Express) {
           faturamentoMes: fatMes,
         };
       });
+
+      // NOTA A+/A-/B+/.../D- — cruza o quadro de ticket medio com o debito da
+      // carteira. Uma linha por nota, na ordem A+, A-, B+, B-, C+, C-, D+, D-.
+      // `faturamentoMes` usa a mesma base do quadro de ticket (media mensal do
+      // cliente no periodo), entao a soma das notas fecha com o total de la.
+      const notas = NOTAS_ORDEM.map((n) => {
+        const dentro = clientes.filter((c) => c.nota === n);
+        return {
+          nota: n,
+          letra: n[0],
+          sinal: n[1],
+          label: NOTA_LABEL[n[0] as NotaLetra],
+          clientes: dentro.length,
+          pj: dentro.filter((c) => c.tipo === "PJ").length,
+          pf: dentro.filter((c) => c.tipo === "PF").length,
+          valor: dentro.reduce((s, c) => s + c.total, 0),
+          faturamentoMes: dentro.reduce((s, c) => s + c.mediaSimples, 0),
+          debito: dentro.reduce((s, c) => s + c.debito, 0),
+          comDebito: dentro.filter((c) => c.debito > 0).length,
+          semMedicao: dentro.filter((c) => c.pontualidade === null).length,
+        };
+      });
+      const notaRegra = {
+        toleranciaDias: NOTA_DIAS_TOLERANCIA,
+        pontualidadeMin: NOTA_PONTUALIDADE_MIN,
+        letras: NOTA_LETRAS.map((l) => ({ letra: l, label: NOTA_LABEL[l] })),
+        semMedicao: clientes.filter((c) => c.pontualidade === null).length,
+      };
 
       const segmentos = Array.from(somaPor((c) => c.segmento).entries())
         .map(([segmento, a]) => ({ segmento, ...a }))
@@ -496,6 +639,8 @@ export function registerCarteira(app: Express) {
         abc,
         tipos,
         faixasTicket,
+        notas,
+        notaRegra,
         segmentos,
         vendedores,
         debitoTotal,
