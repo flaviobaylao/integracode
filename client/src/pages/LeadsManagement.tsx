@@ -112,6 +112,16 @@ export default function LeadsManagement() {
     return (id: string | null | undefined) => (id ? (m.get(id) || '—') : '—');
   }, [allUsers]);
 
+  // Vendedores do filtro: todos que possuem ao menos um lead atribuído
+  // (inclui telemarketing/omie/inativos, ex.: Honest 2), rotulados por nome.
+  const filterSellers = useMemo(() => {
+    const ids = new Set<string>();
+    (leads || []).forEach((l: any) => { if (l.assignedTo) ids.add(l.assignedTo); });
+    return Array.from(ids)
+      .map((id) => ({ id, name: sellerNameById(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }, [leads, sellerNameById]);
+
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
       return await apiRequest('POST', '/api/leads', {
@@ -660,9 +670,9 @@ export default function LeadsManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  {sellers.map(seller => (
+                  {filterSellers.map(seller => (
                     <SelectItem key={seller.id} value={seller.id}>
-                      {seller.firstName} {seller.lastName || ''}
+                      {seller.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
