@@ -26533,6 +26533,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 📥 ADMIN: importa uma lista de leads de prospecção (nome + coordenadas), atribuídos a um vendedor.
+  // Telefone é OPCIONAL (prospecção de mapa não tem telefone). Cria como 'pending' (sem agendar).
+  // Idempotente: pula nomes que já existem para o mesmo vendedor (não convertidos/descartados).
+  app.post('/api/admin/importar-leads', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Apenas administradores podem importar leads.' });
+      }
+      const sellerId = String(req.body?.sellerId || '').trim();
+      const arr = Array.isArray(req.body?.leads) ? req.body.leads : [];
+      if (!sellerId) return res.status(400).json({ message: 'Informe o vendedor (sellerId).' });
+      if (!arr.length) return res.status(400).json({ message: 'Nenhum lead para importar.' });
+
+      // Nomes já existentes para o vendedor (evita duplicar em reexecução).
+      const existRes = await db.execute(sql`
+        SELECT LOWER(TRIM(fantasy_name)) AS nome FROM leads
+        WHERE assigned_to = ${sellerId} AND status NOT IN ('converted', 'discarded')
+      `);
+      const jaExiste = new Set(((existRes.rows || []) as any[]).map(r => String(r.nome || '')));
+
+      let criados = 0, pulados = 0;
+      const erros: any[] = [];
+      const nome = user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Importação';
+      for (const item of arr) {
+        try {
+          const fantasyName = String(item.fantasyName || item.nome || '').trim();
+          const lat = Number(item.latitude);
+          const lng = Number(item.longitude);
+          if (!fantasyName || !Number.isFinite(lat) || !Number.isFinite(lng)) { erros.push({ fantasyName, motivo: 'dados inválidos' }); continue; }
+          if (jaExiste.has(fantasyName.toLowerCase())) { pulados++; continue; }
+          await storage.createLead({
+            fantasyName,
+            latitude: String(lat),
+            longitude: String(lng),
+            contact: item.contact ? String(item.contact) : null,
+            phone: item.phone ? String(item.phone) : null,
+            observation: item.observation ? String(item.observation) : null,
+            status: 'pending',
+            assignedTo: sellerId,
+            createdBy: user.id,
+            createdByName: nome,
+            temperature: null,
+          } as any);
+          jaExiste.add(fantasyName.toLowerCase());
+          criados++;
+        } catch (e: any) {
+          erros.push({ fantasyName: item?.fantasyName, motivo: e?.message });
+        }
+      }
+
+      console.log(`📥 [IMPORTAR-LEADS] ${criados} leads importados p/ vendedor ${sellerId} (${pulados} pulados) por ${user.email}`);
+      return res.json({ message: 'Importação concluída.', total: arr.length, criados, pulados, erros });
+    } catch (error: any) {
+      console.error('Erro ao importar leads:', error);
+      return res.status(500).json({ message: 'Erro ao importar leads', error: error?.message });
+    }
+  });
+
   // Buscar um lead específico
   app.get('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
