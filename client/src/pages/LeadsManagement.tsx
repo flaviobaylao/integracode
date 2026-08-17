@@ -102,8 +102,10 @@ export default function LeadsManagement() {
   });
 
   // Filter vendors from users
+  // Pick-list de "Vendedor Responsável": TODOS os vendedores ativos do Integra
+  // (externos role='vendedor' + telemarketing), igual à definição da tela de Vendedores.
   const sellers = useMemo(() => {
-    return sortSellersByType((allUsers || []).filter((u: any) => u.role === 'vendedor' && u.isActive));
+    return sortSellersByType((allUsers || []).filter((u: any) => (u.role === 'vendedor' || u.role === 'telemarketing') && u.isActive));
   }, [allUsers]);
 
   // Nome do vendedor por id (para a coluna Vendedor)
