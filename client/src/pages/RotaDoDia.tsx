@@ -2131,7 +2131,6 @@ export default function RotaDoDia() {
                           </Button>
                           {/* 📋 Solicitar Alteração */}
                           <ChangeRequestControl
-                            fullRow
                             disabled={hasCheckinOrSale(visit.customerId)}
                             entityType={isLead ? 'lead' : 'customer'}
                             entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
@@ -2509,7 +2508,6 @@ export default function RotaDoDia() {
                                 {/* 📋 Solicitar Alteração */}
                                 {visit.customerId && (
                                   <ChangeRequestControl
-                                    fullRow
                                     disabled={hasCheckinOrSale(visit.customerId)}
                                     entityType="customer"
                                     entityId={String(visit.customerId)}
