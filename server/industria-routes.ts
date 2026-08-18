@@ -392,30 +392,56 @@ export function registerIndustriaRoutes(app: Express) {
 
       // 4) Entrada do produto acabado
       let finished: any = null;
+      // Regra (Flavio 18/ago):
+      //  - Ordem de POLPA → o volume produzido ENTRA no estoque de matéria-prima
+      //    (resolve por product_id OU pelo NOME do produto = nome da MP).
+      //  - Ordem de SUCO → lote de produto acabado SEMPRE na instância IND
+      //    (resolve por product_id OU pelo nome do produto no catálogo).
       const productId = order.product_id ? String(order.product_id) : null;
+      const productName = String(order.product_name || '').trim();
+
+      // a) destino MATÉRIA-PRIMA (polpa produzida): por id, senão por nome exato
+      let matDest: any = null;
       if (productId) {
-        const rmDest: any = await db.execute(sql`SELECT * FROM raw_materials WHERE id = ${productId} LIMIT 1`);
-        const matDest = (rmDest.rows || [])[0];
-        if (matDest) {
-          // produto da ordem é uma matéria-prima (ex.: polpa) → entra no estoque de MP
-          const prevQty = Number(matDest.quantity) || 0;
-          const newQty = prevQty + produced;
-          await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${matDest.id}`);
-          await db.execute(sql`
-            INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
-            VALUES (gen_random_uuid()::varchar, ${matDest.id}, 'entrada', ${produced}, ${prevQty}, ${newQty}, ${id}, ${'Produção ' + order.order_number + ' — lote ' + lotNumber}, ${by}, now(), ${matDest.unit_cost})`);
-          finished = { type: 'raw_material', name: matDest.name, newQuantity: newQty };
-        } else {
-          // produto do catálogo → lote de produto acabado (inventory_lots)
+        const r1: any = await db.execute(sql`SELECT * FROM raw_materials WHERE id = ${productId} LIMIT 1`);
+        matDest = (r1.rows || [])[0] || null;
+      }
+      if (!matDest && productName) {
+        const r2: any = await db.execute(sql`SELECT * FROM raw_materials WHERE UPPER(TRIM(name)) = UPPER(${productName}) LIMIT 1`);
+        matDest = (r2.rows || [])[0] || null;
+      }
+
+      if (matDest) {
+        // produção de polpa → entra no estoque de MP do módulo Indústria
+        const prevQty = Number(matDest.quantity) || 0;
+        const newQty = prevQty + produced;
+        await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${matDest.id}`);
+        await db.execute(sql`
+          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
+          VALUES (gen_random_uuid()::varchar, ${matDest.id}, 'entrada', ${produced}, ${prevQty}, ${newQty}, ${id}, ${'Produção ' + order.order_number + ' — lote ' + lotNumber}, ${by}, now(), ${matDest.unit_cost})`);
+        finished = { type: 'raw_material', name: matDest.name, newQuantity: newQty };
+      } else {
+        // b) destino PRODUTO ACABADO (suco): por id, senão por nome no catálogo
+        let prodId = productId;
+        if (prodId) {
+          const chk: any = await db.execute(sql`SELECT id FROM products WHERE id = ${prodId} LIMIT 1`);
+          if (!(chk.rows || []).length) prodId = null;
+        }
+        if (!prodId && productName) {
+          const rp: any = await db.execute(sql`SELECT id FROM products WHERE UPPER(TRIM(name)) = UPPER(${productName}) LIMIT 1`);
+          prodId = String((rp.rows || [])[0]?.id || '') || null;
+        }
+        if (prodId) {
           try {
-            // resolve a instância real do produto (inventory_lots.instance_id)
-            let instanceId = String(order.instance_id || '');
+            // Lote de produto acabado SEMPRE na instância IND (Indústria)
+            const indQ: any = await db.execute(sql`SELECT id FROM omie_instances WHERE UPPER(name) = 'IND' LIMIT 1`);
+            let instanceId = String((indQ.rows || [])[0]?.id || '');
             if (!instanceId) {
-              const pr: any = await db.execute(sql`SELECT omie_instance_id FROM products WHERE id = ${productId} LIMIT 1`);
-              instanceId = String((pr.rows || [])[0]?.omie_instance_id || '') || 'IND';
+              warnings.push("instancia IND nao encontrada em omie_instances — usando instance_id da ordem");
+              instanceId = String(order.instance_id || '') || 'IND';
             }
             const lot = await storage.createInventoryLot({
-              productId,
+              productId: prodId,
               instanceId,
               stockType: 'in_use',
               lotNumber,
@@ -425,7 +451,7 @@ export function registerIndustriaRoutes(app: Express) {
             } as any);
             await storage.createInventoryMovement({
               lotId: lot.id,
-              productId,
+              productId: prodId,
               instanceId,
               movementType: 'replenish',
               quantity: String(produced),
@@ -437,13 +463,13 @@ export function registerIndustriaRoutes(app: Express) {
               notes: `Entrada por finalização da ${order.order_number}`,
               createdBy: by,
             } as any);
-            finished = { type: 'inventory_lot', lotId: lot.id, lotNumber, quantity: produced };
+            finished = { type: 'inventory_lot', lotId: lot.id, lotNumber, quantity: produced, instanceId };
           } catch (invErr: any) {
             warnings.push('estoque acabado: ' + String(invErr?.message || invErr).slice(0, 200));
           }
+        } else {
+          warnings.push('produto da ordem nao encontrado nem em materias-primas nem no catalogo — produzido NAO foi lancado em estoque');
         }
-      } else {
-        warnings.push('ordem sem product_id — produto acabado nao foi lancado em estoque');
       }
 
       console.log('🏭 [OP] FINALIZADA', order.order_number, 'produzido', produced, 'lote', lotNumber, 'CMV', totalCost.toFixed(2), 'por', by);
