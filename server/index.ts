@@ -45,6 +45,7 @@ import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole } from './authMiddleware';
+import { registerIndustriaRoutes } from './industria-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -3383,6 +3384,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Modulo Industria completo (materia-prima, movimentacoes, ordens de producao,
+  // finalizacao com qualidade/CMV e integracao com inventory_lots) — 18/ago/2026
+  try { registerIndustriaRoutes(app); } catch (e) { console.error('[industria routes]', e); }
+
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
   db.execute(sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS channel_phone varchar`).catch(() => {});
@@ -5563,7 +5568,10 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           'boleto_charges','boleto_charge_receivables','pix_charges','payment_links',
           // CUTOVER receitas 17/ago/2026: o 2.0 e o dono de recipes/recipe_items
           // (edicao em /industria-dados). O backfill do 1.0 nao pode sobrescrever.
-          'recipes','recipe_items']);
+          'recipes','recipe_items',
+          // CUTOVER industria 18/ago/2026: modulo Industria completo no 2.0
+          // (/industria) — o 2.0 e o dono destas tabelas tambem.
+          'raw_materials','raw_material_movements','production_orders','production_order_items']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
