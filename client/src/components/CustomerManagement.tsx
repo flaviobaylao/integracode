@@ -84,6 +84,7 @@ export default function CustomerManagement() {
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
+  const [isLeadMode, setIsLeadMode] = useState(false); // Novo Cliente (false) x Novo Lead (true)
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -124,6 +125,8 @@ export default function CustomerManagement() {
   });
 
   const isAdmin = user?.role === 'admin';
+  // ✅ Ativar/reativar: todos os papéis, exceto entrega (motorista/entregador). 🔒 Inativar: só Admin.
+  const canReactivate = !['motorista', 'entregador'].includes(user?.role || '');
 
   const bulkInactivateMutation = useMutation({
     mutationFn: async () => {
@@ -432,11 +435,21 @@ export default function CustomerManagement() {
           {perms.can(CARD_CLIENTES, "criar") && (
           <Button
             className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-600"
-            onClick={() => setShowModal(true)}
+            onClick={() => { setIsLeadMode(false); setShowModal(true); }}
             data-testid="button-new-customer"
           >
             <Plus className="h-4 w-4 mr-2" />
             Novo Cliente
+          </Button>
+          )}
+          {perms.can(CARD_CLIENTES, "criar") && (
+          <Button
+            className="bg-purple-600 hover:bg-purple-700 text-white border border-purple-600"
+            onClick={() => { setIsLeadMode(true); setShowModal(true); }}
+            data-testid="button-new-lead"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Lead
           </Button>
           )}
         </div>
@@ -580,7 +593,7 @@ export default function CustomerManagement() {
             <div className="text-sm text-gray-600 flex items-center ml-1">
               {filteredCustomers.length} cliente(s)
             </div>
-            {selectedIds.size > 0 && perms.can(CARD_CLIENTES, "excluir") && (
+            {selectedIds.size > 0 && isAdmin && perms.can(CARD_CLIENTES, "excluir") && (
               <Button
                 size="sm"
                 className="bg-red-600 hover:bg-red-700 text-white h-9 ml-1"
@@ -591,7 +604,7 @@ export default function CustomerManagement() {
                 🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedIds.size})`}
               </Button>
             )}
-            {selectedIds.size > 0 && (statusFilter === 'inactive' || statusFilter === 'all') && perms.can(CARD_CLIENTES, "excluir") && (
+            {selectedIds.size > 0 && (statusFilter === 'inactive' || statusFilter === 'all') && canReactivate && (
               <Button
                 size="sm"
                 className="bg-green-600 hover:bg-green-700 text-white h-9 ml-1"
@@ -802,8 +815,10 @@ export default function CustomerManagement() {
           onClose={() => {
             setShowModal(false);
             setEditingCustomer(null);
+            setIsLeadMode(false);
           }}
           customer={editingCustomer}
+          isLead={editingCustomer ? undefined : isLeadMode}
         />
       )}
 
