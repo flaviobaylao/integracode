@@ -17,6 +17,7 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import crypto from 'crypto';
+import { familiaEmDescanso } from './mkt-semelhanca';
 
 // ---------------------------------------------------------------------------
 // Vocabulario controlado
@@ -110,6 +111,12 @@ export async function ensureMktAssetsSchema(): Promise<{ ok: boolean; steps: { s
     `CREATE INDEX IF NOT EXISTS mkt_assets_formato_idx ON mkt_assets (formato)`,
     `CREATE INDEX IF NOT EXISTS mkt_assets_ativo_idx ON mkt_assets (ativo, direitos_ok)`,
     `CREATE INDEX IF NOT EXISTS mkt_assets_tags_idx ON mkt_assets USING GIN (tags)`,
+    // Semelhanca entre criativos (ver mkt-semelhanca.ts): dHash de 64 bits em hex
+    // e o grupo de fotos praticamente iguais. O descanso passa a ser da familia,
+    // para a esteira nunca rodar duas fotos quase identicas em sequencia.
+    `ALTER TABLE mkt_assets ADD COLUMN IF NOT EXISTS phash CHAR(16)`,
+    `ALTER TABLE mkt_assets ADD COLUMN IF NOT EXISTS familia INTEGER`,
+    `CREATE INDEX IF NOT EXISTS mkt_assets_familia_idx ON mkt_assets (familia)`,
     `CREATE TABLE IF NOT EXISTS mkt_asset_usos (
        id SERIAL PRIMARY KEY,
        asset_id INTEGER NOT NULL,
@@ -552,17 +559,31 @@ export async function buscar(f: FiltroBusca = {}): Promise<any[]> {
     const t = '%' + String(f.texto).trim() + '%';
     cond.push(sql`(COALESCE(titulo,'') ILIKE ${t} OR COALESCE(produto_nome,'') ILIKE ${t} OR COALESCE(observacao,'') ILIKE ${t})`);
   }
+  // O descanso vale para a FAMILIA (mkt-semelhanca.ts): se uma foto quase igual
+  // foi ao ar dentro do periodo, esta tambem esta descansando. Sem isso a esteira
+  // "tem 598 opcoes" mas mostra a mesma cena duas vezes seguidas.
+  const familiaDescansada = sql`NOT EXISTS (
+      SELECT 1 FROM mkt_assets irmao
+       WHERE irmao.familia IS NOT NULL
+         AND irmao.familia = mkt_assets.familia
+         AND irmao.id <> mkt_assets.id
+         AND irmao.ultimo_uso IS NOT NULL
+         AND irmao.ultimo_uso >= NOW() - (${descanso}::text || ' days')::interval)`;
+
   if (f.soElegiveis) {
     cond.push(sql`ativo = true AND direitos_ok = true`);
     cond.push(sql`(ultimo_uso IS NULL OR ultimo_uso < NOW() - (${descanso}::text || ' days')::interval)`);
+    cond.push(familiaDescansada);
   }
 
   const where = cond.reduce((acc, c, i) => (i === 0 ? c : sql`${acc} AND ${c}`));
   const r: any = await db.execute(sql`
     SELECT id, sha256, tipo, url, fonte, origem, produto_id, produto_nome, titulo, tags,
            largura, altura, formato, bytes, direitos_ok, ativo, usos, ultimo_uso, observacao, criado_em,
+           phash, familia,
            (ativo AND direitos_ok
-              AND (ultimo_uso IS NULL OR ultimo_uso < NOW() - (${descanso}::text || ' days')::interval)) AS elegivel,
+              AND (ultimo_uso IS NULL OR ultimo_uso < NOW() - (${descanso}::text || ' days')::interval)
+              AND ${familiaDescansada}) AS elegivel,
            CASE WHEN ultimo_uso IS NULL THEN NULL
                 ELSE GREATEST(0, ${descanso}::int - EXTRACT(DAY FROM NOW() - ultimo_uso)::int) END AS dias_de_descanso
       FROM mkt_assets
@@ -619,6 +640,20 @@ export async function elegivel(id: number, diasDescanso = DIAS_DESCANSO_PADRAO):
   if (a.ultimo_uso) {
     const dias = Math.floor((Date.now() - new Date(a.ultimo_uso).getTime()) / 86400000);
     if (dias < diasDescanso) return { elegivel: false, motivo: 'usado ha ' + dias + ' dia(s); descanso de ' + diasDescanso, diasFaltando: diasDescanso - dias };
+  }
+
+  // O descanso e da familia, nao da peca: nao adianta esta foto estar descansada
+  // se uma quase identica foi ao ar ontem — para quem ve o anuncio e a mesma foto.
+  // A frase comeca com "usado ha " de proposito: e assim que registrarUso
+  // reconhece o que um humano pode liberar na mao (direitos e arquivo, nunca).
+  const fam = await familiaEmDescanso(id, diasDescanso);
+  if (fam.emDescanso) {
+    const quem = fam.irmaoTitulo ? ' ("' + fam.irmaoTitulo + '", #' + fam.irmaoId + ')' : ' (#' + fam.irmaoId + ')';
+    return {
+      elegivel: false,
+      motivo: 'usado ha ' + (diasDescanso - (fam.diasFaltando || 0)) + ' dia(s) numa foto quase igual' + quem + '; descanso de ' + diasDescanso + ' vale para a familia inteira',
+      diasFaltando: fam.diasFaltando,
+    };
   }
   return { elegivel: true };
 }
