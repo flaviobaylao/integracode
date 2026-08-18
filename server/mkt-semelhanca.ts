@@ -64,17 +64,47 @@ export function tituloBase(t: any): string {
 }
 
 // --- union-find simples: N e da ordem de centenas, nao precisa de nada esperto
+//
+// Cada componente carrega um ROTULO (o produto). Nao basta recusar o par
+// acerola~maracuja: uma foto sem produto com hash parecido encosta nas duas e
+// liga as duas por corrente. O rotulo viaja junto com o grupo e fecha a porta.
 
-function novaUniao(n: number) {
+function novaUniao(rotulos: string[]) {
+  const n = rotulos.length;
   const pai = Array.from({ length: n }, (_, i) => i);
+  const rot = rotulos.slice();
   const raiz = (i: number): number => { while (pai[i] !== i) { pai[i] = pai[pai[i]]; i = pai[i]; } return i; };
+  const juntar = (ra: number, rb: number) => { pai[ra] = rb; if (!rot[rb]) rot[rb] = rot[ra]; };
   return {
     raiz,
-    unir(a: number, b: number) { const ra = raiz(a), rb = raiz(b); if (ra !== rb) pai[ra] = rb; },
+    rotuloDe: (i: number) => rot[raiz(i)],
+    /** Une sem perguntar. Usado pelo titulo, que e autoridade maior que o hash. */
+    unir(a: number, b: number) { const ra = raiz(a), rb = raiz(b); if (ra !== rb) juntar(ra, rb); },
+    /** Une so se os rotulos nao brigarem. Devolve se uniu. */
+    unirSePuder(a: number, b: number): boolean {
+      const ra = raiz(a), rb = raiz(b);
+      if (ra === rb) return false;
+      if (rot[ra] && rot[rb] && rot[ra] !== rot[rb]) return false;
+      juntar(ra, rb);
+      return true;
+    },
   };
 }
 
-export type PecaParaAgrupar = { id: number; phash?: string | null; titulo?: string | null };
+export type PecaParaAgrupar = { id: number; phash?: string | null; titulo?: string | null; produto_nome?: string | null };
+
+/**
+ * Produto diferente NUNCA e a mesma foto, doa o que doer no hash.
+ *
+ * Medido no banco da Honest: as 15 fotos de catalogo (garrafa em fundo branco)
+ * cairam TODAS numa familia so — Acerola, Maracuja, Frutas Vermelhas, Limonada.
+ * O dHash e em tons de cinza, e a silhueta da garrafa e identica; o que muda
+ * entre elas e a COR do liquido e o rotulo, exatamente o que o hash joga fora.
+ * Sem esta regra o sistema trataria o catalogo inteiro como um criativo unico.
+ */
+function chaveDeProduto(p: PecaParaAgrupar): string {
+  return String(p.produto_nome || '').trim().toLowerCase();
+}
 
 /**
  * Agrupa em familias. Ligacao simples: A~B e B~C poe os tres juntos, mesmo que
@@ -86,7 +116,7 @@ export type PecaParaAgrupar = { id: number; phash?: string | null; titulo?: stri
  */
 export function agrupar(pecas: PecaParaAgrupar[], limiar = LIMIAR_SEMELHANCA): Map<number, number> {
   const n = pecas.length;
-  const u = novaUniao(n);
+  const u = novaUniao(pecas.map(chaveDeProduto));
 
   // 1) mesmo titulo base = mesma familia, sem discussao (original + recortes)
   const porTitulo = new Map<string, number>();
@@ -106,7 +136,10 @@ export function agrupar(pecas: PecaParaAgrupar[], limiar = LIMIAR_SEMELHANCA): M
       if (!hashValido(hj)) continue;
       if (u.raiz(i) === u.raiz(j)) continue;
       const d = distancia(hi as string, hj as string);
-      if (d >= 0 && d <= limiar) u.unir(i, j);
+      // unirSePuder recusa quando os dois lados ja tem produtos diferentes.
+      // Peca sem produto entra na familia de quem encontrar primeiro; qual das
+      // duas nao importa, o que importa e que os dois produtos nao se misturam.
+      if (d >= 0 && d <= limiar) u.unirSePuder(i, j);
     }
   }
 
@@ -152,8 +185,8 @@ export async function recalcularFamilias(limiar = LIMIAR_SEMELHANCA): Promise<{
   ok: boolean; pecas: number; comHash: number; familias: number; maiorFamilia: number; erro?: string;
 }> {
   try {
-    const r: any = await db.execute(sql`SELECT id, phash, titulo FROM mkt_assets ORDER BY id ASC`);
-    const pecas: PecaParaAgrupar[] = (r.rows || []).map((x: any) => ({ id: Number(x.id), phash: x.phash, titulo: x.titulo }));
+    const r: any = await db.execute(sql`SELECT id, phash, titulo, produto_nome FROM mkt_assets ORDER BY id ASC`);
+    const pecas: PecaParaAgrupar[] = (r.rows || []).map((x: any) => ({ id: Number(x.id), phash: x.phash, titulo: x.titulo, produto_nome: x.produto_nome }));
     if (!pecas.length) return { ok: true, pecas: 0, comHash: 0, familias: 0, maiorFamilia: 0 };
 
     const mapa = agrupar(pecas, limiar);
