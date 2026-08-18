@@ -473,6 +473,7 @@ run();
   // ==========================================================================
   app.use('/api/admin/sync', authenticateUser, requireRole(['admin']));
   app.use('/api/synced-table', authenticateUser, requireRole(['admin']));
+  app.use('/api/industria', authenticateUser, requireRole(['admin']));
 
   app.post('/api/admin/sync/customer-ie', async (req, res) => {
     const apply = !!(req.body && req.body.apply === true);
@@ -3247,6 +3248,141 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e), table: name }); }
   });
 
+  // ============ Industria: CRUD de Receitas (recipes + recipe_items) ============
+  // CUTOVER 17/ago/2026: o 2.0 passa a ser o DONO das receitas. As tabelas
+  // recipes/recipe_items sairam do backfill diario do 1.0 (ver blocklist do
+  // backfill-all) — edicoes feitas aqui nao sao mais sobrescritas pelo 1.0.
+  // Sem schema drizzle (tabelas criadas via create-missing-tables) → SQL
+  // parametrizado (drizzle sql``). Auth admin por prefixo, junto das outras travas.
+  const _recNum = (v: any): number | null => {
+    if (v === '' || v == null) return null;
+    const n = Number(String(v).replace(',', '.'));
+    return isFinite(n) ? n : null;
+  };
+  const _recStr = (v: any, max = 300): string | null => {
+    if (v == null) return null;
+    const s = String(v).trim().slice(0, max);
+    return s === '' ? null : s;
+  };
+  // Substitui TODOS os ingredientes da receita (o front manda a lista completa — simples e idempotente)
+  const _recReplaceItems = async (recipeId: string, itemsIn: any[]): Promise<any[]> => {
+    const clean = (Array.isArray(itemsIn) ? itemsIn : [])
+      .map((it: any) => ({
+        raw_material_id: _recStr(it?.raw_material_id, 60),
+        quantity: _recNum(it?.quantity),
+        unit: _recStr(it?.unit, 30),
+      }))
+      .filter((it) => it.raw_material_id && it.quantity != null && it.quantity > 0);
+    await db.execute(sql`DELETE FROM recipe_items WHERE recipe_id = ${recipeId}`);
+    const out: any[] = [];
+    for (const it of clean) {
+      const rm: any = await db.execute(sql`SELECT name, unit FROM raw_materials WHERE id = ${it.raw_material_id} LIMIT 1`);
+      const mat = (rm.rows || [])[0];
+      const ins: any = await db.execute(sql`
+        INSERT INTO recipe_items (id, recipe_id, raw_material_id, raw_material_name, quantity, unit)
+        VALUES (gen_random_uuid()::varchar, ${recipeId}, ${it.raw_material_id}, ${mat?.name || null}, ${it.quantity}, ${it.unit || mat?.unit || null})
+        RETURNING *`);
+      out.push((ins.rows || [])[0]);
+    }
+    return out;
+  };
+
+  // Lista receitas + ingredientes (agrupados por receita)
+  app.get('/api/industria/recipes', async (_req, res) => {
+    try {
+      const rec: any = await db.execute(sql`SELECT * FROM recipes ORDER BY name`);
+      const its: any = await db.execute(sql`SELECT * FROM recipe_items`);
+      const byRecipe: Record<string, any[]> = {};
+      for (const it of (its.rows || [])) {
+        const k = String(it.recipe_id || '');
+        (byRecipe[k] = byRecipe[k] || []).push(it);
+      }
+      const recipes = (rec.rows || []).map((r: any) => ({ ...r, items: byRecipe[String(r.id)] || [] }));
+      res.json({ total: recipes.length, recipes });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Cria receita (com ingredientes opcionais)
+  app.post('/api/industria/recipes', async (req: any, res) => {
+    try {
+      const b = req.body || {};
+      const name = _recStr(b.name);
+      if (!name) return res.status(400).json({ error: 'nome da receita e obrigatorio' });
+      const by = _recStr(req.currentUser?.email || req.currentUser?.id, 120) || 'admin-2.0';
+      const ins: any = await db.execute(sql`
+        INSERT INTO recipes (id, name, product_name, product_id, type, estimated_yield, yield_unit, description, is_active, created_by, created_at, updated_at, registration_date)
+        VALUES (gen_random_uuid()::varchar, ${name}, ${_recStr(b.product_name)}, ${_recStr(b.product_id, 60)}, ${_recStr(b.type, 60)},
+                ${_recNum(b.estimated_yield)}, ${_recStr(b.yield_unit, 30)}, ${_recStr(b.description, 2000)},
+                ${b.is_active === false ? false : true}, ${by}, now(), now(), CURRENT_DATE)
+        RETURNING *`);
+      const recipe = (ins.rows || [])[0];
+      let items: any[] = [];
+      if (recipe && Array.isArray(b.items) && b.items.length) {
+        items = await _recReplaceItems(String(recipe.id), b.items);
+      }
+      console.log('🏭 [RECEITA] criada', name, 'por', by);
+      res.json({ ok: true, recipe: { ...recipe, items } });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Edita campos da receita (so os campos enviados)
+  app.patch('/api/industria/recipes/:id', async (req: any, res) => {
+    try {
+      const id = _recStr(req.params.id, 60);
+      if (!id) return res.status(400).json({ error: 'id invalido' });
+      const b = req.body || {};
+      const cur: any = await db.execute(sql`SELECT * FROM recipes WHERE id = ${id} LIMIT 1`);
+      const prev = (cur.rows || [])[0];
+      if (!prev) return res.status(404).json({ error: 'receita nao encontrada', id });
+      const has = (k: string) => Object.prototype.hasOwnProperty.call(b, k);
+      const name = has('name') ? _recStr(b.name) : prev.name;
+      if (!name) return res.status(400).json({ error: 'nome da receita e obrigatorio' });
+      const up: any = await db.execute(sql`
+        UPDATE recipes SET
+          name = ${name},
+          product_name = ${has('product_name') ? _recStr(b.product_name) : prev.product_name},
+          product_id = ${has('product_id') ? _recStr(b.product_id, 60) : prev.product_id},
+          type = ${has('type') ? _recStr(b.type, 60) : prev.type},
+          estimated_yield = ${has('estimated_yield') ? _recNum(b.estimated_yield) : prev.estimated_yield},
+          yield_unit = ${has('yield_unit') ? _recStr(b.yield_unit, 30) : prev.yield_unit},
+          description = ${has('description') ? _recStr(b.description, 2000) : prev.description},
+          is_active = ${has('is_active') ? b.is_active === true : prev.is_active},
+          updated_at = now()
+        WHERE id = ${id}
+        RETURNING *`);
+      console.log('🏭 [RECEITA] editada', id, name);
+      res.json({ ok: true, recipe: (up.rows || [])[0] });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Substitui os ingredientes da receita
+  app.put('/api/industria/recipes/:id/items', async (req, res) => {
+    try {
+      const id = _recStr(req.params.id, 60);
+      if (!id) return res.status(400).json({ error: 'id invalido' });
+      const cur: any = await db.execute(sql`SELECT id FROM recipes WHERE id = ${id} LIMIT 1`);
+      if (!(cur.rows || [])[0]) return res.status(404).json({ error: 'receita nao encontrada', id });
+      const items = await _recReplaceItems(id, (req.body || {}).items);
+      await db.execute(sql`UPDATE recipes SET updated_at = now() WHERE id = ${id}`);
+      console.log('🏭 [RECEITA] ingredientes substituidos', id, items.length);
+      res.json({ ok: true, items });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Exclui receita (ingredientes junto). production_orders NAO referencia receita (usa product_id) — ok excluir.
+  app.delete('/api/industria/recipes/:id', async (req, res) => {
+    try {
+      const id = _recStr(req.params.id, 60);
+      if (!id) return res.status(400).json({ error: 'id invalido' });
+      await db.execute(sql`DELETE FROM recipe_items WHERE recipe_id = ${id}`);
+      const del: any = await db.execute(sql`DELETE FROM recipes WHERE id = ${id} RETURNING id, name`);
+      const row = (del.rows || [])[0];
+      if (!row) return res.status(404).json({ error: 'receita nao encontrada', id });
+      console.log('🏭 [RECEITA] excluida', id, row.name);
+      res.json({ ok: true, deleted: row });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
   db.execute(sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS channel_phone varchar`).catch(() => {});
@@ -4606,7 +4742,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
-  app.get("/api/dashboard2/full", async (req, res) => {
+  app.get("/api/dashboard2/full", async (_req, res) => {
     try {
       const tz = "America/Sao_Paulo";
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -4621,36 +4757,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // ── REGRA OFICIAL DE FATURAMENTO (vigencia 01/07/2026) — server/faturamento-oficial.ts
       // NF-e autorizada de venda, deduplicada por CNPJ+serie+numero, data SEM AT TIME ZONE
       // (as datas ja estao em horario de Brasilia). now() e timestamptz, esse sim converte.
-      // ── VISÃO POR CARTEIRA (Flavio): vendedor/telemarketing enxergam SÓ o que implantaram.
-      // Admin/coordenador/administrativo (e não logado) veem tudo — SCOPE fica vazio.
-      let __scopeSellerId = '';
-      try {
-        const __s: any = (req as any).session || {};
-        let __uid: any = __s?.userId || __s?.user?.claims?.sub || (((req as any).isAuthenticated && (req as any).isAuthenticated()) ? (req as any).user?.claims?.sub : null);
-        let __umail: any = __s?.userEmail || __s?.user?.claims?.email || (req as any).user?.claims?.email || null;
-        if (__uid) {
-          let __u: any = await storage.getUser(String(__uid));
-          if ((!__u) && __umail) __u = await storage.getUserByEmail(String(__umail));
-          if (__u && __u.isActive) {
-            let __role = __u.role;
-            const __imp = __s?.impersonateRole;
-            if (__imp && __u.role === 'admin') __role = __imp;
-            if (__role === 'vendedor' || __role === 'telemarketing') __scopeSellerId = String(__u.id || '');
-          }
-        }
-      } catch (e) {}
-      const __SID = __scopeSellerId.replace(/[^a-zA-Z0-9_-]/g, '');
-      const __RESTRICT = __SID.length > 0;
-      const __keySet = `(SELECT unnest(ARRAY[su.id, su.omie_vendor_code, 'omie-vendor-'||su.omie_vendor_code]) FROM users su WHERE su.id='${__SID}')`;
-      const __impl = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fi.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fi.sales_card_id LIMIT 1))`;
-      const __implLeg = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fiscal_invoices.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fiscal_invoices.sales_card_id LIMIT 1))`;
-      const SCOPE     = __RESTRICT ? ` AND (${__impl}) = ANY(${__keySet})` : '';
-      const SCOPE_LEG = __RESTRICT ? ` AND (${__implLeg}) = ANY(${__keySet})` : '';
-      const SCOPE_BLK = __RESTRICT ? ` AND bo.seller_id = ANY(${__keySet})` : '';
-      const SCOPE_BP  = __RESTRICT ? ` AND bp.seller_id = ANY(${__keySet})` : '';
-      const SCOPE_SC  = __RESTRICT ? ` AND sc.seller_id = ANY(${__keySet})` : '';
-      const SCOPE_ORD = __RESTRICT ? ` AND seller_id = ANY(${__keySet})` : '';
-      const VF = nfVendaWhere('fi') + SCOPE; const VFROM = nfVendaFrom('fi'); const VDATA = nfData('fi');
+      const VF = nfVendaWhere('fi'); const VFROM = nfVendaFrom('fi'); const VDATA = nfData('fi');
       const statsRows = await q2(`SELECT COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS today_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1), 0) AS yesterday_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 7), 0) AS last_week_same_day_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('week', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS week_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS month_sales FROM (SELECT fi.total_invoice, ${VDATA}::date AS fdate FROM ${VFROM} WHERE ${VF}) t`);
       const stats = { todaySales: statsRows[0]?.today_sales ?? 0, lastWeekSameDaySales: statsRows[0]?.last_week_same_day_sales ?? 0, yesterdaySales: statsRows[0]?.yesterday_sales ?? 0, weekSales: statsRows[0]?.week_sales ?? 0, monthSales: statsRows[0]?.month_sales ?? 0 };
       // FIX (18/jul): número grande de "Faturamento do Mês" = NF-e autorizada do mês (faturamento real, = dashboard2/all),
@@ -4666,11 +4773,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // Grafico anual: meses ANTERIORES a vigencia mantem o calculo legado (nao reprocessamos
       // o passado); de 01/07/2026 em diante vale a Regra Oficial.
       const _legado = "status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (import_origin IS NULL OR TRIM(import_origin) = '')";
-      const monthlySeriesRows = await q2(`SELECT m, COALESCE(SUM(v),0) AS v FROM (SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m, total_invoice AS v FROM fiscal_invoices WHERE ${_legado}${SCOPE_LEG} AND COALESCE(emission_date,authorization_date,created_at)::date >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo'))::date AND COALESCE(emission_date,authorization_date,created_at)::date < '${VIGENCIA_REGRA_OFICIAL}'::date UNION ALL SELECT to_char(date_trunc('month', ${VDATA}),'YYYY-MM') AS m, fi.total_invoice AS v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date >= '${VIGENCIA_REGRA_OFICIAL}'::date) s GROUP BY m ORDER BY m`);
+      const monthlySeriesRows = await q2(`SELECT m, COALESCE(SUM(v),0) AS v FROM (SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m, total_invoice AS v FROM fiscal_invoices WHERE ${_legado} AND COALESCE(emission_date,authorization_date,created_at)::date >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo'))::date AND COALESCE(emission_date,authorization_date,created_at)::date < '${VIGENCIA_REGRA_OFICIAL}'::date UNION ALL SELECT to_char(date_trunc('month', ${VDATA}),'YYYY-MM') AS m, fi.total_invoice AS v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date >= '${VIGENCIA_REGRA_OFICIAL}'::date) s GROUP BY m ORDER BY m`);
       const series = { daily: dailySeriesRows.map((r: any) => ({ d: r.d, v: Number(r.v) || 0 })), monthly: monthlySeriesRows.map((r: any) => ({ m: r.m, v: Number(r.v) || 0 })) };
       const vendasEfetivasMes: any = { label: null, value: 0, approx: true };
-      const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked'${SCOPE_BLK} ORDER BY bo.blocked_at DESC NULLS LAST`);
-      const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar')${SCOPE_BP} ORDER BY bp.created_at DESC NULLS LAST`);
+      const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at FROM blocked_orders bo LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked' ORDER BY bo.blocked_at DESC NULLS LAST`);
+      const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar') ORDER BY bp.created_at DESC NULLS LAST`);
       const nfsHoje = await q2(`SELECT fi.id, COALESCE(fi.customer_name,'-') AS customer_name, fi.invoice_number, fi.total_invoice, COALESCE(fi.authorization_date, fi.emission_date) AS authorization_date, COALESCE(vend.nome,'Sem vendedor') AS seller_name FROM ${VFROM} LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN ${PIPELINE_POR_NF} bp ON bp.num = fi.invoice_number LEFT JOIN LATERAL (SELECT NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),'') AS nome FROM users u WHERE u.id = COALESCE(NULLIF(bp.seller_id,''), sc.seller_id) OR u.omie_vendor_code = COALESCE(NULLIF(bp.seller_id,''), sc.seller_id) OR u.omie_vendor_code = REPLACE(COALESCE(NULLIF(bp.seller_id,''), sc.seller_id,''),'omie-vendor-','') LIMIT 1) vend ON true WHERE ${VF} AND ${VDATA}::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY COALESCE(fi.authorization_date, fi.emission_date) DESC NULLS LAST`);
 
       const faturadosDia = await q2(`SELECT COALESCE(NULLIF(TRIM(fi.customer_name),''),'-') AS customer_name, COALESCE(SUM(fi.total_invoice),0) AS total FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY 1 HAVING COALESCE(SUM(fi.total_invoice),0) > 0 ORDER BY total DESC`);
@@ -4678,11 +4785,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const ordersOverview = { blocked, aFaturar, nfsHoje, faturadosDia, faturadosSemana };
       // Clientes a atender no dia = clientes agendados (sales_cards.scheduled_date = a Rota do Dia).
       // Visitado (Visitas Efetivadas) = existe CHECK-IN em route_checkpoints na mesma data.
-      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date)::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date)::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL${SCOPE_SC} GROUP BY sc.customer_id, d`);
-      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL${SCOPE_ORD} GROUP BY customer_id, d`);
+      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date)::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date)::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL GROUP BY sc.customer_id, d`);
+      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       let metas: any[] = [];
       // Meta = média dos ÚLTIMOS 3 faturamentos (pedidos) de cada cliente
-      try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM (SELECT customer_id, sale_value, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn FROM billing_pipeline WHERE stage <> 'lixeira' AND sale_value > 0 AND customer_id IS NOT NULL${SCOPE_ORD}) t WHERE rn <= 3 GROUP BY customer_id`); } catch (e) {}
+      try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM (SELECT customer_id, sale_value, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn FROM billing_pipeline WHERE stage <> 'lixeira' AND sale_value > 0 AND customer_id IS NOT NULL) t WHERE rn <= 3 GROUP BY customer_id`); } catch (e) {}
       const custInfo = await q2(`SELECT c.id AS customer_id, c.name AS customer_name, c.seller_id, TRIM(CONCAT(u.first_name,' ',u.last_name)) AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id,'omie-vendor-','') OR u.id = c.seller_id)`);
       const metaMap = new Map<string, number>();
       for (const m of metas) metaMap.set(m.customer_id, Number(m.meta) || 0);
@@ -5453,7 +5560,10 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           'bank_statements','bank_statement_items','bank_statement_item_matches','bank_statement_item_status_log','reconciliation_audit_log','reconciliation_patterns',
           'financial_accounts','account_movements','financial_audit_log','financial_sync_log',
           'receivables','receivable_payments','receivable_events','payables','payable_payments',
-          'boleto_charges','boleto_charge_receivables','pix_charges','payment_links']);
+          'boleto_charges','boleto_charge_receivables','pix_charges','payment_links',
+          // CUTOVER receitas 17/ago/2026: o 2.0 e o dono de recipes/recipe_items
+          // (edicao em /industria-dados). O backfill do 1.0 nao pode sobrescrever.
+          'recipes','recipe_items']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
