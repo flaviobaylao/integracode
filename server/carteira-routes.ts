@@ -24,6 +24,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { nfVendaWhere, nfVendaFrom, nfData, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
+import { authenticateUser } from "./authMiddleware";
 
 const TZ = "America/Sao_Paulo";
 
@@ -159,7 +160,7 @@ export function registerCarteira(app: Express) {
   // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
   // ---------------------------------------------------------------------------
-  app.get("/api/reports/gestao-carteiras", async (req: Request, res: Response) => {
+  app.get("/api/reports/gestao-carteiras", authenticateUser, async (req: Request, res: Response) => {
     try {
       const hoje = mesAtual();
       const inicio = normMes(req.query.inicio, "2025-01");
@@ -170,6 +171,44 @@ export function registerCarteira(app: Express) {
       const meses = listaMeses(inicio, fim);
 
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+
+      // ── ESCOPO DE QUEM ESTA OLHANDO ─────────────────────────────────────────
+      // Vendedor e telemarketing enxergam SO a propria carteira. O corte e feito
+      // aqui no servidor (nao na tela): quem chamar o endpoint na mao tambem so
+      // recebe os clientes dele. Os demais papeis continuam vendo tudo.
+      const usuario: any = (req as any).currentUser || (req as any).user || null;
+      const papel = String(usuario?.role || "");
+      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
+      const idsCarteira: string[] = [];
+      if (restrito) {
+        const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
+        add(usuario?.id);
+        const codigos: any[] = [];
+        if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
+        const mapaCodigos = usuario?.omieVendorCodes;
+        if (mapaCodigos && typeof mapaCodigos === "object") {
+          for (const v of Object.values(mapaCodigos)) if (v) codigos.push(v);
+        }
+        for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
+        // Vendedor sem nenhum vinculo nao pode cair no "sem filtro" — fica vazio.
+        if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
+      }
+      const nomeUsuario = [usuario?.firstName, usuario?.lastName].filter(Boolean).join(" ").trim() || usuario?.email || "";
+
+      // CTE com os documentos da carteira do usuario (so quando ha restricao).
+      const CTE_CARTEIRA = restrito
+        ? `minha_carteira AS (
+             SELECT DISTINCT NULLIF(regexp_replace(COALESCE(NULLIF(cnpj,''),NULLIF(cpf,''),''),'[^0-9]','','g'),'') AS doc
+             FROM customers
+             WHERE COALESCE(is_supplier,false) = false
+               AND seller_id IN (${idsCarteira.map((i) => `'${i}'`).join(",")})
+           ),
+        `
+        : "";
+      const FILTRO_CARTEIRA = restrito
+        ? ` WHERE doc IN (SELECT doc FROM minha_carteira WHERE doc IS NOT NULL)`
+        : "";
 
       // ── O QUE NAO E FATURAMENTO DE VENDA ────────────────────────────────────
       // Mesma regua do dashboard geral (server/faturamento-oficial.ts): so entra
@@ -212,7 +251,7 @@ export function registerCarteira(app: Express) {
 
       // CTE comum: titulos validos do periodo, ja com a chave do cliente.
       const CTE_REC = `
-        WITH r AS (
+        WITH ${CTE_CARTEIRA}r AS (
           SELECT
             NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
             NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),'')                        AS nome,
@@ -227,7 +266,7 @@ export function registerCarteira(app: Express) {
             ${FILTRO_VENDA}
         ),
         rk AS (
-          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v FROM r
+          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v FROM r${FILTRO_CARTEIRA}
         )`;
 
       // 1) Serie mensal (base = titulos emitidos)
@@ -249,7 +288,7 @@ export function registerCarteira(app: Express) {
           AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0`;
       const VAL = `COALESCE(NULLIF(amount::text,'')::numeric,0)`;
       const NAO_CANCELADO = `COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')`;
-      const foraRows = await q(`
+      const foraRows = restrito ? [] : await q(`
         SELECT
           COUNT(*) FILTER (WHERE ${NAO_CANCELADO} AND NOT (TRUE ${FILTRO_VENDA}))::int          AS titulos,
           COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND NOT (TRUE ${FILTRO_VENDA})),0)::float AS valor,
@@ -272,8 +311,11 @@ export function registerCarteira(app: Express) {
       const VFROM = nfVendaFrom("fi");
       const VDATA = nfData("fi");
       const LEGADO = `status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (import_origin IS NULL OR TRIM(import_origin) = '')`;
+      // A linha de NF-e e um comparativo da empresa inteira; num recorte de uma
+      // carteira so ela confundiria (notas de outros vendedores). Fica de fora.
       let serieNf: any[] = [];
       try {
+        if (restrito) throw new Error("escopo restrito: sem linha de NF-e");
         serieNf = await q(`
           SELECT m, COALESCE(SUM(v),0)::float AS valor FROM (
             SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m,
@@ -671,7 +713,8 @@ export function registerCarteira(app: Express) {
         classeRegra,
         segmentos,
         vendedores,
-        debitoTotal,
+        debitoTotal: restrito ? clientes.reduce((s2, c) => s2 + (c.debito || 0), 0) : debitoTotal,
+        escopo: { restrito, papel, vendedor: nomeUsuario },
         clientesTotal: clientes.length,
         clientesTruncado: clientes.length > LIMITE,
         clientes: clientes.slice(0, LIMITE),
