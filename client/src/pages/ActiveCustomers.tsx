@@ -213,6 +213,8 @@ export default function ActiveCustomers() {
   const [, navigate] = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  // 🔒 Inativar cliente é EXCLUSIVO do Admin (o isAdmin acima é o grupo gestor e governa outros botões).
+  const isStrictAdmin = user?.role === 'admin';
   const delegMarks = useCustomerMarks();
   const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [searchTerm, setSearchTerm] = useState("");
@@ -565,6 +567,12 @@ export default function ActiveCustomers() {
   const handleNewLead = () => {
     setSelectedCustomerForEdit(null);
     setIsLeadMode(true);
+    setShowCustomerEditModal(true);
+  };
+
+  const handleNewCustomer = () => {
+    setSelectedCustomerForEdit(null);
+    setIsLeadMode(false);
     setShowCustomerEditModal(true);
   };
 
@@ -1127,6 +1135,14 @@ export default function ActiveCustomers() {
             </Button>
           )}
           <Button
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={handleNewCustomer}
+            data-testid="button-new-customer"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Cliente
+          </Button>
+          <Button
             className="bg-purple-600 hover:bg-purple-700 text-white"
             onClick={handleNewLead}
             data-testid="button-new-lead"
@@ -1419,7 +1435,7 @@ export default function ActiveCustomers() {
                   ✏️ Editar em massa ({selectedCustomerIds.size})
                 </Button>
               )}
-              {selectedCustomerIds.size > 0 && perms.can(CARD_ATIVOS, "excluir") && (
+              {selectedCustomerIds.size > 0 && isStrictAdmin && perms.can(CARD_ATIVOS, "excluir") && (
                 <Button
                   size="sm"
                   className="bg-red-600 hover:bg-red-700 text-white h-9"
@@ -2068,10 +2084,10 @@ export default function ActiveCustomers() {
                   Editar Cliente
                 </Button>
 
-                {/* Botão Inativar (apenas Admin) */}
-                {isAdmin && (
-                  <Button 
-                    variant="ghost" 
+                {/* Botão Inativar (EXCLUSIVO do Admin) */}
+                {isStrictAdmin && (
+                  <Button
+                    variant="ghost"
                     size="sm"
                     className="text-red-500 justify-start col-span-2"
                     onClick={(e) => {
