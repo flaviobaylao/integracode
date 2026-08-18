@@ -250,7 +250,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'vendas-digitais', label: 'Vendas Digitais', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
         { id: 'canais', label: 'Canais', icon: 'fas fa-globe', available: canAccessReports || isTelemarketing, badge: hotsitePendentesCount > 0 ? hotsitePendentesCount : null },
         { id: 'relatorios-graficos', label: 'Relatórios Gráficos', icon: 'fas fa-chart-column', available: canAccessReports, badge: null },
-        { id: 'gestao-carteiras', label: 'Gestão de Carteiras', icon: 'fas fa-briefcase', available: canAccessReports, badge: null },
+        { id: 'gestao-carteiras', label: 'Gestão de Carteiras', icon: 'fas fa-briefcase', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'sdr-digital', label: 'SDR Digital', icon: 'fas fa-search-location', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'repescagem', label: 'Repescagem', icon: 'fas fa-redo', available: canAccessReports || isTelemarketing, badge: null },
         { id: 'execucao-rota', label: 'Execução de Rota', icon: 'fas fa-route', available: canAccessReports, badge: null },
