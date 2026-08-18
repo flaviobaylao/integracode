@@ -76,6 +76,14 @@ import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
 
+// 🔌 DESLIGAMENTO DO OMIE NO CADASTRO DE CLIENTES (o 2.0 vira o dono do cadastro).
+// Controla APENAS a sincronização de CADASTRO de cliente com o Omie — as duas direções:
+//   • PULL  (buscar/recriar cliente a partir do Omie);
+//   • PUSH  (criar/alterar o cadastro do cliente no Omie).
+// NÃO afeta o fiscal/pedido (NF, boleto, pedido) — esses seguem usando o Omie normalmente.
+// Padrão = DESLIGADO. Para religar, defina a env OMIE_CADASTRO_SYNC=on no Railway.
+const OMIE_CADASTRO_SYNC_ON = String(process.env.OMIE_CADASTRO_SYNC || 'off').toLowerCase() === 'on';
+
 const STAGE_DESCRIPTIONS: Record<string, string> = {
   '20': 'Em Rota',
   '70': 'Entregue',
@@ -1546,7 +1554,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try { await logCustomerChanges({ customerId: id, before: c, changes, actor, source: 'padronizacao-nome' }); } catch {}
           await db.execute(sql`UPDATE customers SET name_locked = true WHERE id = ${id}`);
           let omieOk: any = null, omieErr: any = null;
-          if (escreverOmie && c.omieClientCode) {
+          if (OMIE_CADASTRO_SYNC_ON && escreverOmie && c.omieClientCode) {
             try {
               const svc = c.omieInstanceId ? await getOmieServiceForInstance(storage, c.omieInstanceId) : getOmieService(storage);
               if (!svc) { omieErr = 'serviço Omie indisponível'; }
@@ -1772,7 +1780,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customer = await storage.getCustomer(id);
       
       // Se não encontrar localmente e for um ID do Omie, buscar do Omie
-      if (!customer && id.startsWith('omie-client-')) {
+      // 🔌 Só quando o sync de cadastro Omie está LIGADO (padrão: desligado — 2.0 é o dono).
+      if (OMIE_CADASTRO_SYNC_ON && !customer && id.startsWith('omie-client-')) {
         console.log(`🔍 Cliente ${id} não encontrado localmente, buscando no Omie...`);
         try {
           const omieService = getOmieService(storage);
@@ -1876,18 +1885,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //  • Demais papéis (ex.: motorista): apenas telefone e contato.
       const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
+      const _isDriver = ['motorista', 'entregador'].includes(user.role);
+      const _isAdmin = user.role === 'admin';
+      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
+      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // 🔒 INATIVAR cliente é exclusivo do Admin (nem coordinator/administrative inativam pelo cadastro).
+      if (_wantsInactivate && !_isAdmin) {
+        return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
+      }
+      // ✅ ATIVAR/REATIVAR: liberado a todos os papéis, EXCETO entrega (motorista/entregador).
+      if (_wantsActivate && _isDriver) {
+        return res.status(403).json({ message: "Seu perfil (entrega) não pode alterar a situação do cliente." });
+      }
       const phoneContactAllowedFields = ['phone', 'contact'];
       if (!_isManager) {
         if (_isCadastroEditor) {
-          // Bloqueia qualquer tentativa de inativar/reativar o cliente pelo cadastro.
-          if (req.body.omieStatus !== undefined || req.body.isActive === false) {
-            return res.status(403).json({
-              message: "Seu perfil pode editar o cadastro do cliente, mas não pode inativar clientes.",
-            });
-          }
-          // Nunca deixa o cadastro alterar a situação (ativo/inativo) do cliente.
-          delete req.body.omieStatus;
-          delete req.body.isActive;
+          // Vendedor/telemarketing: editam TODOS os campos do cadastro. Inativar já foi barrado acima
+          // (só Admin); ativar/reativar é permitido. Nenhum campo é removido aqui.
         } else {
           const requestedFields = Object.keys(req.body);
           const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
@@ -2141,9 +2155,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { cardId } = req.body;
       const user = req.currentUser;
       
-      // Only admin, coordinator, and administrative can inactivate customers
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores, coordenadores e administrativos podem inativar clientes." });
+      // 🔒 Inativar cliente é EXCLUSIVO do Admin (regra do negócio: só o Admin inativa).
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
       }
       
       // Validate cardId
@@ -2380,9 +2394,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // 🟢 REGRA: todo cliente NOVO nasce ATIVO e entra na lista de Clientes Ativos.
+      // (Leads com coordenadas já foram inseridos acima; aqui garantimos o status e cobrimos
+      //  os clientes comuns, sem duplicar quem já entrou.)
+      try {
+        const _nasceAtivo = (customer as any).isActive !== false;
+        if (_nasceAtivo) {
+          // Garante status ATIVO no cadastro (cliente comum às vezes vem sem esses campos definidos).
+          await db.execute(sql`UPDATE customers SET is_active = true, omie_status = 'ativo' WHERE id = ${customer.id} AND (is_active IS DISTINCT FROM true OR omie_status IS DISTINCT FROM 'ativo')`);
+          // Garante presença em active_customers (Clientes Ativos), sem duplicar.
+          const _acExists: any = await db.execute(sql`SELECT 1 FROM active_customers WHERE customer_id = ${customer.id} AND is_active = true LIMIT 1`);
+          if (!_acExists?.rows?.length) {
+            const _docDigits = String((customer as any).cnpj || (customer as any).cpf || '').replace(/\D/g, '');
+            const _doc = _docDigits || customer.id; // sem documento: usa o id (mesmo padrão dos leads)
+            await storage.createActiveCustomer({
+              document: _doc,
+              documentType: (customer as any).cnpj ? 'cnpj' : 'cpf',
+              fantasyNameImported: (customer as any).fantasyName || (customer as any).name,
+              customerId: customer.id,
+              uploadId: 'manual-add',
+              matchStatus: 'matched',
+              latitude: (customer as any).latitude ?? null,
+              longitude: (customer as any).longitude ?? null,
+              isActive: true,
+            } as any);
+            console.log(`🟢 [CREATE CUSTOMER] Cliente adicionado a Clientes Ativos (status ativo).`);
+          }
+        }
+      } catch (_eAtivo: any) {
+        console.warn('⚠️ [CREATE CUSTOMER] nasce-ativo/active_customers:', _eAtivo?.message);
+      }
+
       // 📤 CADASTRAR NO OMIE automaticamente (se tiver CPF/CNPJ)
+      // 🔌 Só quando o sync de cadastro Omie está LIGADO (padrão: desligado — 2.0 não empurra cadastro ao Omie).
       let omieMessage = '';
-      if (customer.cpf || customer.cnpj) {
+      if (OMIE_CADASTRO_SYNC_ON && (customer.cpf || customer.cnpj)) {
         try {
           const omieService = getOmieService(storage);
           if (omieService) {
@@ -2447,6 +2493,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Resincronizar cliente local para o Omie
   app.post('/api/customers/:id/send-to-omie', authenticateUser, async (req: any, res) => {
     try {
+      // 🔌 Sync de cadastro com o Omie DESLIGADO (2.0 é o dono do cadastro). Religue com OMIE_CADASTRO_SYNC=on.
+      if (!OMIE_CADASTRO_SYNC_ON) {
+        return res.status(409).json({ message: 'Sincronização de cadastro com o Omie está desligada. O Integra 2.0 é o dono do cadastro de clientes.' });
+      }
       const { id } = req.params;
       const customer = await storage.getCustomer(id);
       
@@ -2539,16 +2589,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //  • Demais papéis (ex.: motorista): apenas telefone e contato.
       const _isManager = ['admin', 'coordinator', 'administrative'].includes(user.role);
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
+      const _isDriver = ['motorista', 'entregador'].includes(user.role);
+      const _isAdmin = user.role === 'admin';
+      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
+      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // 🔒 INATIVAR cliente é exclusivo do Admin (mesma regra do PATCH).
+      if (_wantsInactivate && !_isAdmin) {
+        return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
+      }
+      // ✅ ATIVAR/REATIVAR: liberado a todos os papéis, EXCETO entrega (motorista/entregador).
+      if (_wantsActivate && _isDriver) {
+        return res.status(403).json({ message: "Seu perfil (entrega) não pode alterar a situação do cliente." });
+      }
       const phoneContactAllowedFields = ['phone', 'contact'];
       if (!_isManager) {
         if (_isCadastroEditor) {
-          if (req.body.omieStatus !== undefined || req.body.isActive === false) {
-            return res.status(403).json({
-              message: "Seu perfil pode editar o cadastro do cliente, mas não pode inativar clientes.",
-            });
-          }
-          delete req.body.omieStatus;
-          delete req.body.isActive;
+          // Vendedor/telemarketing: editam TODOS os campos do cadastro. Inativar já foi barrado acima
+          // (só Admin); ativar/reativar é permitido. Nenhum campo é removido aqui.
         } else {
           const requestedFields = Object.keys(req.body);
           const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
@@ -3492,9 +3549,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // 🚫 Inativação em massa (admin/coordenador/administrativo). Mesma semântica da individual:
+  // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
-  app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const { ids } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
@@ -3512,9 +3569,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ✅ Reativação em massa (admin/coordenador/administrativo). Inverso da inativação:
+  // ✅ Reativação em massa — liberada a TODOS os papéis, EXCETO entrega (motorista/entregador).
   // customers.isActive=true, omie_status='ativo', volta para a lista de Clientes Ativos.
-  app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req: any, res) => {
     try {
       const { ids } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
@@ -5599,7 +5656,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Multi-tenant: tentar usar instância Omie default para sincronização
           let omieService = getOmieService(storage);
-          if (omieService && processedData.customerId.startsWith('omie-client-')) {
+          // 🔌 Pull de cadastro do Omie só quando LIGADO (padrão: desligado — 2.0 é o dono).
+          if (OMIE_CADASTRO_SYNC_ON && omieService && processedData.customerId.startsWith('omie-client-')) {
             const omieClientCode = processedData.customerId.replace('omie-client-', '');
             const omieClient = await omieService.getClientByCode(parseInt(omieClientCode));
             
@@ -8585,6 +8643,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para importar clientes do Omie
   app.post('/api/omie/import-clients', authenticateUser, async (req: any, res) => {
     try {
+      // 🔌 Import de cadastro do Omie DESLIGADO (2.0 é o dono). Religue com OMIE_CADASTRO_SYNC=on.
+      if (!OMIE_CADASTRO_SYNC_ON) {
+        return res.status(409).json({ disabled: true, message: 'Importação de clientes do Omie desligada. Cadastro gerido no INTEGRA 2.0.' });
+      }
       const { clientIds, sellerId } = req.body;
       
       if (!clientIds || !Array.isArray(clientIds) || clientIds.length === 0) {
@@ -8686,6 +8748,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Rota para sincronizar um cliente específico do Omie por CNPJ/CPF
   app.post('/api/omie/sync-client-by-document', authenticateUser, async (req: any, res) => {
     try {
+      // 🔌 Sync de cadastro do Omie DESLIGADO (2.0 é o dono). Religue com OMIE_CADASTRO_SYNC=on.
+      if (!OMIE_CADASTRO_SYNC_ON) {
+        return res.status(409).json({ disabled: true, message: 'Sincronização de cliente do Omie desligada. Cadastro gerido no INTEGRA 2.0.' });
+      }
       const { document } = req.body;
       
       if (!document) {
@@ -10540,6 +10606,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           endTime: null
         };
 
+      // 🔌 0+1. CADASTRO (vendedores + clientes) do Omie — só quando o sync de cadastro está LIGADO.
+      // Desligado por padrão: o INTEGRA 2.0 é o dono do cadastro. Faturamentos/débitos (2-3) seguem normalmente.
+      if (OMIE_CADASTRO_SYNC_ON) {
       // 0. PRIMEIRO: Sincronizar vendedores (necessário antes dos clientes)
       try {
         console.log('👥 Sincronizando vendedores do Omie...');
@@ -10570,6 +10639,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error: any) {
         console.error('❌ Erro na sincronização de clientes:', error);
         results.errors.push(`Clientes: ${error.message}`);
+      }
+      } else {
+        console.log('🔌 [SYNC-COMPLETE] Cadastro (vendedores/clientes) NÃO sincronizado do Omie — sync de cadastro desligado (2.0 é o dono).');
+        (results as any).vendors = { skipped: true };
+        (results as any).clients = { skipped: true };
       }
 
       // 2. Sincronizar pedidos/faturamentos (TODOS os períodos) - Iterar todas as instâncias ativas
@@ -27758,7 +27832,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customer = await storage.getCustomer(customerId);
       
       // Se não encontrar localmente e for um ID do Omie, buscar e sincronizar do Omie
-      if (!customer && customerId.startsWith('omie-client-')) {
+      // 🔌 Só quando o sync de cadastro Omie está LIGADO (padrão: desligado — 2.0 é o dono).
+      if (OMIE_CADASTRO_SYNC_ON && !customer && customerId.startsWith('omie-client-')) {
         console.log(`🔄 Cliente ${customerId} não encontrado localmente, buscando no Omie...`);
         try {
           const omieService = getOmieService(storage);
