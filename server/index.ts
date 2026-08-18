@@ -4295,6 +4295,31 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try { const { lacunas } = await import('./mkt-assets'); res.json(await lacunas()); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+
+  // Semelhanca entre criativos: nunca rodar duas fotos quase iguais em sequencia.
+  // Tambem vem ANTES de /api/mkt/assets/:id para "familias" nao virar um id.
+  app.get("/api/mkt/assets/familias", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panoramaFamilias } = await import('./mkt-semelhanca'); res.json(await panoramaFamilias()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Quem decodifica a imagem e o navegador (o projeto nao tem sharp/jimp): o
+  // painel manda os dHash calculados no canvas e o servidor reagrupa.
+  app.post("/api/mkt/assets/hashes", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { gravarHashes, recalcularFamilias } = await import('./mkt-semelhanca');
+      const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+      const g = await gravarHashes(itens);
+      const f = req.body?.recalcular === false ? undefined : await recalcularFamilias();
+      res.json({ ...g, familias: f });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/assets/familias/recalcular", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { recalcularFamilias, LIMIAR_SEMELHANCA } = await import('./mkt-semelhanca');
+      const l = Number(req.body?.limiar);
+      res.json(await recalcularFamilias(Number.isFinite(l) && l >= 0 && l <= 32 ? l : LIMIAR_SEMELHANCA));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.get("/api/mkt/assets", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       const { buscar } = await import('./mkt-assets');
