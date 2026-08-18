@@ -1,5 +1,6 @@
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import SyncedTable from "@/components/SyncedTable";
+import RecipesEditor from "@/components/RecipesEditor";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 export default function IndustriaDados() {
@@ -19,8 +20,8 @@ export default function IndustriaDados() {
             labels={{ name: "Material", code: "Código", category: "Categoria", unit: "Un.", quantity: "Estoque", min_quantity: "Mínimo", unit_cost: "Custo Unit.", supplier: "Fornecedor", instance_name: "Instância", description: "Descrição", is_active: "Ativo" }} />
         </TabsContent>
         <TabsContent value="receitas">
-          <SyncedTable table="recipes" hideColumns={["id", "product_id", "created_by"]}
-            labels={{ name: "Receita", product_name: "Produto", type: "Tipo", estimated_yield: "Rendimento", yield_unit: "Un. Rend.", description: "Descrição", is_active: "Ativa", registration_date: "Cadastro" }} />
+          {/* Editável desde 17/ago/2026 — o 2.0 é o dono de recipes/recipe_items (fora do backfill do 1.0) */}
+          <RecipesEditor />
         </TabsContent>
         <TabsContent value="itens"><SyncedTable table="recipe_items" hideColumns={["id"]} /></TabsContent>
         <TabsContent value="ordens"><SyncedTable table="production_orders" hideColumns={["id"]} /></TabsContent>
