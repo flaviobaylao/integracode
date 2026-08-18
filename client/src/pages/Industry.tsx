@@ -1079,13 +1079,16 @@ function MateriaisReportDialog({ orders, onClose }: any) {
   const doPrint = () => {
     const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Requisição de Matéria-Prima</title>
-<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:normal;margin:2px 0 12px}
+<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:normal;margin:2px 0 0}
+.cab{display:flex;align-items:center;gap:16px;border-bottom:2px solid #16a34a;padding-bottom:10px;margin-bottom:10px}.cab img{height:58px}
 table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #bbb;padding:5px 7px;text-align:left}th{background:#f0f0f0}
 td.num,th.num{text-align:right}tr.neg td{color:#b00020;font-weight:bold}tfoot td{font-weight:bold;background:#fafafa}
 .ordens{font-size:12px;margin:6px 0 2px}.aviso{color:#b00020;font-size:12px}
 .assin{margin-top:42px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
+<div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
 <h1>Requisição de Matéria-Prima — Produção</h1>
 <h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
+</div></div>
 <div class="ordens"><b>Ordens selecionadas (${orders.length}):</b><br>${orders.map((o: any) => `${o.order_number} — ${esc(o.product_name)} (${fmtQty(o.quantity)} un, ${fmtDate(o.production_date || o.created_at)})`).join('<br>')}</div>
 <table><thead><tr><th>Material</th><th>Un.</th><th class="num">Necessário</th><th class="num">Estoque Atual</th><th class="num">Saldo Após</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th><th>Lote MP</th><th>Ordens</th></tr></thead>
 <tbody>${rows.map((r: any) => `<tr${r.saldo != null && r.saldo < 0 ? ' class="neg"' : ''}><td>${esc(r.name)}</td><td>${esc(r.unit || '')}</td><td class="num">${fmtQty(r.total)}</td><td class="num">${r.stock == null ? '-' : fmtQty(r.stock)}</td><td class="num">${r.saldo == null ? '-' : fmtQty(r.saldo)}</td><td class="num">${fmtBRL(r.cost)}</td><td class="num">${fmtBRL(r.totalCost)}</td><td>${esc(r.lotsList || '')}</td><td>${esc(r.ordersList)}</td></tr>`).join('')}</tbody>
