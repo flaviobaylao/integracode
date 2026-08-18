@@ -157,20 +157,26 @@ function MateriaPrimaTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
-        {cards.map((c) => (
-          <Card key={c.value}
-            className={`cursor-pointer ${catFilter === c.value ? 'ring-2 ring-emerald-500' : ''}`}
-            onClick={() => setCatFilter(catFilter === c.value ? null : c.value)}>
-            <CardContent className="p-3 text-center">
-              <p className="text-xs text-gray-500">{c.label}</p>
-              <p className="text-xl font-bold">{c.count}</p>
-              <p className="text-[10px] text-gray-400">{fmtQty(c.qty)} un · {fmtBRL(c.value)}</p>
-              {c.low > 0 && <Badge className="mt-1 bg-red-500 text-white hover:bg-red-500 text-[10px]">{c.low} baixo</Badge>}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* Grid só renderiza com dados + key de remontagem — evita cards órfãos da
+          fase de loading (18/ago: DOM ficou com 14 filhos enquanto o React tinha 8) */}
+      {isLoading ? (
+        <div className="text-sm text-gray-400 py-2">Carregando categorias...</div>
+      ) : (
+        <div key={`mp-cards-${materials.length}`} className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+          {cards.map((c) => (
+            <Card key={c.value}
+              className={`cursor-pointer ${catFilter === c.value ? 'ring-2 ring-emerald-500' : ''}`}
+              onClick={() => setCatFilter(catFilter === c.value ? null : c.value)}>
+              <CardContent className="p-3 text-center">
+                <p className="text-xs text-gray-500">{c.label}</p>
+                <p className="text-xl font-bold">{c.count}</p>
+                <p className="text-[10px] text-gray-400">{fmtQty(c.qty)} un · {fmtBRL(c.value)}</p>
+                {c.low > 0 && <Badge className="mt-1 bg-red-500 text-white hover:bg-red-500 text-[10px]">{c.low} baixo</Badge>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative">
@@ -487,7 +493,7 @@ function OrdensTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div key={`op-cards-${orders.length}`} className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-blue-100 rounded-lg"><ClipboardList className="h-5 w-5 text-blue-600" /></div>
           <div><p className="text-2xl font-bold">{counts.planejada}</p><p className="text-xs text-gray-500">Planejadas</p></div>
@@ -984,7 +990,7 @@ function EstoqueTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div key={`inv-cards-${lots.length}`} className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-emerald-100 rounded-lg"><Package className="h-5 w-5 text-emerald-600" /></div>
           <div><p className="text-2xl font-bold">{data?.totalProducts ?? 0}</p><p className="text-xs text-gray-500">Produtos</p></div>
