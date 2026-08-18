@@ -327,47 +327,36 @@ export function registerIndustriaRoutes(app: Express) {
       if (!lotExpiry) return res.status(400).json({ error: 'validade do lote produzido e obrigatoria' });
       const by = userOf(req);
 
-      // 1) Consome matérias-primas (quantidades REAIS informadas na finalização)
+      // 0) Pré-carrega os materiais (SÓ leitura) e calcula o CMV ANTES de qualquer escrita
       const materials = (Array.isArray(b.materials) ? b.materials : [])
         .map((m: any) => ({ raw_material_id: str(m?.raw_material_id, 60), quantity_used: num(m?.quantity_used), lot_number: str(m?.lot_number, 60), unit: str(m?.unit, 30) }))
         .filter((m: any) => m.raw_material_id && m.quantity_used != null && m.quantity_used > 0);
-      let totalCost = 0;
       const warnings: string[] = [];
+      const matRows: any[] = [];
+      let totalCost = 0;
       for (const m of materials) {
         const rm: any = await db.execute(sql`SELECT * FROM raw_materials WHERE id = ${m.raw_material_id} LIMIT 1`);
         const mat = (rm.rows || [])[0];
-        if (!mat) { warnings.push(`material ${m.raw_material_id} nao encontrado`); continue; }
-        const prevQty = Number(mat.quantity) || 0;
-        const newQty = prevQty - m.quantity_used!;
+        if (!mat) { warnings.push(`material ${m.raw_material_id} nao encontrado — ignorado`); continue; }
         totalCost += m.quantity_used! * (Number(mat.unit_cost) || 0);
-        await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${mat.id}`);
-        await db.execute(sql`
-          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
-          VALUES (gen_random_uuid()::varchar, ${mat.id}, 'saida_producao', ${m.quantity_used}, ${prevQty}, ${newQty}, ${id}, ${'Consumo na ordem ' + order.order_number + (m.lot_number ? ' (lote insumo ' + m.lot_number + ')' : '')}, ${by}, now(), ${mat.unit_cost})`);
-        if (newQty < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${newQty})`);
+        matRows.push({ req: m, mat });
       }
-
-      // 2) Itens da ordem passam a refletir o consumo REAL (com lote do insumo)
-      await db.execute(sql`DELETE FROM production_order_items WHERE production_order_id = ${id}`);
-      for (const m of materials) {
-        const rm: any = await db.execute(sql`SELECT name, unit FROM raw_materials WHERE id = ${m.raw_material_id} LIMIT 1`);
-        const mat = (rm.rows || [])[0];
-        await db.execute(sql`
-          INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, unit, lot_number, lot_expiry_date)
-          VALUES (gen_random_uuid()::varchar, ${id}, ${m.raw_material_id}, ${mat?.name || null}, ${m.quantity_used}, ${m.unit || mat?.unit || null}, ${m.lot_number}, NULL)`);
-      }
-
-      // 3) Atualiza a ordem (status, datas, qualidade, pasteurização, CMV nas notas)
       const cmvUnit = produced > 0 ? totalCost / produced : 0;
       const cmvNote = `CMV: R$ ${totalCost.toFixed(2)} (unit. R$ ${cmvUnit.toFixed(4)}) — lote ${lotNumber}, validade ${lotExpiry}`;
       const notes = [str(b.notes, 800) || order.notes || '', cmvNote].filter(Boolean).join(' | ');
+      // production_date é coluna DATE — resolve em JS (COALESCE com texto quebrava: bug 18/ago)
+      const prodDate = str(b.production_date, 20)
+        || (order.production_date ? String(order.production_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+
+      // 1) "Claim" atômico: finaliza a ordem PRIMEIRO (WHERE status != finalizada).
+      //    Blinda contra clique duplo/concorrência e valida os tipos antes de mexer no estoque.
       const up: any = await db.execute(sql`
         UPDATE production_orders SET
           status = 'finalizada',
           quantity = ${produced},
           start_date = COALESCE(start_date, now()),
           end_date = now(),
-          production_date = COALESCE(${str(b.production_date, 20)}, production_date, CURRENT_DATE::text),
+          production_date = ${prodDate},
           brix_degree = ${num(b.brix_degree)},
           ph = ${num(b.ph)},
           sensory_analysis = ${str(b.sensory_analysis, 30)},
@@ -378,8 +367,28 @@ export function registerIndustriaRoutes(app: Express) {
           pasteurization_end_temp = ${num(b.pasteurization_end_temp)},
           notes = ${notes.slice(0, 1000)},
           updated_at = now()
-        WHERE id = ${id}
+        WHERE id = ${id} AND status <> 'finalizada'
         RETURNING *`);
+      if (!(up.rows || []).length) return res.status(400).json({ error: 'ordem ja finalizada (ou em finalizacao) — recarregue a lista' });
+
+      // 2) Consome matérias-primas (quantidades REAIS informadas na finalização)
+      for (const { req: m, mat } of matRows) {
+        const prevQty = Number(mat.quantity) || 0;
+        const newQty = prevQty - m.quantity_used!;
+        await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${mat.id}`);
+        await db.execute(sql`
+          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
+          VALUES (gen_random_uuid()::varchar, ${mat.id}, 'saida_producao', ${m.quantity_used}, ${prevQty}, ${newQty}, ${id}, ${'Consumo na ordem ' + order.order_number + (m.lot_number ? ' (lote insumo ' + m.lot_number + ')' : '')}, ${by}, now(), ${mat.unit_cost})`);
+        if (newQty < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${newQty})`);
+      }
+
+      // 3) Itens da ordem passam a refletir o consumo REAL (com lote do insumo)
+      await db.execute(sql`DELETE FROM production_order_items WHERE production_order_id = ${id}`);
+      for (const { req: m, mat } of matRows) {
+        await db.execute(sql`
+          INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, unit, lot_number, lot_expiry_date)
+          VALUES (gen_random_uuid()::varchar, ${id}, ${m.raw_material_id}, ${mat?.name || null}, ${m.quantity_used}, ${m.unit || mat?.unit || null}, ${m.lot_number}, NULL)`);
+      }
 
       // 4) Entrada do produto acabado
       let finished: any = null;
@@ -399,7 +408,12 @@ export function registerIndustriaRoutes(app: Express) {
         } else {
           // produto do catálogo → lote de produto acabado (inventory_lots)
           try {
-            const instanceId = String(order.instance_id || '') || 'IND';
+            // resolve a instância real do produto (inventory_lots.instance_id)
+            let instanceId = String(order.instance_id || '');
+            if (!instanceId) {
+              const pr: any = await db.execute(sql`SELECT omie_instance_id FROM products WHERE id = ${productId} LIMIT 1`);
+              instanceId = String((pr.rows || [])[0]?.omie_instance_id || '') || 'IND';
+            }
             const lot = await storage.createInventoryLot({
               productId,
               instanceId,
