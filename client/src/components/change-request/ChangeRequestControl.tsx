@@ -297,12 +297,12 @@ export function ChangeRequestControl(props: ControlProps) {
     statusBadge = (
       <Badge
         variant="outline"
-        className="cursor-pointer bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 gap-1"
+        className="cursor-pointer bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2.5 py-0 sm:py-0.5"
         title={`Solicitação pendente: ${(state.types || []).map((t) => TYPE_LABEL[t] || t).join(", ")}`}
         onClick={(e) => { stop(e); setViewOpen(true); }}
         data-testid={`badge-cr-pending-${entityId}`}
       >
-        <Hourglass className="h-3 w-3" /> Pendente
+        <Hourglass className="h-2.5 w-2.5 sm:h-3 sm:w-3" /> Pendente
       </Badge>
     );
   } else if (state && RESULT_META[state.status]) {
@@ -310,15 +310,15 @@ export function ChangeRequestControl(props: ControlProps) {
     statusBadge = (
       <Badge
         variant="outline"
-        className={`cursor-pointer gap-1 ${m.cls}`}
+        className={`cursor-pointer gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2.5 py-0 sm:py-0.5 ${m.cls}`}
         title={`Alterações ${m.label}${state.resolutionNote ? " — " + state.resolutionNote : ""}${(state.status === "parcial" || state.status === "rejeitadas") ? " · há retorno do admin a responder" : ""}`}
         onClick={(e) => { stop(e); setViewOpen(true); }}
         data-testid={`badge-cr-result-${entityId}`}
       >
-        <m.Icon className="h-3 w-3" /> {m.label}
+        <m.Icon className="h-2.5 w-2.5 sm:h-3 sm:w-3" /> {m.label}
         {/* 🔔 Retorno do admin (Parcial/Rejeitada) a ser respondido no card. (04/08/2026) */}
         {(state.status === "parcial" || state.status === "rejeitadas") && (
-          <Bell className="h-3 w-3 ml-0.5 animate-pulse" data-testid={`badge-cr-bell-${entityId}`} />
+          <Bell className="h-2.5 w-2.5 sm:h-3 sm:w-3 ml-0.5 animate-pulse" data-testid={`badge-cr-bell-${entityId}`} />
         )}
       </Badge>
     );
@@ -329,12 +329,12 @@ export function ChangeRequestControl(props: ControlProps) {
       <Button
         size="sm"
         variant="outline"
-        className="h-7 gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800"
+        className="h-6 sm:h-7 px-2 sm:px-3 text-[11px] sm:text-sm gap-1 text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800"
         onClick={(e) => { stop(e); setOpen(true); }}
         title="Solicitar Alteração"
         data-testid={`button-cr-open-${entityId}`}
       >
-        <ClipboardList className="h-3.5 w-3.5" /> Solicitar Alteração
+        <ClipboardList className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> Solicitar Alteração
       </Button>
     </div>
   );
