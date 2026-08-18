@@ -663,7 +663,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
     status: order.status || 'planejada',
     production_date: order.production_date ? String(order.production_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
     notes: order.notes || '',
-    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), unit: it.unit || '' })),
+    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), unit: it.unit || '', lot_number: it.lot_number || '' })),
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const [saving, setSaving] = useState(false);
@@ -676,11 +676,16 @@ function OrderDialog({ order, onClose, onDone }: any) {
       ...p,
       product_id: r.product_id || '',
       product_name: r.product_name || r.name,
-      items: (r.items || []).map((it: any) => ({
-        raw_material_id: it.raw_material_id,
-        quantity_used: String(+(n(it.quantity) * mult).toFixed(4)),
-        unit: it.unit || '',
-      })),
+      items: (r.items || []).map((it: any) => {
+        // preserva lote já digitado p/ o mesmo material ao reaplicar a receita
+        const prev = p.items.find((x: any) => String(x.raw_material_id) === String(it.raw_material_id));
+        return {
+          raw_material_id: it.raw_material_id,
+          quantity_used: String(+(n(it.quantity) * mult).toFixed(4)),
+          unit: it.unit || '',
+          lot_number: prev?.lot_number || '',
+        };
+      }),
     }));
   };
 
@@ -689,7 +694,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
   const setItem = (idx: number, patch: any) => setF((p: any) => {
     const items = p.items.slice(); items[idx] = { ...items[idx], ...patch }; return { ...p, items };
   });
-  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', unit: '' }] }));
+  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', unit: '', lot_number: '' }] }));
   const rmItem = (idx: number) => setF((p: any) => ({ ...p, items: p.items.filter((_: any, i: number) => i !== idx) }));
 
   const save = async () => {
@@ -792,6 +797,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
                     </Select>
                   </div>
                   <Input className="w-24 h-8 text-xs" inputMode="decimal" placeholder="Qtd Total" value={it.quantity_used} onChange={(e) => setItem(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-28 h-8 text-xs" placeholder="Lote MP" title="Lote da matéria-prima" value={it.lot_number || ''} onChange={(e) => setItem(idx, { lot_number: e.target.value })} />
                   {mat && (
                     <span className={`text-xs whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>
                       (estoque: {fmtQty(mat.quantity)})
@@ -1031,6 +1037,7 @@ function MateriaisReportDialog({ orders, onClose }: any) {
         if (it.raw_material_name) cur.name = it.raw_material_name;
         if (it.unit) cur.unit = it.unit;
         cur.ords.add(o.order_number);
+        if (it.lot_number) (cur.lots = cur.lots || new Set<string>()).add(String(it.lot_number));
         agg.set(k, cur);
       }
     }
@@ -1047,6 +1054,7 @@ function MateriaisReportDialog({ orders, onClose }: any) {
         cost,
         totalCost: r.total * cost,
         ordersList: Array.from(r.ords).sort().join(', '),
+        lotsList: r.lots ? Array.from(r.lots).sort().join(', ') : '',
       };
     }).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
   }, [orders, materials]);
@@ -1063,6 +1071,7 @@ function MateriaisReportDialog({ orders, onClose }: any) {
       'Saldo Após Produção': r.saldo == null ? '' : +r.saldo.toFixed(3),
       'Custo Unit. (R$)': +r.cost.toFixed(4),
       'Custo Total (R$)': +r.totalCost.toFixed(2),
+      'Lotes MP': r.lotsList,
       'Ordens': r.ordersList,
     })), `requisicao-mp-${new Date().toISOString().slice(0, 10)}`);
   };
@@ -1078,9 +1087,9 @@ td.num,th.num{text-align:right}tr.neg td{color:#b00020;font-weight:bold}tfoot td
 <h1>Requisição de Matéria-Prima — Produção</h1>
 <h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
 <div class="ordens"><b>Ordens selecionadas (${orders.length}):</b><br>${orders.map((o: any) => `${o.order_number} — ${esc(o.product_name)} (${fmtQty(o.quantity)} un, ${fmtDate(o.production_date || o.created_at)})`).join('<br>')}</div>
-<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Necessário</th><th class="num">Estoque Atual</th><th class="num">Saldo Após</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th><th>Ordens</th></tr></thead>
-<tbody>${rows.map((r: any) => `<tr${r.saldo != null && r.saldo < 0 ? ' class="neg"' : ''}><td>${esc(r.name)}</td><td>${esc(r.unit || '')}</td><td class="num">${fmtQty(r.total)}</td><td class="num">${r.stock == null ? '-' : fmtQty(r.stock)}</td><td class="num">${r.saldo == null ? '-' : fmtQty(r.saldo)}</td><td class="num">${fmtBRL(r.cost)}</td><td class="num">${fmtBRL(r.totalCost)}</td><td>${esc(r.ordersList)}</td></tr>`).join('')}</tbody>
-<tfoot><tr><td colspan="6">Custo total estimado das matérias-primas</td><td class="num">${fmtBRL(custoTotal)}</td><td></td></tr></tfoot></table>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Necessário</th><th class="num">Estoque Atual</th><th class="num">Saldo Após</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th><th>Lote MP</th><th>Ordens</th></tr></thead>
+<tbody>${rows.map((r: any) => `<tr${r.saldo != null && r.saldo < 0 ? ' class="neg"' : ''}><td>${esc(r.name)}</td><td>${esc(r.unit || '')}</td><td class="num">${fmtQty(r.total)}</td><td class="num">${r.stock == null ? '-' : fmtQty(r.stock)}</td><td class="num">${r.saldo == null ? '-' : fmtQty(r.saldo)}</td><td class="num">${fmtBRL(r.cost)}</td><td class="num">${fmtBRL(r.totalCost)}</td><td>${esc(r.lotsList || '')}</td><td>${esc(r.ordersList)}</td></tr>`).join('')}</tbody>
+<tfoot><tr><td colspan="6">Custo total estimado das matérias-primas</td><td class="num">${fmtBRL(custoTotal)}</td><td colspan="2"></td></tr></tfoot></table>
 ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} material(is) com estoque insuficiente: ${faltando.map((r: any) => esc(r.name)).join(', ')}.</p>` : ''}
 <div class="assin"><div>Separado por</div><div>Conferido por</div><div>Data / Hora</div></div>
 <script>window.onload=function(){window.print()}</script></body></html>`;
@@ -1109,6 +1118,7 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
                   <TableHead className="text-right">Estoque Atual</TableHead>
                   <TableHead className="text-right">Saldo Após</TableHead>
                   <TableHead className="text-right">Custo Total</TableHead>
+                  <TableHead>Lote MP</TableHead>
                   <TableHead>Ordens</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1123,11 +1133,12 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
                       {r.saldo == null ? '-' : fmtQty(r.saldo)}
                     </TableCell>
                     <TableCell className="text-right">{fmtBRL(r.totalCost)}</TableCell>
+                    <TableCell className="text-xs">{r.lotsList || '-'}</TableCell>
                     <TableCell className="text-xs text-gray-500">{r.ordersList}</TableCell>
                   </TableRow>
                 ))}
                 {rows.length === 0 && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-gray-400 py-6">As ordens selecionadas não têm insumos cadastrados</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center text-gray-400 py-6">As ordens selecionadas não têm insumos cadastrados</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
