@@ -109,6 +109,9 @@ export default function GestaoCarteiras() {
   });
 
   const d = data || {};
+  // Vendedor e telemarketing recebem do servidor SO a carteira deles — o filtro
+  // de vendedor some, porque não há o que escolher.
+  const escopoRestrito = d?.escopo?.restrito === true;
   const meses: string[] = d?.periodo?.meses || [];
   const todos: Cliente[] = d?.clientes || [];
 
@@ -445,7 +448,7 @@ export default function GestaoCarteiras() {
         <div>
           <h1 className="text-3xl font-bold">Gestão de Carteiras — Vendas</h1>
           <p className="text-muted-foreground">
-            Classe do cliente, perfil da carteira e evolução do faturamento de {labelMes(inicio)} a {labelMes(fim)}
+            {escopoRestrito ? "Sua carteira — classe" : "Classe"} do cliente, perfil da carteira e evolução do faturamento de {labelMes(inicio)} a {labelMes(fim)}
           </p>
         </div>
       </div>
@@ -467,15 +470,22 @@ export default function GestaoCarteiras() {
               <SelectContent>{opcoesMes.map((m) => <SelectItem key={m} value={m}>{labelMes(m)}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          {/* Multipla escolha: vazio = todos os vendedores */}
+          {/* Multipla escolha: vazio = todos os vendedores. No escopo restrito
+              vira um selo, porque o corte ja veio pronto do servidor. */}
           <div className="pt-[21px]">
-            <MultiSelect
-              label="Vendedor"
-              options={opcoesVend}
-              selected={vendedores}
-              onChange={setVendedores}
-              testId="select-vendedor"
-            />
+            {escopoRestrito ? (
+              <div className="px-3 py-2 border rounded-md text-sm bg-muted/40 text-muted-foreground whitespace-nowrap" data-testid="selo-minha-carteira">
+                Carteira: <span className="font-medium text-foreground">{d?.escopo?.vendedor || "minha carteira"}</span>
+              </div>
+            ) : (
+              <MultiSelect
+                label="Vendedor"
+                options={opcoesVend}
+                selected={vendedores}
+                onChange={setVendedores}
+                testId="select-vendedor"
+              />
+            )}
           </div>
           {/* Recorte PJ / PF da carteira inteira: vale para KPIs, ABC, faixas e listas. */}
           <div>
