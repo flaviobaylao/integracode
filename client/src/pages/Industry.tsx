@@ -20,13 +20,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
+import { exportToExcel } from '@/lib/tableTools';
 import RecipesEditor from '@/components/RecipesEditor';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
-  ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical,
+  ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -444,6 +446,9 @@ function OrdensTab() {
   const [orderDialog, setOrderDialog] = useState<any>(null);     // {} novo, order p/ editar
   const [finalizeDialog, setFinalizeDialog] = useState<any>(null);
   const [detailsDialog, setDetailsDialog] = useState<any>(null);
+  // Seleção de ordens p/ relatório de matérias-primas (requisição de MP)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [reportOpen, setReportOpen] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['/api/industria/production-orders'],
@@ -529,6 +534,10 @@ function OrdensTab() {
         </Button>
         <span className="text-sm text-gray-500">{isLoading ? 'Carregando...' : `${filtered.length} de ${orders.length} ordens`}</span>
         <div className="flex-1" />
+        <Button variant="outline" size="sm" disabled={selected.size === 0} onClick={() => setReportOpen(true)}
+          title="Relatório agregado das matérias-primas das ordens selecionadas">
+          <Printer className="h-4 w-4 mr-1" /> Relatório de MP ({selected.size})
+        </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Nova Ordem
         </Button>
@@ -538,6 +547,20 @@ function OrdensTab() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" onClick={(e) => e.stopPropagation()}>
+                <Checkbox
+                  checked={filtered.length > 0 && filtered.every((o) => selected.has(o.id))}
+                  onCheckedChange={(v) => {
+                    setSelected((prev) => {
+                      const nx = new Set(prev);
+                      if (v) filtered.forEach((o) => nx.add(o.id));
+                      else filtered.forEach((o) => nx.delete(o.id));
+                      return nx;
+                    });
+                  }}
+                  title="Selecionar todas as ordens filtradas"
+                />
+              </TableHead>
               <TableHead>Ordem</TableHead>
               <TableHead>Produto</TableHead>
               <TableHead className="text-right">Qtd</TableHead>
@@ -553,6 +576,18 @@ function OrdensTab() {
               const st = ORDER_STATUS[o.status] || { label: o.status, cls: '' };
               return (
                 <TableRow key={o.id} className="cursor-pointer hover:bg-gray-50" onClick={() => setDetailsDialog(o)}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selected.has(o.id)}
+                      onCheckedChange={(v) => {
+                        setSelected((prev) => {
+                          const nx = new Set(prev);
+                          if (v) nx.add(o.id); else nx.delete(o.id);
+                          return nx;
+                        });
+                      }}
+                    />
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{o.order_number}</TableCell>
                   <TableCell className="font-medium">{o.product_name}</TableCell>
                   <TableCell className="text-right">{fmtQty(o.quantity)}</TableCell>
@@ -584,7 +619,7 @@ function OrdensTab() {
               );
             })}
             {!isLoading && filtered.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="text-center text-gray-400 py-8">Nenhuma ordem de produção</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="text-center text-gray-400 py-8">Nenhuma ordem de produção</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -593,6 +628,12 @@ function OrdensTab() {
       {orderDialog != null && <OrderDialog order={orderDialog} onClose={() => setOrderDialog(null)} onDone={() => { setOrderDialog(null); invalidate(); }} />}
       {finalizeDialog && <FinalizeDialog order={finalizeDialog} onClose={() => setFinalizeDialog(null)} onDone={() => { setFinalizeDialog(null); invalidate(); }} />}
       {detailsDialog && <OrderDetailsDialog order={detailsDialog} onClose={() => setDetailsDialog(null)} />}
+      {reportOpen && (
+        <MateriaisReportDialog
+          orders={orders.filter((o) => selected.has(o.id))}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -965,6 +1006,148 @@ function OrderDetailsDialog({ order, onClose }: any) {
           </div>
           {order.notes && <p className="text-xs text-gray-500 whitespace-pre-wrap">{order.notes}</p>}
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// RELATÓRIO DE MATÉRIAS-PRIMAS — requisição de MP das ordens selecionadas
+// Agrega quantity_used por material, cruza com estoque atual e custo, e emite
+// versão impressa (com assinaturas p/ o chão de fábrica) e Excel.
+// ===========================================================================
+const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c]));
+
+function MateriaisReportDialog({ orders, onClose }: any) {
+  const { materials } = useIndustriaAux();
+
+  const rows = useMemo(() => {
+    const agg = new Map<string, any>();
+    for (const o of orders) {
+      for (const it of (o.items || [])) {
+        const k = String(it.raw_material_id || it.raw_material_name || '');
+        const cur = agg.get(k) || { id: it.raw_material_id, name: it.raw_material_name || '?', unit: it.unit || '', total: 0, ords: new Set<string>() };
+        cur.total += n(it.quantity_used);
+        if (it.raw_material_name) cur.name = it.raw_material_name;
+        if (it.unit) cur.unit = it.unit;
+        cur.ords.add(o.order_number);
+        agg.set(k, cur);
+      }
+    }
+    return Array.from(agg.values()).map((r: any) => {
+      const mat = materials.find((m: any) => String(m.id) === String(r.id));
+      const stock = mat ? n(mat.quantity) : null;
+      const cost = mat ? n(mat.unit_cost) : 0;
+      return {
+        ...r,
+        name: mat?.name || r.name,
+        unit: mat?.unit || r.unit,
+        stock,
+        saldo: stock == null ? null : stock - r.total,
+        cost,
+        totalCost: r.total * cost,
+        ordersList: Array.from(r.ords).sort().join(', '),
+      };
+    }).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+  }, [orders, materials]);
+
+  const custoTotal = rows.reduce((s: number, r: any) => s + r.totalCost, 0);
+  const faltando = rows.filter((r: any) => r.saldo != null && r.saldo < 0);
+
+  const doExcel = () => {
+    exportToExcel(rows.map((r: any) => ({
+      'Material': r.name,
+      'Unidade': r.unit,
+      'Necessário': +r.total.toFixed(3),
+      'Estoque Atual': r.stock == null ? '' : +r.stock.toFixed(3),
+      'Saldo Após Produção': r.saldo == null ? '' : +r.saldo.toFixed(3),
+      'Custo Unit. (R$)': +r.cost.toFixed(4),
+      'Custo Total (R$)': +r.totalCost.toFixed(2),
+      'Ordens': r.ordersList,
+    })), `requisicao-mp-${new Date().toISOString().slice(0, 10)}`);
+  };
+
+  const doPrint = () => {
+    const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Requisição de Matéria-Prima</title>
+<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:normal;margin:2px 0 12px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #bbb;padding:5px 7px;text-align:left}th{background:#f0f0f0}
+td.num,th.num{text-align:right}tr.neg td{color:#b00020;font-weight:bold}tfoot td{font-weight:bold;background:#fafafa}
+.ordens{font-size:12px;margin:6px 0 2px}.aviso{color:#b00020;font-size:12px}
+.assin{margin-top:42px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
+<h1>Requisição de Matéria-Prima — Produção</h1>
+<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
+<div class="ordens"><b>Ordens selecionadas (${orders.length}):</b><br>${orders.map((o: any) => `${o.order_number} — ${esc(o.product_name)} (${fmtQty(o.quantity)} un, ${fmtDate(o.production_date || o.created_at)})`).join('<br>')}</div>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Necessário</th><th class="num">Estoque Atual</th><th class="num">Saldo Após</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th><th>Ordens</th></tr></thead>
+<tbody>${rows.map((r: any) => `<tr${r.saldo != null && r.saldo < 0 ? ' class="neg"' : ''}><td>${esc(r.name)}</td><td>${esc(r.unit || '')}</td><td class="num">${fmtQty(r.total)}</td><td class="num">${r.stock == null ? '-' : fmtQty(r.stock)}</td><td class="num">${r.saldo == null ? '-' : fmtQty(r.saldo)}</td><td class="num">${fmtBRL(r.cost)}</td><td class="num">${fmtBRL(r.totalCost)}</td><td>${esc(r.ordersList)}</td></tr>`).join('')}</tbody>
+<tfoot><tr><td colspan="6">Custo total estimado das matérias-primas</td><td class="num">${fmtBRL(custoTotal)}</td><td></td></tr></tfoot></table>
+${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} material(is) com estoque insuficiente: ${faltando.map((r: any) => esc(r.name)).join(', ')}.</p>` : ''}
+<div class="assin"><div>Separado por</div><div>Conferido por</div><div>Data / Hora</div></div>
+<script>window.onload=function(){window.print()}</script></body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { alert('Libere pop-ups para imprimir o relatório.'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Requisição de Matéria-Prima — {orders.length} ordem(ns)</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            {orders.map((o: any) => `${o.order_number} (${o.product_name} × ${fmtQty(o.quantity)})`).join(' · ')}
+          </p>
+          <div className="border rounded-lg overflow-auto max-h-[55vh]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Material</TableHead>
+                  <TableHead>Un.</TableHead>
+                  <TableHead className="text-right">Necessário</TableHead>
+                  <TableHead className="text-right">Estoque Atual</TableHead>
+                  <TableHead className="text-right">Saldo Após</TableHead>
+                  <TableHead className="text-right">Custo Total</TableHead>
+                  <TableHead>Ordens</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r: any) => (
+                  <TableRow key={String(r.id || r.name)}>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell>{r.unit || '-'}</TableCell>
+                    <TableCell className="text-right font-semibold">{fmtQty(r.total)}</TableCell>
+                    <TableCell className="text-right">{r.stock == null ? '-' : fmtQty(r.stock)}</TableCell>
+                    <TableCell className={`text-right ${r.saldo != null && r.saldo < 0 ? 'text-red-600 font-bold' : 'text-emerald-600'}`}>
+                      {r.saldo == null ? '-' : fmtQty(r.saldo)}
+                    </TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.totalCost)}</TableCell>
+                    <TableCell className="text-xs text-gray-500">{r.ordersList}</TableCell>
+                  </TableRow>
+                ))}
+                {rows.length === 0 && (
+                  <TableRow><TableCell colSpan={7} className="text-center text-gray-400 py-6">As ordens selecionadas não têm insumos cadastrados</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm">Custo total estimado: <b>{fmtBRL(custoTotal)}</b></p>
+            {faltando.length > 0 && (
+              <p className="text-sm text-red-600 flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" /> {faltando.length} material(is) com estoque insuficiente
+              </p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+          <Button variant="outline" onClick={doExcel}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
+          <Button onClick={doPrint} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Printer className="h-4 w-4 mr-1" /> Imprimir
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
