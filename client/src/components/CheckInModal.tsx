@@ -43,6 +43,9 @@ export default function CheckInModal({
   const [notes, setNotes] = useState('');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState(false);
+  // GPS falhou (permissao negada / ambiente fechado / timeout): libera seguir p/ a camera
+  // mesmo sem localizacao, para o check-in nao ficar travado.
+  const [locFailed, setLocFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Explicação do débito (quando o cliente tem débito em aberto). Transcrição por voz (pt-BR).
@@ -82,6 +85,7 @@ export default function CheckInModal({
   // Capturar localização
   const captureLocation = async () => {
     setStep('location');
+    setLocFailed(false);
     
     try {
       if (!navigator.geolocation) {
@@ -138,6 +142,8 @@ export default function CheckInModal({
         description,
         variant: "destructive"
       });
+      // Nao bloqueia o check-in: libera o botao "Continuar sem localizacao" p/ abrir a camera.
+      setLocFailed(true);
     }
   };
 
@@ -250,7 +256,8 @@ export default function CheckInModal({
 
   // Enviar check-in
   const submitCheckIn = async () => {
-    if (!location || !photoData) return;
+    // Localizacao e opcional: exige apenas a foto. Quando o GPS funciona, as coordenadas vao junto.
+    if (!photoData) return;
 
     setStep('submitting');
 
@@ -262,8 +269,10 @@ export default function CheckInModal({
       // Criar FormData
       const formData = new FormData();
       formData.append('photo', blob, 'checkin.jpg');
-      formData.append('latitude', location.latitude.toString());
-      formData.append('longitude', location.longitude.toString());
+      if (location) {
+        formData.append('latitude', location.latitude.toString());
+        formData.append('longitude', location.longitude.toString());
+      }
       if (notes.trim()) {
         formData.append('notes', notes.trim());
       }
@@ -344,8 +353,26 @@ export default function CheckInModal({
               </p>
               <Button onClick={captureLocation} data-testid="button-capture-location">
                 <MapPin className="mr-2 h-4 w-4" />
-                Capturar Localização
+                {locFailed ? 'Tentar Localização Novamente' : 'Capturar Localização'}
               </Button>
+
+              {/* Se o GPS falhar (ambiente fechado / permissao negada), NAO travar o check-in:
+                  segue para a camera mesmo sem coordenadas. */}
+              {locFailed && (
+                <div className="mt-4">
+                  <p className="text-xs text-amber-700 mb-2">
+                    Não foi possível obter sua localização. Você pode continuar e registrar a foto do check-in mesmo assim.
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => { setLocation(null); setDistance(null); setStep('photo'); }}
+                    data-testid="button-continue-without-location"
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    Continuar sem localização
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
