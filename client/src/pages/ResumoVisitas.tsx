@@ -79,6 +79,15 @@ function cellStatus(v?: Visit): StatusKey {
 }
 
 const money = (n: number) => (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// Valor curto para caber na célula do dia (a coluna tem ~46px): 512 · 1,2k · 12k.
+// O valor cheio continua no tooltip da célula.
+function valorCurto(n: number) {
+  const v = Math.abs(n || 0);
+  if (!v) return "";
+  if (v >= 10000) return Math.round(v / 1000).toLocaleString("pt-BR") + "k";
+  if (v >= 1000) return (v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "k";
+  return Math.round(v).toLocaleString("pt-BR");
+}
 const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "%" : "—");
 
 function todayISO() {
@@ -399,7 +408,7 @@ export default function ResumoVisitas() {
                 <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas{sortArrow("efet")}</th>
                 <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
-                  <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 34, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
+                  <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 46, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
                 ))}
               </tr>
             </thead>
@@ -425,7 +434,14 @@ export default function ResumoVisitas() {
                       const next = v && k === "future" ? v.nextSaleValue || v.metaValue || 0 : 0;
                       const title = st.t + (sale ? ` • ${money(sale)}` : "") + (next ? ` • Próxima Venda: ${money(next)}` : "");
                       return (
-                        <td key={d} title={title} style={{ textAlign: "center", padding: "3px 2px", background: st.bg, color: st.c, fontWeight: 700, borderLeft: "1px solid #f1f5f9" }}>{st.g}</td>
+                        <td key={d} title={title} style={{ textAlign: "center", padding: "3px 2px", background: st.bg, color: st.c, fontWeight: 700, borderLeft: "1px solid #f1f5f9" }}>
+                          {sale ? (
+                            <span style={{ display: "inline-block", lineHeight: 1.05 }}>
+                              <span style={{ display: "block", fontSize: 10 }}>{st.g}</span>
+                              <span style={{ display: "block", fontSize: 9, fontWeight: 700, letterSpacing: "-0.02em" }}>{valorCurto(sale)}</span>
+                            </span>
+                          ) : st.g}
+                        </td>
                       );
                     })}
                   </tr>
