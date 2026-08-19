@@ -1,5 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
-import { useState, Fragment } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { parseISO } from "date-fns";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -85,6 +85,13 @@ export default function CustomerManagement() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
   const [isLeadMode, setIsLeadMode] = useState(false); // Novo Cliente (false) x Novo Lead (true)
+  // ✏️ Edição em massa (Dias da Semana, Vendedor, Periodicidade, Situação)
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
+  const [bulkSeller, setBulkSeller] = useState<string>('');
+  const [bulkPeriodicity, setBulkPeriodicity] = useState<string>('');
+  const [bulkSituacao, setBulkSituacao] = useState<string>(''); // '' | 'ativo' | 'inativo'
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -127,6 +134,23 @@ export default function CustomerManagement() {
   const isAdmin = user?.role === 'admin';
   // ✅ Ativar/reativar: todos os papéis, exceto entrega (motorista/entregador). 🔒 Inativar: só Admin.
   const canReactivate = !['motorista', 'entregador'].includes(user?.role || '');
+  // 👔 Gestor: pode fazer edição em massa (mesma regra do backend /api/customers/bulk-update).
+  const isManager = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
+
+  // 🔻 Situação "Perdido" (mesma régua da Gestão de Carteiras): cadastro ativo, comprou em 3+
+  // meses distintos e está há 3+ meses sem comprar. O servidor devolve os ids em churn.
+  const { data: perdidoIds = [] } = useQuery<string[]>({
+    queryKey: ['/api/customers/perdidos-ids'],
+    queryFn: async () => {
+      const r = await fetch('/api/customers/perdidos-ids', { credentials: 'include' });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d?.ids || []);
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled: statusFilter === 'perdido',
+  });
+  const perdidoSet = useMemo(() => new Set((perdidoIds as string[]).map(String)), [perdidoIds]);
 
   const bulkInactivateMutation = useMutation({
     mutationFn: async () => {
@@ -160,6 +184,50 @@ export default function CustomerManagement() {
     },
     onError: (e: any) => { toast({ title: "Erro na reativação em massa", description: e?.message || String(e), variant: "destructive" }); },
   });
+
+  // ✏️ Aplica a edição em massa: campos diretos (dias/vendedor/periodicidade) via bulk-update,
+  // e situação via bulk-reactivate (ativo) ou bulk-inactivate (inativo, só admin, exige motivo).
+  const applyBulkEdit = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { toast({ title: "Selecione ao menos um cliente." }); return; }
+    const fields: any = {};
+    if (bulkSeller) fields.sellerId = bulkSeller;
+    if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
+    if (bulkWeekdays.length > 0) fields.weekdays = bulkWeekdays;
+    const nada = Object.keys(fields).length === 0 && !bulkSituacao;
+    if (nada) { toast({ title: "Escolha ao menos um campo para alterar." }); return; }
+    setBulkSaving(true);
+    try {
+      let msg: string[] = [];
+      if (Object.keys(fields).length > 0) {
+        const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
+        const res = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+        msg.push(`${res.updated ?? ids.length} atualizado(s)`);
+      }
+      if (bulkSituacao === 'ativo') {
+        await apiRequest('POST', '/api/customers/bulk-reactivate', { ids });
+        msg.push('reativados');
+      } else if (bulkSituacao === 'inativo') {
+        const motivo = window.prompt('Informe o MOTIVO da inativação (fica no histórico de cada cliente):');
+        if (motivo === null) {
+          msg.push('situação não alterada (cancelado)');
+        } else if (!motivo.trim()) {
+          alert('Motivo obrigatório para inativar — a situação não foi alterada.');
+        } else {
+          await apiRequest('POST', '/api/customers/bulk-inactivate', { ids, motivo: motivo.trim() });
+          msg.push('inativados');
+        }
+      }
+      toast({ title: "Edição em massa concluída", description: `${ids.length} cliente(s): ${msg.join(' · ') || 'sem alterações'}.` });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      setShowBulkEdit(false); setSelectedIds(new Set());
+      setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSituacao('');
+    } catch (e: any) {
+      toast({ title: "Erro na edição em massa", description: e?.message || String(e), variant: "destructive" });
+    } finally {
+      setBulkSaving(false);
+    }
+  };
 
   const deleteCustomerMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -269,7 +337,8 @@ export default function CustomerManagement() {
     
     const matchesStatus = statusFilter === 'all' ||
                          (statusFilter === 'active' && customer.isActive !== false) ||
-                         (statusFilter === 'inactive' && customer.isActive === false);
+                         (statusFilter === 'inactive' && customer.isActive === false) ||
+                         (statusFilter === 'perdido' && customer.isActive !== false && perdidoSet.has(String(customer.id)));
     const matchesSeller = sellerFilter === 'all' || customer.sellerId === sellerFilter;
     
     // Filtro por data da rota (verifica se a data está nos dias da semana selecionados)
@@ -579,6 +648,7 @@ export default function CustomerManagement() {
                 <SelectItem value="all">Todos</SelectItem>
                 <SelectItem value="active">Ativo</SelectItem>
                 <SelectItem value="inactive">Inativo</SelectItem>
+                <SelectItem value="perdido">Perdido</SelectItem>
               </SelectContent>
             </Select>
 
@@ -593,6 +663,16 @@ export default function CustomerManagement() {
             <div className="text-sm text-gray-600 flex items-center ml-1">
               {filteredCustomers.length} cliente(s)
             </div>
+            {selectedIds.size > 0 && isManager && (
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white h-9 ml-1"
+                onClick={() => setShowBulkEdit(true)}
+                data-testid="button-bulk-edit"
+              >
+                ✏️ Editar em massa ({selectedIds.size})
+              </Button>
+            )}
             {selectedIds.size > 0 && isAdmin && perms.can(CARD_CLIENTES, "excluir") && (
               <Button
                 size="sm"
@@ -820,6 +900,77 @@ export default function CustomerManagement() {
           customer={editingCustomer}
           isLead={editingCustomer ? undefined : isLeadMode}
         />
+      )}
+
+      {/* Modal de Edição em Massa (Dias da Semana, Vendedor, Periodicidade, Situação) */}
+      {showBulkEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !bulkSaving && setShowBulkEdit(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-semibold text-gray-800">Editar em massa</h3>
+              <button className="text-gray-400 hover:text-gray-600" onClick={() => !bulkSaving && setShowBulkEdit(false)} aria-label="Fechar">✕</button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">{selectedIds.size} cliente(s) selecionado(s). Preencha só o que deseja alterar.</p>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Dias da Semana</label>
+              <div className="flex flex-wrap gap-2">
+                {['Seg','Ter','Qua','Qui','Sex','Sab','Dom'].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setBulkWeekdays((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d])}
+                    className={`px-3 py-1 rounded-full text-sm border ${bulkWeekdays.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                    data-testid={`bulk-weekday-${d}`}
+                  >{d}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vendedor</label>
+              <Select value={bulkSeller} onValueChange={setBulkSeller}>
+                <SelectTrigger className="w-full h-9" data-testid="bulk-seller"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  {(Array.isArray(users) ? users : []).filter((u: any) => u.isActive !== false && (u.role === 'vendedor' || u.role === 'telemarketing')).map((u: any) => (
+                    <SelectItem key={u.id} value={u.id}>{[u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.email}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Periodicidade</label>
+              <Select value={bulkPeriodicity} onValueChange={setBulkPeriodicity}>
+                <SelectTrigger className="w-full h-9" data-testid="bulk-periodicity"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Situação</label>
+              <Select value={bulkSituacao} onValueChange={setBulkSituacao}>
+                <SelectTrigger className="w-full h-9" data-testid="bulk-situacao"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ativo">Ativo (reativar)</SelectItem>
+                  {isAdmin && <SelectItem value="inativo">Inativo (só admin)</SelectItem>}
+                </SelectContent>
+              </Select>
+              {bulkSituacao === 'inativo' && <p className="text-xs text-amber-600 mt-1">Ao aplicar, será pedido o motivo da inativação.</p>}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowBulkEdit(false)} disabled={bulkSaving}>Cancelar</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={applyBulkEdit} disabled={bulkSaving} data-testid="button-apply-bulk-edit">
+                {bulkSaving ? 'Aplicando…' : 'Aplicar'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Excel Import Modal */}
