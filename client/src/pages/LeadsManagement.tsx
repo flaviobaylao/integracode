@@ -68,6 +68,7 @@ export default function LeadsManagement() {
   // Filtros
   const [filterName, setFilterName] = useState("");
   const [filterSellerId, setFilterSellerId] = useState("");
+  const [filterCity, setFilterCity] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterNextContactFrom, setFilterNextContactFrom] = useState("");
@@ -132,6 +133,13 @@ export default function LeadsManagement() {
       .map((id) => ({ id, name: sellerNameById(id) }))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   }, [leads, sellerNameById]);
+
+  // Municípios do filtro: valores distintos de city entre os leads, ordenados.
+  const filterCities = useMemo(() => {
+    const set = new Set<string>();
+    (leads || []).forEach((l: any) => { const c = String(l.city || '').trim(); if (c) set.add(c); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [leads]);
 
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -549,6 +557,11 @@ export default function LeadsManagement() {
         return false;
       }
 
+      // Filtro por município
+      if (filterCity && String(lead.city || '') !== filterCity) {
+        return false;
+      }
+
       // Filtro por data de criação
       if (filterDateFrom || filterDateTo) {
         if (!lead.createdAt) return false;
@@ -581,7 +594,7 @@ export default function LeadsManagement() {
 
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
+  }, [leads, filterName, filterSellerId, filterCity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
   const filteredLeads = useMemo(() => {
@@ -766,6 +779,23 @@ export default function LeadsManagement() {
             </div>
 
             <div>
+              <Label htmlFor="filter-city">Município</Label>
+              <Select value={filterCity || "all"} onValueChange={(val) => setFilterCity(val === "all" ? "" : val)}>
+                <SelectTrigger data-testid="select-filter-city">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {filterCities.map(city => (
+                    <SelectItem key={city} value={city}>
+                      {city}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <Label htmlFor="filter-date-from">Data De</Label>
               <Input
                 id="filter-date-from"
@@ -807,7 +837,7 @@ export default function LeadsManagement() {
               />
             </div>
           </div>
-          {(filterName || filterSellerId || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -815,6 +845,7 @@ export default function LeadsManagement() {
               onClick={() => {
                 setFilterName("");
                 setFilterSellerId("");
+                setFilterCity("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
                 setFilterNextContactFrom("");
