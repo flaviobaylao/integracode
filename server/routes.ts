@@ -27002,6 +27002,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // ✏️ Alteração em massa de leads (admin): assignedTo, status, nextContactDate, routeType (alocação).
+  app.post('/api/leads/bulk-update', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { ids, fields } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'Informe os leads (ids).' });
+      }
+      const patch: any = {};
+      if (fields && typeof fields === 'object') {
+        if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
+        if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
+        if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
+        if ('nextContactDate' in fields) {
+          const v = fields.nextContactDate;
+          if (!v) {
+            patch.nextContactDate = null;
+          } else if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+            const [y, m, d] = v.split('-').map(Number);
+            patch.nextContactDate = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+          } else {
+            patch.nextContactDate = new Date(v);
+          }
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ message: 'Nenhum campo para alterar.' });
+      }
+      let updated = 0;
+      const errors: any[] = [];
+      for (const id of ids) {
+        try { await storage.updateLead(String(id), patch); updated++; }
+        catch (e: any) { errors.push({ id, motivo: e?.message }); }
+      }
+      console.log(`✏️ [LEADS-BULK] ${updated}/${ids.length} leads alterados (${Object.keys(patch).join(', ')}) por ${req.currentUser?.email}`);
+      return res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), errors });
+    } catch (error: any) {
+      console.error('Erro no bulk-update de leads:', error);
+      return res.status(500).json({ message: 'Erro ao alterar leads em massa', error: error?.message });
+    }
+  });
+
   // Deletar lead (apenas admin)
   app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
