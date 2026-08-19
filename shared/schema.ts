@@ -947,6 +947,9 @@ export const dailyRoutes = pgTable("daily_routes", {
   
   // Status da rota
   routeStatus: varchar("route_status").notNull().default('pending'), // pending, in_progress, completed
+  // Modo da rota (por vendedor+dia): 'dia' = rota normal (clientes + leads do dia);
+  // 'prospeccao' = rota de prospecção (SOMENTE leads alocados em prospecção com próximo contato = data).
+  routeMode: varchar("route_mode").notNull().default('dia'),
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
   
@@ -1684,6 +1687,10 @@ export const leads = pgTable("leads", {
   
   // Quem está atendendo o lead (vendedor)
   assignedTo: varchar("assigned_to"),
+
+  // Alocação do lead na rota: 'dia' = entra na rota do dia normal (retorno de lead);
+  // 'prospeccao' = entra somente na rota de prospecção do vendedor (no dia do próximo contato).
+  routeType: varchar("route_type").notNull().default('dia'),
   
   // Informações de check-in/check-out
   lastCheckInAt: timestamp("last_check_in_at"),
