@@ -503,6 +503,7 @@ export default function LeadsManagement() {
       "Nome": lead.fantasyName || "",
       "Contato": lead.contact || "",
       "Telefone": lead.phone || "",
+      "Município": (lead as any).city || "",
       "Latitude": lead.latitude ? parseFloat(lead.latitude.toString()).toFixed(6) : "",
       "Longitude": lead.longitude ? parseFloat(lead.longitude.toString()).toFixed(6) : "",
       "Status": statusLabels[lead.status] || lead.status,
@@ -867,6 +868,7 @@ export default function LeadsManagement() {
                   <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Vendedor</th>
+                  <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Município</th>
                   <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
@@ -878,7 +880,7 @@ export default function LeadsManagement() {
               <tbody>
                 {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={(canAct ? 11 : 10) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
+                    <td colSpan={(canAct ? 12 : 11) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -915,6 +917,7 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4">{lead.contact || '—'}</td>
                       <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className={descartado ? 'text-gray-400' : 'text-blue-600 hover:underline'} onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">{sellerNameById(lead.assignedTo)}</td>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">{(lead as any).city || '—'}</td>
                       <td className="py-3 px-4 text-xs text-gray-500 dark:text-gray-400">
                         <div className="flex flex-col gap-1">
                           <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
