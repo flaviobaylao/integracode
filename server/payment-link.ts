@@ -251,6 +251,13 @@ export async function orderAlreadyPaid(salesCardId?: string | null): Promise<boo
     const c: any = await db.execute(sql`SELECT 1 FROM hotsite_pending_pix WHERE order_id = ${salesCardId} AND status = 'paid' LIMIT 1`);
     if (((c.rows || c) as any[]).length) return true;
   } catch {}
+  // Maquininha Cielo Smart (app do balcao). Sem esta linha, um pedido ja pago
+  // no aparelho ainda poderia receber link de pagamento — cobranca em dobro no
+  // cliente. O try/catch cobre o banco onde a tabela ainda nao existe.
+  try {
+    const d: any = await db.execute(sql`SELECT 1 FROM lio_pedidos WHERE sales_card_id = ${salesCardId} AND liquidado = true LIMIT 1`);
+    if (((d.rows || d) as any[]).length) return true;
+  } catch {}
   return false;
 }
 

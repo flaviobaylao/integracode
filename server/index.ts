@@ -14,6 +14,7 @@ import { registerPaymentVerificationRoutes } from "./payment-verification-routes
 import { registerDelegationRoutes } from "./delegations-routes";
 import { registerHotsitePix } from "./hotsite-pix";
 import { registerHotsiteCard } from "./hotsite-card";
+import { registerLioApp } from "./lio-app";
 import { registerPaymentLink } from "./payment-link";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
@@ -523,6 +524,7 @@ run();
   registerCommunicationAutomationsRoutes(app);
   registerHotsitePix(app);
   registerHotsiteCard(app);
+  registerLioApp(app);
 
   // 📣 CANAIS DE VENDA (Hotsite + Instagram) — pagina unica de gestao (04/ago/2026)
   try {
