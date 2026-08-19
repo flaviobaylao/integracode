@@ -18011,6 +18011,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
+      // Localizacao e BEST-EFFORT: se o GPS falhar no aparelho (ambiente fechado, permissao
+      // negada), o check-in ainda e aceito SEM coordenadas — a camera/foto nao pode ficar
+      // bloqueada pelo GPS. Quando ha GPS, tudo segue igual (distancia + trava de coordenada).
+      const _lat = parseFloat(String(latitude));
+      const _lng = parseFloat(String(longitude));
+      const hasGps = !isNaN(_lat) && !isNaN(_lng);
       const checkInNotes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
 
       // Buscar dados do card para verificar se é virtual e calcular distância
@@ -18046,7 +18052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calcular distância até o cliente usando Haversine
       let checkInDistance = null;
-      if (currentCard.customerLatitude && currentCard.customerLongitude) {
+      if (hasGps && currentCard.customerLatitude && currentCard.customerLongitude) {
         const customerLat = parseFloat(currentCard.customerLatitude);
         const customerLon = parseFloat(currentCard.customerLongitude);
         
@@ -18071,8 +18077,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updateData: any = {
         checkInTime: agora(),
-        checkInLatitude: latitude.toString(),
-        checkInLongitude: longitude.toString(),
+        checkInLatitude: hasGps ? _lat.toString() : null,
+        checkInLongitude: hasGps ? _lng.toString() : null,
         distanceToCustomer: checkInDistance?.toString() || null,
         checkInPhotoUrl: photoUrl,
         // Observações do check-in (quando informadas).
@@ -18116,7 +18122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
-          if (dailyRoute) {
+          if (dailyRoute && hasGps) {
             console.log(`📍 Registrando checkpoint de check-in para sales_card ${id} na rota ${dailyRoute.id}`);
             const { registerCheckpoint } = await import('./routeOptimizationService');
             routeProgress = await registerCheckpoint(
@@ -18126,10 +18132,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               currentCard.customerId,
               currentCard.sellerId,
               'check_in',
-              parseFloat(latitude),
-              parseFloat(longitude)
+              _lat,
+              _lng
             );
             console.log(`✅ Checkpoint de check-in registrado: ${JSON.stringify(routeProgress)}`);
+          } else if (dailyRoute) {
+            console.log(`ℹ️ Check-in sem GPS - checkpoint de rota não registrado (sales_card ${id})`);
           } else {
             console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentCard.sellerId}`);
           }
