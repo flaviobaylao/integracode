@@ -20212,6 +20212,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🧭 Alternar o MODO da rota (Rota do Dia ↔ Rota de Prospecção) de um vendedor num dia. Só admin.
+  // Se ainda não existe rota para o dia e o modo pedido é 'prospeccao', cria uma rota vazia
+  // (com a casa do vendedor) para segurar o modo; para 'dia' sem rota, apenas retorna (padrão).
+  app.post('/api/daily-routes/route-mode', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { sellerId, date, mode } = req.body || {};
+      if (!sellerId || !date) {
+        return res.status(400).json({ message: 'Informe o vendedor e a data.' });
+      }
+      if (mode !== 'dia' && mode !== 'prospeccao') {
+        return res.status(400).json({ message: "Modo inválido. Use 'dia' ou 'prospeccao'." });
+      }
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
+      let route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      if (!route) {
+        if (mode === 'dia') {
+          return res.json({ mode: 'dia', routeId: null, message: 'Sem rota criada; modo padrão (dia).' });
+        }
+        // Criar rota vazia p/ segurar o modo prospecção
+        const seller = await storage.getUserById(sellerId);
+        if (!seller) return res.status(404).json({ message: 'Vendedor não encontrado' });
+        const startLatitude = seller.homeLatitude?.toString() || '-23.5505';
+        const startLongitude = seller.homeLongitude?.toString() || '-46.6333';
+        const startAddress = seller.homeLatitude && seller.homeLongitude
+          ? `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`
+          : `São Paulo, SP (padrão)`;
+        const startOfDay = new Date(routeDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        route = await storage.createDailyRoute({
+          sellerId,
+          routeDate: startOfDay,
+          startLatitude,
+          startLongitude,
+          startAddress,
+          optimizedOrder: [],
+          totalEstimatedDistance: '0',
+          totalActualDistance: '0',
+          totalVisits: 0,
+          completedVisits: 0,
+          routeStatus: 'pending',
+          routeMode: 'prospeccao',
+        } as any);
+        console.log(`🧭 [ROUTE-MODE] Rota vazia criada em modo prospecção p/ ${sellerId} em ${date} por ${req.currentUser?.email}`);
+        return res.json({ mode: 'prospeccao', routeId: route.id, created: true });
+      }
+      await storage.updateDailyRoute(route.id, { routeMode: mode } as any);
+      console.log(`🧭 [ROUTE-MODE] ${sellerId} em ${date} → modo ${mode} por ${req.currentUser?.email}`);
+      return res.json({ mode, routeId: route.id });
+    } catch (error: any) {
+      console.error('Erro ao alternar modo da rota:', error);
+      return res.status(500).json({ message: 'Erro ao alternar modo da rota', error: error?.message });
+    }
+  });
+
   // Buscar rota do dia atual para um vendedor
   app.get('/api/daily-routes/:sellerId/today', authenticateUser, async (req: any, res) => {
     try {
@@ -20674,6 +20728,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // 🧭 ROTA DE PROSPECÇÃO: quando o Admin liga o modo prospecção para este vendedor+dia,
+      // a rota exibe SOMENTE os leads alocados em prospecção (route_type='prospeccao') cujo
+      // próximo contato seja exatamente esta data. Não entram clientes ativos nem as regras de
+      // cadência de cliente — apenas as regras de lead. Branch isolado com retorno antecipado.
+      if ((route as any).routeMode === 'prospeccao') {
+        try {
+          const { db: _dbP } = await import('./db');
+          const { leads: _leadsTbl } = await import('../shared/schema');
+          const { inArray: _inArrayP } = await import('drizzle-orm');
+          const pRows: any = await _dbP.execute(sql`
+            SELECT id FROM leads
+            WHERE assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') = 'prospeccao'
+              AND status NOT IN ('converted', 'discarded')
+              AND next_contact_date IS NOT NULL
+              AND (next_contact_date)::date = ${date}::date
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          `);
+          const pIds = (pRows?.rows || []).map((r: any) => r.id);
+          let pLeads: any[] = [];
+          if (pIds.length > 0) {
+            pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, pIds));
+          }
+          // Ordena por vizinho-mais-próximo a partir da casa do vendedor (rota curta no mapa).
+          const { calculateDistance: _cdP } = await import('./routeOptimizationService');
+          const homeLat0 = parseFloat(route.startLatitude), homeLon0 = parseFloat(route.startLongitude);
+          const remaining = pLeads.slice();
+          const ordered: any[] = [];
+          let curLat: number | null = isNaN(homeLat0) ? null : homeLat0;
+          let curLon: number | null = isNaN(homeLon0) ? null : homeLon0;
+          while (remaining.length > 0) {
+            let bi = 0;
+            if (curLat != null && curLon != null) {
+              let bc = Infinity;
+              for (let i = 0; i < remaining.length; i++) {
+                const d = _cdP(curLat, curLon, parseFloat(remaining[i].latitude), parseFloat(remaining[i].longitude));
+                if (d < bc) { bc = d; bi = i; }
+              }
+            }
+            const nx = remaining.splice(bi, 1)[0];
+            ordered.push(nx);
+            curLat = parseFloat(nx.latitude); curLon = parseFloat(nx.longitude);
+          }
+          const pVisits = ordered.map((lead: any) => ({
+            id: `lead:${lead.id}`,
+            visitType: 'lead' as const,
+            entityId: lead.id,
+            leadId: lead.id,
+            customerName: lead.fantasyName,
+            customerLatitude: lead.latitude,
+            customerLongitude: lead.longitude,
+            customerAddress: null,
+            scheduledDate: route.routeDate,
+            isVirtual: false,
+            isAutoCheckout: false,
+            visitDuration: null,
+            leadStatus: lead.status,
+            leadNextContactDate: lead.nextContactDate,
+            leadPostponementCount: lead.postponementCount,
+            leadNonConversionReason: lead.nonConversionReason,
+          }));
+          let pCheckpoints: any[] = [];
+          try { pCheckpoints = await storage.getRouteCheckpoints(route.id); } catch {}
+          const pCompleted = pCheckpoints.filter((cp: any) => cp.checkpointType === 'check_out').length;
+          return res.json({
+            route: {
+              ...route,
+              routeMode: 'prospeccao',
+              visits: pVisits,
+              checkpoints: pCheckpoints,
+              segments: [],
+              adminAdjustments: {},
+              sellerHome: { latitude: homeLat0, longitude: homeLon0 },
+              progress: {
+                totalVisits: pVisits.length,
+                completedVisits: pCompleted,
+                totalEstimatedDistance: 0,
+                totalActualDistance: 0,
+                percentComplete: pVisits.length > 0 ? Math.round((pCompleted / pVisits.length) * 100) : 0,
+                workedHours: 0,
+                lunchBreak: null,
+                ordersCount: 0,
+                performanceIndex: 0,
+              }
+            }
+          });
+        } catch (pErr: any) {
+          console.error('Erro ao montar rota de prospecção:', pErr);
+          return res.status(500).json({ message: 'Erro ao montar rota de prospecção', error: pErr?.message });
+        }
+      }
+
       // 📅 Retornos de lead do dia entram na ROTA como paradas de lead (sequência + mapa + otimização).
       // Idempotente e só para a data atual/futura (não altera rotas passadas). Só leads com coordenadas.
       try {
@@ -20686,6 +20832,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND next_contact_date IS NOT NULL
               AND (next_contact_date)::date <= ${date}::date
               AND assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') <> 'prospeccao'
               AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
