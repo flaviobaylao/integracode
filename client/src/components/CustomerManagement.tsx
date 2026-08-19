@@ -329,9 +329,12 @@ export default function CustomerManagement() {
     if (weekdayFilter !== 'all') {
       try {
         const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
-        matchesWeekday = normalizedWeekdays.includes(weekdayFilter);
+        matchesWeekday = weekdayFilter === '__vazio__'
+          ? normalizedWeekdays.length === 0   // "Vazio": clientes sem nenhum dia de rota registrado
+          : normalizedWeekdays.includes(weekdayFilter);
       } catch {
-        matchesWeekday = false;
+        // Se os dias não parsearem, trata como vazio (sem registro válido).
+        matchesWeekday = weekdayFilter === '__vazio__';
       }
     }
     
@@ -547,6 +550,7 @@ export default function CustomerManagement() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os dias</SelectItem>
+                <SelectItem value="__vazio__">Vazio (sem dia)</SelectItem>
                 <SelectItem value="Seg">Segunda-feira</SelectItem>
                 <SelectItem value="Ter">Terça-feira</SelectItem>
                 <SelectItem value="Qua">Quarta-feira</SelectItem>
