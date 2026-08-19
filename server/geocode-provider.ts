@@ -118,3 +118,49 @@ export async function geocodeOne(query: string): Promise<GeoHit | null> {
   if (!String(query || "").trim()) return null;
   return geocodeProvider() === "google" ? geocodeGoogle(query) : geocodeNominatim(query);
 }
+
+/**
+ * Geocodificacao REVERSA: coordenada -> nome do MUNICIPIO (cidade).
+ * Usa Google (administrative_area_level_2) quando ha chave; senao Nominatim reverse.
+ * Devolve null quando nao encontra. Nunca lanca (retorna null em erro).
+ */
+export async function reverseGeocodeCity(lat: number | string, lon: number | string): Promise<string | null> {
+  const la = String(lat ?? "").trim();
+  const lo = String(lon ?? "").trim();
+  if (!la || !lo) return null;
+  try {
+    if (geocodeProvider() === "google") {
+      const url =
+        "https://maps.googleapis.com/maps/api/geocode/json" +
+        `?latlng=${encodeURIComponent(la + "," + lo)}` +
+        "&language=pt-BR&result_type=administrative_area_level_2" +
+        `&key=${encodeURIComponent(GOOGLE_KEY())}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!resp.ok) return null;
+      const j: any = await resp.json();
+      if (String(j?.status || "") !== "OK") return null;
+      for (const r of (j.results || [])) {
+        const comps: any[] = Array.isArray(r.address_components) ? r.address_components : [];
+        const mun = comps.find((c) => Array.isArray(c?.types) && c.types.includes("administrative_area_level_2"));
+        if (mun?.long_name) return String(mun.long_name).trim();
+        const loc = comps.find((c) => Array.isArray(c?.types) && c.types.includes("locality"));
+        if (loc?.long_name) return String(loc.long_name).trim();
+      }
+      return null;
+    }
+    const url =
+      "https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&zoom=10" +
+      `&lat=${encodeURIComponent(la)}&lon=${encodeURIComponent(lo)}`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return null;
+    const j: any = await resp.json();
+    const a = j?.address || {};
+    const city = String(a.city || a.town || a.municipality || a.village || a.county || "").trim();
+    return city || null;
+  } catch {
+    return null;
+  }
+}
