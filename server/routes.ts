@@ -26927,7 +26927,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (prospectionError) {
         console.error('Erro ao registrar prospecção:', prospectionError);
       }
-      
+
+      // 🗺️ Preenche o município (city) via geocode reverso — best-effort, não bloqueia a resposta.
+      (async () => {
+        try {
+          const { reverseGeocodeCity } = await import('./geocode-provider');
+          const cidade = await reverseGeocodeCity((lead as any).latitude, (lead as any).longitude);
+          if (cidade) await db.execute(sql`UPDATE leads SET city = ${cidade} WHERE id = ${lead.id}`);
+        } catch (_e) { /* silencioso: município é complementar */ }
+      })();
+
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
     } catch (error) {
@@ -27040,6 +27049,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro no bulk-update de leads:', error);
       return res.status(500).json({ message: 'Erro ao alterar leads em massa', error: error?.message });
+    }
+  });
+
+  // 🗺️ Preenche o Município (city) dos leads via geocode reverso das coordenadas. Admin.
+  // Processa em lote (respeitando o throttle do provedor) os leads SEM city e retorna quantos faltam.
+  app.post('/api/admin/leads/preencher-municipio', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { reverseGeocodeCity, geocodeThrottleMs } = await import('./geocode-provider');
+      const limit = Math.min(Math.max(Number(req.body?.limite) || 40, 1), 100);
+      const pend: any = await db.execute(sql`
+        SELECT id, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE (city IS NULL OR city = '')
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY created_at ASC
+        LIMIT ${limit}
+      `);
+      const rows = (pend?.rows || []) as any[];
+      let atualizados = 0;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (const r of rows) {
+        try {
+          const cidade = await reverseGeocodeCity(r.lat, r.lng);
+          if (cidade) {
+            await db.execute(sql`UPDATE leads SET city = ${cidade}, updated_at = NOW() WHERE id = ${r.id}`);
+            atualizados++;
+          }
+        } catch (_e) { /* segue para o próximo */ }
+        await wait(geocodeThrottleMs());
+      }
+      const restRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads
+        WHERE (city IS NULL OR city = '') AND latitude IS NOT NULL AND longitude IS NOT NULL
+      `);
+      const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
+      console.log(`🗺️ [LEADS-MUNICIPIO] processados ${rows.length}, atualizados ${atualizados}, restam ${restantes} por ${req.currentUser?.email}`);
+      return res.json({ ok: true, processados: rows.length, atualizados, restantes });
+    } catch (error: any) {
+      console.error('Erro ao preencher municipio dos leads:', error);
+      return res.status(500).json({ message: 'Erro ao preencher município dos leads', error: error?.message });
     }
   });
 
