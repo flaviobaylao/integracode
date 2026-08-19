@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +35,13 @@ export default function LeadsManagement() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForService, setSelectedLeadForService] = useState<Lead | null>(null);
   const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
+  // Seleção em massa de leads (admin): alteração de vendedor, status, próximo contato e alocação de rota.
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkAssignedTo, setBulkAssignedTo] = useState("");
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkNextContact, setBulkNextContact] = useState("");
+  const [bulkRouteType, setBulkRouteType] = useState("");
   // Desfecho do lead (Converter / Não Convertido / Prorrogar)
   const [converterLead, setConverterLead] = useState<Lead | null>(null);
   const [cust, setCust] = useState<any>({});
@@ -217,6 +225,29 @@ export default function LeadsManagement() {
         description: error.message || "Erro ao deletar lead",
         variant: "destructive",
       });
+    },
+  });
+
+  // Alteração em massa dos leads selecionados (somente admin).
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedLeadIds);
+      const fields: any = {};
+      if (bulkAssignedTo) fields.assignedTo = bulkAssignedTo === '__none__' ? null : bulkAssignedTo;
+      if (bulkStatus) fields.status = bulkStatus;
+      if (bulkNextContact) fields.nextContactDate = bulkNextContact;
+      if (bulkRouteType) fields.routeType = bulkRouteType;
+      return await apiRequest('POST', '/api/leads/bulk-update', { ids, fields });
+    },
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      setShowBulkModal(false);
+      setSelectedLeadIds(new Set());
+      setBulkAssignedTo(""); setBulkStatus(""); setBulkNextContact(""); setBulkRouteType("");
+      toast({ title: "Leads atualizados", description: `${res?.updated ?? 0} lead(s) alterado(s) com sucesso.` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Erro ao alterar os leads em massa", variant: "destructive" });
     },
   });
 
@@ -575,6 +606,12 @@ export default function LeadsManagement() {
   // Não convertidos (descartados) vão para o FINAL da lista, preservando a ordenação dentro de cada grupo
   const displayLeads = [...sortedLeads].sort((a: any, b: any) => (a.status === 'discarded' ? 1 : 0) - (b.status === 'discarded' ? 1 : 0));
 
+  // Seleção em massa (admin): utilitários sobre os leads exibidos.
+  const selectableLeadIds = displayLeads.map((l: any) => l.id);
+  const allLeadsSelected = selectableLeadIds.length > 0 && selectableLeadIds.every((id: string) => selectedLeadIds.has(id));
+  const toggleLeadSel = (id: string) => setSelectedLeadIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSelectAllLeads = () => setSelectedLeadIds(prev => (selectableLeadIds.length > 0 && selectableLeadIds.every((id: string) => prev.has(id))) ? new Set() : new Set(selectableLeadIds));
+
   const stats = {
     total: leads.length,
     pending: leads.filter(l => l.status === 'pending').length,
@@ -797,10 +834,34 @@ export default function LeadsManagement() {
           <CardTitle>Leads ({filteredLeads.filter((l: any) => l.status !== 'discarded').length})</CardTitle>
         </CardHeader>
         <CardContent>
+          {isAdmin && (
+            <div className="mb-3 flex items-center gap-3 flex-wrap">
+              <span className="text-sm text-gray-600 dark:text-gray-300">{selectedLeadIds.size} selecionado(s)</span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={selectedLeadIds.size === 0}
+                onClick={() => setShowBulkModal(true)}
+                data-testid="button-bulk-edit-leads"
+              >
+                <Edit className="h-4 w-4 mr-1" /> Editar em massa
+              </Button>
+              {selectedLeadIds.size > 0 && (
+                <Button size="sm" variant="ghost" onClick={() => setSelectedLeadIds(new Set())} data-testid="button-bulk-clear">
+                  Limpar seleção
+                </Button>
+              )}
+            </div>
+          )}
           <div className="overflow-auto max-h-[70vh] rounded-md border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
+                  {isAdmin && (
+                    <th className="py-3 px-4 sticky top-0 z-10 bg-white dark:bg-gray-950 w-8">
+                      <Checkbox checked={allLeadsSelected} onCheckedChange={toggleSelectAllLeads} aria-label="Selecionar todos" />
+                    </th>
+                  )}
                   <SortableTh label="Temp." colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Nome" colKey="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
@@ -817,7 +878,7 @@ export default function LeadsManagement() {
               <tbody>
                 {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={canAct ? 11 : 10} className="text-center py-8 text-gray-500">
+                    <td colSpan={(canAct ? 11 : 10) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -831,6 +892,15 @@ export default function LeadsManagement() {
                       data-testid={`lead-row-${lead.id}`}
                       onClick={() => descartado ? setJustificativaLead(lead) : setSelectedLeadForService(lead)}
                     >
+                      {isAdmin && (
+                        <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedLeadIds.has(lead.id)}
+                            onCheckedChange={() => toggleLeadSel(lead.id)}
+                            aria-label="Selecionar lead"
+                          />
+                        </td>
+                      )}
                       <td className="py-3 px-4">
                         {lead.temperature ? (
                           <div
@@ -1196,6 +1266,89 @@ export default function LeadsManagement() {
                 data-testid="button-save-lead"
               >
                 {editingLead ? "Atualizar" : "Criar Lead"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo de alteração em massa (admin) */}
+      <Dialog open={showBulkModal} onOpenChange={(open) => { if (!open) setShowBulkModal(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Alterar {selectedLeadIds.size} lead(s) em massa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Preencha apenas os campos que deseja alterar. Os demais permanecem como estão.
+            </p>
+
+            <div>
+              <Label>Vendedor</Label>
+              <Select value={bulkAssignedTo} onValueChange={setBulkAssignedTo}>
+                <SelectTrigger data-testid="select-bulk-seller"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhum (remover vendedor)</SelectItem>
+                  {sellers.map(seller => (
+                    <SelectItem key={seller.id} value={seller.id}>{seller.firstName} {seller.lastName || ''}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Status</Label>
+              <Select value={bulkStatus} onValueChange={setBulkStatus}>
+                <SelectTrigger data-testid="select-bulk-status"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="scheduled">Agendado</SelectItem>
+                  <SelectItem value="visited">Visitado</SelectItem>
+                  <SelectItem value="converted">Convertido</SelectItem>
+                  <SelectItem value="discarded">Descartado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="bulk-next-contact">Próximo Contato</Label>
+              <Input
+                id="bulk-next-contact"
+                type="date"
+                value={bulkNextContact}
+                onChange={(e) => setBulkNextContact(e.target.value)}
+                data-testid="input-bulk-next-contact"
+              />
+            </div>
+
+            <div>
+              <Label>Alocação de Leads</Label>
+              <Select value={bulkRouteType} onValueChange={setBulkRouteType}>
+                <SelectTrigger data-testid="select-bulk-route-type"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dia">Rota do Dia</SelectItem>
+                  <SelectItem value="prospeccao">Rota de Prospecção</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Leads em "Rota de Prospecção" aparecem apenas na rota de prospecção do vendedor, no dia do próximo contato.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setShowBulkModal(false)} data-testid="button-bulk-cancel">Cancelar</Button>
+              <Button
+                onClick={() => {
+                  if (!bulkAssignedTo && !bulkStatus && !bulkNextContact && !bulkRouteType) {
+                    toast({ title: "Nada para alterar", description: "Selecione ao menos um campo.", variant: "destructive" });
+                    return;
+                  }
+                  bulkUpdateMutation.mutate();
+                }}
+                disabled={bulkUpdateMutation.isPending}
+                data-testid="button-bulk-apply"
+              >
+                Aplicar
               </Button>
             </div>
           </div>
