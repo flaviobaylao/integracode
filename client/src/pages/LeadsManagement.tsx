@@ -42,6 +42,7 @@ export default function LeadsManagement() {
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkNextContact, setBulkNextContact] = useState("");
   const [bulkRouteType, setBulkRouteType] = useState("");
+  const [bulkEnviarRota, setBulkEnviarRota] = useState(false);
   // Desfecho do lead (Converter / Não Convertido / Prorrogar)
   const [converterLead, setConverterLead] = useState<Lead | null>(null);
   const [cust, setCust] = useState<any>({});
@@ -245,13 +246,14 @@ export default function LeadsManagement() {
       if (bulkStatus) fields.status = bulkStatus;
       if (bulkNextContact) fields.nextContactDate = bulkNextContact;
       if (bulkRouteType) fields.routeType = bulkRouteType;
+      if (bulkEnviarRota) { fields.status = 'scheduled'; fields.routeType = 'dia'; }
       return await apiRequest('POST', '/api/leads/bulk-update', { ids, fields });
     },
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
       setShowBulkModal(false);
       setSelectedLeadIds(new Set());
-      setBulkAssignedTo(""); setBulkStatus(""); setBulkNextContact(""); setBulkRouteType("");
+      setBulkAssignedTo(""); setBulkStatus(""); setBulkNextContact(""); setBulkRouteType(""); setBulkEnviarRota(false);
       toast({ title: "Leads atualizados", description: `${res?.updated ?? 0} lead(s) alterado(s) com sucesso.` });
     },
     onError: (error: any) => {
@@ -1369,12 +1371,32 @@ export default function LeadsManagement() {
               </p>
             </div>
 
+            <div className="flex items-start gap-2 pt-2 border-t mt-1">
+              <Checkbox
+                id="bulk-enviar-rota"
+                checked={bulkEnviarRota}
+                onCheckedChange={(v) => setBulkEnviarRota(!!v)}
+                data-testid="checkbox-bulk-enviar-rota"
+                className="mt-0.5"
+              />
+              <div>
+                <Label htmlFor="bulk-enviar-rota" className="cursor-pointer">Enviar para a Rota do Dia</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Agenda os leads selecionados (status Agendado) para entrarem na rota do vendedor na data do próximo contato. Requer preencher o Próximo Contato acima.
+                </p>
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowBulkModal(false)} data-testid="button-bulk-cancel">Cancelar</Button>
               <Button
                 onClick={() => {
-                  if (!bulkAssignedTo && !bulkStatus && !bulkNextContact && !bulkRouteType) {
+                  if (!bulkAssignedTo && !bulkStatus && !bulkNextContact && !bulkRouteType && !bulkEnviarRota) {
                     toast({ title: "Nada para alterar", description: "Selecione ao menos um campo.", variant: "destructive" });
+                    return;
+                  }
+                  if (bulkEnviarRota && !bulkNextContact) {
+                    toast({ title: "Data obrigatória", description: "Para enviar para a Rota do Dia, informe o Próximo Contato.", variant: "destructive" });
                     return;
                   }
                   bulkUpdateMutation.mutate();
