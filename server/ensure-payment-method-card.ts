@@ -21,6 +21,7 @@ import { sql } from 'drizzle-orm';
 
 let _done = false;
 let _doneRouteMode = false;
+let _doneLeadCols = false;
 
 // ============================================================================
 // TRAVA DA ROTA DO DIA (19/ago/2026) — o schema Drizzle de daily_routes passou a
@@ -48,10 +49,32 @@ export async function ensureDailyRouteMode(): Promise<void> {
   }
 }
 
+// ============================================================================
+// TRAVA DOS LEADS (19/ago/2026) — o schema Drizzle de leads passou a declarar as
+// colunas route_type (alocacao Rota do Dia/Prospeccao) e city (Municipio), mas as
+// colunas nunca foram criadas no banco. Como o Drizzle faz UPDATE ... RETURNING com
+// TODAS as colunas do schema, QUALQUER atualizacao de lead (alteracao em massa,
+// "Enviar para Rota", editar Proximo Contato) morria com:
+//   column "route_type" does not exist
+// Este ensure acrescenta as colunas de forma idempotente (ADD COLUMN IF NOT EXISTS).
+// ============================================================================
+export async function ensureLeadColumns(): Promise<void> {
+  if (_doneLeadCols) return;
+  try {
+    await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS route_type varchar NOT NULL DEFAULT 'dia'`));
+    await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS city varchar`));
+    _doneLeadCols = true;
+    console.log("✅ [SCHEMA] leads.route_type e leads.city garantidos (alteracao em massa e coluna Municipio voltam a funcionar).");
+  } catch (e: any) {
+    console.warn("⚠️ [SCHEMA] nao foi possivel garantir colunas de leads:", e?.message || e);
+  }
+}
+
 export async function ensurePaymentMethodCard(): Promise<void> {
   // Colocado aqui porque este bootstrap ja e chamado no start; a funcao tem guarda
   // propria (_doneRouteMode), entao roda no maximo uma vez com sucesso por processo.
   await ensureDailyRouteMode();
+  await ensureLeadColumns();
   if (_done) return;
   try {
     const q: any = await db.execute(sql`
