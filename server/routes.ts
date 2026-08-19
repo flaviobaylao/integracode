@@ -1615,6 +1615,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔻 IDs dos clientes "Perdidos" (mesma régua da Gestão de Carteiras / map-data): cadastro ATIVO,
+  // comprou em 3+ meses distintos e está há 3+ meses sem comprar. Sem exigir coordenadas.
+  // Definido ANTES de :id para evitar conflito de rota.
+  app.get('/api/customers/perdidos-ids', authenticateUser, async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`
+        WITH rec AS (
+          SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
+                 to_char(issue_date,'YYYY-MM') AS mes
+          FROM receivables
+          WHERE issue_date >= '2025-01-01'
+            AND issue_date < (date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')) + interval '1 month')
+            AND deleted_at IS NULL
+            AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+            AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+        ),
+        buys AS (
+          SELECT doc, COUNT(DISTINCT mes) AS meses, MAX(mes) AS ultimo_mes
+          FROM rec WHERE doc IS NOT NULL AND length(doc) >= 11 GROUP BY doc
+        )
+        SELECT c.id
+        FROM customers c
+        JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
+        WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
+          AND b.doc NOT IN ('28295493000153','28295493000234','28295493000315','52921727000105','14877972000173')
+          AND b.meses >= 3
+          AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
+                - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3`);
+      const ids = ((r.rows || r) as any[]).map((x) => x.id);
+      res.json(ids);
+    } catch (error: any) {
+      console.error('Error fetching perdidos-ids:', error);
+      res.status(500).json({ message: 'Falha ao carregar clientes perdidos' });
+    }
+  });
+
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', async (req: any, res) => {
     try {
@@ -18011,6 +18047,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
+      // Localizacao e BEST-EFFORT: se o GPS falhar no aparelho (ambiente fechado, permissao
+      // negada), o check-in ainda e aceito SEM coordenadas — a camera/foto nao pode ficar
+      // bloqueada pelo GPS. Quando ha GPS, tudo segue igual (distancia + trava de coordenada).
+      const _lat = parseFloat(String(latitude));
+      const _lng = parseFloat(String(longitude));
+      const hasGps = !isNaN(_lat) && !isNaN(_lng);
       const checkInNotes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
 
       // Buscar dados do card para verificar se é virtual e calcular distância
@@ -18046,7 +18088,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calcular distância até o cliente usando Haversine
       let checkInDistance = null;
-      if (currentCard.customerLatitude && currentCard.customerLongitude) {
+      if (hasGps && currentCard.customerLatitude && currentCard.customerLongitude) {
         const customerLat = parseFloat(currentCard.customerLatitude);
         const customerLon = parseFloat(currentCard.customerLongitude);
         
@@ -18071,8 +18113,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updateData: any = {
         checkInTime: agora(),
-        checkInLatitude: latitude.toString(),
-        checkInLongitude: longitude.toString(),
+        checkInLatitude: hasGps ? _lat.toString() : null,
+        checkInLongitude: hasGps ? _lng.toString() : null,
         distanceToCustomer: checkInDistance?.toString() || null,
         checkInPhotoUrl: photoUrl,
         // Observações do check-in (quando informadas).
@@ -18116,7 +18158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const todayBrazil = dataCalendario(hojeBR());
           const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
-          if (dailyRoute) {
+          if (dailyRoute && hasGps) {
             console.log(`📍 Registrando checkpoint de check-in para sales_card ${id} na rota ${dailyRoute.id}`);
             const { registerCheckpoint } = await import('./routeOptimizationService');
             routeProgress = await registerCheckpoint(
@@ -18126,10 +18168,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               currentCard.customerId,
               currentCard.sellerId,
               'check_in',
-              parseFloat(latitude),
-              parseFloat(longitude)
+              _lat,
+              _lng
             );
             console.log(`✅ Checkpoint de check-in registrado: ${JSON.stringify(routeProgress)}`);
+          } else if (dailyRoute) {
+            console.log(`ℹ️ Check-in sem GPS - checkpoint de rota não registrado (sales_card ${id})`);
           } else {
             console.log(`⚠️  Nenhuma rota diária encontrada para o vendedor ${currentCard.sellerId}`);
           }
@@ -20212,6 +20256,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🧭 Alternar o MODO da rota (Rota do Dia ↔ Rota de Prospecção) de um vendedor num dia. Só admin.
+  // Se ainda não existe rota para o dia e o modo pedido é 'prospeccao', cria uma rota vazia
+  // (com a casa do vendedor) para segurar o modo; para 'dia' sem rota, apenas retorna (padrão).
+  app.post('/api/daily-routes/route-mode', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { sellerId, date, mode } = req.body || {};
+      if (!sellerId || !date) {
+        return res.status(400).json({ message: 'Informe o vendedor e a data.' });
+      }
+      if (mode !== 'dia' && mode !== 'prospeccao') {
+        return res.status(400).json({ message: "Modo inválido. Use 'dia' ou 'prospeccao'." });
+      }
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
+      let route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      if (!route) {
+        if (mode === 'dia') {
+          return res.json({ mode: 'dia', routeId: null, message: 'Sem rota criada; modo padrão (dia).' });
+        }
+        // Criar rota vazia p/ segurar o modo prospecção
+        const seller = await storage.getUserById(sellerId);
+        if (!seller) return res.status(404).json({ message: 'Vendedor não encontrado' });
+        const startLatitude = seller.homeLatitude?.toString() || '-23.5505';
+        const startLongitude = seller.homeLongitude?.toString() || '-46.6333';
+        const startAddress = seller.homeLatitude && seller.homeLongitude
+          ? `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`
+          : `São Paulo, SP (padrão)`;
+        const startOfDay = new Date(routeDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        route = await storage.createDailyRoute({
+          sellerId,
+          routeDate: startOfDay,
+          startLatitude,
+          startLongitude,
+          startAddress,
+          optimizedOrder: [],
+          totalEstimatedDistance: '0',
+          totalActualDistance: '0',
+          totalVisits: 0,
+          completedVisits: 0,
+          routeStatus: 'pending',
+          routeMode: 'prospeccao',
+        } as any);
+        console.log(`🧭 [ROUTE-MODE] Rota vazia criada em modo prospecção p/ ${sellerId} em ${date} por ${req.currentUser?.email}`);
+        return res.json({ mode: 'prospeccao', routeId: route.id, created: true });
+      }
+      await storage.updateDailyRoute(route.id, { routeMode: mode } as any);
+      console.log(`🧭 [ROUTE-MODE] ${sellerId} em ${date} → modo ${mode} por ${req.currentUser?.email}`);
+      return res.json({ mode, routeId: route.id });
+    } catch (error: any) {
+      console.error('Erro ao alternar modo da rota:', error);
+      return res.status(500).json({ message: 'Erro ao alternar modo da rota', error: error?.message });
+    }
+  });
+
   // Buscar rota do dia atual para um vendedor
   app.get('/api/daily-routes/:sellerId/today', authenticateUser, async (req: any, res) => {
     try {
@@ -20674,6 +20772,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // 🧭 ROTA DE PROSPECÇÃO: quando o Admin liga o modo prospecção para este vendedor+dia,
+      // a rota exibe SOMENTE os leads alocados em prospecção (route_type='prospeccao') cujo
+      // próximo contato seja exatamente esta data. Não entram clientes ativos nem as regras de
+      // cadência de cliente — apenas as regras de lead. Branch isolado com retorno antecipado.
+      if ((route as any).routeMode === 'prospeccao') {
+        try {
+          const { db: _dbP } = await import('./db');
+          const { leads: _leadsTbl } = await import('../shared/schema');
+          const { inArray: _inArrayP } = await import('drizzle-orm');
+          const pRows: any = await _dbP.execute(sql`
+            SELECT id FROM leads
+            WHERE assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') = 'prospeccao'
+              AND status NOT IN ('converted', 'discarded')
+              AND next_contact_date IS NOT NULL
+              AND (next_contact_date)::date = ${date}::date
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          `);
+          const pIds = (pRows?.rows || []).map((r: any) => r.id);
+          let pLeads: any[] = [];
+          if (pIds.length > 0) {
+            pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, pIds));
+          }
+          // Ordena por vizinho-mais-próximo a partir da casa do vendedor (rota curta no mapa).
+          const { calculateDistance: _cdP } = await import('./routeOptimizationService');
+          const homeLat0 = parseFloat(route.startLatitude), homeLon0 = parseFloat(route.startLongitude);
+          const remaining = pLeads.slice();
+          const ordered: any[] = [];
+          let curLat: number | null = isNaN(homeLat0) ? null : homeLat0;
+          let curLon: number | null = isNaN(homeLon0) ? null : homeLon0;
+          while (remaining.length > 0) {
+            let bi = 0;
+            if (curLat != null && curLon != null) {
+              let bc = Infinity;
+              for (let i = 0; i < remaining.length; i++) {
+                const d = _cdP(curLat, curLon, parseFloat(remaining[i].latitude), parseFloat(remaining[i].longitude));
+                if (d < bc) { bc = d; bi = i; }
+              }
+            }
+            const nx = remaining.splice(bi, 1)[0];
+            ordered.push(nx);
+            curLat = parseFloat(nx.latitude); curLon = parseFloat(nx.longitude);
+          }
+          const pVisits = ordered.map((lead: any) => ({
+            id: `lead:${lead.id}`,
+            visitType: 'lead' as const,
+            entityId: lead.id,
+            leadId: lead.id,
+            customerName: lead.fantasyName,
+            customerLatitude: lead.latitude,
+            customerLongitude: lead.longitude,
+            customerAddress: null,
+            scheduledDate: route.routeDate,
+            isVirtual: false,
+            isAutoCheckout: false,
+            visitDuration: null,
+            leadStatus: lead.status,
+            leadNextContactDate: lead.nextContactDate,
+            leadPostponementCount: lead.postponementCount,
+            leadNonConversionReason: lead.nonConversionReason,
+          }));
+          let pCheckpoints: any[] = [];
+          try { pCheckpoints = await storage.getRouteCheckpoints(route.id); } catch {}
+          const pCompleted = pCheckpoints.filter((cp: any) => cp.checkpointType === 'check_out').length;
+          return res.json({
+            route: {
+              ...route,
+              routeMode: 'prospeccao',
+              visits: pVisits,
+              checkpoints: pCheckpoints,
+              segments: [],
+              adminAdjustments: {},
+              sellerHome: { latitude: homeLat0, longitude: homeLon0 },
+              progress: {
+                totalVisits: pVisits.length,
+                completedVisits: pCompleted,
+                totalEstimatedDistance: 0,
+                totalActualDistance: 0,
+                percentComplete: pVisits.length > 0 ? Math.round((pCompleted / pVisits.length) * 100) : 0,
+                workedHours: 0,
+                lunchBreak: null,
+                ordersCount: 0,
+                performanceIndex: 0,
+              }
+            }
+          });
+        } catch (pErr: any) {
+          console.error('Erro ao montar rota de prospecção:', pErr);
+          return res.status(500).json({ message: 'Erro ao montar rota de prospecção', error: pErr?.message });
+        }
+      }
+
       // 📅 Retornos de lead do dia entram na ROTA como paradas de lead (sequência + mapa + otimização).
       // Idempotente e só para a data atual/futura (não altera rotas passadas). Só leads com coordenadas.
       try {
@@ -20686,6 +20876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND next_contact_date IS NOT NULL
               AND (next_contact_date)::date <= ${date}::date
               AND assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') <> 'prospeccao'
               AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
@@ -26352,6 +26543,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: leads.createdBy,
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
+        city: leads.city,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -26375,6 +26567,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: row.createdBy || '',
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
+        city: row.city || null,
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -26410,6 +26603,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: leads.createdBy,
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
+        city: leads.city,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -26438,6 +26632,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: row.createdBy || '',
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
+        city: row.city || null,
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -26780,7 +26975,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (prospectionError) {
         console.error('Erro ao registrar prospecção:', prospectionError);
       }
-      
+
+      // 🗺️ Preenche o município (city) via geocode reverso — best-effort, não bloqueia a resposta.
+      (async () => {
+        try {
+          const { reverseGeocodeCity } = await import('./geocode-provider');
+          const cidade = await reverseGeocodeCity((lead as any).latitude, (lead as any).longitude);
+          if (cidade) await db.execute(sql`UPDATE leads SET city = ${cidade} WHERE id = ${lead.id}`);
+        } catch (_e) { /* silencioso: município é complementar */ }
+      })();
+
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
     } catch (error) {
@@ -26855,6 +27059,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // ✏️ Alteração em massa de leads (admin): assignedTo, status, nextContactDate, routeType (alocação).
+  app.post('/api/leads/bulk-update', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { ids, fields } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'Informe os leads (ids).' });
+      }
+      const patch: any = {};
+      if (fields && typeof fields === 'object') {
+        if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
+        if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
+        if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
+        if ('nextContactDate' in fields) {
+          const v = fields.nextContactDate;
+          if (!v) {
+            patch.nextContactDate = null;
+          } else if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+            const [y, m, d] = v.split('-').map(Number);
+            patch.nextContactDate = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+          } else {
+            patch.nextContactDate = new Date(v);
+          }
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ message: 'Nenhum campo para alterar.' });
+      }
+      let updated = 0;
+      const errors: any[] = [];
+      for (const id of ids) {
+        try { await storage.updateLead(String(id), patch); updated++; }
+        catch (e: any) { errors.push({ id, motivo: e?.message }); }
+      }
+      console.log(`✏️ [LEADS-BULK] ${updated}/${ids.length} leads alterados (${Object.keys(patch).join(', ')}) por ${req.currentUser?.email}`);
+      return res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), errors });
+    } catch (error: any) {
+      console.error('Erro no bulk-update de leads:', error);
+      return res.status(500).json({ message: 'Erro ao alterar leads em massa', error: error?.message });
+    }
+  });
+
+  // 🗺️ Preenche o Município (city) dos leads via geocode reverso das coordenadas. Admin.
+  // Processa em lote (respeitando o throttle do provedor) os leads SEM city e retorna quantos faltam.
+  app.post('/api/admin/leads/preencher-municipio', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { reverseGeocodeCity, geocodeThrottleMs } = await import('./geocode-provider');
+      const limit = Math.min(Math.max(Number(req.body?.limite) || 40, 1), 100);
+      const pend: any = await db.execute(sql`
+        SELECT id, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE (city IS NULL OR city = '')
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY created_at ASC
+        LIMIT ${limit}
+      `);
+      const rows = (pend?.rows || []) as any[];
+      let atualizados = 0;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (const r of rows) {
+        try {
+          const cidade = await reverseGeocodeCity(r.lat, r.lng);
+          if (cidade) {
+            await db.execute(sql`UPDATE leads SET city = ${cidade}, updated_at = NOW() WHERE id = ${r.id}`);
+            atualizados++;
+          }
+        } catch (_e) { /* segue para o próximo */ }
+        await wait(geocodeThrottleMs());
+      }
+      const restRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads
+        WHERE (city IS NULL OR city = '') AND latitude IS NOT NULL AND longitude IS NOT NULL
+      `);
+      const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
+      console.log(`🗺️ [LEADS-MUNICIPIO] processados ${rows.length}, atualizados ${atualizados}, restam ${restantes} por ${req.currentUser?.email}`);
+      return res.json({ ok: true, processados: rows.length, atualizados, restantes });
+    } catch (error: any) {
+      console.error('Erro ao preencher municipio dos leads:', error);
+      return res.status(500).json({ message: 'Erro ao preencher município dos leads', error: error?.message });
+    }
+  });
+
   // Deletar lead (apenas admin)
   app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
