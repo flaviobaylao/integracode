@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -1940,6 +1940,9 @@ export default function RotaDoDia() {
                   // 📋 Alteração Efetuada → card cinza/inativo, não clicável e fora da contagem.
                   const crEntId = isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId;
                   const crEfetuada = crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(crEntId)));
+                  // Card sendo aberto (busca do sales-card em andamento): mostra spinner e
+                  // bloqueia novos toques ate abrir — evita "clicar varias vezes".
+                  const cardBusy = loadingCardId != null && loadingCardId === (isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId));
 
                   const cardKey = presCardKey(visit);
                   const isExpanded = presExpanded.has(cardKey);
@@ -1970,15 +1973,15 @@ export default function RotaDoDia() {
                         </div>
                       ) : (
                       <>
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                         <div
-                          className={`flex items-start gap-3 flex-1 min-w-0 ${crEfetuada ? 'cursor-default' : 'cursor-pointer'}`}
+                          className={`flex items-start gap-3 flex-1 min-w-0 ${crEfetuada ? 'cursor-default' : 'cursor-pointer'} ${cardBusy ? 'opacity-60 pointer-events-none' : ''}`}
                           onClick={crEfetuada ? undefined : () => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
-                            {crEfetuada ? '' : presCardNumbers[index]}
+                            {crEfetuada ? '' : (cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : presCardNumbers[index])}
                           </div>
 
                           <div className="flex-1 min-w-0">
@@ -2372,7 +2375,7 @@ export default function RotaDoDia() {
                                 </div>
                               </div>
                             ) : (
-                            <div className="flex items-start justify-between gap-3">
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1 min-w-0">
                                 <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
                                   {crEfetuada ? '' : virtCardNumbers[index]}
