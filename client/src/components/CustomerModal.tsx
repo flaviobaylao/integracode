@@ -120,7 +120,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   const canManageVirtualService = user?.role !== 'vendedor';
 
   // Inativação é ação de gestor. Telemarketing e Vendedor editam o cadastro, mas NÃO inativam clientes.
-  const canInactivateCustomer = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
+  const canInactivateCustomer = (user?.role === 'admin'); // Inativar é exclusivo do Admin
 
   // 🔒 Dias/Periodicidade de visita: QUALQUER usuário pode INCLUIR (quando o campo está vazio);
   // ALTERAR um valor já preenchido é permitido só a estes administradores (Cinthia e Flávio).
