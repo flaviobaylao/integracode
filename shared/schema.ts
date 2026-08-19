@@ -1674,6 +1674,7 @@ export const leads = pgTable("leads", {
   latitude: decimal("latitude", { precision: 9, scale: 6 }).notNull(),
   longitude: decimal("longitude", { precision: 10, scale: 6 }).notNull(),
   coordinatesLocked: boolean("coordinates_locked").notNull().default(false),
+  city: varchar("city"), // Município do lead (reverse geocode das coordenadas)
   contact: varchar("contact"),
   phone: varchar("phone"),
   photo: varchar("photo"), // URL da foto capturada no check-in
