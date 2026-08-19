@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { useTableSort, SortableTh } from "@/lib/tableTools";
@@ -51,6 +51,11 @@ export default function LeadsManagement() {
   const [obsNao, setObsNao] = useState<string>("");
   const [prorrogarLead, setProrrogarLead] = useState<Lead | null>(null);
   const [novaDataProrrogar, setNovaDataProrrogar] = useState<string>("");
+  // Registro de Atendimento (texto livre + ditado por voz via Web Speech API)
+  const [atendLead, setAtendLead] = useState<Lead | null>(null);
+  const [atendTexto, setAtendTexto] = useState("");
+  const [atendGravando, setAtendGravando] = useState(false);
+  const atendRecRef = useRef<any>(null);
   // Ver justificativa de um lead não convertido (somente leitura)
   const [justificativaLead, setJustificativaLead] = useState<Lead | null>(null);
   const [formData, setFormData] = useState({
@@ -339,6 +344,45 @@ export default function LeadsManagement() {
   // Limites do date picker de prorrogação: amanhã até hoje+15
   const prorrogarMin = diaMaisBR(1);
   const prorrogarMax = diaMaisBR(15);
+
+  // === Registro de Atendimento ===
+  const atendSpeechSupported = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  const abrirAtendimento = (lead: Lead) => { setAtendLead(lead); setAtendTexto(""); setAtendGravando(false); };
+  const atendStartRec = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { toast({ title: "Ditado indisponível", description: "Use o Chrome no computador ou Android para gravar por voz.", variant: "destructive" }); return; }
+    try {
+      const rec = new SR();
+      rec.lang = 'pt-BR'; rec.continuous = true; rec.interimResults = true;
+      rec.onresult = (e: any) => {
+        let add = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) add += e.results[i][0].transcript; }
+        if (add.trim()) setAtendTexto(prev => (prev ? prev.trim() + ' ' : '') + add.trim());
+      };
+      rec.onerror = () => setAtendGravando(false);
+      rec.onend = () => setAtendGravando(false);
+      atendRecRef.current = rec; setAtendGravando(true); rec.start();
+    } catch (_e) { setAtendGravando(false); }
+  };
+  const atendStopRec = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
+  const salvarAtendimentoMut = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/leads/${atendLead!.id}/visits`, { observation: atendTexto.trim() }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/service-logs/last/lead'] });
+      toast({ title: "Atendimento registrado", description: "O registro foi salvo no histórico do lead." });
+      atendStopRec(); setAtendLead(null); setAtendTexto("");
+    },
+    onError: (e: any) => toast({ title: "Erro ao registrar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const atendDesfecho = (tipo: 'conv' | 'nao' | 'pro') => {
+    const l = atendLead; if (!l) return;
+    const txt = atendTexto.trim();
+    atendStopRec(); setAtendLead(null); setAtendTexto("");
+    if (tipo === 'nao') { setNaoConverterLead(l); setMotivoNao(""); setObsNao(txt); return; }
+    if (txt) { try { apiRequest('POST', `/api/leads/${l.id}/visits`, { observation: txt }); } catch (_e) {} }
+    if (tipo === 'conv') openConverter(l); else openProrrogar(l);
+  };
 
   const resetForm = () => {
     setFormData({
@@ -1018,6 +1062,16 @@ export default function LeadsManagement() {
                               <>
                                 <Button
                                   size="sm"
+                                  variant="outline"
+                                  className="border-blue-400 text-blue-700 whitespace-nowrap"
+                                  onClick={() => abrirAtendimento(lead)}
+                                  title="Registro de Atendimento"
+                                  data-testid={`button-atendimento-lead-${lead.id}`}
+                                >
+                                  <FileText className="h-4 w-4 mr-1" /> Registro
+                                </Button>
+                                <Button
+                                  size="sm"
                                   className="bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
                                   onClick={() => openConverter(lead)}
                                   title="Converter em cliente (cadastro + 1º pedido)"
@@ -1533,9 +1587,9 @@ export default function LeadsManagement() {
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">{prorrogarLead?.fantasyName}</p>
             <div>
-              <Label>Nova data da visita (máximo 15 dias)</Label>
-              <Input type="date" value={novaDataProrrogar} min={prorrogarMin} max={prorrogarMax} onChange={(e) => setNovaDataProrrogar(e.target.value)} />
-              <p className="text-[11px] text-muted-foreground mt-1">Permitido de {prorrogarMin.split('-').reverse().join('/')} até {prorrogarMax.split('-').reverse().join('/')}.</p>
+              <Label>Nova data da visita</Label>
+              <Input type="date" value={novaDataProrrogar} onChange={(e) => setNovaDataProrrogar(e.target.value)} />
+              <p className="text-[11px] text-muted-foreground mt-1">Escolha livremente a data da próxima visita.</p>
             </div>
             {Number((prorrogarLead as any)?.postponementCount || 0) >= 1 && (
               <p className="text-xs text-amber-700">Este lead já foi prorrogado uma vez. Reagendamento permitido apenas para admin.</p>
@@ -1546,6 +1600,57 @@ export default function LeadsManagement() {
             <Button className="bg-amber-600 hover:bg-amber-700 text-white" disabled={!novaDataProrrogar || prorrogarMut.isPending} onClick={() => prorrogarMut.mutate()}>
               Confirmar prorrogação
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Registro de Atendimento (texto livre + ditado por voz) */}
+      <Dialog open={!!atendLead} onOpenChange={(o) => { if (!o) { atendStopRec(); setAtendLead(null); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Registro de Atendimento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{atendLead?.fantasyName}</p>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label htmlFor="atend-texto">Descrição do atendimento</Label>
+                {atendSpeechSupported ? (
+                  atendGravando ? (
+                    <Button type="button" size="sm" variant="destructive" onClick={atendStopRec} data-testid="button-atend-stop">
+                      <XCircle className="h-4 w-4 mr-1" /> Parar
+                    </Button>
+                  ) : (
+                    <Button type="button" size="sm" variant="outline" className="border-blue-400 text-blue-700" onClick={atendStartRec} data-testid="button-atend-record">
+                      <Phone className="h-4 w-4 mr-1" /> Gravar áudio
+                    </Button>
+                  )
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">Ditado indisponível neste navegador</span>
+                )}
+              </div>
+              <Textarea id="atend-texto" rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid="textarea-atend" />
+              {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={() => { if (!atendTexto.trim()) { toast({ title: "Nada para salvar", description: "Escreva ou dite o atendimento.", variant: "destructive" }); return; } salvarAtendimentoMut.mutate(); }} disabled={salvarAtendimentoMut.isPending} data-testid="button-atend-save">
+                Salvar registro
+              </Button>
+            </div>
+            <div className="border-t pt-3">
+              <p className="text-xs text-muted-foreground mb-2">Desfecho do lead</p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => atendDesfecho('conv')} data-testid="button-atend-converter">
+                  <CheckCircle className="h-4 w-4 mr-1" /> Converter
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => atendDesfecho('nao')} data-testid="button-atend-naoconverter">
+                  <XCircle className="h-4 w-4 mr-1" /> Não Convertido
+                </Button>
+                <Button size="sm" variant="outline" className="border-amber-400 text-amber-700" onClick={() => atendDesfecho('pro')} data-testid="button-atend-prorrogar">
+                  <Clock className="h-4 w-4 mr-1" /> Prorrogar
+                </Button>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
