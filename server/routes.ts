@@ -27698,36 +27698,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (Number((lead as any).postponementCount || 0) >= 1 && !isAdminUser) {
           return res.status(409).json({ message: 'Prorrogação já utilizada. Finalize (não converter) ou converta o lead.', code: 'PRORROGACAO_JA_USADA' });
         }
-        // Data futura escolhida (YYYY-MM-DD) OU +dias. Teto: no máximo 15 dias corridos a partir de hoje.
-        const _hoje0 = dataCalendario(hojeBR()); _hoje0.setHours(0, 0, 0, 0);
-        const _teto = new Date(_hoje0); _teto.setDate(_teto.getDate() + 15);
+        // 📆 Data da nova visita. Data explícita (YYYY-MM-DD) = LIVRE: sem mínimo, sem teto e sem "encaixe".
+        // Fallback +dias (quando não vem data): mantém o comportamento antigo com encaixe no dia de rota.
         let _ret: Date;
         const _dataStr = String(req.body?.data || '').trim();
         if (_dataStr) {
           _ret = new Date(`${_dataStr}T12:00:00-03:00`);
           if (isNaN(_ret.getTime())) return res.status(400).json({ message: 'Data inválida.' });
-          const _r0 = new Date(_ret); _r0.setHours(0, 0, 0, 0);
-          if (_r0 <= _hoje0) return res.status(400).json({ message: 'A nova data de visita deve ser futura.' });
-          if (_r0 > _teto) return res.status(400).json({ message: 'A nova visita pode ser no máximo 15 dias à frente.', code: 'TETO_15_DIAS' });
         } else {
           let dias = Number(req.body?.dias);
           if (!Number.isFinite(dias) || dias < 1) dias = 15;
-          if (dias > 15) dias = 15; // teto
           _ret = dataCalendario(hojeBR());
           _ret.setDate(_ret.getDate() + Math.floor(dias));
           const _dow = _ret.getDay();
           if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
           else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+          // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias.
+          try {
+            const _custs = await __sellerCustomers(String((lead as any).assignedTo || ''));
+            const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
+            _ret = __snapToWeekday(_ret, _wd, 3, null, null);
+          } catch (_snapErr) { /* mantém _ret */ }
         }
-        // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias,
-        // sem sair da janela permitida (futuro e teto de 15 dias).
-        try {
-          const _custs = await __sellerCustomers(String((lead as any).assignedTo || ''));
-          const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
-          const _nb = new Date(_hoje0.getTime() + 86400000);
-          const _na = new Date(_hoje0.getTime() + 15 * 86400000 + 23 * 3600000);
-          _ret = __snapToWeekday(_ret, _wd, 3, _nb, _na);
-        } catch (_snapErr) { /* mantém _ret */ }
         // Mantém a contagem em 1 (trava do vendedor); admin reagenda sem zerar.
         const _novoCount = Number((lead as any).postponementCount || 0) >= 1 ? Number((lead as any).postponementCount) : 1;
         await db.execute(sql`
