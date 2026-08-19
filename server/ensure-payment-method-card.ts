@@ -20,8 +20,38 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 let _done = false;
+let _doneRouteMode = false;
+
+// ============================================================================
+// TRAVA DA ROTA DO DIA (19/ago/2026) — o schema Drizzle de daily_routes passou a
+// declarar a coluna route_mode (feature "Rota de Prospecção"), mas a coluna nunca
+// foi criada no banco de producao (migracao nao aplicada). Como o Drizzle faz
+// SELECT/INSERT com TODAS as colunas do schema, qualquer operacao em daily_routes
+// (inclusive gerar/regenerar rota) morria com:
+//   column "route_mode" does not exist
+// derrubando o botao "Gerar Rota" com o toast generico "Erro ao gerar rota".
+// (A tela de listagem seguia funcionando porque le via SQL cru.)
+//
+// Este ensure acrescenta a coluna de forma idempotente (ADD COLUMN IF NOT EXISTS),
+// com DEFAULT 'dia' NOT NULL — o Postgres preenche as linhas existentes com 'dia'.
+// Roda no start (chamado a partir de ensurePaymentMethodCard, ja fiado no bootstrap),
+// nao depende de drizzle-kit push e nunca derruba a subida.
+// ============================================================================
+export async function ensureDailyRouteMode(): Promise<void> {
+  if (_doneRouteMode) return;
+  try {
+    await db.execute(sql.raw(`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS route_mode varchar NOT NULL DEFAULT 'dia'`));
+    _doneRouteMode = true;
+    console.log("✅ [SCHEMA] daily_routes.route_mode garantido (geracao de rota volta a funcionar).");
+  } catch (e: any) {
+    console.warn("⚠️ [SCHEMA] nao foi possivel garantir daily_routes.route_mode:", e?.message || e);
+  }
+}
 
 export async function ensurePaymentMethodCard(): Promise<void> {
+  // Colocado aqui porque este bootstrap ja e chamado no start; a funcao tem guarda
+  // propria (_doneRouteMode), entao roda no maximo uma vez com sucesso por processo.
+  await ensureDailyRouteMode();
   if (_done) return;
   try {
     const q: any = await db.execute(sql`
