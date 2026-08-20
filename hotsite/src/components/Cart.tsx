@@ -1,6 +1,13 @@
+import { useEffect, useState } from 'react';
 import { CartItem } from '../types';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { TEXTO_AREA_ATENDIDA } from '../utils/entrega';
+
+// 🔒 Pedido mínimo do consumidor — valores padrão iguais aos da configuração no
+// servidor (Canais > Hotsite). Se a consulta falhar, a loja usa estes mesmos números,
+// nunca libera o pedido sem trava.
+const MIN_VAREJO_PADRAO = 70;
+const MIN_ATACADO_PADRAO = 200;
 
 interface CartProps {
   items: CartItem[];
@@ -16,16 +23,32 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const total = subtotal; // Sem desconto - preços já são diferenciados por tabela
 
+  // 🔒 TRAVA DE VALOR DO CONSUMIDOR (ago/2026) — o teste de pagamento online de
+  // 18/jul, que liberava pedido mínimo zero para consumidores, foi encerrado.
+  // Os valores vêm de Canais > Hotsite > Configurações (default 70 varejo / 200
+  // atacado) e a mesma regra é reaplicada no servidor, que é a trava de verdade.
+  const [minVarejo, setMinVarejo] = useState(MIN_VAREJO_PADRAO);
+  const [minAtacado, setMinAtacado] = useState(MIN_ATACADO_PADRAO);
+  useEffect(() => {
+    let vivo = true;
+    fetch('/api/public/canais/minimos')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        if (!vivo || !cfg?.consumidor) return;
+        const v = Number(cfg.consumidor.varejo);
+        const a = Number(cfg.consumidor.atacado);
+        if (Number.isFinite(v) && v >= 0) setMinVarejo(v);
+        if (Number.isFinite(a) && a >= 0) setMinAtacado(a);
+      })
+      .catch(() => { /* mantém os padrões */ });
+    return () => { vivo = false; };
+  }, []);
+
   // Calcular pedido mínimo baseado no tipo de cliente
   const getMinimumOrder = (): number => {
-    // ⚠️ TEMPORÁRIO (TESTE DE PAGAMENTO ONLINE): pedido mínimo LIBERADO para consumidores
-    // a pedido do Flavio em 18/jul/2026, para testar PIX/cartão com valores baixos.
-    // REVERTER depois dos testes: basta remover este bloco (volta aos R$ 70/200).
-    if (category === 'consumer') return 0;
     if (category === 'consumer') {
-      if (consumerTier === 'retail') return 70;
-      if (consumerTier === 'wholesale') return 200;
-      return 70; // Fallback para consumidor sem tier
+      if (consumerTier === 'wholesale') return minAtacado;
+      return minVarejo; // varejo e fallback do consumidor sem tier
     }
     if (category === 'reseller') {
       if (resellerLocation === 'goiania') return 150;
