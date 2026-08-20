@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Target, Phone, CheckCircle, XCircle, Clock, AlertTriangle } from "lucide-react";
+import { Target, Phone, CheckCircle, XCircle, Clock, AlertTriangle, FileText } from "lucide-react";
+import LeadVisitHistoryModal from "@/components/LeadVisitHistoryModal";
 
 interface LeadReturn {
   id: string;
@@ -50,6 +51,7 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
   const [obs, setObs] = useState<string>("");
   const [converterLead, setConverterLead] = useState<LeadReturn | null>(null);
   const [cust, setCust] = useState<any>({});
+  const [registroLead, setRegistroLead] = useState<LeadReturn | null>(null);
 
   const { data, isLoading } = useQuery<{ hoje: LeadReturn[]; atrasados: LeadReturn[]; total: number; date: string }>({
     queryKey: ["/api/leads/retornos", sellerId, date],
@@ -162,6 +164,16 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
           data-testid={`button-lead-prorrogar-${l.id}`}
         >
           <Clock className="w-4 h-4 mr-1" /> {l.postponementCount >= 1 ? "Já prorrogado" : "Prorrogar (1x)"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="border-slate-300 text-slate-700 dark:text-slate-200"
+          title="Registrar contato/visita e ver o historico deste lead"
+          onClick={() => setRegistroLead(l)}
+          data-testid={"button-lead-registro-" + l.id}
+        >
+          <FileText className="w-4 h-4 mr-1" /> Registro
         </Button>
       </div>
     </div>
@@ -293,6 +305,17 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {registroLead && (
+        <LeadVisitHistoryModal
+          open={!!registroLead}
+          onClose={() => setRegistroLead(null)}
+          leadId={registroLead.id}
+          leadName={registroLead.fantasyName}
+          currentTemperature={registroLead.temperature as any}
+          onSuccess={invalidate}
+        />
+      )}
     </div>
   );
 }
