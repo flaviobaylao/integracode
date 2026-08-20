@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,9 @@ import {
   AlertTriangle,
   FileText,
   MessageCircle,
-  LogOut
+  LogOut,
+  Mic,
+  Camera
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS, OPERATION_TYPE_LABELS } from "@shared/schema";
@@ -65,6 +67,13 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [paymentMethod, setPaymentMethod] = useState('a_vista');
   const [operationType, setOperationType] = useState('venda');
   const [notes, setNotes] = useState('');
+  // Troca/Amostra: gravacao de voz (transcricao pt-BR) para o campo Observacoes
+  const [gravandoObs, setGravandoObs] = useState(false);
+  const recObsRef = useRef<any>(null);
+  const notesBaseRef = useRef<string>('');
+  // Troca: foto obrigatoria dos produtos (armazenada, nao exibida no pipeline)
+  const [trocaPhoto, setTrocaPhoto] = useState<string | null>(null);
+  const [uploadingTrocaPhoto, setUploadingTrocaPhoto] = useState(false);
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -110,6 +119,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setPaymentMethod(card.paymentMethod || 'a_vista');
       setOperationType(card.operationType || 'venda');
       setNotes(card.notes || '');
+      setTrocaPhoto(null);
+      setGravandoObs(false);
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
       setBoletoDays((card as any).boletoDays || 7);
@@ -377,6 +388,66 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     });
   };
 
+  // ── Troca/Amostra: transcricao por voz (pt-BR) para o campo Observacoes ──
+  const toggleGravacaoObs = () => {
+    const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SR) { toast({ title: 'Gravação de voz não suportada neste navegador', description: 'Abra pelo Chrome (celular) para ditar as observações.', variant: 'destructive' }); return; }
+    if (gravandoObs && recObsRef.current) { try { recObsRef.current.stop(); } catch {} return; }
+    try {
+      const r = new SR();
+      r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
+      notesBaseRef.current = notes ? notes.trim() + ' ' : '';
+      r.onresult = (e: any) => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setNotes(notesBaseRef.current + t); };
+      r.onerror = () => { setGravandoObs(false); recObsRef.current = null; };
+      r.onend = () => { setGravandoObs(false); recObsRef.current = null; };
+      recObsRef.current = r; r.start(); setGravandoObs(true);
+    } catch { setGravandoObs(false); recObsRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
+  };
+
+  // Comprime/redimensiona a foto p/ upload confiavel (evita estourar 10MB no mobile).
+  const compressTrocaImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; }
+        else if (h >= w && h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; }
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const cx = c.getContext('2d'); if (!cx) { resolve(src); return; }
+        cx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(src);
+      img.src = src;
+    });
+
+  // Troca: capturar/selecionar foto dos produtos (camera no mobile via input capture).
+  const handleTrocaPhotoChange = (e: any) => {
+    const f = e?.target?.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = async (ev: any) => {
+      const compressed = await compressTrocaImage(ev?.target?.result as string);
+      setTrocaPhoto(compressed);
+    };
+    reader.readAsDataURL(f);
+    if (e?.target) e.target.value = '';
+  };
+
+  // Envia a foto da troca ao backend (armazenada de forma duravel, sem aparecer no pipeline).
+  const uploadTrocaPhoto = async (cardId: string, dataUrl: string): Promise<boolean> => {
+    try {
+      setUploadingTrocaPhoto(true);
+      const blob = await (await fetch(dataUrl)).blob();
+      const fd = new FormData();
+      fd.append('photo', blob, 'troca.jpg');
+      const resp = await fetch(`/api/sales-cards/${cardId}/troca-photo`, { method: 'POST', credentials: 'include', body: fd });
+      if (!resp.ok) throw new Error('upload falhou');
+      return true;
+    } catch { return false; }
+    finally { setUploadingTrocaPhoto(false); }
+  };
+
   const updateProductQuantity = (productId: string, quantity: number) => {
     const updatedProducts = products.map(p => {
       if (p.id === productId) {
@@ -496,6 +567,25 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const handleSendToFaturamento = async () => {
     if (!card?.id) return;
 
+    // 🔒 TRAVA Troca/Amostra: justificativa obrigatória no campo Observações (pode ditar por voz).
+    if ((operationType === 'troca' || operationType === 'amostra') && !(notes || '').trim()) {
+      toast({
+        title: operationType === 'troca' ? 'Observação obrigatória na Troca' : 'Observação obrigatória na Amostra',
+        description: 'Detalhe o motivo no campo Observações. Você pode ditar por voz no botão 🎤.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    // 🔒 TRAVA Troca: foto dos produtos obrigatória.
+    if (operationType === 'troca' && !trocaPhoto) {
+      toast({
+        title: 'Foto obrigatória na Troca',
+        description: 'Tire ou anexe uma foto dos produtos da troca antes de finalizar.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     // Validação do agendamento: exige uma data (hoje ou futura) quando "Agendar pedido" está marcado.
     if (isScheduledOrder) {
       if (!scheduledOrderDate) {
@@ -546,6 +636,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
 
     try {
+      // Troca: enviar a foto dos produtos ANTES de finalizar (se falhar, aborta).
+      if (operationType === 'troca' && trocaPhoto) {
+        const ok = await uploadTrocaPhoto(card.id, trocaPhoto);
+        if (!ok) {
+          toast({
+            title: 'Falha ao enviar a foto',
+            description: 'Não foi possível enviar a foto da troca. Verifique a conexão e tente novamente.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      }
       // Primeiro finalizar a venda
       await handleFinalizeSale();
       
@@ -1486,15 +1588,75 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               )}
               
               <div>
-                <Label>Observações</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>
+                    Observações
+                    {(operationType === 'troca' || operationType === 'amostra') && (
+                      <span className="text-red-600"> * (obrigatório — detalhe o motivo)</span>
+                    )}
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={gravandoObs ? 'destructive' : 'outline'}
+                    onClick={toggleGravacaoObs}
+                    className="h-8 shrink-0"
+                    data-testid="button-mic-notes"
+                  >
+                    <Mic className="h-4 w-4 mr-1" />
+                    {gravandoObs ? 'Gravando… toque p/ parar' : 'Ditar por voz'}
+                  </Button>
+                </div>
                 <Textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Observações sobre a venda..."
+                  placeholder={(operationType === 'troca' || operationType === 'amostra')
+                    ? `Descreva o motivo da ${operationType === 'troca' ? 'troca' : 'amostra'}… (pode ditar por voz no botão acima)`
+                    : 'Observações sobre a venda...'}
                   rows={3}
                   data-testid="textarea-notes"
                 />
               </div>
+
+              {/* Troca: foto obrigatória dos produtos */}
+              {operationType === 'troca' && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium text-red-800">
+                    <Camera className="h-4 w-4 inline mr-1" />
+                    Foto dos produtos da troca <span className="font-bold">(obrigatória)</span>
+                  </p>
+                  {trocaPhoto ? (
+                    <div className="space-y-2">
+                      <img src={trocaPhoto} alt="Foto da troca" className="w-full max-h-64 object-contain rounded border bg-white" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTrocaPhoto(null)}
+                        data-testid="button-retake-troca-photo"
+                      >
+                        Refazer foto
+                      </Button>
+                    </div>
+                  ) : (
+                    <label
+                      className="flex items-center justify-center gap-2 w-full cursor-pointer bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 rounded-md py-2 text-sm font-medium"
+                      data-testid="label-troca-photo"
+                    >
+                      <Camera className="h-4 w-4" />
+                      Tirar / anexar foto
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={handleTrocaPhotoChange}
+                        data-testid="input-troca-photo"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
 
               <div>
                 <Label>Cupom de desconto / código de indicação (opcional)</Label>
