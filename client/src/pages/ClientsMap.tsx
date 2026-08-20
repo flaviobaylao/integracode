@@ -185,7 +185,7 @@ export default function ClientsMap() {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
       (c) =>
         (c.fantasyName || c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (c.phone || '').includes(searchTerm.replace(/\D/g, ''))
+        (searchTerm.replace(/\D/g, '').length > 0 && (c.phone || '').includes(searchTerm.replace(/\D/g, '')))
     );
   }
 
