@@ -52,6 +52,40 @@ async function setSetting(key: string, value: string, by: string): Promise<void>
 const DIAS_VALIDOS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
 const PERIODICIDADES = ['semanal', 'quinzenal', 'mensal', 'bimestral'];
 
+// ------------------------------------------- pedido minimo do CONSUMIDOR
+// TRAVA DE VALOR (ago/2026): consumidor nao fecha pedido abaixo do minimo, nem no
+// Hotsite nem no Instagram (IA). Dois patamares, porque o consumidor escolhe a
+// tabela: VAREJO (default R$ 70) e ATACADO (default R$ 200 — o preco de atacado so
+// se justifica a partir desse volume). REVENDA nao entra aqui: seus minimos
+// continuam onde sempre estiveram (150 Goiania/Brasilia, 350 interior).
+// Editavel em Canais > Hotsite > Configuracoes; vale para os DOIS canais.
+export const MIN_CONSUMIDOR_VAREJO_PADRAO = 70;
+export const MIN_CONSUMIDOR_ATACADO_PADRAO = 200;
+
+/** Le os minimos do consumidor (fail-safe: valor invalido cai no default). */
+export async function getMinimosConsumidor(): Promise<{ varejo: number; atacado: number }> {
+  const ler = async (chave: string, padrao: number): Promise<number> => {
+    const n = Number(String(await getSetting(chave, String(padrao))).replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 ? n : padrao;
+  };
+  return {
+    varejo: await ler('pedido_min_consumidor_varejo', MIN_CONSUMIDOR_VAREJO_PADRAO),
+    atacado: await ler('pedido_min_consumidor_atacado', MIN_CONSUMIDOR_ATACADO_PADRAO),
+  };
+}
+
+/**
+ * Minimo que vale para um pedido, dada a tabela de preco escolhida.
+ * 'retail'/'wholesale' = consumidor (trava ativa). Tabelas de revenda
+ * ('goiania' | 'interior' | 'brasilia') devolvem 0 — sem trava aqui.
+ */
+export async function minimoParaTabela(priceTable?: string | null): Promise<number> {
+  const t = String(priceTable || 'retail').toLowerCase();
+  if (t === 'goiania' || t === 'interior' || t === 'brasilia') return 0;
+  const min = await getMinimosConsumidor();
+  return t === 'wholesale' ? min.atacado : min.varejo;
+}
+
 export async function getHotsiteDefaults(): Promise<{ rota: string; dia: string; periodicidade: string; vendedorId: string | null }> {
   const dia = await getSetting('hotsite_novo_dia', 'Dom');
   const per = await getSetting('hotsite_novo_periodicidade', 'mensal');
@@ -80,6 +114,16 @@ function podeEditar(req: any, res: any, next: any) {
 
 // ---------------------------------------------------------------- rotas
 export function registerCanaisRoutes(app: Express): void {
+  // PUBLICO (a loja consulta antes de liberar o botao de finalizar). Sem dados
+  // sensiveis: devolve so os dois patamares do pedido minimo do consumidor.
+  app.get('/api/public/canais/minimos', async (_req, res) => {
+    try {
+      res.json({ ok: true, consumidor: await getMinimosConsumidor() });
+    } catch {
+      res.json({ ok: true, consumidor: { varejo: MIN_CONSUMIDOR_VAREJO_PADRAO, atacado: MIN_CONSUMIDOR_ATACADO_PADRAO } });
+    }
+  });
+
   // ====================== RESUMO (cabecalho da pagina) ======================
   app.get('/api/canais/resumo', authenticateUser, podeVer, async (_req: any, res) => {
     try {
@@ -197,6 +241,8 @@ export function registerCanaisRoutes(app: Express): void {
         ok: true,
         cartaoAtivo: await cartaoLojaAtivo(),
         clienteNovo: { ...def, vendedorNome },
+        // Trava de valor do consumidor (vale para Hotsite E Instagram).
+        minimoConsumidor: await getMinimosConsumidor(),
         cadastro: {
           destino: 'INTEGRA 2.0',
           enviaAoOmie: false,
@@ -224,8 +270,24 @@ export function registerCanaisRoutes(app: Express): void {
       if (typeof b.periodicidade === 'string' && PERIODICIDADES.includes(b.periodicidade)) { await setSetting('hotsite_novo_periodicidade', b.periodicidade, by); alterado.push('periodicidade'); }
       if (b.vendedorId !== undefined) { await setSetting('hotsite_novo_vendedor_id', String(b.vendedorId || ''), by); alterado.push('vendedorId'); }
 
+      // Trava de valor do consumidor — aceita numero ou texto ("70", "70,00").
+      const lerValor = (v: any): number | null => {
+        if (v === undefined || v === null || String(v).trim() === '') return null;
+        const n = Number(String(v).replace(/\./g, '').replace(',', '.'));
+        return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+      };
+      const mv = lerValor(b.minimoVarejo);
+      if (mv !== null) { await setSetting('pedido_min_consumidor_varejo', String(mv), by); alterado.push('minimoVarejo'); }
+      const ma = lerValor(b.minimoAtacado);
+      if (ma !== null) { await setSetting('pedido_min_consumidor_atacado', String(ma), by); alterado.push('minimoAtacado'); }
+
       const { cartaoLojaAtivo } = await import('./hotsite-card');
-      res.json({ ok: true, alterado, por: by, cartaoAtivo: await cartaoLojaAtivo(), clienteNovo: await getHotsiteDefaults() });
+      res.json({
+        ok: true, alterado, por: by,
+        cartaoAtivo: await cartaoLojaAtivo(),
+        clienteNovo: await getHotsiteDefaults(),
+        minimoConsumidor: await getMinimosConsumidor(),
+      });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
