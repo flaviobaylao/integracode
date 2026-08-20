@@ -434,6 +434,26 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     const total = products.reduce((s, p) => s + p.totalPrice, 0);
     if (!(total > 0)) return 'Não consegui calcular o valor (tabela de preço sem valor para esses itens). Melhor transferir para um atendente humano.';
 
+    // 🔒 TRAVA DE VALOR — PEDIDO MINIMO DO CONSUMIDOR (ago/2026)
+    // Mesma regra do Hotsite, mesma configuracao (Canais > Hotsite > Configuracoes):
+    // consumidor nao registra pedido abaixo do minimo. Revenda nao entra na trava.
+    // Em vez de recusar seco, devolve a instrucao para a IA convidar o cliente a
+    // completar o carrinho — o pedido so nao e gravado.
+    if (tipo === 'consumidor') {
+      try {
+        const { minimoParaTabela } = await import('./canais-routes');
+        const minimo = await minimoParaTabela(table);
+        if (minimo > 0 && total < minimo) {
+          const faltam = Math.round((minimo - total) * 100) / 100;
+          return `NÃO registrei o pedido: o valor está abaixo do pedido mínimo para consumidor. `
+            + `Total do carrinho: ${brl(total)} · mínimo: ${brl(minimo)} · faltam ${brl(faltam)}. `
+            + `Avise o cliente com simpatia, ofereça sugestões de produtos para completar e só chame registrar_pedido de novo quando o total atingir o mínimo.`;
+        }
+      } catch (e: any) {
+        console.warn('[IG-ORDER] leitura do pedido minimo falhou (segue sem trava):', e?.message);
+      }
+    }
+
     const { storage } = await import('./storage');
     // Cliente: procura por CPF/CNPJ (e telefone). Se NAO existir, CADASTRA automaticamente
     // (nome, documento, endereco) e vincula ao pedido — assim o card entra no pipeline com os
