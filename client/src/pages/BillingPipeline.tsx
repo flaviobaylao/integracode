@@ -550,7 +550,9 @@ export default function BillingPipeline() {
           products: b.products ?? null,
           source: b.source ?? undefined,
           paidOnline: b.paidOnline ?? undefined,
-          notes: b.blockDetails ?? b.blockReason ?? null,
+          // Observações do card bloqueado = observação do vendedor (o que ele escreveu) em 1º lugar;
+          // o motivo automático do bloqueio segue logo abaixo, quando houver.
+          notes: ([b.sellerNotes, b.blockDetails].filter((x: any) => x && String(x).trim()).join('\n\n')) || b.blockReason || null,
           omieInstanceId: null,
           omieInstanceName: null,
           stageHistory: [],
