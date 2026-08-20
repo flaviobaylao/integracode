@@ -12362,12 +12362,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // bloqueados (o mesmo enriquecimento do billing_pipeline, que não roda aqui).
       const scIds = Array.from(new Set(blockedOrdersData.map((o: any) => o.salesCardId).filter(Boolean)));
       const srcById = new Map<string, string>();
+      const notesById = new Map<string, string>(); // observação escrita pelo vendedor na implantação
       const paidSet = new Set<string>();
       if (scIds.length) {
         try {
-          const scs = await db.select({ id: salesCards.id, source: salesCards.source })
+          const scs = await db.select({ id: salesCards.id, source: salesCards.source, notes: salesCards.notes })
             .from(salesCards).where(inArray(salesCards.id, scIds as any));
-          for (const s of scs as any[]) if (s.source) srcById.set(String(s.id), String(s.source));
+          for (const s of scs as any[]) {
+            if (s.source) srcById.set(String(s.id), String(s.source));
+            if (s.notes && String(s.notes).trim()) notesById.set(String(s.id), String(s.notes));
+          }
         } catch {}
         const idList = sql.join(scIds.map((c: any) => sql`${c}`), sql`, `);
         try {
@@ -12389,6 +12393,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             ...order,
             source: srcById.get(String(order.salesCardId)) || null,
+            // Observação que o vendedor escreveu na implantação (troca/amostra exigem justificativa).
+            // O card bloqueado deve mostrá-la, e não apenas o motivo automático do bloqueio.
+            sellerNotes: notesById.get(String(order.salesCardId)) || null,
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
