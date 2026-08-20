@@ -44,6 +44,7 @@ interface BillingPipelineItem {
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   notes: string | null;
+  trocaPhotoUrl?: string | null; // foto dos produtos anexada na troca (armazenada no servidor)
   omieInstanceId: string | null;
   omieInstanceName: string | null;
   scheduledBillingDate: string | null;
@@ -553,6 +554,7 @@ export default function BillingPipeline() {
           // Observações do card bloqueado = observação do vendedor (o que ele escreveu) em 1º lugar;
           // o motivo automático do bloqueio segue logo abaixo, quando houver.
           notes: ([b.sellerNotes, b.blockDetails].filter((x: any) => x && String(x).trim()).join('\n\n')) || b.blockReason || null,
+          trocaPhotoUrl: b.trocaPhotoUrl ?? null,
           omieInstanceId: null,
           omieInstanceName: null,
           stageHistory: [],
@@ -1456,7 +1458,20 @@ export default function BillingPipeline() {
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
                   {editMode && (canEdit || canSellerEditItem(detailItem)) ? (
                     <textarea value={editData?.notes ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, notes: e.target.value }))} rows={2} className="w-full border rounded px-2 py-1 text-sm" />
-                  ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">{detailItem.notes}</p>)}
+                  ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg whitespace-pre-line">{detailItem.notes}</p>)}
+                </div>
+              )}
+
+              {detailItem.trocaPhotoUrl && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Foto da troca</label>
+                  <a href={detailItem.trocaPhotoUrl} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={detailItem.trocaPhotoUrl}
+                      alt="Foto dos produtos da troca"
+                      className="w-full max-h-72 object-contain rounded-lg border bg-white cursor-zoom-in"
+                    />
+                  </a>
                 </div>
               )}
 
