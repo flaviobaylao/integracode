@@ -196,6 +196,11 @@ function ConfigHotsite() {
   const cfg = data || {};
   const novo = { ...(cfg.clienteNovo || {}), ...(rascunho || {}) };
   const cartao = pag?.cartao || {};
+  // Trava de valor: mostra o rascunho enquanto edita, senão o valor salvo.
+  const min = {
+    varejo: rascunho?.minimoVarejo ?? cfg.minimoConsumidor?.varejo ?? 70,
+    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 200,
+  };
 
   return (
     <div className="space-y-4">
@@ -283,7 +288,37 @@ function ConfigHotsite() {
               {novo.vendedorNome && <p className="text-xs text-gray-500 mt-1">Atual: {novo.vendedorNome}</p>}
             </div>
           </div>
-          <Button onClick={() => salvar.mutate(rascunho || {})} disabled={!rascunho || salvar.isPending}>
+
+          {/* 🔒 Trava de valor do consumidor — vale para Hotsite E Instagram */}
+          <div className="mt-6 pt-4 border-t">
+            <h4 className="font-semibold text-sm mb-1">Pedido mínimo do consumidor</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              Vale para os dois canais: Hotsite e Instagram (IA). Revenda não entra nesta trava —
+              continua com os mínimos por região.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label>Varejo (R$)</Label>
+                <Input
+                  inputMode="decimal"
+                  value={min.varejo ?? ""}
+                  placeholder="70"
+                  onChange={(e) => setRascunho({ ...(rascunho || {}), minimoVarejo: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Atacado (R$)</Label>
+                <Input
+                  inputMode="decimal"
+                  value={min.atacado ?? ""}
+                  placeholder="200"
+                  onChange={(e) => setRascunho({ ...(rascunho || {}), minimoAtacado: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          <Button className="mt-4" onClick={() => salvar.mutate(rascunho || {})} disabled={!rascunho || salvar.isPending}>
             {salvar.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             Salvar padrões
           </Button>
