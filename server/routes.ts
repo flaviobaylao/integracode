@@ -18043,6 +18043,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Route for check-in with photo upload
+  // Troca: recebe a foto dos produtos, armazena de forma duravel (fallback no banco no Railway)
+  // e registra a referencia contra o pedido em order_pipeline_audit (auditoria). A foto NAO
+  // aparece no pipeline — fica apenas armazenada/registrada.
+  app.post('/api/sales-cards/:id/troca-photo', authenticateUser, upload.single('photo'), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      if (!req.file) return res.status(400).json({ message: 'Foto obrigatória' });
+      const card = await storage.getSalesCard(id);
+      if (!card) return res.status(404).json({ message: 'Sales card not found' });
+      const url = await uploadPhotoToStorage(req.file.buffer, req.file.mimetype, `troca/${id}`);
+      if (!url) return res.status(500).json({ message: 'Falha ao armazenar a foto' });
+      // Registra a foto contra o pedido (auditoria). Nunca bloqueia o fluxo.
+      try {
+        await db.execute(sql`INSERT INTO order_pipeline_audit (id, sales_card_id, outcome, error, created_at)
+          VALUES (gen_random_uuid(), ${id}, 'troca_photo', ${url}, now())`);
+      } catch { /* auditoria nao bloqueia */ }
+      return res.json({ ok: true, url });
+    } catch (error: any) {
+      console.error('Erro ao salvar foto da troca:', error?.message || error);
+      return res.status(500).json({ message: 'Failed to store troca photo' });
+    }
+  });
+
   app.post('/api/sales-cards/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
     try {
       const { id } = req.params;
