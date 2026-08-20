@@ -990,7 +990,22 @@ export default function LeadsManagement() {
                           <div className="w-4 h-4 rounded-full bg-gray-300" title="Sem temperatura" />
                         )}
                       </td>
-                      <td className={`py-3 px-4 font-medium ${descartado ? 'text-gray-400 dark:text-gray-500' : ''}`}>{lead.fantasyName}</td>
+                      <td className={`py-3 px-4 font-medium ${descartado ? 'text-gray-400 dark:text-gray-500' : ''}`}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setSelectedLeadForVisitHistory(lead); }}
+                              title="Histórico de Atendimentos"
+                              data-testid={`button-history-lead-${lead.id}`}
+                              className="shrink-0 text-muted-foreground hover:text-foreground"
+                            >
+                              <History className="h-4 w-4" />
+                            </button>
+                          )}
+                          <span>{lead.fantasyName}</span>
+                        </span>
+                      </td>
                       <td className="py-3 px-4">{lead.contact || '—'}</td>
                       <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className={descartado ? 'text-gray-400' : 'text-blue-600 hover:underline'} onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">{sellerNameById(lead.assignedTo)}</td>
@@ -1107,9 +1122,6 @@ export default function LeadsManagement() {
                                 <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => handleEdit(lead)} title="Editar lead" data-testid={`button-edit-lead-${lead.id}`}>
                                   <Edit className="h-4 w-4 mr-1" /> Editar
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de Visitas" data-testid={`button-history-lead-${lead.id}`}>
-                                <History className="h-4 w-4" />
-                              </Button>
                               <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(lead.id)} title="Excluir" data-testid={`button-delete-lead-${lead.id}`}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
