@@ -12363,6 +12363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const scIds = Array.from(new Set(blockedOrdersData.map((o: any) => o.salesCardId).filter(Boolean)));
       const srcById = new Map<string, string>();
       const notesById = new Map<string, string>(); // observação escrita pelo vendedor na implantação
+      const trocaPhotoById = new Map<string, string>(); // URL da foto anexada na troca (order_pipeline_audit)
       const paidSet = new Set<string>();
       if (scIds.length) {
         try {
@@ -12382,6 +12383,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id IN (${idList})`);
           for (const x of (pc.rows || pc) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
         } catch {}
+        // Foto dos produtos anexada na troca (registrada em order_pipeline_audit com outcome='troca_photo').
+        // Pega a mais recente por card para exibir no card bloqueado.
+        try {
+          const tp: any = await db.execute(sql`SELECT DISTINCT ON (sales_card_id) sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${idList}) ORDER BY sales_card_id, created_at DESC`);
+          for (const x of (tp.rows || tp) as any[]) if (x.url) trocaPhotoById.set(String(x.sales_card_id), String(x.url));
+        } catch {}
       }
 
       // Buscar dados relacionados (cliente e vendedor)
@@ -12396,6 +12403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Observação que o vendedor escreveu na implantação (troca/amostra exigem justificativa).
             // O card bloqueado deve mostrá-la, e não apenas o motivo automático do bloqueio.
             sellerNotes: notesById.get(String(order.salesCardId)) || null,
+            trocaPhotoUrl: trocaPhotoById.get(String(order.salesCardId)) || null,
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
