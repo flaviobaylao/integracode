@@ -25242,6 +25242,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Atualizar totalAmount com valor validado pelo servidor
       validatedData.totalAmount = serverTotal;
 
+      // 🔒 TRAVA DE VALOR — PEDIDO MINIMO DO CONSUMIDOR (ago/2026)
+      // O carrinho ja bloqueia o botao, mas o bloqueio de verdade e este: PIX, cartao e
+      // Google Pay reentram por ESTE endpoint, entao nenhum caminho escapa. Vale sobre o
+      // subtotal (antes de cupom/indicacao), mesma base do aviso no carrinho — assim um
+      // desconto nao derruba um pedido que ja atingiu o minimo. Revenda nao entra na
+      // trava (minimo_para_tabela devolve 0). Valor editavel em Canais > Hotsite.
+      try {
+        const { minimoParaTabela } = await import('./canais-routes');
+        const minimo = await minimoParaTabela(validatedData.priceTable);
+        if (minimo > 0 && serverTotal < minimo) {
+          console.warn(`🔒 [MINIMO] pedido recusado: R$ ${serverTotal.toFixed(2)} < minimo R$ ${minimo.toFixed(2)} (tabela: ${validatedData.priceTable || 'retail'})`);
+          return res.status(400).json({
+            message: `Pedido mínimo de R$ ${minimo.toFixed(2)} para este tipo de cliente. Adicione mais R$ ${(minimo - serverTotal).toFixed(2)} para finalizar.`,
+            code: 'PEDIDO_MINIMO',
+            minimo,
+            subtotal: serverTotal,
+            faltam: Math.round((minimo - serverTotal) * 100) / 100,
+            priceTable: validatedData.priceTable || 'retail',
+          });
+        }
+      } catch (_em: any) {
+        // Nunca derruba o pedido por falha ao LER a configuracao — cai no default do modulo.
+        console.warn('[MINIMO] leitura da configuracao falhou (segue sem trava):', _em?.message);
+      }
+
     // 🎟️ CUPOM PROMOCIONAL NA LOJA (04/ago/2026) — UM desconto por pedido, nesta ordem:
     //   cupom > codigo de indicacao > recompensa automatica.  Mesma regra do pedido do
     //   vendedor (VIGIA CUPOM vendedor, acima). Aqui so VALIDAMOS; o resgate e gravado
