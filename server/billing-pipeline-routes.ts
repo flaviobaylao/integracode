@@ -444,12 +444,21 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     //   `sellerId: walletSellerId || (... : effectiveSellerId)`
     // e a carteira ganhava de TODO mundo, inclusive de quem tinha acabado de lancar o pedido.
     const isInstagram = String(salesCard.source || '') === 'instagram';
+    // Se o card JÁ tem um vendedor humano real (o implantador), ELE manda — a carteira do
+    // cadastro NÃO sobrescreve. A carteira só roteia pedido de canal digital SEM implantador
+    // (sellerId vazio ou placeholder tipo 'instagram'/'chatgpt-ai'/'system').
+    // CORRIGE: ao LIBERAR um pedido bloqueado (createdBy 'system-liberacao-manual', sem
+    // registeringUser), o vendedor voltava para o dono da carteira em vez de manter quem
+    // implantou (ex.: amostra/troca de "Honest 1" reaparecia como "Gabriel R" ao mudar de etapa).
+    const cardSellerIsReal = !!(salesCard.sellerId && !['chatgpt-ai', 'instagram', 'system'].includes(String(salesCard.sellerId)));
     const pedidoSellerId = registeringUser
       ? registeringUser.id
-      : (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId));
+      : (cardSellerIsReal ? effectiveSellerId : (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)));
     const pedidoSellerName = registeringUser
       ? `${registeringUser.firstName || ''} ${registeringUser.lastName || ''}`.trim()
-      : (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)));
+      : (cardSellerIsReal
+          ? (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)
+          : (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null))));
     console.log(`👤 [BILLING-PIPELINE] Vendedor do pedido: ${pedidoSellerName || pedidoSellerId} `
       + `(implantador=${registeringUser ? registeringUser.email : 'nenhum'}; carteira=${walletSellerName || '-'})`);
 
