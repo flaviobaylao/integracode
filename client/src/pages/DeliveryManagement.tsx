@@ -371,6 +371,7 @@ export default function DeliveryManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setShowAddPedidos(false);
       setSelectedRoute(null);
       setRemovePedidoIds(new Set());
@@ -396,6 +397,7 @@ export default function DeliveryManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setRemovePedidoIds(new Set());
       toast({
         title: "Pedido removido com sucesso!",

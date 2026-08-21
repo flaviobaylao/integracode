@@ -204,6 +204,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setShowAddOrders(false);
       setRemovePedidoIds(new Set());
       toast({
@@ -227,6 +228,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Parada excluída",
         description: "A entrega foi removida da rota e retornará para Gestão de Rotas.",
@@ -248,6 +250,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setSelectedRoute(null); // Fechar detalhes da rota excluída
       toast({
         title: "Rota excluída",
@@ -270,6 +273,7 @@ export default function RoutesSummary() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rota otimizada!",
         description: `A ordem das ${data.totalStops} paradas foi reorganizada. Nova distância: ${data.newDistance} km`,
@@ -307,6 +311,7 @@ export default function RoutesSummary() {
     onSuccess: () => {
       console.log('✅ [TRANSFER-SUCCESS] Parada transferida com sucesso');
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setSelectedStopForTransfer(null);
       setNewDriverIdForTransfer('');
       setNewPositionForReorder('');
@@ -335,6 +340,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setSelectedStopForTransfer(null);
       setNewPositionForReorder('');
       toast({
@@ -362,6 +368,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       setEditingRoute(null);
       toast({
         title: "Rota atualizada com sucesso!",
@@ -415,6 +422,7 @@ export default function RoutesSummary() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rotas salvas com sucesso! ✅",
         description: `${data.routes.length} rotas foram salvas e estão prontas para execução`,
@@ -436,6 +444,7 @@ export default function RoutesSummary() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rota enviada com sucesso! 📤",
         description: "O motorista agora pode ver a rota no app.",
@@ -457,6 +466,7 @@ export default function RoutesSummary() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rotas enviadas com sucesso! 📤",
         description: data.message || "Todas as rotas foram enviadas aos motoristas.",
@@ -477,6 +487,7 @@ export default function RoutesSummary() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Etapas Omie sincronizadas",
         description: data.message || "Sincronização concluída",

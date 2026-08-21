@@ -114,6 +114,7 @@ export default function DeliveryRoutesList() {
     mutationFn: (routeId: string) => apiRequest("PATCH", `/api/delivery-routes/${routeId}/cancel`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       toast({ title: "Rota cancelada com sucesso!" });
       setRouteToCancel(null);
@@ -131,6 +132,7 @@ export default function DeliveryRoutesList() {
     mutationFn: (routeId: string) => apiRequest("DELETE", `/api/delivery-routes/${routeId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliveries'] });
       toast({ title: "Rota excluída com sucesso!" });
       setRouteToDelete(null);
