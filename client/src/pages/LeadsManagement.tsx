@@ -964,10 +964,12 @@ export default function LeadsManagement() {
                 ) : (
                   displayLeads.map((lead) => {
                     const descartado = lead.status === 'discarded';
+                    // Verde quando ha registro (contato/visita) feito HOJE para o lead.
+                    const temRegistroHoje = (((lead as any).registroCountToday) || 0) > 0;
                     return (
                     <tr
                       key={lead.id}
-                      className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${descartado ? 'bg-gray-50/60 dark:bg-gray-900/40 text-gray-400 dark:text-gray-500' : ''}`}
+                      className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${descartado ? 'bg-gray-50/60 dark:bg-gray-900/40 text-gray-400 dark:text-gray-500' : temRegistroHoje ? 'bg-green-50 dark:bg-green-950/40' : ''}`}
                       data-testid={`lead-row-${lead.id}`}
                       onClick={() => descartado ? setJustificativaLead(lead) : setSelectedLeadForService(lead)}
                     >
