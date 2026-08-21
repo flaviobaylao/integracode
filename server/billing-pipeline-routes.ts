@@ -1851,6 +1851,65 @@ export function registerBillingPipelineRoutes(app: Express) {
   // ==========================================================================
   const STAGES_PRIORIZAVEIS = ['aguardando_rota', 'aguardando_rota_bsb', 'impresso', 'bsb'];
 
+  // Adiciona uma OBSERVAÇÃO carimbada (data/hora/quem incluiu) ao card. Append-only: nunca
+  // apaga o que já existe. Vale para os cards em Bloqueados, Agendado, Pedido e A Faturar.
+  // - Item do pipeline (agendado/pedido/a_faturar): grava em billing_pipeline.notes.
+  // - Pedido bloqueado (blocked_orders): grava em sales_cards.notes (fonte das observações do
+  //   card bloqueado). Managers (admin/coord/adm) em qualquer das 4 etapas; vendedor só no
+  //   próprio pedido (Agendado/Pedido).
+  app.post('/api/billing-pipeline/:id/note', authenticateUser, async (req: any, res) => {
+    try {
+      const _u = req.currentUser || req.user;
+      const _role = String(_u?.role || '');
+      const _isManager = ['admin', 'coordinator', 'administrative'].includes(_role);
+      const _isSeller = ['vendedor', 'telemarketing'].includes(_role);
+      if (!_isManager && !_isSeller) return res.status(403).json({ message: 'Access denied' });
+      const _text = String(req.body?.text ?? '').trim();
+      if (!_text) return res.status(400).json({ message: 'Observação vazia' });
+      if (_text.length > 2000) return res.status(400).json({ message: 'Observação muito longa (máx. 2000 caracteres)' });
+      const _who = (`${_u?.firstName || ''} ${_u?.lastName || ''}`.trim()) || _u?.email || 'Usuário';
+      const _p = paredeBR(agora()); // 2026-08-20T14:30:15
+      const _dt = `${_p.slice(8, 10)}/${_p.slice(5, 7)}/${_p.slice(0, 4)} ${_p.slice(11, 16)}`;
+      const _entry = `[${_dt} — ${_who}] ${_text}`;
+
+      // 1) Item do pipeline (agendado / pedido / a_faturar / ...)
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (item) {
+        const _stage = String(item.stage || '');
+        if (!_isManager) {
+          if (String(item.sellerId || '') !== String(_u.id) || !['agendado', 'pedido'].includes(_stage)) {
+            return res.status(403).json({ message: 'Você só pode adicionar observações no seu próprio pedido (Agendado/Pedido).' });
+          }
+        } else if (!['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(_stage)) {
+          return res.status(403).json({ message: 'Observação disponível apenas em Bloqueados, Agendado, Pedido e A Faturar.' });
+        }
+        const _newNotes = (item.notes ? String(item.notes) + '\n' : '') + _entry;
+        const updated = await storage.updateBillingPipelineItem(req.params.id, { notes: _newNotes } as any);
+        return res.json({ ok: true, notes: _newNotes, item: updated });
+      }
+
+      // 2) Pedido bloqueado (blocked_orders): a observação do card vem do sales_card.
+      const _bo = await db.select().from(blockedOrders).where(eq(blockedOrders.id, req.params.id)).limit(1);
+      if (_bo.length) {
+        const _order: any = _bo[0];
+        if (!_isManager && String(_order.sellerId || '') !== String(_u.id)) {
+          return res.status(403).json({ message: 'Você só pode adicionar observações no seu próprio pedido.' });
+        }
+        const _sc: any = await storage.getSalesCard(_order.salesCardId);
+        if (!_sc) return res.status(404).json({ message: 'Pedido (sales card) não encontrado' });
+        const _cur = _sc.notes ? String(_sc.notes) : '';
+        const _newNotes = (_cur ? _cur + '\n' : '') + _entry;
+        try { await storage.updateSalesCard(_order.salesCardId, { notes: _newNotes } as any); }
+        catch (e: any) { return res.status(500).json({ message: 'Falha ao gravar observação' }); }
+        return res.json({ ok: true, notes: _newNotes });
+      }
+
+      return res.status(404).json({ message: 'Pedido não encontrado' });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.patch('/api/billing-pipeline/:id/priority', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       const isPriority = req.body?.isPriority === true;
