@@ -23211,12 +23211,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // 🔒 TROCA BLOQUEADA: cliente com card de TROCA bloqueado no pipeline (blocked_orders com
+      // operation_type='troca' ainda bloqueado). Serve para o vendedor SABER no dia da rota e para
+      // marcar o pedido implantado no dia. Casa por customer_id.
+      const trocasBloqueadas: Record<string, boolean> = {};
+      try {
+        const tbRes = await db.execute(sql`
+          SELECT DISTINCT customer_id
+          FROM blocked_orders
+          WHERE status = 'blocked' AND released_at IS NULL
+            AND operation_type = 'troca'
+            AND customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+        `);
+        for (const row of (tbRes.rows as any[])) { if (row.customer_id) trocasBloqueadas[String(row.customer_id)] = true; }
+      } catch (e: any) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar trocas bloqueadas:', e?.message);
+      }
+
       res.json({
         orders: ordersMap,
         debts: debtsMap,
         periodicity: periodicityMap,
         lastOrders: lastOrdersMap,
-        phones: phonesMap
+        phones: phonesMap,
+        trocasBloqueadas
       });
     } catch (error: any) {
       console.error('Erro ao buscar informações dos clientes:', error);
