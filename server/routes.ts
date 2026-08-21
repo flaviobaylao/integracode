@@ -21022,6 +21022,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('⚠️ [LEAD-RETORNOS] Falha ao injetar retornos de lead na rota:', leadRetErr);
       }
 
+      // RECONCILIA presenciais da AGENDA que ficaram fora do optimizedOrder persistido (21/ago/2026).
+      // A rota gravada (daily_routes.optimized_order) podia ter MENOS clientes que a agenda do dia:
+      // foi gerada quando a agenda tinha menos, e o GET so ANEXAVA virtuais/leads, nunca readicionava
+      // presenciais novos. Aqui injetamos no optimizedOrder os clientes da agenda (getCustomersForDate,
+      // MESMA fonte da geracao) que ainda nao estao na rota. Idempotente; so data atual/futura.
+      try {
+        const todayBRrec = getBrazilDateString();
+        if (date >= todayBRrec) {
+          const agendaCusts = await storage.getCustomersForDate(sellerId, routeDate);
+          const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
+          const curStops: any = (route.visitStops as any) || {};
+          const presentIds = new Set<string>();
+          for (const sidStop of curOrder) {
+            if (String(sidStop).includes(':')) { const m = curStops[sidStop]; if (m && m.entityType === 'customer') presentIds.add(m.entityId); }
+            else presentIds.add(String(sidStop));
+          }
+          let addedCust = false;
+          for (const c of (agendaCusts || [])) {
+            if (presentIds.has((c as any).id)) continue;
+            const stopId = `customer:${(c as any).id}`;
+            if (!curStops[stopId]) {
+              curOrder.push(stopId);
+              curStops[stopId] = { entityType: 'customer', entityId: (c as any).id };
+              presentIds.add((c as any).id);
+              addedCust = true;
+            }
+          }
+          if (addedCust) {
+            await storage.updateDailyRoute(route.id, { optimizedOrder: curOrder, visitStops: curStops, totalVisits: curOrder.length });
+            (route as any).optimizedOrder = curOrder;
+            (route as any).visitStops = curStops;
+            console.log(`[AGENDA-RECONCILE] presenciais injetados na rota ${route.id}`);
+          }
+        }
+      } catch (reconErr) {
+        console.warn('[AGENDA-RECONCILE] Falha ao reconciliar presenciais da agenda:', reconErr);
+      }
+
       // NOVA ARQUITETURA COM VISITSTOPS: Resolver stops (customers + leads)
       console.log(`🔍 [DEBUG] Resolvendo stops (customers + leads) para ${date}`);
       
