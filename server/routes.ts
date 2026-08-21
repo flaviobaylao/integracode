@@ -26759,6 +26759,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt: leads.createdAt,
         updatedAt: leads.updatedAt,
         hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
+        registroCountToday: sql<number>`(SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = ${leads.id} AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)`,
       }).from(leads).orderBy(desc(leads.createdAt));
 
       console.log('📋 [LEADS] Leads encontrados:', rows.length);
@@ -26787,6 +26788,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         returnOverdue: row.returnOverdue === true,
         createdAt: row.createdAt ? String(row.createdAt) : null,
         updatedAt: row.updatedAt ? String(row.updatedAt) : null,
+        registroCountToday: Number(row.registroCountToday || 0),
       }));
 
       if (user.role === 'telemarketing') {
@@ -26831,7 +26833,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await db.execute(sql`
         SELECT id, fantasy_name, contact, phone, latitude, longitude, temperature, status,
                assigned_to, postponement_count, return_overdue,
-               CAST(next_contact_date AS TEXT) AS next_contact_date
+               CAST(next_contact_date AS TEXT) AS next_contact_date,
+               (SELECT COUNT(*) FROM lead_visits lv
+                  WHERE lv.lead_id = leads.id
+                    AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date
+                        = (now() AT TIME ZONE 'America/Sao_Paulo')::date) AS registro_count
         FROM leads
         WHERE status = 'scheduled'
           AND next_contact_date IS NOT NULL
@@ -26855,6 +26861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           postponementCount: Number(r.postponement_count || 0),
           returnDate: r.next_contact_date,
           overdue: atrasado || r.return_overdue === true,
+          registroCount: Number(r.registro_count || 0),
         };
       });
       res.json({
