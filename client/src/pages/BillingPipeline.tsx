@@ -232,6 +232,8 @@ export default function BillingPipeline() {
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
+  // Observação carimbada (data/hora/quem) — adicionada em Bloqueados/Agendado/Pedido/A Faturar.
+  const [newNote, setNewNote] = useState('');
   const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
   // Pick-list de Vendedor (edição do card): SOMENTE vendedores ativos do módulo Vendedores
   // (role vendedor/telemarketing, ativos, sem nomes de sistema) — não todos os usuários.
@@ -393,6 +395,18 @@ export default function BillingPipeline() {
       setDetailItem((prev) => prev ? ({ ...prev, ...vars.data } as any) : prev);
     },
     onError: (e: any) => toast({ title: 'Erro ao salvar', description: e.message, variant: 'destructive' }),
+  });
+  const addNoteMutation = useMutation({
+    mutationFn: async ({ id, text }: { id: string; text: string }) => await apiRequest('POST', `/api/billing-pipeline/${id}/note`, { text }),
+    onSuccess: (r: any) => {
+      const notes = r && typeof r.notes === 'string' ? r.notes : undefined;
+      setDetailItem((prev) => (prev && notes !== undefined) ? ({ ...prev, notes } as any) : prev);
+      setNewNote('');
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      toast({ title: 'Observação adicionada', description: 'Registrada com data, hora e seu nome.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro ao adicionar observação', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
   });
   const duplicateMutation = useMutation({
     mutationFn: async (id: string) => await apiRequest('POST', `/api/billing-pipeline/${id}/duplicate`, {}),
@@ -1231,7 +1245,7 @@ export default function BillingPipeline() {
       </div>
 
       {/* Detail Modal */}
-      <Dialog open={!!detailItem} onOpenChange={() => { setDetailItem(null); setEditMode(false); }}>
+      <Dialog open={!!detailItem} onOpenChange={() => { setDetailItem(null); setEditMode(false); setNewNote(''); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
@@ -1472,6 +1486,30 @@ export default function BillingPipeline() {
                       className="w-full max-h-72 object-contain rounded-lg border bg-white cursor-zoom-in"
                     />
                   </a>
+                </div>
+              )}
+
+              {['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage)) && (canEdit || canSellerEditItem(detailItem)) && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Adicionar observação (registra data, hora e quem incluiu)</label>
+                  <textarea
+                    value={newNote}
+                    onChange={(e) => setNewNote(e.target.value)}
+                    rows={2}
+                    placeholder="Escreva a observação..."
+                    className="w-full border rounded px-2 py-1 text-sm"
+                    data-testid="textarea-add-note"
+                  />
+                  <div className="flex justify-end mt-1">
+                    <Button
+                      size="sm"
+                      onClick={() => { const t = newNote.trim(); if (t && detailItem) addNoteMutation.mutate({ id: detailItem.id, text: t }); }}
+                      disabled={!newNote.trim() || addNoteMutation.isPending}
+                      data-testid="button-add-note"
+                    >
+                      {addNoteMutation.isPending ? 'Adicionando…' : 'Adicionar observação'}
+                    </Button>
+                  </div>
                 </div>
               )}
 
