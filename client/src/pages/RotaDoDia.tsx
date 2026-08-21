@@ -303,6 +303,7 @@ export default function RotaDoDia() {
     periodicity?: Record<string, string>;
     lastOrders?: Record<string, { date: string; value: number }>;
     phones?: Record<string, string>;
+    trocasBloqueadas?: Record<string, boolean>;
   }
   
   const routeId = response?.route?.id;
@@ -2044,6 +2045,14 @@ export default function RotaDoDia() {
                                   {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
                                 </Badge>
                               ))}
+                              {/* 🔒 TROCA BLOQUEADA: card de troca do cliente bloqueado no pipeline.
+                                  Fica ao lado do pedido do dia, avisando o vendedor na Rota. */}
+                              {visit.customerId && customerInfo?.trocasBloqueadas?.[visit.customerId] && (
+                                <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`troca-bloqueada-badge-${visit.customerId}`}>
+                                  <AlertCircle className="h-3 w-3 mr-1" />
+                                  Troca bloqueada
+                                </Badge>
+                              )}
                               {/* Mostrar débito vencido */}
                               {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
                                 <Badge 
@@ -2411,6 +2420,13 @@ export default function RotaDoDia() {
                                         {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
                                       </Badge>
                                     ))}
+                                    {/* 🔒 TROCA BLOQUEADA (virtual): mesmo aviso no card virtual. */}
+                                    {visit.customerId && customerInfo?.trocasBloqueadas?.[visit.customerId] && (
+                                      <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`virtual-troca-bloqueada-badge-${visit.customerId}`}>
+                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                        Troca bloqueada
+                                      </Badge>
+                                    )}
                                     {/* Mostrar débito vencido */}
                                     {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
                                       <Badge 
@@ -2803,6 +2819,12 @@ export default function RotaDoDia() {
                             {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
                           </Badge>
                         ))}
+                        {r.customerId && customerInfo?.trocasBloqueadas?.[r.customerId] && (
+                          <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`repescagem-troca-bloqueada-badge-${r.customerId}`}>
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Troca bloqueada
+                          </Badge>
+                        )}
                         {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
                           <Badge variant="destructive" className="text-xs">
                             <DollarSign className="h-3 w-3 mr-1" />
