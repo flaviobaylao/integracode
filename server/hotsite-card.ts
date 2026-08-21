@@ -398,6 +398,17 @@ export function registerHotsiteCard(app: Express): void {
       if (Math.abs(totals.subtotal - clientTotal) > 0.01) {
         return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.subtotal });
       }
+
+      // 🔒 PEDIDO MINIMO — antes de autorizar o cartao. Base = SUBTOTAL BRUTO (sem cupom
+      // nem indicacao); o desconto entra no valor cobrado, depois que a trava liberou.
+      {
+        const { barrarSeAbaixoDoMinimo } = await import('./canais-routes');
+        const barrado = await barrarSeAbaixoDoMinimo(order.priceTable, totals.subtotal);
+        if (barrado) {
+          console.warn('🔒 [LOJA-CARTAO] cobranca recusada por pedido minimo:', barrado.subtotal, '<', barrado.minimo);
+          return res.status(400).json(barrado);
+        }
+      }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
       const installments = Math.max(1, Math.min(cfg.maxInstallments, parseInt(body.installments, 10) || 1));
@@ -501,6 +512,16 @@ export function registerHotsiteCard(app: Express): void {
       // Mesma regra do cartao: confere contra o subtotal sem desconto (ver computeServerTotal).
       if (Math.abs(totals.subtotal - (Number(order.totalAmount) || 0)) > 0.01) return res.status(400).json({ message: 'O total do pedido não corresponde aos preços atuais dos produtos', serverTotal: totals.subtotal });
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
+
+      // 🔒 PEDIDO MINIMO — mesma regra do cartao/PIX, sobre o subtotal BRUTO.
+      {
+        const { barrarSeAbaixoDoMinimo } = await import('./canais-routes');
+        const barrado = await barrarSeAbaixoDoMinimo(order.priceTable, totals.subtotal);
+        if (barrado) {
+          console.warn('🔒 [LOJA-GPAY] cobranca recusada por pedido minimo:', barrado.subtotal, '<', barrado.minimo);
+          return res.status(400).json(barrado);
+        }
+      }
 
       const amountCents = Math.round(totals.total * 100);
       const merchantOrderId = 'LOJAGP' + Date.now() + Math.floor(Math.random() * 1000);
