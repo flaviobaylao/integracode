@@ -221,6 +221,18 @@ export function registerHotsitePix(app: Express): void {
       }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
+      // 🔒 PEDIDO MINIMO — antes de gerar a cobranca. Base = SUBTOTAL BRUTO (sem cupom
+      // nem indicacao); o desconto so entra no valor cobrado depois que a trava liberou.
+      // Sem isto o cliente pagaria um PIX que o /api/public/orders recusaria depois.
+      {
+        const { barrarSeAbaixoDoMinimo } = await import('./canais-routes');
+        const barrado = await barrarSeAbaixoDoMinimo(body.priceTable, totals.subtotal);
+        if (barrado) {
+          console.warn('🔒 [LOJA-PIX] cobranca recusada por pedido minimo:', barrado.subtotal, '<', barrado.minimo);
+          return res.status(400).json(barrado);
+        }
+      }
+
       const accounts = await storage.getFinancialAccounts();
       const account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
       if (!account) return res.status(503).json({ message: 'Pagamento PIX indisponível no momento. Tente novamente em instantes.' });
