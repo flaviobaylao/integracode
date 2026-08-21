@@ -23,6 +23,7 @@ interface LeadReturn {
   postponementCount: number;
   returnDate: string | null;
   overdue: boolean;
+  registroCount?: number;
 }
 
 const MOTIVOS: { value: string; label: string }[] = [
@@ -128,16 +129,22 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
   const atrasados = (data?.atrasados || []).filter((l) => !excludeSet.has(String(l.id)));
   if (isLoading || (hoje.length === 0 && atrasados.length === 0)) return null;
 
-  const renderLead = (l: LeadReturn) => (
-    <div key={l.id} className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-white dark:bg-gray-900 p-3">
+  const renderLead = (l: LeadReturn) => {
+    // Card fica VERDE quando o lead já tem ao menos um registro (contato/visita).
+    const temRegistro = (l.registroCount || 0) > 0;
+    return (
+    <div key={l.id} className={`flex flex-col gap-2 rounded-lg border p-3 ${temRegistro ? "border-green-400 bg-green-50 dark:bg-green-950" : "border-amber-200 bg-white dark:bg-gray-900"}`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
-          <Target className="w-4 h-4 text-amber-600 shrink-0" />
+          <Target className={`w-4 h-4 shrink-0 ${temRegistro ? "text-green-600" : "text-amber-600"}`} />
           <span className="font-semibold truncate">{l.fantasyName}</span>
           {l.overdue ? (
             <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 shrink-0"><AlertTriangle className="w-3 h-3 mr-1" />Atrasado</Badge>
           ) : (
             <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 shrink-0"><Clock className="w-3 h-3 mr-1" />Retorno hoje</Badge>
+          )}
+          {temRegistro && (
+            <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 shrink-0"><CheckCircle className="w-3 h-3 mr-1" />Registrado hoje ({l.registroCount})</Badge>
           )}
         </div>
         <span className="text-xs text-muted-foreground shrink-0">Previsto: {fmtDate(l.returnDate)}</span>
@@ -177,7 +184,8 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
         </Button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="my-6 border-t-2 border-amber-300 dark:border-amber-700 pt-4">
