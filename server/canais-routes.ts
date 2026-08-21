@@ -86,6 +86,41 @@ export async function minimoParaTabela(priceTable?: string | null): Promise<numb
   return t === 'wholesale' ? min.atacado : min.varejo;
 }
 
+/**
+ * Confere o pedido minimo ANTES de cobrar (PIX, cartao, Google Pay).
+ *
+ * IMPORTANTE — base de calculo: sempre o `subtotal` BRUTO (soma dos itens, SEM
+ * cupom e sem desconto de indicacao). O cupom incide DEPOIS que a trava liberou:
+ * quem comprou R$ 70 e tem cupom de 10% paga R$ 63 — o desconto reduz o que se
+ * paga, nunca serve para atingir o minimo.
+ *
+ * Por que aqui e nao so na criacao do pedido: PIX e cartao COBRAM primeiro e so
+ * depois criam o pedido. Sem esta checagem, um pedido abaixo do minimo seria pago
+ * e so entao recusado — dinheiro entrando sem pedido. Devolve `null` quando pode
+ * seguir, ou o corpo pronto do 400.
+ */
+export async function barrarSeAbaixoDoMinimo(
+  priceTable: any,
+  subtotalBruto: number,
+): Promise<null | { message: string; code: string; minimo: number; subtotal: number; faltam: number }> {
+  let minimo = 0;
+  try {
+    minimo = await minimoParaTabela(priceTable);
+  } catch {
+    return null; // falha ao LER a config nunca derruba uma venda
+  }
+  const sub = Math.round(Number(subtotalBruto) * 100) / 100;
+  if (!(minimo > 0) || sub >= minimo) return null;
+  const faltam = Math.round((minimo - sub) * 100) / 100;
+  return {
+    message: `Pedido mínimo de R$ ${minimo.toFixed(2)}. Faltam R$ ${faltam.toFixed(2)} para finalizar (o desconto de cupom entra depois, sobre o valor já aprovado).`,
+    code: 'PEDIDO_MINIMO',
+    minimo,
+    subtotal: sub,
+    faltam,
+  };
+}
+
 export async function getHotsiteDefaults(): Promise<{ rota: string; dia: string; periodicidade: string; vendedorId: string | null }> {
   const dia = await getSetting('hotsite_novo_dia', 'Dom');
   const per = await getSetting('hotsite_novo_periodicidade', 'mensal');
