@@ -1310,7 +1310,26 @@ export class DatabaseStorage implements IStorage {
           eq(customers.omieStatus, 'ativo'),
           // 🗓️ Mesmo guard do presencial: não entra na rota antes da DATA DE INÍCIO
           // DO FORNECIMENTO (service_start_date). (31/jul/2026)
-          sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`
+          sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`,
+          // 🛡️ TRAVA DE CLIENTES ATIVOS (21/ago/2026): o caminho VIRTUAL não reconferia a lista
+          // "Clientes Ativos" (active_customers), então um cliente virtual DESATIVADO na lista
+          // continuava aparecendo na rota — enquanto o presencial já era filtrado. Aplica a MESMA
+          // regra do caminho presencial: mantém quem NÃO está na lista (não importado) e quem tem
+          // membership ATIVA; exclui só quem está na lista e sem nenhuma linha ativa. Casa por
+          // customer_id OU por documento normalizado (só dígitos de cnpj/cpf).
+          sql`(
+            NOT EXISTS (
+              SELECT 1 FROM active_customers ac
+              WHERE ac.customer_id = ${customers.id}
+                 OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g'))
+            )
+            OR EXISTS (
+              SELECT 1 FROM active_customers ac
+              WHERE ac.is_active = true
+                AND (ac.customer_id = ${customers.id}
+                  OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g')))
+            )
+          )`
         )
       );
     } catch (error: any) {
