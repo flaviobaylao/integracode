@@ -144,6 +144,93 @@ export async function marcarCardDevolvido(
 }
 
 // ============================================================================
+// EDIÇÃO DE ROTA JÁ EXISTENTE (21/ago/2026)
+// ----------------------------------------------------------------------------
+// Pedido do Flavio: adicionar/excluir uma entrega numa rota que JÁ existe tem
+// de mexer no pipeline de faturamento igual acontece quando a rota é criada —
+// para "Em Rota" ao adicionar, de volta para "Aguardando Rota" ao remover.
+// Best-effort: falha aqui não derruba a edição da rota.
+// ============================================================================
+
+/** Descobre se o card deve ir para "em_rota" ou "em_rota_bsb". */
+async function resolverEtapaEmRota(
+  billingPipelineId: string,
+  vehicleType?: string | null,
+): Promise<'em_rota' | 'em_rota_bsb'> {
+  if (String(vehicleType || '').toLowerCase() === 'baruc') return 'em_rota_bsb';
+  try {
+    const q: any = await db.execute(sql`
+      SELECT stage FROM billing_pipeline WHERE id = ${billingPipelineId} LIMIT 1
+    `);
+    const atual = String((q?.rows || [])[0]?.stage || '');
+    if (atual === 'aguardando_rota_bsb' || atual === 'bsb' || atual === 'em_rota_bsb') return 'em_rota_bsb';
+  } catch { /* ignora: cai no padrão Goiânia */ }
+  return 'em_rota';
+}
+
+/** PEDIDO ADICIONADO a uma rota existente → card vai para "Em Rota". */
+export async function moverCardParaEmRota(
+  billingPipelineId: string | null | undefined,
+  actor: string,
+  opts?: { vehicleType?: string | null; motivo?: string },
+): Promise<{ ok: boolean; moved: number; stage?: string; detalhe: string }> {
+  if (!billingPipelineId) return { ok: false, moved: 0, detalhe: 'parada sem billingId' };
+  try {
+    const destino = await resolverEtapaEmRota(billingPipelineId, opts?.vehicleType);
+    const r: any = await db.execute(sql`
+      UPDATE billing_pipeline
+      SET stage = ${destino}::billing_pipeline_stage, updated_at = NOW()
+      WHERE id = ${billingPipelineId}
+        AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb', 'bsb')
+    `);
+    const moved = r?.rowCount ?? r?.rows?.length ?? 0;
+    if (moved > 0) {
+      const nota = opts?.motivo ? ` — ${String(opts.motivo).slice(0, 120)}` : '';
+      await appendStageHistory(billingPipelineId, destino, `${actor}${nota}`);
+      console.log(`🚚 [PIPELINE-SYNC] Card ${billingPipelineId} → "${destino}" (${actor})`);
+    } else {
+      console.log(`ℹ️ [PIPELINE-SYNC] Card ${billingPipelineId} não estava em etapa de espera — nada movido`);
+    }
+    return { ok: true, moved, stage: destino, detalhe: moved > 0 ? 'movido para em rota' : 'sem movimento' };
+  } catch (e: any) {
+    console.error('[PIPELINE-SYNC] Falha ao mover card para em rota:', e?.message);
+    return { ok: false, moved: 0, detalhe: e?.message || 'erro' };
+  }
+}
+
+/** PEDIDO RETIRADO da rota (parada excluída / rota excluída ou cancelada) → volta para "Aguardando Rota". */
+export async function moverCardParaAguardandoRota(
+  billingPipelineId: string | null | undefined,
+  actor: string,
+  opts?: { vehicleType?: string | null; motivo?: string },
+): Promise<{ ok: boolean; moved: number; stage?: string; detalhe: string }> {
+  if (!billingPipelineId) return { ok: false, moved: 0, detalhe: 'parada sem billingId' };
+  try {
+    const destino = await resolverEtapaDeRetorno(billingPipelineId, opts?.vehicleType);
+    if (!destino) return { ok: false, moved: 0, detalhe: 'card não encontrado' };
+
+    const r: any = await db.execute(sql`
+      UPDATE billing_pipeline
+      SET stage = ${destino.stage}::billing_pipeline_stage, updated_at = NOW()
+      WHERE id = ${billingPipelineId}
+        AND stage IN ('em_rota', 'em_rota_bsb')
+    `);
+    const moved = r?.rowCount ?? r?.rows?.length ?? 0;
+    if (moved > 0) {
+      const nota = opts?.motivo ? ` — ${String(opts.motivo).slice(0, 120)}` : '';
+      await appendStageHistory(billingPipelineId, destino.stage, `${actor}${nota}`);
+      console.log(`↩️ [PIPELINE-SYNC] Card ${billingPipelineId} → "${destino.stage}" (${actor}: ${destino.motivo})`);
+    } else {
+      console.log(`ℹ️ [PIPELINE-SYNC] Card ${billingPipelineId} não estava em rota — nada movido`);
+    }
+    return { ok: true, moved, stage: destino.stage, detalhe: destino.motivo };
+  } catch (e: any) {
+    console.error('[PIPELINE-SYNC] Falha ao devolver card para aguardando rota:', e?.message);
+    return { ok: false, moved: 0, detalhe: e?.message || 'erro' };
+  }
+}
+
+// ============================================================================
 // COMPROVANTE DE ENTREGA → ANEXO DA CONTA A RECEBER
 // ============================================================================
 

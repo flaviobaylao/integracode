@@ -14659,6 +14659,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       
+      // ✅ 21/ago/2026 — devolver os pedidos da rota cancelada para "Aguardando Rota"
+      // (status legado + card do pipeline de faturamento).
+      try {
+        const stopsCanceladas = await db.select().from(deliveryRouteStops)
+          .where(eq(deliveryRouteStops.routeId, routeId));
+        const billingIdsCancelados = stopsCanceladas
+          .map((s: any) => s.billingId)
+          .filter((id: any) => !!id) as string[];
+
+        if (billingIdsCancelados.length > 0) {
+          await storage.updateBillingsStatus(billingIdsCancelados, 'Aguardando Rota');
+          const { moverCardParaAguardandoRota } = await import('./deliveryPipelineSync');
+          const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-cancelada';
+          for (const bid of billingIdsCancelados) {
+            await moverCardParaAguardandoRota(bid, `rota-cancelada (${ator})`, {
+              vehicleType: (updatedRoute as any)?.vehicleType ?? null,
+              motivo: `rota ${routeId}`,
+            });
+          }
+          console.log(`↩️ [ROUTE-CANCEL] ${billingIdsCancelados.length} pedido(s) devolvidos para "Aguardando Rota"`);
+        }
+      } catch (e: any) {
+        console.error('[ROUTE-CANCEL] Falha ao devolver pedidos:', e?.message);
+      }
+
       console.log(`✅ [ROUTE-CANCEL] Rota ${routeId} cancelada com sucesso`);
       res.json({ message: "Rota cancelada com sucesso", route: updatedRoute });
     } catch (error: any) {
@@ -16722,17 +16747,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const billingId = stop[0].billingId;
       const routeId = stop[0].routeId;
-      
+
+      // Veículo da rota (define se o card volta para "Aguardando Rota" ou "Ag. Rota BSB")
+      let vehicleTypeDaRota: string | null = null;
+      try {
+        const rotaAtual = await db.select().from(deliveryRoutes)
+          .where(eq(deliveryRoutes.id, routeId as string))
+          .limit(1);
+        vehicleTypeDaRota = (rotaAtual[0] as any)?.vehicleType ?? null;
+      } catch { /* best-effort */ }
+
       // Excluir a parada
       await db.delete(deliveryRouteStops)
         .where(eq(deliveryRouteStops.id, stopId));
-      
+
       // Retornar billing para "Aguardando Rota"
       if (billingId) {
         await storage.updateBillingsStatus([billingId], 'Aguardando Rota');
         console.log(`📦 [DELETE-STOP] Billing ${billingId} retornado para "Aguardando Rota"`);
+
+        // ✅ 21/ago/2026 — mover TAMBÉM o card do pipeline de faturamento de volta
+        // para "Aguardando Rota" (antes só o status legado era alterado).
+        try {
+          const { moverCardParaAguardandoRota } = await import('./deliveryPipelineSync');
+          const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-editada';
+          await moverCardParaAguardandoRota(billingId, `parada-removida (${ator})`, {
+            vehicleType: vehicleTypeDaRota,
+            motivo: `rota ${routeId}`,
+          });
+        } catch (e: any) {
+          console.error('[DELETE-STOP] Falha ao sincronizar pipeline:', e?.message);
+        }
       }
-      
+
       console.log(`✅ [DELETE-STOP] Parada ${stopId} excluída da rota ${routeId}`);
       res.json({ 
         message: "Parada excluída com sucesso",
@@ -16764,7 +16811,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter(id => id !== null) as string[];
       
       console.log(`📦 [DELETE-ROUTE] Encontradas ${stops.length} paradas com ${billingIds.length} billings`);
-      
+
+      // Veículo da rota (define se os cards voltam para "Aguardando Rota" ou "Ag. Rota BSB")
+      let vehicleTypeDaRota: string | null = null;
+      try {
+        const rotaAtual = await db.select().from(deliveryRoutes)
+          .where(eq(deliveryRoutes.id, routeId))
+          .limit(1);
+        vehicleTypeDaRota = (rotaAtual[0] as any)?.vehicleType ?? null;
+      } catch { /* best-effort */ }
+
       // Excluir todas as paradas
       await db.delete(deliveryRouteStops)
         .where(eq(deliveryRouteStops.routeId, routeId));
@@ -16777,6 +16833,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (billingIds.length > 0) {
         await storage.updateBillingsStatus(billingIds, 'Aguardando Rota');
         console.log(`📦 [DELETE-ROUTE] ${billingIds.length} billings retornados para "Aguardando Rota"`);
+
+        // ✅ 21/ago/2026 — mover TAMBÉM os cards do pipeline de faturamento de volta.
+        try {
+          const { moverCardParaAguardandoRota } = await import('./deliveryPipelineSync');
+          const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-excluida';
+          for (const bid of billingIds) {
+            await moverCardParaAguardandoRota(bid, `rota-excluida (${ator})`, {
+              vehicleType: vehicleTypeDaRota,
+              motivo: `rota ${routeId}`,
+            });
+          }
+        } catch (e: any) {
+          console.error('[DELETE-ROUTE] Falha ao sincronizar pipeline:', e?.message);
+        }
       }
       
       console.log(`✅ [DELETE-ROUTE] Rota ${routeId} excluída com sucesso`);
@@ -17130,6 +17200,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Atualizar status do billing para "Em Rota"
       await storage.updateBillingsStatus([billingId], 'Em Rota');
+
+      // ✅ 21/ago/2026 — mover TAMBÉM o card do pipeline de faturamento para "Em Rota"
+      // (mesma regra de quando a rota é criada no POST /api/delivery-routes/save).
+      try {
+        const { moverCardParaEmRota } = await import('./deliveryPipelineSync');
+        const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-editada';
+        await moverCardParaEmRota(billingId, `parada-adicionada (${ator})`, {
+          vehicleType: (route as any)?.vehicleType ?? null,
+          motivo: `rota ${routeId}`,
+        });
+      } catch (e: any) {
+        console.error('[ADD-STOP] Falha ao sincronizar pipeline:', e?.message);
+      }
 
       console.log(`✅ [ADD-STOP] Parada adicionada com sucesso à rota ${routeId}`);
       res.json({ 
