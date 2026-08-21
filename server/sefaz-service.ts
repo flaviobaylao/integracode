@@ -2358,6 +2358,15 @@ export class SefazService {
           createdBy: invoice.createdBy || undefined,
         });
 
+        // 📨 ENVIO AUTOMATICO DE DOCUMENTOS (21/ago/2026): a NF-e acabou de ser autorizada
+        // — este e o momento em que DANFE e XML passam a existir para o cliente. Dispara e
+        // segue (fire-and-forget): falha de e-mail/WhatsApp e logada dentro do gatilho e
+        // NUNCA altera o resultado da autorizacao.
+        try {
+          const { dispararDocsNfeAutorizada } = await import('./doc-triggers');
+          void dispararDocsNfeAutorizada(invoiceId);
+        } catch (e: any) { console.error('[SEFAZ] envio automatico de documentos (ignorado):', e?.message); }
+
         return {
           success: true,
           accessKey,

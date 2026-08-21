@@ -8878,6 +8878,14 @@ export class DatabaseStorage implements IStorage {
 
   async createPixCharge(data: InsertPixCharge): Promise<PixCharge> {
     const [item] = await db.insert(pixCharges).values(data).returning();
+    // 📨 ENVIO AUTOMATICO (21/ago/2026): a cobranca PIX acabou de nascer. O gatilho
+    // e o ponto central porque todos os provedores (BB e Inter) passam por aqui.
+    // Fire-and-forget: se o cliente nao tiver canal marcado, o gatilho apenas sai.
+    if (item?.id && (item as any).customerId) {
+      void import('./doc-triggers')
+        .then(m => m.dispararDocPix(String(item.id)))
+        .catch((e: any) => console.error('[PIX] envio automatico (ignorado):', e?.message));
+    }
     return item;
   }
 

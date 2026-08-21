@@ -532,6 +532,12 @@ run();
     registerCanaisRoutes(app);
   } catch (e: any) { console.error('[canais routes]', e?.message || e); }
   registerPaymentLink(app);
+  // 📨 ENVIO AUTOMATICO DE DOCUMENTOS DE FATURAMENTO (21/ago/2026): download publico
+  // por token (o Umbler baixa a midia daqui), diagnostico de SMTP e reenvio manual.
+  try {
+    const { registerDocRoutes } = await import('./doc-routes');
+    registerDocRoutes(app);
+  } catch (e: any) { console.error('[doc-delivery routes]', e?.message || e); }
   registerVisitSummary(app);
   registerCarteira(app);
   registerCadastroReceitaSync(app);
@@ -5694,6 +5700,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_boleto_pix_email boolean DEFAULT false`);
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_pedido_email boolean DEFAULT false`);
   } catch (e: any) { console.warn('[DOCS-EMAIL-COLS-MIGRATION] falha ao garantir colunas:', e?.message); }
+
+  // 📨 ENVIO AUTOMATICO DE DOCUMENTOS (21/ago/2026): colunas de WhatsApp no cadastro
+  // (irmas das de e-mail acima) + tabelas do link publico e do log de entregas.
+  // AWAITED pelo mesmo motivo das de cima: as colunas entram no schema drizzle de
+  // customers, e qualquer select de customers quebraria se elas nao existissem.
+  try {
+    const { ensureDocDeliverySchema } = await import('./doc-delivery');
+    await ensureDocDeliverySchema();
+  } catch (e: any) { console.warn('[DOC-ENVIO-MIGRATION] falha ao garantir schema:', e?.message); }
 
   startSyncWorker();      // Sync 1.0 → 2.0
   startSync20Worker();    // Sync 2.0 → 1.0
