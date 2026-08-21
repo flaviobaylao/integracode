@@ -784,8 +784,13 @@ export default function ActiveCustomers() {
         'Cidade': ac.customer?.city || '',
         'UF': ac.customer?.state || '',
         'Coordenada': (ac.customer?.latitude && ac.customer?.longitude) ? 'SIM' : 'NÃO',
-        'Latitude': (ac.customer as any)?.latitude ?? '',
-        'Longitude': (ac.customer as any)?.longitude ?? '',
+        'Coordenadas (Lat,Long)': (() => {
+          const la = (ac.customer as any)?.latitude;
+          const lo = (ac.customer as any)?.longitude;
+          if (la == null || la === '' || lo == null || lo === '') return '';
+          const nla = Number(la), nlo = Number(lo);
+          return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`;
+        })(),
         'Telefone': ac.customer?.phone || '',
         'Vendedor': ac.customer?.sellerName || '',
         'Segmento': (ac.customer as any)?.segmentoPrincipal || '',
@@ -812,7 +817,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Latitude', 'Longitude', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
