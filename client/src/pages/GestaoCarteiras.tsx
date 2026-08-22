@@ -21,6 +21,8 @@ const CINZA = "#898781";
 // Barras da situação da carteira — ordem importa: a validação é por par
 // adjacente (azul→vermelho→âmbar→violeta passa em todas as checagens).
 const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda100", perdidos: "#4a3aa7" };
+// Data de conquista: azul = entrou ou voltou; vermelho = saiu.
+const COR_CONQUISTA = { entrada: "#2a78d6", saida: "#d03b3b" };
 const SERIE_TITULOS = "#2a78d6";
 const SERIE_NF = "#eb6834";
 
@@ -28,6 +30,12 @@ const BRL = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currenc
 const BRL0 = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const NUM = (v: any) => Number(v || 0).toLocaleString("pt-BR");
 const MES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+/** '2026-06-24' -> '24/06/26'. Data curta, para caber na coluna. */
+const dataBR = (d: any) => {
+  const m = String(d || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : "";
+};
+
 const labelMes = (m: string) => {
   const [a, b] = String(m || "").split("-");
   return b ? `${MES_ABREV[Number(b) - 1]}/${a.slice(2)}` : m;
@@ -39,6 +47,8 @@ type Cliente = {
   mesesComCompra: number; primeiraCompra: string | null; ultimaCompra: string | null;
   mediaSimples: number; mediaPonderada: number;
   potencialMes: number; debito: number; situacao: "ativo" | "inativo" | "perdido"; mesesSemComprar: number;
+  conquista: string | null; cadastroEm: string | null; primeiraVenda: string | null;
+  eventos?: Array<{ data: string; tipo: string }>;
   // Classe do cliente: letra = nivel de faturamento, sinal = positivacao de pagamento.
   classe?: string; pontualidade?: number | null; titulosMedidos?: number;
   piorAtraso?: number; atrasoMedio?: number; diasVencido?: number;
@@ -313,6 +323,7 @@ export default function GestaoCarteiras() {
       case "classe": return c.classe || "";
       case "vendedor": return c.vendedor || "";
       case "total": return c.total || 0;
+      case "conquista": return c.conquista || "9999-99-99"; // sem data vai para o fim
       case "debito": return c.debito || 0;
       case "atraso": return c.atrasoUltimo == null ? -1 : c.atrasoUltimo;
       default: return "";
@@ -423,6 +434,9 @@ export default function GestaoCarteiras() {
           "Média ponderada/mês": Number(c.mediaPonderada.toFixed(2)),
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
           "Meses com compra": c.mesesComCompra, "Última compra": c.ultimaCompra || "",
+          "Data de conquista": c.conquista || "", "Cadastro no sistema": c.cadastroEm || "",
+          "Inativado em": (c.eventos||[]).filter(e=>e.tipo==="inativado").map(e=>e.data).join(" / "),
+          "Reativado em": (c.eventos||[]).filter(e=>e.tipo==="reativado").map(e=>e.data).join(" / "),
           Situação: c.situacao, "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
           "Débito vencido": Number((c.debito || 0).toFixed(2)),
           "Dias vencido": c.diasVencido || 0,
@@ -1083,6 +1097,7 @@ export default function GestaoCarteiras() {
                   <TableRow>
                     <TableHead className="w-10">#</TableHead>
                     {thOrdenavel("nome", "Cliente")}
+                    {thOrdenavel("conquista", "Data de conquista", "w-32")}
                     {thOrdenavel("tipo", "Tipo", "w-16")}
                     {thOrdenavel("classe", "Classe", "w-16")}
                     {thOrdenavel("vendedor", "Vendedor")}
@@ -1123,6 +1138,26 @@ export default function GestaoCarteiras() {
                             >perdido</span>
                           ) : null}
                           {c.cidade ? <span className="block text-xs text-muted-foreground">{c.cidade}</span> : null}
+                        </TableCell>
+                        {/* Data de conquista + idas e vindas: azul para entrada e
+                            volta (cadastro/reativação), vermelho para inativação. */}
+                        <TableCell className="whitespace-nowrap" data-testid={`cell-conquista-${i}`}>
+                          {c.conquista ? (
+                            <span className="text-sm font-medium" style={{ color: COR_CONQUISTA.entrada }} title={
+                              `Cadastro no sistema: ${c.cadastroEm ? dataBR(c.cadastroEm) : "sem data"}` +
+                              (c.primeiraVenda ? ` · 1ª compra: ${dataBR(c.primeiraVenda)}` : "")
+                            }>{dataBR(c.conquista)}</span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                          {(c.eventos || []).slice(-3).map((e, k) => (
+                            <span
+                              key={k}
+                              className="block text-[11px] leading-tight"
+                              style={{ color: e.tipo === "inativado" ? COR_CONQUISTA.saida : COR_CONQUISTA.entrada }}
+                              title={e.tipo === "inativado" ? "Cliente inativado nesta data" : "Cliente reativado nesta data"}
+                            >
+                              {e.tipo === "inativado" ? "inativado " : "reativado "}{dataBR(e.data)}
+                            </span>
+                          ))}
                         </TableCell>
                         <TableCell>
                           <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${COR_TIPO[c.tipo] || CINZA}1a`, color: COR_TIPO[c.tipo] || CINZA }}>{c.tipo === "Não identificado" ? "—" : c.tipo}</span>
@@ -1173,7 +1208,7 @@ export default function GestaoCarteiras() {
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
