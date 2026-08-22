@@ -283,6 +283,41 @@ export async function classificar(retrato: Retrato[], reguaAlvo?: string): Promi
 // ---------------------------------------------------------------------------
 // Montagem do lote — o passo que NÃO envia nada
 // ---------------------------------------------------------------------------
+/**
+ * A categoria APROVADA de cada template, lida de whatsapp_templates.
+ *
+ * REGUAS declara todas como UTILITY. A Meta tem a ultima palavra: ela pode
+ * reclassificar no momento da revisao — foi o que aconteceu com
+ * `recompra_reposicao`, submetido como Utilidade e aprovado como Marketing
+ * (R$ 0,34 em vez de R$ 0,04, 8,5x). Quem paga a conta e a categoria da Meta,
+ * nao a nossa.
+ *
+ * Esta consulta existia copiada em tres lugares. Agora e uma so: se um deles
+ * consultasse e outro nao, a tela e o disparo dariam numeros diferentes para o
+ * mesmo lote — que e exatamente o defeito que este codigo corrige.
+ *
+ * Nunca lanca. Sem a tabela, devolve mapa vazio e TODOS os rotulos em `faltando`:
+ * quem chama decide se cai no palpite da regua, mas sabe que caiu.
+ */
+export async function categoriasAprovadas(): Promise<{ mapa: Map<string, string>; faltando: string[] }> {
+  const mapa = new Map<string, string>();
+  const rotulos = Array.from(new Set(REGUAS.map(r => r.templateLabel)));
+  try {
+    // IN com um parametro por rotulo, e nao `= ANY(${array})`: o drizzle manda o
+    // array JS como texto e o Postgres recusa com "requires array on right side".
+    const t: any = await db.execute(sql`
+      SELECT label, categoria FROM whatsapp_templates
+       WHERE label IN (${sql.join(rotulos.map(l => sql`${l}`), sql`, `)})`);
+    for (const row of (t.rows || [])) {
+      const cat = String(row.categoria || '').toUpperCase();
+      if (cat) mapa.set(String(row.label), cat);
+    }
+  } catch {
+    // Sem cadastro nao da para saber. Nao e motivo para travar — e motivo para avisar.
+  }
+  return { mapa, faltando: rotulos.filter(l => !mapa.has(l)) };
+}
+
 export async function montarLote(opts: { regua?: string; limite?: number; criadoPor?: string }): Promise<any> {
   if (!(await garantirSchema())) throw new Error('schema da recompra indisponivel');
 
@@ -312,26 +347,9 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
   // custa R$ 27, e a decisao de liberar seria tomada em cima de um numero errado.
   // A categoria aprovada ja esta cadastrada em whatsapp_templates: e de la que ela
   // tem que vir. Sem cadastro, cai na da regua — e o aviso diz que e um palpite.
-  const catDoTemplate = new Map<string, string>();
-  const templatesFaltando: string[] = [];
-  try {
-    const rotulos = Array.from(new Set(REGUAS.map(r => r.templateLabel)));
-    // IN com um parametro por rotulo, e nao `= ANY(${array})`: o drizzle manda o
-    // array JS como texto e o Postgres recusa com "requires array on right side".
-    // O erro morreria neste try/catch e a categoria cairia no palpite da regua em
-    // silencio — a correcao pareceria funcionar sem fazer nada.
-    const t: any = await db.execute(sql`
-      SELECT label, categoria FROM whatsapp_templates
-       WHERE label IN (${sql.join(rotulos.map(l => sql`${l}`), sql`, `)})`);
-    for (const row of (t.rows || [])) {
-      const cat = String(row.categoria || '').toUpperCase();
-      if (cat) catDoTemplate.set(String(row.label), cat);
-    }
-    for (const l of rotulos) if (!catDoTemplate.has(l)) templatesFaltando.push(l);
-  } catch {
-    // Sem a tabela nao da para saber: segue com a categoria da regua. Faltar o
-    // cadastro nao e motivo para nao montar o lote — e motivo para avisar.
-  }
+  const cats = await categoriasAprovadas();
+  const catDoTemplate = cats.mapa;
+  const templatesFaltando = cats.faltando;
 
   const loteId: string = (await db.execute(sql`
     INSERT INTO mkt_lotes (regua, status) VALUES (${opts.regua || 'todas'}, 'previsto') RETURNING id`) as any)
@@ -417,17 +435,7 @@ export async function liberarLote(loteId: string, por: string): Promise<any> {
   // Mesma regra do montarLote: a categoria que vai para o disparo e a APROVADA,
   // nao a que a regua supoe. Mandar UTILITY num template que a Meta aprovou como
   // MARKETING nao muda o que a Meta cobra — muda so a conta que a gente faz.
-  const catDoTemplate = new Map<string, string>();
-  try {
-    const rotulos = Array.from(new Set(REGUAS.map(r => r.templateLabel)));
-    const t: any = await db.execute(sql`
-      SELECT label, categoria FROM whatsapp_templates
-       WHERE label IN (${sql.join(rotulos.map(l => sql`${l}`), sql`, `)})`);
-    for (const row of (t.rows || [])) {
-      const cat = String(row.categoria || '').toUpperCase();
-      if (cat) catDoTemplate.set(String(row.label), cat);
-    }
-  } catch { /* cai na categoria da regua */ }
+  const catDoTemplate = (await categoriasAprovadas()).mapa;
 
   const resultado: Record<string, number> = {};
   for (const it of (itens.rows || [])) {
@@ -502,6 +510,8 @@ export async function panorama(): Promise<any> {
     resultado = r.rows || [];
   } catch {}
 
+  const { mapa: catAprovada, faltando: catFaltando } = await categoriasAprovadas();
+
   return {
     base: {
       clientes: retrato.length,
@@ -510,11 +520,34 @@ export async function panorama(): Promise<any> {
       inadimplentes: retrato.filter(r => r.inadimplente).length,
       optout: retrato.filter(r => r.optout).length,
     },
-    candidatosHoje: REGUAS.map(r => ({
-      id: r.id, nome: r.nome, descricao: r.descricao, categoria: r.categoria,
-      conversaoEsperada: r.conversaoEsperada, template: r.templateLabel,
-      candidatos: porRegua[r.id] || 0,
-    })),
+    candidatosHoje: REGUAS.map(r => {
+      // Esta tela e onde se decide LIGAR uma regua. Ate aqui ela mostrava
+      // `r.categoria` — a categoria que a regua SUPOE. Todas supoem UTILITY.
+      // A Meta aprovou `recompra_reposicao` como MARKETING. Ou seja: a tela
+      // dizia "UTILITY, R$ 0,04" para um template que custa R$ 0,34, bem no
+      // lugar onde a instrucao e "so utility, sem risco de marketing indevido".
+      // Nao era um numero impreciso: era a resposta errada para a pergunta feita.
+      const aprovada = catAprovada.get(r.templateLabel) || null;
+      const categoria = aprovada || r.categoria;
+      const custoUnit = categoria === 'MARKETING' ? 0.34 : 0.04;
+      const candidatos = porRegua[r.id] || 0;
+      return {
+        id: r.id, nome: r.nome, descricao: r.descricao,
+        categoria,                       // a que vale: a aprovada, se houver
+        categoriaDeclarada: r.categoria, // o que a regua supunha
+        categoriaAprovada: aprovada,     // null = template ainda nao cadastrado
+        // Divergir nao e erro a corrigir no codigo: e um fato da Meta que precisa
+        // aparecer na tela, porque muda o custo em 8,5x e muda a decisao.
+        divergente: !!aprovada && aprovada !== r.categoria,
+        custoUnit,
+        custoLote: Number((candidatos * custoUnit).toFixed(2)),
+        conversaoEsperada: r.conversaoEsperada, template: r.templateLabel,
+        candidatos,
+      };
+    }),
+    // Sem cadastro nao ha como saber a categoria — e ai o custo da tela e palpite.
+    templatesSemCategoria: catFaltando,
+    custoConfiavel: catFaltando.length === 0,
     totalCandidatos: candidatos.length,
     lotes, resultado,
     parametros: await parametros(),
