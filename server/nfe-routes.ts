@@ -535,7 +535,21 @@ export function registerNfeRoutes(app: Express) {
           (new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
         const inv = candidates[0];
         const items = await storage.getFiscalInvoiceItems(inv.id);
-        results.push({ ...inv, items });
+        // FATURA/DUPLICATA da DANFE espelhada nos TITULOS do Contas a Receber (mesma
+        // fonte do <cobr> da NF-e e do boleto): uma duplicata por parcela, com o valor e
+        // o vencimento exatos do boleto.
+        let duplicatas: any[] = [];
+        try {
+          const dq: any = await db.execute(sql`SELECT due_date, amount, payment_method, title_number FROM receivables WHERE fiscal_invoice_id = ${inv.id} AND deleted_at IS NULL AND COALESCE(status::text,'') <> 'cancelada' ORDER BY due_date ASC, title_number ASC`);
+          duplicatas = (dq?.rows ?? dq ?? []).map((r: any, i: number) => ({
+            nDup: String(i + 1).padStart(3, '0'),
+            dVenc: r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null,
+            vDup: Number(parseFloat(String(r.amount || '0')).toFixed(2)),
+            paymentMethod: r.payment_method || null,
+            titleNumber: r.title_number || null,
+          }));
+        } catch {}
+        results.push({ ...inv, items, duplicatas });
       }
 
       res.json(results);
@@ -551,8 +565,13 @@ export function registerNfeRoutes(app: Express) {
 
       const items = await storage.getFiscalInvoiceItems(req.params.id);
       const events = await storage.getFiscalInvoiceEvents(req.params.id);
+      let duplicatas: any[] = [];
+      try {
+        const dq: any = await db.execute(sql`SELECT due_date, amount, payment_method, title_number FROM receivables WHERE fiscal_invoice_id = ${req.params.id} AND deleted_at IS NULL AND COALESCE(status::text,'') <> 'cancelada' ORDER BY due_date ASC, title_number ASC`);
+        duplicatas = (dq?.rows ?? dq ?? []).map((r: any, i: number) => ({ nDup: String(i + 1).padStart(3, '0'), dVenc: r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null, vDup: Number(parseFloat(String(r.amount || '0')).toFixed(2)), paymentMethod: r.payment_method || null, titleNumber: r.title_number || null }));
+      } catch {}
 
-      res.json({ ...invoice, items, events });
+      res.json({ ...invoice, items, events, duplicatas });
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar nota fiscal', error: error.message });
     }

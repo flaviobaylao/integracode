@@ -6,6 +6,8 @@ import {
 } from 'node-nfe-nfce';
 
 import { storage } from './storage';
+import { db } from './db';
+import { sql } from 'drizzle-orm';
 import { nowBrazil } from './brazilTimezone';
 // Hora oficial do Brasil — ver shared/tempo.ts (regra de ouro: INSTANTE grava UTC,
 // DATA DE CALENDARIO grava meia-noite UTC e nunca converte fuso).
@@ -639,6 +641,38 @@ async function findCertificateForCnpj(cnpj: string): Promise<string | null> {
 }
 
 // ─── Build documento ──────────────────────────────────────────────────────────
+// ── FATURA/DUPLICATA espelhada nos TITULOS (Contas a Receber) ─────────────
+// Regra (Flavio, 22/ago/2026): o <cobr> da NF-e (fat/dup) deve ser EXATAMENTE o que
+// vai para o boleto: mesmo valor e mesmo vencimento, uma <dup> por parcela. A fonte de
+// verdade e a tabela receivables (fiscal_invoice_id = NF): cada titulo vira uma duplicata
+// (o boleto e gerado do proprio titulo, logo NF, DANFE e boleto ficam iguais por construcao).
+// Retorna null quando nao ha titulos ligados (fallback antigo) ou quando a soma dos
+// titulos nao fecha com o vLiq da nota (a SEFAZ rejeita soma(vDup) != vLiq).
+export interface NfeDuplicata { nDup: string; dVenc: string; vDup: number; paymentMethod?: string | null }
+export async function loadDuplicatasDaNf(invoiceId: string, totalInvoice: number): Promise<NfeDuplicata[] | null> {
+  try {
+    const rs: any = await db.execute(sql`SELECT due_date, amount, payment_method, title_number FROM receivables WHERE fiscal_invoice_id = ${invoiceId} AND deleted_at IS NULL AND COALESCE(status::text,'') <> 'cancelada' ORDER BY due_date ASC, title_number ASC`);
+    const rows: any[] = rs?.rows ?? rs ?? [];
+    if (!rows.length) return null;
+    const dups: NfeDuplicata[] = rows.map((r: any, i: number) => {
+      const d = r.due_date ? new Date(r.due_date) : null;
+      // due_date e DATA DE CALENDARIO gravada como meia-noite UTC -> ler em UTC (mesmo dia que a tela mostra)
+      const dVenc = d ? d.toISOString().slice(0, 10) : '';
+      return { nDup: String(i + 1).padStart(3, '0'), dVenc, vDup: Math.round(parseFloat(String(r.amount || '0')) * 100) / 100, paymentMethod: r.payment_method || null };
+    }).filter(x => x.dVenc && x.vDup > 0);
+    if (!dups.length) return null;
+    const soma = Math.round(dups.reduce((a, x) => a + x.vDup, 0) * 100) / 100;
+    if (Math.abs(soma - Math.round(totalInvoice * 100) / 100) > 0.009) {
+      console.warn(`[SEFAZ] duplicatas (${soma.toFixed(2)}) nao fecham com vLiq (${totalInvoice.toFixed(2)}) p/ NF ${invoiceId} - usando fallback`);
+      return null;
+    }
+    return dups;
+  } catch (e: any) {
+    console.warn('[SEFAZ] loadDuplicatasDaNf falhou:', e?.message);
+    return null;
+  }
+}
+
 function buildDocumento(
   invoice: FiscalInvoice,
   items: FiscalInvoiceItem[],
@@ -647,6 +681,7 @@ function buildDocumento(
   crt: string,
   allScenarios?: any[],
   snCreditAliq: number = 0,
+  duplicatas: NfeDuplicata[] | null = null,
 ): { documento: Record<string, any>; cNF: string; cUF: string; modelo: string } {
   const modelo = (invoice as any).invoiceModel || '55';
   const isNFCe = modelo === '65';
@@ -1484,6 +1519,24 @@ function buildDocumento(
     ...(!isNFCe ? (() => {
       const pm = String(invoice.paymentMethod || 'a_prazo').trim().toLowerCase();
       const isAVista = pm === 'a_vista' || pm === 'dinheiro' || pm === 'pix' || pm === 'cartao_debito' || pm === 'debit_card';
+      // ESPELHO NF <-> BOLETO: se ha titulos ligados a esta NF, as duplicatas saem deles
+      // (uma por parcela, mesmo valor e vencimento do boleto), independente da forma
+      // gravada na nota — o titulo e a fonte de verdade da cobranca.
+      if (duplicatas && duplicatas.length) {
+        const algumBoleto = duplicatas.some(d => String(d.paymentMethod || '').toLowerCase() === 'boleto');
+        if (!algumBoleto && isAVista) return {};
+        return {
+          cobr: {
+            fat: {
+              nFat: String(invoice.invoiceNumber || '1'),
+              vOrig: (totalInvoice + totalDiscount).toFixed(2),
+              vDesc: totalDiscount.toFixed(2),
+              vLiq: totalInvoice.toFixed(2),
+            },
+            dup: duplicatas.map(d => ({ nDup: d.nDup, dVenc: d.dVenc, vDup: d.vDup.toFixed(2) })),
+          },
+        };
+      }
       if (isAVista || pm === 'sem_pagamento') return {};
       const dVencDate = (() => {
         let d = invoice.dueDate ? new Date(invoice.dueDate) : null;
@@ -1965,7 +2018,10 @@ export class SefazService {
           if (!isNaN(parsed) && parsed >= 0) snCreditAliq = parsed;
         }
       } catch (e) { /* usa default */ }
-      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq);
+      // Duplicatas espelhadas nos titulos do Contas a Receber ligados a esta NF (boleto = titulo).
+      const duplicatasNf = await loadDuplicatasDaNf(invoice.id, parseFloat(invoice.totalInvoice?.toString() || '0'));
+      if (duplicatasNf) console.log(`[SEFAZ] <cobr> espelhado em ${duplicatasNf.length} titulo(s): ${duplicatasNf.map(d => d.dVenc + '=' + d.vDup.toFixed(2)).join(', ')}`);
+      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf);
       const isNFCe = modelo === '65';
 
       // ── Persiste valores de impostos calculados nos itens e na nota ───────

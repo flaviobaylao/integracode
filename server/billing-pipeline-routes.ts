@@ -1656,6 +1656,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           return res.status(409).json({ message: 'Item já faturado ou em faturamento — NF-e duplicada evitada.', duplicatePrevented: true });
         }
 
+        let invoiceDraft: any = null;
         let lotMap: Record<string, string[]> = {};
         try {
           lotMap = await deductStockForBilling(item, user);
@@ -1665,11 +1666,13 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
 
         try {
-          const invoiceResult = await createInvoiceFromPipelineItem(item, user, lotMap);
-          if (invoiceResult) {
-            invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
-            fiscalInvoiceId = invoiceResult.id;
-            console.log(`📄 [BILLING-PIPELINE] NF-e #${invoiceResult.invoiceNumber} criada automaticamente para item ${req.params.id}`);
+          // skipEmit: a NF e criada em rascunho, os TITULOS sao gerados e SO ENTAO a NF e
+          // transmitida — assim o <cobr> (fatura/duplicatas) sai espelhado nos titulos/boletos.
+          invoiceDraft = await createInvoiceFromPipelineItem(item, user, lotMap, { skipEmit: true });
+          if (invoiceDraft) {
+            invoiceNumber = `NF-${invoiceDraft.invoiceNumber}`;
+            fiscalInvoiceId = invoiceDraft.id;
+            console.log(`📄 [BILLING-PIPELINE] NF-e #${invoiceDraft.invoiceNumber} criada automaticamente para item ${req.params.id}`);
           }
         } catch (invoiceError: any) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar NF-e automática:`, invoiceError.message);
@@ -1681,6 +1684,8 @@ export function registerBillingPipelineRoutes(app: Express) {
         } catch (recError: any) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar conta a receber:`, recError.message);
         }
+
+        if (invoiceDraft) await transmitirNfeAuto(invoiceDraft);
       }
 
       const updateData: any = { stage, stageHistory: history };
@@ -2051,6 +2056,7 @@ export function registerBillingPipelineRoutes(app: Express) {
               results.push({ id, success: false, error: 'Já faturado — NF-e duplicada evitada' });
               continue;
             }
+            let invoiceDraft: any = null;
             let lotMap: Record<string, string[]> = {};
             try {
               lotMap = await deductStockForBilling(item, user);
@@ -2059,10 +2065,10 @@ export function registerBillingPipelineRoutes(app: Express) {
             }
 
             try {
-              const invoiceResult = await createInvoiceFromPipelineItem(item, user, lotMap);
-              if (invoiceResult) {
-                invoiceNumber = `NF-${invoiceResult.invoiceNumber}`;
-                fiscalInvoiceId = invoiceResult.id;
+              invoiceDraft = await createInvoiceFromPipelineItem(item, user, lotMap, { skipEmit: true });
+              if (invoiceDraft) {
+                invoiceNumber = `NF-${invoiceDraft.invoiceNumber}`;
+                fiscalInvoiceId = invoiceDraft.id;
               }
             } catch (invoiceError: any) {
               console.error(`❌ [BATCH] Erro NF-e para ${id}:`, invoiceError.message);
@@ -2073,6 +2079,9 @@ export function registerBillingPipelineRoutes(app: Express) {
             } catch (recError: any) {
               console.error(`❌ [BATCH] Erro conta a receber para ${id}:`, recError.message);
             }
+
+            // Titulos criados -> transmite a NF com <cobr> espelhado nos titulos/boletos.
+            if (invoiceDraft) await transmitirNfeAuto(invoiceDraft);
           }
 
           const updateData: any = { stage, stageHistory: history };
@@ -2346,7 +2355,23 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
   return lotMap;
 }
 
-async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>) {
+// CONDICAO DE PAGAMENTO efetiva do faturamento — UNICA fonte para a NF-e (pag/cobr) e para os
+// titulos/boletos: se o cliente tem forma+prazo cadastrados, eles sobrepoem a forma da venda;
+// senao forma da venda + default (pix=5, boleto=7, a vista=0). Usada por
+// createInvoiceFromPipelineItem E createReceivableFromPipelineItem para que NF, DANFE e
+// boleto nascam com a MESMA forma/prazo (espelho exigido pelo Flavio, 22/ago/2026).
+async function resolveCondicaoPagamento(item: any): Promise<{ effForma: string; prazoDays: number; hasCadastro: boolean; custCond: any }> {
+  let custCond: any = null;
+  try { if (item.customerId) custCond = await storage.getCustomer(item.customerId); } catch {}
+  const hasCadastro = !!(custCond && custCond.paymentMethod);
+  const effForma = hasCadastro ? String(custCond.paymentMethod) : String(item.paymentMethod || 'a_vista');
+  const defaultDays = (fm: string) => (fm === 'pix' ? 5 : fm === 'boleto' ? 7 : 0);
+  const prazoDaysRaw = (hasCadastro && custCond.boletoDays != null) ? Number(custCond.boletoDays) : defaultDays(effForma);
+  const prazoDays = isNaN(prazoDaysRaw) ? 0 : prazoDaysRaw;
+  return { effForma, prazoDays, hasCadastro, custCond };
+}
+
+async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>, opts?: { skipEmit?: boolean }) {
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
   // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
   //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
@@ -2487,7 +2512,8 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     fiscalScenarioId,
     totalProducts: totalValue.toFixed(2),
     totalInvoice: totalValue.toFixed(2),
-    paymentMethod: item.paymentMethod || 'a_vista',
+    // Forma de pagamento EFETIVA (cadastro do cliente sobrepoe a venda) — a mesma dos titulos/boleto.
+    paymentMethod: (await resolveCondicaoPagamento(item)).effForma || item.paymentMethod || 'a_vista',
     salesCardId: item.salesCardId || null,
     notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
     // INSTANTE -> UTC real. Era nowBrazil(), que gravava hora de parede de Brasilia
@@ -2559,19 +2585,27 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // AUTO-EMISSAO: transmite a NF-e para a SEFAZ (autoriza) logo apos criar o rascunho.
   // Sem isto a NF fica em 'draft' (Rascunho) e NAO tem valor fiscal. Robusto: falha nao bloqueia
   // o faturamento (a NF fica em rascunho e pode ser transmitida manualmente pelo botao Transmitir).
+  if (!opts?.skipEmit) await transmitirNfeAuto(invoice, invEnv);
+
+  return invoice;
+}
+
+// Transmite a NF-e a SEFAZ (auto-emissao). Separado de createInvoiceFromPipelineItem para
+// que o faturamento possa criar os TITULOS antes de transmitir: o <cobr> (fatura/duplicatas)
+// da NF e espelhado nos titulos (ver loadDuplicatasDaNf em sefaz-service). Falha nao bloqueia
+// o faturamento (a NF fica em rascunho e pode ser transmitida pelo botao Transmitir).
+export async function transmitirNfeAuto(invoice: any, invEnv?: string): Promise<void> {
   try {
     const { sefazService } = await import('./sefaz-service.js');
     const emitRes = await sefazService.emitNfe(invoice.id);
     if (emitRes?.success) {
-      console.log(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} AUTORIZADA automaticamente (${invEnv})`);
+      console.log(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} AUTORIZADA automaticamente (${invEnv || invoice.environment || ''})`);
     } else {
       console.warn(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
     }
   } catch (e: any) {
     console.warn(`[NFE-AUTO] erro ao transmitir NF-e #${invoice.invoiceNumber} (fica em rascunho):`, e?.message);
   }
-
-  return invoice;
 }
 
 
@@ -2797,13 +2831,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
 
   // Vencimento por PRAZO: se o cliente tem condicao cadastrada (forma+prazo), usa AMBOS
   // do cadastro; senao usa a forma da venda + default (pix=5, boleto=7, a vista=0).
-  let custCond: any = null;
-  try { if (item.customerId) custCond = await storage.getCustomer(item.customerId); } catch {}
-  const hasCadastro = !!(custCond && custCond.paymentMethod);
-  const effForma = hasCadastro ? String(custCond.paymentMethod) : String(item.paymentMethod || 'a_vista');
-  const defaultDays = (fm: string) => (fm === 'pix' ? 5 : fm === 'boleto' ? 7 : 0);
-  const prazoDaysRaw = (hasCadastro && custCond.boletoDays != null) ? Number(custCond.boletoDays) : defaultDays(effForma);
-  const prazoDays = isNaN(prazoDaysRaw) ? 0 : prazoDaysRaw;
+  const { effForma, prazoDays } = await resolveCondicaoPagamento(item);
 
   const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix' };
   const paymentMethod: string | null = methodMap[effForma] || 'outros';
