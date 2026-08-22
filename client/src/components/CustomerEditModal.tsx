@@ -130,6 +130,14 @@ export default function CustomerEditModal({
     sendXmlEmail: false as any,
     sendBoletoPixEmail: false as any,
     sendPedidoEmail: false as any,
+    // Envio automático por WhatsApp (22/ago/2026). Estes 5 campos NÃO vão no payload do
+    // PATCH /api/customers: eles são salvos por uma rota própria (doc-delivery), porque
+    // as colunas não estão no schema drizzle de `customers` de propósito.
+    notificationWhatsapp: "" as any,
+    sendDanfeWhatsapp: false as any,
+    sendXmlWhatsapp: false as any,
+    sendBoletoPixWhatsapp: false as any,
+    sendPedidoWhatsapp: false as any,
     serviceStartDate: "", // Data de início do fornecimento (só admins alteram)
   });
 
@@ -221,6 +229,22 @@ export default function CustomerEditModal({
       sendPedidoEmail: !!(formData as any).sendPedidoEmail,
       omieInstanceId: (formData as any).omieInstanceId || null,
     };
+    // Os 5 campos de WhatsApp NÃO vão para /api/customers (as colunas não existem no
+    // schema drizzle) — salvam pela rota dedicada, em paralelo e sem travar o submit.
+    delete payload.notificationWhatsapp;
+    delete payload.sendDanfeWhatsapp;
+    delete payload.sendXmlWhatsapp;
+    delete payload.sendBoletoPixWhatsapp;
+    delete payload.sendPedidoWhatsapp;
+    if (customer?.id) {
+      apiRequest("PATCH", `/api/customers/${customer.id}/doc-delivery`, {
+        notificationWhatsapp: String((formData as any).notificationWhatsapp || "").trim(),
+        sendDanfeWhatsapp: !!(formData as any).sendDanfeWhatsapp,
+        sendXmlWhatsapp: !!(formData as any).sendXmlWhatsapp,
+        sendBoletoPixWhatsapp: !!(formData as any).sendBoletoPixWhatsapp,
+        sendPedidoWhatsapp: !!(formData as any).sendPedidoWhatsapp,
+      }).catch(() => { /* não bloqueia o salvamento do cadastro */ });
+    }
     
     // Se é novo lead (isLead = true e customer = null), cria novo
     if (isLead && !customer?.id) {
@@ -406,8 +430,30 @@ export default function CustomerEditModal({
         sendXmlEmail: !!(customer as any).sendXmlEmail,
         sendBoletoPixEmail: !!(customer as any).sendBoletoPixEmail,
         sendPedidoEmail: !!(customer as any).sendPedidoEmail,
+        notificationWhatsapp: "",
+        sendDanfeWhatsapp: false,
+        sendXmlWhatsapp: false,
+        sendBoletoPixWhatsapp: false,
+        sendPedidoWhatsapp: false,
         serviceStartDate: (customer as any).serviceStartDate ? new Date((customer as any).serviceStartDate).toISOString().split('T')[0] : "",
       });
+      // As preferências de WhatsApp vêm da rota própria (não estão no objeto customer).
+      const cid = (customer as any).id;
+      if (cid) {
+        apiRequest("GET", `/api/customers/${cid}/doc-delivery`)
+          .then((p: any) => {
+            if (!p) return;
+            setFormData(prev => ({
+              ...prev,
+              notificationWhatsapp: p.notificationWhatsapp || "",
+              sendDanfeWhatsapp: !!p.sendDanfeWhatsapp,
+              sendXmlWhatsapp: !!p.sendXmlWhatsapp,
+              sendBoletoPixWhatsapp: !!p.sendBoletoPixWhatsapp,
+              sendPedidoWhatsapp: !!p.sendPedidoWhatsapp,
+            } as any));
+          })
+          .catch(() => { /* sem preferências ainda: fica tudo desmarcado */ });
+      }
     }
   }, [customer]);
 
@@ -942,6 +988,37 @@ export default function CustomerEditModal({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {([['sendDanfeEmail','DANFE (PDF)'],['sendXmlEmail','XML da NF-e'],['sendBoletoPixEmail','Boleto / PIX'],['sendPedidoEmail','Pedido']] as [string,string][]).map(([k,lbl]) => (
+                  <div key={k} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={'docsend-'+k}
+                      checked={!!(formData as any)[k]}
+                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, [k]: checked === true } as any))}
+                      data-testid={'checkbox-'+k}
+                    />
+                    <label htmlFor={'docsend-'+k} className="text-sm cursor-pointer">{lbl}</label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Envio automático de documentos por WhatsApp (22/ago/2026).
+                Mesmos documentos do bloco de e-mail, entregues como ARQUIVO no WhatsApp.
+                Os dois blocos são independentes: dá para usar só um, ou os dois. */}
+            <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
+              <Label className="text-sm font-medium text-emerald-900">Envio Automático de Documentos por WhatsApp</Label>
+              <div>
+                <Label className="text-sm">WhatsApp para envio</Label>
+                <Input
+                  type="tel"
+                  value={(formData as any).notificationWhatsapp}
+                  onChange={(e) => setFormData(prev => ({ ...prev, notificationWhatsapp: e.target.value } as any))}
+                  placeholder="(62) 99999-9999"
+                  data-testid="input-notification-whatsapp"
+                />
+                <p className="text-xs text-gray-500 mt-1">Se vazio, usa o telefone do cadastro. Sem nenhum dos dois, nada é enviado.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {([['sendDanfeWhatsapp','DANFE (PDF)'],['sendXmlWhatsapp','XML da NF-e'],['sendBoletoPixWhatsapp','Boleto / PIX'],['sendPedidoWhatsapp','Pedido']] as [string,string][]).map(([k,lbl]) => (
                   <div key={k} className="flex items-center space-x-2">
                     <Checkbox
                       id={'docsend-'+k}
