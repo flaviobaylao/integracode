@@ -106,9 +106,10 @@ export const FAIXAS_TICKET: Array<{ chave: string; label: string; min: number; m
 ];
 
 // ── CLASSE DO CLIENTE (A+ / A- / B+ ... / D-) ─────────────────────────────────
-// A LETRA e o nivel de faturamento: o ticket medio do cliente (o que ele fatura
-// por mes QUANDO compra) nas mesmas faixas do quadro de ticket medio, agrupadas
-// de 6 para 4:
+// A LETRA e o nivel de faturamento: a MEDIA PONDERADA/mes do cliente — a media
+// mensal do periodo com peso crescente por recencia (o mes mais antigo pesa 1; o
+// mais recente, N). Quem esfriou desce de letra sozinho. As faixas sao as mesmas
+// do quadro de ticket medio, agrupadas de 6 para 4:
 //   A = acima de R$ 1.501/mes   (faixas f5+f6)
 //   B = R$ 800,00 a R$ 1.500,00 (faixa  f4)
 //   C = R$ 300,00 a R$ 799,00   (faixas f2+f3)
@@ -132,6 +133,7 @@ export const CLASSE_DIAS_TOLERANCIA = 3;
 /** Fatia minima de titulos pagos dentro da tolerancia para o cliente ganhar o "+". */
 export const CLASSE_PONTUALIDADE_MIN = 0.8;
 
+/** Recebe a media ponderada/mes do cliente (antes era o ticket medio). */
 export function letraDoTicket(ticket: number): ClasseLetra {
   const t = Number(ticket) || 0;
   if (t > 1500) return "A";
@@ -639,7 +641,8 @@ export function registerCarteira(app: Express) {
           atrasoUltimo: pg?.ultAtraso ?? null,
           situacaoUltimo: pg?.ultSituacao || "sem_data",
           vencimentoUltimo: pg?.ultVenc || null,
-          classe: `${letraDoTicket(ticketCli)}${sinalDePagamento(pontualidade, debitoCli)}`,
+          // A letra sai da MEDIA PONDERADA/mes (recencia manda), nao do ticket medio.
+          classe: `${letraDoTicket(ponderado / somaPesos)}${sinalDePagamento(pontualidade, debitoCli)}`,
           situacao,
           mesesSemComprar,
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
@@ -701,7 +704,8 @@ export function registerCarteira(app: Express) {
           pj: dentro.filter((c) => c.tipo === "PJ").length,
           pf: dentro.filter((c) => c.tipo === "PF").length,
           valor: dentro.reduce((s, c) => s + c.total, 0),
-          faturamentoMes: dentro.reduce((s, c) => s + c.mediaSimples, 0),
+          // Mesma medida que define a letra, para a tabela fechar com ela.
+          faturamentoMes: dentro.reduce((s, c) => s + c.mediaPonderada, 0),
           debito: dentro.reduce((s, c) => s + c.debito, 0),
           comDebito: dentro.filter((c) => c.debito > 0).length,
           semMedicao: dentro.filter((c) => c.pontualidade === null).length,
