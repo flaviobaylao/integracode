@@ -228,7 +228,8 @@ export default function GestaoCarteiras() {
         pj: dentro.filter((c) => c.tipo === "PJ").length,
         pf: dentro.filter((c) => c.tipo === "PF").length,
         valor: dentro.reduce((s: number, c: any) => s + c.total, 0),
-        faturamentoMes: dentro.reduce((s: number, c: any) => s + c.mediaSimples, 0),
+        // Mesma medida que define a letra (média ponderada), para a linha fechar com ela.
+        faturamentoMes: dentro.reduce((s: number, c: any) => s + (c.mediaPonderada || 0), 0),
         debito: dentro.reduce((s: number, c: any) => s + (c.debito || 0), 0),
         comDebito: dentro.filter((c) => (c.debito || 0) > 0).length,
         semMedicao: dentro.filter((c) => c.pontualidade == null).length,
@@ -324,6 +325,10 @@ export default function GestaoCarteiras() {
       case "vendedor": return c.vendedor || "";
       case "total": return c.total || 0;
       case "conquista": return c.conquista || "9999-99-99"; // sem data vai para o fim
+      case "mediaPonderada": return c.mediaPonderada || 0;
+      case "mediaSimples": return c.mediaSimples || 0;
+      case "mesesComCompra": return c.mesesComCompra || 0;
+      case "ultimaCompra": return c.ultimaCompra || "";
       case "debito": return c.debito || 0;
       case "atraso": return c.atrasoUltimo == null ? -1 : c.atrasoUltimo;
       default: return "";
@@ -761,7 +766,7 @@ export default function GestaoCarteiras() {
                     </>
                   ) : (
                     <>
-                      A <strong>letra</strong> é o nível de faturamento (o mesmo ticket médio ao lado, em 4 degraus).
+                      A <strong>letra</strong> é o nível de faturamento: a <strong>média ponderada/mês</strong> do cliente, em 4 degraus.
                       O <strong>sinal</strong> é a positivação de pagamento: <strong>+</strong> para quem pagou ao menos
                       80% dos títulos em até 3 dias do vencimento <em>e</em> não deve nada hoje; <strong>−</strong> para
                       o resto.
@@ -843,7 +848,7 @@ export default function GestaoCarteiras() {
                         <th className="py-2 px-2 text-right w-20">Clientes</th>
                         <th className="py-2 px-2 text-right w-16">%</th>
                         <th className="py-2 px-2">Nível de faturamento</th>
-                        <th className="py-2 pl-2 text-right w-32">Fat. médio/mês</th>
+                        <th className="py-2 pl-2 text-right w-32">Média ponderada/mês</th>
                         <th className="py-2 pl-2 text-right w-28">Débito hoje</th>
                       </tr>
                     </thead>
@@ -1081,17 +1086,17 @@ export default function GestaoCarteiras() {
               </div>
 
               <p className="text-xs text-muted-foreground">
-                A letra é o nível de faturamento — A: acima de R$ 1.501/mês · B: R$ 800 a 1.500 · C: R$ 300 a 799 · D: até R$ 299,99.
+                A letra é o nível de faturamento pela média ponderada/mês — A: acima de R$ 1.501 · B: R$ 800 a 1.500 · C: R$ 300 a 799 · D: até R$ 299,99.
                 O sinal é o pagamento — <strong>+</strong> pagou ao menos 80% dos títulos em até 3 dias do vencimento e não deve nada hoje;
                 {" "}<strong>−</strong> atrasa ou está devendo. A classe não muda com o filtro de vendedor: é a mesma do cliente em toda a empresa.
               </p>
             </CardHeader>
             <CardContent>
-              {/* Sem o teto de altura do design system (max-h-[75vh]): assim o div de
-                  scroll do <Table> termina na última linha e a barra de rolagem
-                  horizontal nativa fica exatamente ali, embaixo do último cliente da
-                  página. Em troca o cabeçalho vira sticky, para não sumir na rolagem. */}
-              <div className="[&>div]:max-h-none [&>div]:overflow-x-auto">
+              {/* O scroll é DA TABELA (não da página): sem um teto de altura aqui, o
+                  `overflow-x-auto` do wrapper vira o container de rolagem do sticky e
+                  o cabeçalho gruda no topo da tabela inteira — ou seja, nunca acompanha
+                  a rolagem. Com max-h + overflow-auto o cabeçalho fica de fato fixo. */}
+              <div className="[&>div]:max-h-[70vh] [&>div]:overflow-auto">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
@@ -1102,10 +1107,10 @@ export default function GestaoCarteiras() {
                     {thOrdenavel("classe", "Classe", "w-16")}
                     {thOrdenavel("vendedor", "Vendedor")}
                     {thOrdenavel("total", "Faturamento no período", "text-right", true)}
-                    <TableHead className="text-right">Média ponderada/mês</TableHead>
-                    <TableHead className="text-right">Média simples/mês</TableHead>
-                    <TableHead className="text-right w-24">Meses c/ compra</TableHead>
-                    <TableHead className="w-24">Última compra</TableHead>
+                    {thOrdenavel("mediaPonderada", "Média ponderada/mês", "text-right", true)}
+                    {thOrdenavel("mediaSimples", "Média simples/mês", "text-right", true)}
+                    {thOrdenavel("mesesComCompra", "Meses c/ compra", "text-right w-24", true)}
+                    {thOrdenavel("ultimaCompra", "Última compra", "w-24")}
                     {thOrdenavel("debito", "Débito", "text-right w-28", true)}
                     {thOrdenavel("atraso", "Atraso do último título", "text-right w-32", true)}
                   </TableRow>
