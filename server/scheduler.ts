@@ -1206,3 +1206,43 @@ cron.schedule('0 9 * * *', async () => {
     }
   }
 }, { timezone: 'America/Sao_Paulo' });
+
+// ---------------------------------------------------------------------------
+// Esteira: o agente de conteudo alimenta a fila
+// ---------------------------------------------------------------------------
+//
+// A esteira tinha revisor de IA, portao de aprovacao e decisao em lote — e
+// `de_agente: 0`. Filtro bom, sem entrada. Este job e a entrada.
+//
+// Roda TODO DIA, mas so produz enquanto a cota da semana nao fechou (o proprio
+// agente conta e para sozinho). Diario com cota e melhor que "seg/qua/sex": se
+// um dia falha, o seguinte recupera, em vez de perder a peca da semana.
+//
+// O agente NAO publica. Ele cria a peca e manda para revisao; ela para em
+// aguardando_aprovacao esperando voce. Nasce com modo 'off' — nada acontece
+// aqui ate alguem ligar em /marketing.
+//
+// 07:10: depois do lote de recompra das 06:40, para as duas coisas ja estarem
+// na tela quando voce pega o celular.
+cron.schedule('10 7 * * *', async () => {
+  try {
+    const { rodar, modo } = await import('./mkt-agente-conteudo');
+    if ((await modo()) === 'off') return;   // desligado nao vira log todo dia
+
+    const r = await rodar({ quem: 'cron' });
+    if (r.criou) {
+      console.log('[MKT-CONTEUDO] peca ' + r.pieceId + ' (' + r.assunto?.publico + ' x ' + r.assunto?.gancho
+        + ') criada e enviada para revisao: ' + r.estado + '/' + r.veredito
+        + '. Cota da semana: ' + ((r.saldo?.feitas || 0) + 1) + '/' + (r.saldo?.cota || 0) + '.');
+      return;
+    }
+    // Cota cumprida e o caso normal — nao merece alarme nenhum dia da semana.
+    if (r.ok && /cota/.test(String(r.motivo))) return;
+    console.warn('⚠️  [MKT-CONTEUDO] nao produziu hoje: ' + (r.motivo || 'sem motivo informado'));
+  } catch (e: any) {
+    const m = String(e?.message || e);
+    if (!/does not exist|relation .* does not exist/i.test(m)) {
+      console.error('[MKT-CONTEUDO] cron falhou:', m);
+    }
+  }
+}, { timezone: 'America/Sao_Paulo' });
