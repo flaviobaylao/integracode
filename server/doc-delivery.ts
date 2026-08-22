@@ -117,8 +117,16 @@ export function ensureDocDeliverySchema(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// SMTP (GoDaddy). As credenciais vivem SO em env var — nunca no codigo.
-// GoDaddy (Microsoft 365 / cPanel): smtpout.secureserver.net porta 465 (SSL).
+// SMTP. As credenciais vivem SO em env var — nunca no codigo.
+//
+// A caixa da Honest e comprada na GoDaddy mas roda no TITAN (o webmail e
+// secureserver.titan.email) — conferido no painel em 22/ago/2026. Por isso o
+// padrao e `smtp.titan.email` na 465 (SSL); a 587 (STARTTLS) tambem serve.
+// NAO e `smtpout.secureserver.net` (SMTP das contas Workspace/cPanel antigas da
+// GoDaddy) nem `smtp.office365.com`.
+//
+// ⚠️ Com 2FA ligado na caixa, a senha comum NAO autentica: e preciso gerar uma
+// "application password" no Titan e usar ela em SMTP_PASS.
 // ---------------------------------------------------------------------------
 export function smtpConfigurado(): boolean {
   return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
@@ -131,7 +139,7 @@ async function getTransport(): Promise<any> {
   const nodemailer = mod.default || mod;
   const port = Number(process.env.SMTP_PORT || 465);
   _transport = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtpout.secureserver.net',
+    host: process.env.SMTP_HOST || 'smtp.titan.email',
     port,
     secure: port === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
@@ -149,7 +157,7 @@ export async function testarSmtp(): Promise<{ ok: boolean; error?: string; host?
   try {
     const t = await getTransport();
     await t.verify();
-    return { ok: true, host: process.env.SMTP_HOST || 'smtpout.secureserver.net', user: process.env.SMTP_USER };
+    return { ok: true, host: process.env.SMTP_HOST || 'smtp.titan.email', user: process.env.SMTP_USER };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }
