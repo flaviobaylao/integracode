@@ -451,6 +451,52 @@ export function registerCarteira(app: Express) {
         ]),
       );
 
+      // 2c) DATA DE CONQUISTA — a evidencia mais antiga de que o cliente existe.
+      //     `customers.created_at` sozinho engana: a base do 2.0 nasceu de importacoes
+      //     (774 cadastros em 19/06/2026, 395 em 14/10/2025...), entao para quem veio
+      //     do 1.0 essa data e a da importacao, nao a da conquista. Por isso pegamos
+      //     tambem o PRIMEIRO titulo de todos os tempos (sem recorte de periodo) e
+      //     ficamos com a data menor entre as duas.
+      const primeiraVendaRows = await q(`
+        SELECT COALESCE(
+                 NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),''),
+                 'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),''),'?')
+               ) AS chave,
+               MIN(issue_date)::date::text AS primeira
+        FROM receivables
+        WHERE deleted_at IS NULL
+          AND issue_date IS NOT NULL
+          AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+          AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+          ${FILTRO_VENDA}
+        GROUP BY 1`);
+      const primeiraVendaPorChave = new Map<string, string>(
+        primeiraVendaRows.map((r: any) => [String(r.chave), String(r.primeira || "")]),
+      );
+
+      // 2d) IDAS E VINDAS — inativacoes e reativacoes registradas na auditoria
+      //     (`customer_change_history`, campo isActive). O historico so existe a
+      //     partir de quando a auditoria entrou; antes disso sobra o
+      //     `inactivated_at` do cadastro, que guarda SO a inativacao vigente
+      //     (a reativacao limpa o campo).
+      let eventosPorCliente = new Map<string, Array<{ data: string; tipo: string }>>();
+      try {
+        const evRows = await q(`
+          SELECT customer_id,
+                 created_at::date::text AS data,
+                 CASE WHEN lower(COALESCE(new_value,'')) IN ('sim','true','t','1') THEN 'reativado' ELSE 'inativado' END AS tipo
+          FROM customer_change_history
+          WHERE field = 'isActive'
+          ORDER BY customer_id, created_at`);
+        for (const r of evRows as any[]) {
+          const k = String(r.customer_id);
+          if (!eventosPorCliente.has(k)) eventosPorCliente.set(k, []);
+          eventosPorCliente.get(k)!.push({ data: String(r.data), tipo: String(r.tipo) });
+        }
+      } catch (e: any) {
+        console.warn("[gestao-carteiras] historico de ativacao indisponivel:", e?.message || e);
+      }
+
       // 3) Por cliente: total, titulos, meses com compra e o mapa mes -> valor.
       //    O cadastro entra por LEFT JOIN no documento (tipo, vendedor, cidade,
       //    segmento, ativo) — cliente sem cadastro fica com o nome do titulo.
@@ -472,10 +518,12 @@ export function registerCarteira(app: Express) {
           FROM per_mes GROUP BY chave
         ),
         cust AS (
-          SELECT DISTINCT ON (doc) doc, name, customer_type, seller_id, city, segmento_principal, is_active
+          SELECT DISTINCT ON (doc) doc, id, name, customer_type, seller_id, city, segmento_principal, is_active,
+                 created_at, inactivated_at
           FROM (
             SELECT NULLIF(regexp_replace(COALESCE(NULLIF(cnpj,''),NULLIF(cpf,''),''),'[^0-9]','','g'),'') AS doc,
-                   name, customer_type, seller_id, city, segmento_principal, is_active,
+                   id, name, customer_type, seller_id, city, segmento_principal, is_active,
+                   created_at, inactivated_at,
                    (CASE WHEN is_active THEN 1 ELSE 0 END) AS sc, updated_at
             FROM customers
             WHERE COALESCE(is_supplier,false) = false
@@ -486,6 +534,7 @@ export function registerCarteira(app: Express) {
         SELECT a.chave, a.doc, a.nome, a.total, a.titulos, a.ultimo_mes, a.primeiro_mes,
                a.meses_com_compra, a.por_mes,
                c.name AS cad_nome, c.customer_type, c.city, c.segmento_principal, c.is_active,
+               c.id AS cad_id, c.created_at AS cad_criado, c.inactivated_at AS cad_inativado,
                COALESCE(vend.nome,'Sem vendedor') AS vendedor
         FROM agg a
         LEFT JOIN cust c ON c.doc = a.doc
@@ -534,6 +583,24 @@ export function registerCarteira(app: Express) {
           : mesesComCompra >= 3 && mesesSemComprar >= 3
             ? "perdido"
             : "ativo";
+
+        // ── DATA DE CONQUISTA + IDAS E VINDAS ────────────────────────────────
+        // Conquista = a evidencia mais antiga: o cadastro no sistema ou o
+        // primeiro titulo dele, o que vier primeiro.
+        const cadastroEm = r.cad_criado ? String(r.cad_criado).slice(0, 10) : null;
+        const primeiraVenda = primeiraVendaPorChave.get(chaveCli) || null;
+        const conquista = [cadastroEm, primeiraVenda].filter(Boolean).sort()[0] || null;
+        // Linha do tempo: o que a auditoria registrou + a inativacao vigente do
+        // cadastro (que a auditoria pode nao ter, se e anterior a ela).
+        const eventos: Array<{ data: string; tipo: string }> = [
+          ...(r.cad_id ? eventosPorCliente.get(String(r.cad_id)) || [] : []),
+        ];
+        const inativadoEm = r.cad_inativado ? String(r.cad_inativado).slice(0, 10) : null;
+        if (inativadoEm && !eventos.some((e) => e.tipo === "inativado" && e.data === inativadoEm)) {
+          eventos.push({ data: inativadoEm, tipo: "inativado" });
+        }
+        eventos.sort((x, y) => x.data.localeCompare(y.data));
+
         return {
           chave: String(r.chave),
           doc,
@@ -555,6 +622,10 @@ export function registerCarteira(app: Express) {
           mediaPonderada: ponderado / somaPesos,
           // Ritmo do cliente QUANDO ele compra (nao dilui pelos meses parados) —
           // e a base do "quanto deixaria de entrar se ele parar".
+          conquista,
+          cadastroEm,
+          primeiraVenda,
+          eventos,
           potencialMes: ticketCli,
           debito: debitoCli,
           // Dias vencidos do titulo em aberto mais antigo (0 = nao deve nada hoje).
