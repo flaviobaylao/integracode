@@ -130,11 +130,6 @@ export default function CustomerEditModal({
     sendXmlEmail: false as any,
     sendBoletoPixEmail: false as any,
     sendPedidoEmail: false as any,
-    notificationWhatsapp: "" as any, // Envio automático pelo WhatsApp (21/ago/2026)
-    sendDanfeWhatsapp: false as any,
-    sendXmlWhatsapp: false as any,
-    sendBoletoPixWhatsapp: false as any,
-    sendPedidoWhatsapp: false as any,
     serviceStartDate: "", // Data de início do fornecimento (só admins alteram)
   });
 
@@ -224,11 +219,6 @@ export default function CustomerEditModal({
       sendXmlEmail: !!(formData as any).sendXmlEmail,
       sendBoletoPixEmail: !!(formData as any).sendBoletoPixEmail,
       sendPedidoEmail: !!(formData as any).sendPedidoEmail,
-      notificationWhatsapp: String((formData as any).notificationWhatsapp || "").trim() || null,
-      sendDanfeWhatsapp: !!(formData as any).sendDanfeWhatsapp,
-      sendXmlWhatsapp: !!(formData as any).sendXmlWhatsapp,
-      sendBoletoPixWhatsapp: !!(formData as any).sendBoletoPixWhatsapp,
-      sendPedidoWhatsapp: !!(formData as any).sendPedidoWhatsapp,
       omieInstanceId: (formData as any).omieInstanceId || null,
     };
     
@@ -416,11 +406,6 @@ export default function CustomerEditModal({
         sendXmlEmail: !!(customer as any).sendXmlEmail,
         sendBoletoPixEmail: !!(customer as any).sendBoletoPixEmail,
         sendPedidoEmail: !!(customer as any).sendPedidoEmail,
-        notificationWhatsapp: (customer as any).notificationWhatsapp || "",
-        sendDanfeWhatsapp: !!(customer as any).sendDanfeWhatsapp,
-        sendXmlWhatsapp: !!(customer as any).sendXmlWhatsapp,
-        sendBoletoPixWhatsapp: !!(customer as any).sendBoletoPixWhatsapp,
-        sendPedidoWhatsapp: !!(customer as any).sendPedidoWhatsapp,
         serviceStartDate: (customer as any).serviceStartDate ? new Date((customer as any).serviceStartDate).toISOString().split('T')[0] : "",
       });
     }
@@ -957,37 +942,6 @@ export default function CustomerEditModal({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {([['sendDanfeEmail','DANFE (PDF)'],['sendXmlEmail','XML da NF-e'],['sendBoletoPixEmail','Boleto / PIX'],['sendPedidoEmail','Pedido']] as [string,string][]).map(([k,lbl]) => (
-                  <div key={k} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={'docsend-'+k}
-                      checked={!!(formData as any)[k]}
-                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, [k]: checked === true } as any))}
-                      data-testid={'checkbox-'+k}
-                    />
-                    <label htmlFor={'docsend-'+k} className="text-sm cursor-pointer">{lbl}</label>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Envio automático de documentos por WhatsApp (21/ago/2026).
-                Mesmos documentos do bloco de e-mail, entregues como ARQUIVO no WhatsApp.
-                Os dois blocos são independentes: dá para mandar só por um, ou pelos dois. */}
-            <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-emerald-900">Envio Automático de Documentos por WhatsApp</Label>
-              <div>
-                <Label className="text-sm">WhatsApp para envio</Label>
-                <Input
-                  type="tel"
-                  value={(formData as any).notificationWhatsapp}
-                  onChange={(e) => setFormData(prev => ({ ...prev, notificationWhatsapp: e.target.value } as any))}
-                  placeholder="(62) 99999-9999"
-                  data-testid="input-notification-whatsapp"
-                />
-                <p className="text-xs text-gray-500 mt-1">Se vazio, usa o telefone do cadastro. Sem nenhum dos dois, nada é enviado.</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {([['sendDanfeWhatsapp','DANFE (PDF)'],['sendXmlWhatsapp','XML da NF-e'],['sendBoletoPixWhatsapp','Boleto / PIX'],['sendPedidoWhatsapp','Pedido']] as [string,string][]).map(([k,lbl]) => (
                   <div key={k} className="flex items-center space-x-2">
                     <Checkbox
                       id={'docsend-'+k}
