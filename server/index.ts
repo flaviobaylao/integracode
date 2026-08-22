@@ -532,6 +532,16 @@ run();
     registerCanaisRoutes(app);
   } catch (e: any) { console.error('[canais routes]', e?.message || e); }
   registerPaymentLink(app);
+  // ENVIO AUTOMATICO DE DOCUMENTOS DE FATURAMENTO (22/ago/2026): download publico por
+  // token (o Umbler baixa a midia daqui), preferencias do cliente, diagnostico de SMTP
+  // e reenvio manual. A migracao das tabelas roda SOB DEMANDA dentro do proprio modulo
+  // (ensureDocDeliverySchema), nunca no caminho critico do boot — e nenhuma coluna nova
+  // entra no schema drizzle de `customers`, entao um atraso na migracao nao quebra
+  // nenhum SELECT existente.
+  try {
+    const { registerDocRoutes } = await import('./doc-routes');
+    registerDocRoutes(app);
+  } catch (e: any) { console.error('[doc-delivery routes]', e?.message || e); }
   registerVisitSummary(app);
   registerCarteira(app);
   registerCadastroReceitaSync(app);

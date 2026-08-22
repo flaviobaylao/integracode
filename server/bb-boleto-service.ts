@@ -353,6 +353,15 @@ export async function registrarBoleto(
   }
 
   console.log(`✅ [BB-BOLETO] Boleto ${numeroTituloCliente} registrado. Linha: ${linhaDigitavel || '(sem linha)'}`);
+
+  // ENVIO AUTOMATICO (22/ago/2026): cobranca registrada = documento existe para o cliente.
+  // So dispara se o boleto foi gravado (precisamos do id para montar o PDF).
+  if (boletoChargeId) {
+    void import('./doc-triggers')
+      .then(m => m.dispararDocBoleto(boletoChargeId as string))
+      .catch((e: any) => console.error('[BB-BOLETO] envio automatico (ignorado):', e?.message));
+  }
+
   return {
     success: true, sandbox,
     boletoChargeId,

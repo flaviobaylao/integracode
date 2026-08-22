@@ -19,11 +19,17 @@ import { montarDanfePdf, montarXmlNfe, montarCobrancaPdf, montarPedidoPdf } from
 import { storage } from './storage';
 
 export function registerDocRoutes(app: Express) {
+  // Prepara as tabelas do envio de documentos EM BACKGROUND — nunca no caminho critico
+  // do boot. Cada rota que precisa delas tambem chama ensureDocDeliverySchema() (a
+  // funcao e idempotente e memoizada), entao um atraso aqui nao quebra nada.
+  void ensureDocDeliverySchema();
+
   // ---- PUBLICO: download do documento por token -----------------------------
   app.get(['/api/doc/:token', '/api/doc/:token/:filename'], async (req: any, res: any) => {
     try {
       const token = String(req.params.token || '');
       if (!token || token.length < 16) return res.status(404).send('nao encontrado');
+      await ensureDocDeliverySchema();
       const q: any = await db.execute(sql`
         SELECT filename, mime, data, expires_at FROM document_blobs WHERE token = ${token} LIMIT 1`);
       const row = q.rows?.[0];
@@ -94,6 +100,47 @@ export function registerDocRoutes(app: Express) {
       });
       res.json({ ok: true, to: para });
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // ---- Preferencias de envio do cliente ------------------------------------
+  // ⚠️ POR QUE UMA ROTA PROPRIA (22/ago/2026): as colunas de WhatsApp NAO entram no
+  // schema drizzle de `customers`. O drizzle monta SELECT com todas as colunas do
+  // schema; uma coluna declarada que ainda nao existe no banco quebra TODO
+  // getCustomers e derruba o processo (foi exatamente o 502 de 21/ago). Aqui tudo
+  // e SQL cru, e a migracao roda sob demanda — o cadastro nunca fica refem dela.
+  app.get('/api/customers/:id/doc-delivery', authenticateUser, async (req: any, res: any) => {
+    try {
+      await ensureDocDeliverySchema();
+      const q: any = await db.execute(sql`
+        SELECT COALESCE(notification_whatsapp, '') AS "notificationWhatsapp",
+               COALESCE(send_danfe_whatsapp, false) AS "sendDanfeWhatsapp",
+               COALESCE(send_xml_whatsapp, false) AS "sendXmlWhatsapp",
+               COALESCE(send_boleto_pix_whatsapp, false) AS "sendBoletoPixWhatsapp",
+               COALESCE(send_pedido_whatsapp, false) AS "sendPedidoWhatsapp"
+        FROM customers WHERE id = ${req.params.id} LIMIT 1`);
+      res.json(q.rows?.[0] || {
+        notificationWhatsapp: '', sendDanfeWhatsapp: false, sendXmlWhatsapp: false,
+        sendBoletoPixWhatsapp: false, sendPedidoWhatsapp: false,
+      });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  app.patch('/api/customers/:id/doc-delivery', authenticateUser, async (req: any, res: any) => {
+    try {
+      await ensureDocDeliverySchema();
+      const b = req.body || {};
+      const fone = String(b.notificationWhatsapp ?? '').trim() || null;
+      await db.execute(sql`
+        UPDATE customers SET
+          notification_whatsapp = ${fone},
+          send_danfe_whatsapp = ${b.sendDanfeWhatsapp === true},
+          send_xml_whatsapp = ${b.sendXmlWhatsapp === true},
+          send_boleto_pix_whatsapp = ${b.sendBoletoPixWhatsapp === true},
+          send_pedido_whatsapp = ${b.sendPedidoWhatsapp === true},
+          updated_at = now()
+        WHERE id = ${req.params.id}`);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
   // ---- Reenvio MANUAL -------------------------------------------------------

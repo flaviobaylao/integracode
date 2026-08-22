@@ -225,6 +225,17 @@ export async function promoteDueScheduledOrders(): Promise<number> {
     `);
     const n = res?.rowCount ?? (res?.rows?.length ?? 0);
     if (n) console.log(`📅 [AGENDADO→PEDIDO] ${n} pedido(s) agendado(s) promovido(s) para 'Pedido'.`);
+    // O espelho do pedido agendado sai AGORA (na promocao), nao na hora do agendamento.
+    for (const row of (res?.rows || [])) {
+      const pid = (row as any)?.id;
+      if (!pid) continue;
+      void (async () => {
+        try {
+          const item = await storage.getBillingPipelineItem(String(pid));
+          if (item) { const m = await import('./doc-triggers'); await m.dispararDocPedido(item); }
+        } catch (e: any) { console.error('[AGENDADO→PEDIDO] envio automatico (ignorado):', e?.message); }
+      })();
+    }
     return n;
   } catch (e: any) {
     console.error('❌ [AGENDADO→PEDIDO] erro ao promover pedidos agendados:', e?.message || e);
@@ -526,6 +537,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     // 📣 O cliente e avisado AGORA, nao na proxima varredura. Este e o momento em que o
     // pedido passa a existir para o faturamento — a "ocorrencia" do disparo.
     try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido roteado ao pipeline'); } catch {}
+    // ENVIO AUTOMATICO DO ESPELHO DO PEDIDO (22/ago/2026). So para pedido que entra JA na
+    // etapa 'pedido': o agendado ainda pode mudar antes da data (ele dispara na promocao).
+    if (stage !== 'agendado') {
+      void import('./doc-triggers')
+        .then(m => m.dispararDocPedido(item))
+        .catch((e: any) => console.error('[BILLING-PIPELINE] envio automatico do pedido (ignorado):', e?.message));
+    }
     return item;
   } catch (error) {
     await logOrderAudit(salesCard.id, 'failed', String((error as any)?.message || error));
