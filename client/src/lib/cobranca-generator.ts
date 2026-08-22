@@ -340,6 +340,15 @@ function renderPix(doc: jsPDF, c: CobrancaData, logo: string | null) {
   const qr = p.qr_code_base64;
   if (qr) { try { doc.addImage(String(qr).startsWith('data:') ? String(qr) : 'data:image/png;base64,' + qr, 'PNG', 12, y, 45, 45); } catch (e) {} }
   if (p.pix_copia_e_cola) { doc.setFont('helvetica', 'bold'); doc.text('PIX copia e cola:', 64, y + 4); doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.text(String(p.pix_copia_e_cola), 64, y + 9, { maxWidth: 132 }); doc.setFontSize(10); }
+  // Informativo abaixo do QR Code (pedido do Flavio, 22/ago/2026): fonte 24, centralizado,
+  // a 2 tabs (2 x 12,7 mm = 25,4 mm) de distância da base do QR Code.
+  y += 45 + 25.4;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(24); doc.setTextColor(200, 0, 0);
+  doc.text('ATENÇÃO: Documento Aguardando Pagamento via PIX.', 105, y, { align: 'center', maxWidth: 186 });
+  y += 22;
+  doc.setTextColor(0);
+  doc.text('QRCode de pagamento válido por 3 dias', 105, y, { align: 'center', maxWidth: 186 });
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
 }
 
 // ── FOLHA DE ROSTO DO MOTORISTA (romaneio da rota) ──────────────────────────

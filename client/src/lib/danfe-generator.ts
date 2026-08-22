@@ -63,6 +63,7 @@ export interface DanfeInvoice {
   totalIcmsSt?: string;
   paymentMethod: string;
   dueDate?: string;
+  duplicatas?: { nDup: string; dVenc: string | null; vDup: number; paymentMethod?: string | null }[];
   notes: string;
   accessKey: string;
   protocolNumber: string;
@@ -383,12 +384,32 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
     'a_vista': 'À Vista', 'a_prazo': 'A Prazo', 'pix': 'PIX',
     'boleto': 'Boleto', 'cartao': 'Cartão', 'dinheiro': 'Dinheiro'
   };
-  const fatW = contentWidth / 4;
-  drawField('Num.', '001', margin, y, fatW, 12);
-  drawField('Venc.', invoice.dueDate ? fmtDateOnly(invoice.dueDate) : fmtDateOnly(emissionDate), margin + fatW, y, fatW, 12);
-  drawField('Valor', `R$ ${fmtCur(invoice.totalInvoice || '0')}`, margin + fatW * 2, y, fatW, 12);
-  drawField('Forma Pagamento', payLabels[invoice.paymentMethod] || invoice.paymentMethod || '-', margin + fatW * 3, y, fatW, 12);
-  y += 12;
+  // FATURA/DUPLICATA espelhada nos titulos (Contas a Receber): uma duplicata por parcela,
+  // com o MESMO valor e vencimento do boleto. Sem titulos ligados, cai no layout antigo.
+  const dups = (invoice.duplicatas || []).filter(d => d && d.dVenc && d.vDup > 0);
+  const fmtVencDup = (iso: string) => { const [yy, mm, dd] = iso.slice(0, 10).split('-'); return `${dd}/${mm}/${yy}`; };
+  const formaLabel = payLabels[invoice.paymentMethod] || invoice.paymentMethod || '-';
+  if (dups.length) {
+    // ate 4 duplicatas por linha (Num./Venc./Valor cada); a forma de pagamento fecha a ultima linha
+    const perRow = 3;
+    const colW = contentWidth / 4;
+    for (let r = 0; r < dups.length; r += perRow) {
+      const linha = dups.slice(r, r + perRow);
+      linha.forEach((d, i) => {
+        drawField(`Dup. ${d.nDup}  Venc. ${fmtVencDup(d.dVenc as string)}`, `R$ ${fmtCur(d.vDup.toFixed(2))}`, margin + colW * i, y, colW, 12);
+      });
+      for (let i = linha.length; i < perRow; i++) drawField('', '', margin + colW * i, y, colW, 12);
+      drawField(r === 0 ? 'Forma Pagamento' : '', r === 0 ? formaLabel : '', margin + colW * 3, y, colW, 12);
+      y += 12;
+    }
+  } else {
+    const fatW = contentWidth / 4;
+    drawField('Num.', '001', margin, y, fatW, 12);
+    drawField('Venc.', invoice.dueDate ? fmtDateOnly(invoice.dueDate) : fmtDateOnly(emissionDate), margin + fatW, y, fatW, 12);
+    drawField('Valor', `R$ ${fmtCur(invoice.totalInvoice || '0')}`, margin + fatW * 2, y, fatW, 12);
+    drawField('Forma Pagamento', formaLabel, margin + fatW * 3, y, fatW, 12);
+    y += 12;
+  }
 
   drawBox(margin, y, contentWidth, 5);
   doc.setFontSize(6);
