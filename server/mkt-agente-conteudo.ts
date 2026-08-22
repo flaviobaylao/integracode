@@ -257,9 +257,35 @@ const DICA_DE_GANCHO: Record<string, string> = {
   prova_social: 'gente de verdade usando — sem inventar depoimento',
 };
 
+/**
+ * Os fatos da empresa, na fonte que os atendentes ja usam.
+ *
+ * ACHADO POR LEITURA DA SAIDA, nao por teste: a primeira versao deste agente
+ * recebia so o cartao de marca — tom, voz, o que nunca dizer. Fato de produto,
+ * nenhum. E modelo sem fato nao fica calado: ele preenche com o que soa
+ * plausivel. Escreveu "produzimos tudo aqui em Goiania, diariamente" quando a
+ * fabrica e em Bela Vista de Goias e Goiania e a filial.
+ *
+ * O revisor de marca nao pega isso: ele barra claim proibido e adjetivo vazio,
+ * nao geografia errada. Fato errado sobre a propria empresa passa limpo.
+ *
+ * A base de conhecimento dos atendentes e a fonte certa: ja e verificada, ja
+ * esta em producao respondendo cliente, e e mantida num lugar so. Puxo de la em
+ * vez de escrever uma segunda copia que ia divergir na primeira mudanca.
+ */
+export async function fatosDaEmpresa(): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT base_conhecimento FROM agentes_config
+       WHERE COALESCE(base_conhecimento, '') <> ''
+       ORDER BY LENGTH(base_conhecimento) DESC LIMIT 1`);
+    return String(r.rows?.[0]?.base_conhecimento || '').trim();
+  } catch { return ''; }
+}
+
 export function montarPrompt(o: {
   cartao: string; publico: string; gancho: string; canal: string;
-  criativo: any; link: string;
+  criativo: any; link: string; fatos?: string;
 }): { sistema: string; pedido: string } {
   const t = o.criativo?.tags || {};
   const cenario = Array.isArray(t.cenario) ? t.cenario.join(', ') : '';
@@ -267,13 +293,29 @@ export function montarPrompt(o: {
     ? 'dono de padaria, mercadinho ou distribuidor que REVENDE o produto'
     : 'pessoa que bebe o suco';
 
+  const fatos = String(o.fatos || '').trim();
+
   const sistema = [
     o.cartao,
     '',
+    ...(fatos ? [
+      '# FATOS DA HONEST — A UNICA FONTE DE FATO QUE VOCE TEM',
+      'Tudo que voce afirmar sobre a empresa, o produto, prazo, preco, cidade,',
+      'entrega ou processo TEM que sair daqui, literalmente. Nao complete, nao',
+      'arredonde, nao suponha. Se a informacao nao esta abaixo, ela nao entra na',
+      'peca — escreva a peca sem ela.',
+      '',
+      fatos,
+      '',
+    ] : []),
     '# REGRAS DESTA TAREFA (valem junto com o cartao)',
     '- Voce esta escrevendo UMA peca para ' + o.canal + '.',
     '- Nao invente numero, percentual, preco, prazo, premio nem depoimento.',
     '  Se voce nao recebeu o dado aqui, ele nao existe.',
+    '- Cidade, endereco e local de producao: so os que estao nos FATOS acima.',
+    '  Confundir fabrica com filial e erro grave.',
+    '- Nao diga com que frequencia algo acontece ("diariamente", "toda semana")',
+    '  a menos que esteja escrito nos FATOS.',
     '- Nao prometa efeito no corpo, cura, emagrecimento nem imunidade.',
     '- Descreva apenas o que esta NA FOTO descrita abaixo. Se a foto nao mostra,',
     '  nao escreva.',
@@ -366,9 +408,17 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
     return { ok: false, modo: m, saldo, assunto: a.assunto, motivo: 'cartao de marca indisponivel: escrever sem ele e escrever sem voz' };
   }
 
+  // Sem os fatos ele preenche com o que soa plausivel — ja escreveu a cidade
+  // errada por causa disso. Sem eles, nao escreve.
+  const fatos = await fatosDaEmpresa();
+  if (!fatos) {
+    return { ok: false, modo: m, saldo, assunto: a.assunto, motivo: 'base de conhecimento vazia: sem fato o modelo inventa, e ja inventou' };
+  }
+
   const { sistema, pedido } = montarPrompt({
     cartao, publico: a.assunto.publico, gancho: a.assunto.gancho, canal,
     criativo, link: link.destino.startsWith('http') ? link.destino : ('/r/' + link.slug),
+    fatos,
   });
 
   const texto = await escrever(sistema, pedido);
