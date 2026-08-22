@@ -298,15 +298,6 @@ export const customers = pgTable("customers", {
   sendBoletoPixEmail: boolean("send_boleto_pix_email").default(false),
   sendPedidoEmail: boolean("send_pedido_email").default(false),
 
-  // Mesmo envio automático, agora também pelo WHATSAPP (21/ago/2026) — o documento vai
-  // como ARQUIVO. notificationWhatsapp vazio => usa o telefone do cadastro. Colunas
-  // garantidas no boot por ensureDocDeliverySchema() (server/doc-delivery.ts).
-  notificationWhatsapp: varchar("notification_whatsapp"),
-  sendDanfeWhatsapp: boolean("send_danfe_whatsapp").default(false),
-  sendXmlWhatsapp: boolean("send_xml_whatsapp").default(false),
-  sendBoletoPixWhatsapp: boolean("send_boleto_pix_whatsapp").default(false),
-  sendPedidoWhatsapp: boolean("send_pedido_whatsapp").default(false),
-
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
