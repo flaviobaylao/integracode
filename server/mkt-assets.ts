@@ -614,15 +614,44 @@ export async function verAsset(id: number): Promise<any | null> {
 }
 
 /** Bytes de um criativo embutido, para servir a miniatura sem inchar a listagem. */
+/**
+ * Serve os bytes de um criativo.
+ *
+ * Antes so entendia data: URL — e isso deixava 583 das 598 pecas devolvendo 404,
+ * porque foto que sobe pelo upload vira `/api/photo-media/<id>`, nao data:. A
+ * tela nao quebrava (ela usa a URL direta), mas qualquer coisa que dependesse
+ * deste endpoint pegava o erro, sem explicacao.
+ *
+ * `bytesDoCriativo` ja sabia ler as duas formas desde sempre. O conserto e usar
+ * o que ja existia, e buscar o mimetype gravado junto da foto em vez de chutar.
+ */
 export async function arquivoDoAsset(id: number): Promise<{ mime: string; buf: Buffer } | null> {
   const a = await verAsset(id);
   if (!a) return null;
-  const url = String(a.url || '');
-  const m = /^data:([^;,]*);base64,([\s\S]*)$/i.exec(url.trim());
-  if (!m) return null;
-  try {
-    return { mime: m[1] || 'application/octet-stream', buf: Buffer.from(m[2], 'base64') };
-  } catch { return null; }
+  const url = String(a.url || '').trim();
+
+  // data: URL carrega o proprio mime — caminho antigo, continua igual.
+  const m = /^data:([^;,]*);base64,([\s\S]*)$/i.exec(url);
+  if (m) {
+    try { return { mime: m[1] || 'application/octet-stream', buf: Buffer.from(m[2], 'base64') }; }
+    catch { return null; }
+  }
+
+  const buf = await bytesDoCriativo(url);
+  if (!buf) return null;
+
+  // O mime esta na tabela da foto. Se ela nao tiver, image/jpeg e o palpite certo
+  // aqui: o upload do painel so aceita imagem, e o navegador corrige sozinho.
+  let mime = 'image/jpeg';
+  const pm = /^\/api\/photo-media\/([A-Za-z0-9_-]{1,64})$/.exec(url);
+  if (pm) {
+    try {
+      const r: any = await db.execute(sql`SELECT mimetype FROM photo_media WHERE id = ${pm[1]} LIMIT 1`);
+      const t = r.rows?.[0]?.mimetype;
+      if (t) mime = String(t);
+    } catch { /* sem mimetype gravado: segue com o padrao */ }
+  }
+  return { mime, buf };
 }
 
 // ---------------------------------------------------------------------------
