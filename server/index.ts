@@ -4392,6 +4392,35 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     try { const { panoramaEsteira } = await import('./mkt-esteira'); res.json(await panoramaEsteira(Number(req.query?.dias || 30))); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+
+  // ===== O que faltava ENTRAR na esteira: o agente de conteudo =====
+  // Ele nunca publica: cria a peca e manda para revisao. Ela para em
+  // aguardando_aprovacao esperando um humano, como qualquer outra.
+  app.get("/api/mkt/conteudo", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panorama } = await import('./mkt-agente-conteudo'); res.json(await panorama()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/conteudo/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { definirModo } = await import('./mkt-agente-conteudo');
+      res.json(await definirModo(String(req.body?.modo || ''), req.user?.email || req.user?.id || null));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/conteudo/parametros", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { definirParametros, parametros } = await import('./mkt-agente-conteudo');
+      const r = await definirParametros(req.body || {}, req.user?.email || req.user?.id || null);
+      res.json({ ...r, parametros: await parametros() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Rodar na mao. Em 'test' devolve o plano sem gravar — e assim que se confere
+  // o que o agente escreveria antes de deixar ele escrever de verdade.
+  app.post("/api/mkt/conteudo/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { rodar } = await import('./mkt-agente-conteudo');
+      res.json(await rodar({ forcar: req.body?.forcar === true, quem: req.user?.email || req.user?.id || null }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   // A tela que decide o projeto
   app.get("/api/mkt/fila-aprovacao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try { const { fila } = await import('./mkt-esteira'); res.json(await fila(Number(req.query?.limite || 40))); }
