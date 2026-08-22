@@ -583,6 +583,60 @@ export async function verificacaoPorDns(siteUrl: string): Promise<{ verificado: 
   }
 }
 
+/**
+ * Extrai do campo `redes` o link do Perfil da Empresa no Google, se houver.
+ *
+ * Formatos que o Google emite hoje para o mesmo perfil:
+ *   maps.google.com/?cid=123        (link classico, o que o painel do perfil copia)
+ *   google.com/maps/place/...       (link da ficha aberta)
+ *   g.page/nome  |  g.page/r/CODIGO (link curto e link de avaliacao)
+ *   business.google.com/...         (o painel de gestao)
+ * Aceito todos: sao o mesmo negocio por caminhos diferentes, e recusar um deles
+ * recriaria o alarme falso que este codigo existe para tirar.
+ *
+ * Devolve '' quando nao ha nada — nunca lanca: e um diagnostico, nao pode derrubar
+ * a tela por causa de um separador estranho no campo.
+ */
+export function linkDoPerfilGoogle(redes: string): string {
+  // Duas armadilhas que so apareceram quando testei com os links de verdade:
+  //
+  // 1) Link de ficha do Maps TEM virgula dentro:
+  //       .../maps/place/HONEST/@-16.71,-49.29,17z
+  //    e `redes` tambem usa virgula como separador. Cortar em toda virgula
+  //    partia o link no meio das coordenadas. Entao so separo na virgula (ou
+  //    ponto-e-virgula) quando ela vem antes de OUTRO endereco http.
+  //
+  // 2) Conferir o dominio por regex no texto inteiro aceitava sosia:
+  //       https://google.com.evil.example/maps
+  //    casava com /google\.[a-z.]+\/maps/. Agora o host e lido pelo parser de
+  //    URL e comparado por igualdade ou sufixo de rotulo — "termina em
+  //    .google.com", nao "contem google.com".
+  try {
+    const texto = String(redes || '').replace(/([,;])\s*(?=https?:\/\/)/gi, ' ');
+    const partes = texto.split(/\s+/).map(x => x.replace(/[.,;]+$/, '').trim()).filter(Boolean);
+    for (const bruto of partes) {
+      let host = '';
+      let caminho = '';
+      try {
+        const u = new URL(bruto);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+        host = u.hostname.toLowerCase().replace(/^www\./, '');
+        caminho = u.pathname;
+      } catch { continue; }
+
+      // "e este dominio, ou um subdominio dele" — nunca "contem este texto".
+      const eh = (d: string) => host === d || host.endsWith('.' + d);
+      // google.com, google.com.br, google.co.uk... o TLD varia, o resto nao.
+      const ehGoogle = /^(maps\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host);
+
+      if (ehGoogle && (host.startsWith('maps.') || /^\/maps(\/|$)/.test(caminho))) return bruto;
+      if (eh('g.page')) return bruto;
+      if (/^business\.google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)) return bruto;
+    }
+    return '';
+  } catch { return ''; }
+}
+
 export async function diagnosticoGoogle(): Promise<{
   itens: ItemDiagnostico[]; prontos: number; pendentes: number;
   seoLigado: boolean; medindo: boolean; conversoes: any;
@@ -621,8 +675,21 @@ export async function diagnosticoGoogle(): Promise<{
     cfg.verificacaoSearchConsole ? 'Verificado por meta tag.'
       : dns.verificado ? 'Verificado por DNS (registro TXT em ' + dns.dominio + '), o que cobre o dominio e todos os subdominios. Nao precisa da meta tag.'
       : 'Sem verificação por meta tag, e sem registro TXT no DNS. É o que mostra quais buscas trazem gente, e onde se envia o sitemap.', 'voce');
-  add('Perfil da Empresa no Google', 'falta',
-    'Não dá para criar por API sem sua conta. É o item de maior retorno para busca local: sem ele, a Honest não aparece no mapa nem no "perto de mim".', 'voce');
+  // Este item vivia cravado em 'falta'. Nao era uma medicao: era um texto fixo.
+  // Medido em 22/ago/2026 o perfil JA EXISTIA, reivindicado, com 26 avaliacoes e
+  // 4,2 estrelas — e o painel continuava mandando criar o que ja estava criado.
+  // E o mesmo defeito que o Search Console tinha (alarme falso e pior que
+  // silencio: ensina a ignorar o painel), entao a correcao e a mesma: perguntar.
+  //
+  // A fonte da verdade e o proprio campo `redes`, que ja alimenta o sameAs do
+  // JSON-LD. Se ha link de perfil ali, o perfil existe — e o sameAs so funciona
+  // porque existe. Nao invento uma checagem nova; leio a que ja sustenta o dado
+  // estruturado. Sem API do Google Business, este e o sinal honesto disponivel.
+  const perfil = linkDoPerfilGoogle(cfg.redes);
+  add('Perfil da Empresa no Google', perfil ? 'ok' : 'falta',
+    perfil ? 'Perfil no ar e ligado ao site pelo sameAs: ' + perfil
+      : 'Não dá para criar por API sem sua conta. É o item de maior retorno para busca local: sem ele, a Honest não aparece no mapa nem no "perto de mim".',
+    perfil ? 'sistema' : 'voce');
   add('Conversões offline para o Ads', 'ok',
     'A fila lê os pedidos com gclid e exporta no formato que o Ads aceita. Só falta o Ads existir para receber.');
 
