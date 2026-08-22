@@ -659,8 +659,34 @@ export async function diagnosticoGoogle(): Promise<{
     cfg.telefone || 'Não informado. Sem ele o negócio aparece sem forma de contato no resultado local.', cfg.telefone ? 'sistema' : 'voce');
   add('Google Analytics 4', cfg.ga4Id ? 'ok' : 'falta',
     cfg.ga4Id || 'Sem ID. Crie a propriedade em analytics.google.com e cole o G-XXXXXXX aqui — a tag entra sozinha, sem deploy.', 'voce');
-  add('Google Ads', cfg.adsId ? 'ok' : 'falta',
-    cfg.adsId || 'Sem conta. Sem ela não há anúncio de busca — e quem procura "suco natural atacado Goiânia" continua não achando.', 'voce');
+  // Este item dizia "Sem conta" sempre que `adsId` estava vazio. Isso nunca foi uma
+  // medicao: o sistema nao tem como perguntar ao Google se a conta existe.
+  //
+  // Medido em 22/ago/2026: a conta EXISTE (516-164-7772), e a acao de conversao
+  // "Pedido no site" ja esta criada la como "Importar de cliques", com janela de
+  // clique de 90 dias — a mesma janela que conversoesOffline() usa, e com o nome
+  // exato que csvGoogleAds() escreve na coluna Conversion Name. O circuito esta
+  // fechado ponta a ponta sem nenhuma tag AW-:
+  //     hotsite captura o gclid da URL (hotsite/src/utils/origem.ts)
+  //  -> vai junto do pedido e vira utm->>'gclid' (mkt-atribuicao.lerOrigem)
+  //  -> conversoesOffline() le os pedidos com gclid
+  //  -> csvGoogleAds() exporta no formato do "Conversoes > Uploads"
+  //
+  // O `adsId` so acrescenta gtag('config','AW-...') no site. Nao dispara evento de
+  // conversao — entao nao duplica compra com a importacao offline. O ganho e
+  // persistencia do clique entre sessoes, nao medicao nova.
+  //
+  // Entao o estado honesto com adsId vazio nao e "falta": e "pronto, faltando
+  // trafego". O que impede numero no Ads e campanha rodando, porque gclid so
+  // nasce em clique de anuncio.
+  add('Google Ads', 'ok',
+    cfg.adsId
+      ? 'Tag do Ads no site: ' + cfg.adsId + '. A compra continua voltando pela importação offline; '
+        + 'a tag só ajuda a não perder o clique entre sessões.'
+      : 'Sem tag AW- no site, e por ora não faz falta: a compra volta pelo upload de conversões '
+        + 'offline, com o gclid que o hotsite captura da URL. O que falta não é configuração — '
+        + 'é campanha rodando, porque gclid só existe em clique de anúncio.',
+    'sistema');
   // O painel so sabia conferir UM dos tres metodos de verificacao do Google
   // (meta tag). Quem verifica por DNS — o metodo que o proprio Google recomenda,
   // porque cobre o dominio inteiro e todos os subdominios — via "falta" para
