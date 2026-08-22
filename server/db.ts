@@ -35,4 +35,26 @@ export const pool = new Pool({
   application_name: 'integra-app',
   options: '-c lock_timeout=15s',
 });
+
+// O pg emite 'error' no POOL quando um cliente OCIOSO cai sozinho — a rede
+// oscilou, o banco reiniciou, o provedor derrubou a conexao parada. Sem ninguem
+// escutando esse evento, o Node trata como excecao nao capturada e MATA O
+// PROCESSO. Ou seja: o banco pisca por um segundo e o sistema inteiro sai do ar,
+// sem uma linha de log dizendo por que.
+//
+// Reproduzido: com a aplicacao no ar, derrubar o Postgres encerra o processo em
+// pg-pool/index.js:45. Nao existe ponto de defesa no meio do caminho.
+//
+// E pior do que parece por causa do railway.json: restartPolicyMaxRetries e 10.
+// Se o banco demora mais do que dez reinicios para voltar, o Railway desiste e o
+// servico fica em 502 ate alguem entrar e mandar subir na mao.
+//
+// Escutar aqui NAO esconde erro de consulta: cada query continua rejeitando a
+// promessa dela e quem chamou trata como sempre. O que muda e so o destino da
+// conexao ociosa que morreu — vira log em vez de fim do processo, e o proximo
+// pedido pega uma conexao nova, que o pool recria sozinho.
+pool.on('error', (err: any) => {
+  console.error('[DB] conexao ociosa caiu; o pool se recupera sozinho:', err?.message || err);
+});
+
 export const db = drizzle({ client: pool, schema });
