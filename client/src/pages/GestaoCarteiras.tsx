@@ -90,6 +90,9 @@ export default function GestaoCarteiras() {
   const [vendedores, setVendedores] = useState<string[]>([]); // vazio = todos
   const [visao, setVisao] = useState<"situacao" | "clientes">("situacao");
   const [balde, setBalde] = useState<"inativos" | "perdidos" | "debito">("inativos");
+  const [ordSitCol, setOrdSitCol] = useState<string>("");
+  const [ordSitDir, setOrdSitDir] = useState<"asc" | "desc">("asc");
+  const [clienteSerie, setClienteSerie] = useState<string>(""); // chave do cliente no gráfico
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C" | "D">("todas");
   const [sinalSel, setSinalSel] = useState<"todos" | "+" | "-">("todos");
@@ -258,17 +261,47 @@ export default function GestaoCarteiras() {
     [listaSituacao, balde],
   );
 
+  // Ordenação da lista de situação (clique no cabeçalho). Sem coluna escolhida,
+  // vale a ordem natural do balde (potencial ou débito, do maior para o menor).
+  const listaSituacaoOrdenada = useMemo(() => {
+    if (!ordSitCol) return listaSituacao;
+    const valor = (c: Cliente) => {
+      if (ordSitCol === "nome") return (c.nome || "").toLocaleLowerCase("pt-BR");
+      if (ordSitCol === "valor") return balde === "debito" ? c.debito || 0 : c.potencialMes || 0;
+      return c.mesesSemComprar >= 99 ? -1 : c.mesesSemComprar; // "parado há"
+    };
+    const arr = [...listaSituacao].sort((a2, b2) => {
+      const x = valor(a2), y = valor(b2);
+      const cmp = typeof x === "string" || typeof y === "string"
+        ? String(x).localeCompare(String(y), "pt-BR")
+        : (x as number) - (y as number);
+      return ordSitDir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [listaSituacao, ordSitCol, ordSitDir, balde]);
+
   // A série do gráfico segue o período; com filtro de vendedor ela é recomposta
   // a partir dos clientes daquela carteira (por isso o back manda porMes).
+  // Cliente escolhido para o gráfico (vazio = a carteira toda do recorte).
+  const clienteDaSerie = useMemo(
+    () => (clienteSerie ? todos.find((c) => c.chave === clienteSerie) || null : null),
+    [clienteSerie, todos],
+  );
+
   const serie = useMemo(() => {
     const base: any[] = d?.serie || [];
+    // Um cliente só: a série é o histórico dele, mês a mês.
+    if (clienteDaSerie) {
+      const pm: any = (clienteDaSerie as any).porMes || {};
+      return meses.map((m) => ({ mes: m, valor: Number(pm[m]) || 0, titulos: 0, clientes: 0, valorNf: null }));
+    }
     if (!filtrarVend) return base;
     const soma = new Map<string, number>();
     for (const c of clientes as any[]) {
       for (const [m, v] of Object.entries(c.porMes || {})) soma.set(m, (soma.get(m) || 0) + (Number(v) || 0));
     }
     return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
-  }, [d, clientes, meses, filtrarVend]);
+  }, [d, clientes, meses, filtrarVend, clienteDaSerie]);
 
   const kpis = useMemo(() => {
     if (!filtrarVend) return d?.kpis || {};
@@ -325,6 +358,7 @@ export default function GestaoCarteiras() {
       case "vendedor": return c.vendedor || "";
       case "total": return c.total || 0;
       case "conquista": return c.conquista || "9999-99-99"; // sem data vai para o fim
+      case "status": return !c.cadastrado ? "3 sem cadastro" : c.ativo ? "1 Ativo" : "2 Inativo";
       case "mediaPonderada": return c.mediaPonderada || 0;
       case "mediaSimples": return c.mediaSimples || 0;
       case "mesesComCompra": return c.mesesComCompra || 0;
@@ -339,6 +373,30 @@ export default function GestaoCarteiras() {
     if (ordCol !== k) { setOrdCol(k); setOrdDir("asc"); return; }
     if (ordDir === "asc") { setOrdDir("desc"); return; }
     setOrdCol(""); setOrdDir("asc");
+  };
+
+  const clicarSituacao = (k: string) => {
+    if (ordSitCol !== k) { setOrdSitCol(k); setOrdSitDir("asc"); return; }
+    if (ordSitDir === "asc") { setOrdSitDir("desc"); return; }
+    setOrdSitCol(""); setOrdSitDir("asc");
+  };
+  const thSituacao = (k: string, label: string, cls = "", direita = false) => {
+    const ativa = ordSitCol === k;
+    return (
+      <TableHead className={cls}>
+        <button
+          type="button"
+          onClick={() => clicarSituacao(k)}
+          data-testid={`th-situacao-${k}`}
+          className={`inline-flex items-center gap-1 hover:text-foreground transition ${direita ? "flex-row-reverse" : ""} ${ativa ? "text-foreground font-semibold" : ""}`}
+        >
+          {label}
+          {ativa
+            ? (ordSitDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)
+            : <ChevronsUpDown className="h-3 w-3 opacity-40" />}
+        </button>
+      </TableHead>
+    );
   };
 
   const thOrdenavel = (k: string, label: string, cls = "", direita = false) => {
@@ -704,18 +762,16 @@ export default function GestaoCarteiras() {
 
                     <div className="max-h-[268px] overflow-auto border rounded-md">
                       <Table>
-                        <TableHeader>
+                        <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
                           <TableRow>
                             <TableHead className="w-8">#</TableHead>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead className="text-right whitespace-nowrap">
-                              {balde === "debito" ? "Vencido em aberto" : "Potencial/mês"}
-                            </TableHead>
-                            <TableHead className="text-right w-20 whitespace-nowrap">Parado há</TableHead>
+                            {thSituacao("nome", "Cliente")}
+                            {thSituacao("valor", balde === "debito" ? "Vencido em aberto" : "Potencial/mês", "text-right whitespace-nowrap", true)}
+                            {thSituacao("parado", "Parado há", "text-right w-20 whitespace-nowrap", true)}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {listaSituacao.slice(0, 200).map((c, i) => (
+                          {listaSituacaoOrdenada.slice(0, 200).map((c, i) => (
                             <TableRow key={c.chave} data-testid={`row-situacao-${i}`}>
                               <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
                               <TableCell className="font-medium leading-tight">
@@ -924,13 +980,45 @@ export default function GestaoCarteiras() {
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <CardTitle>Evolução do faturamento</CardTitle>
+                <div className="min-w-0">
+                  <CardTitle>
+                    Evolução do faturamento
+                    {clienteDaSerie ? <span className="text-base font-normal text-muted-foreground"> · {clienteDaSerie.nome}</span> : null}
+                  </CardTitle>
                   <CardDescription>
                     Base: títulos de venda emitidos em Contas a Receber
-                    {!filtrarVend && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
+                    {!filtrarVend && !clienteDaSerie && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
                     {fim === mesHoje ? " · o último mês ainda está em curso" : ""}
                   </CardDescription>
+                  {/* Filtro por cliente: digitar filtra a lista (datalist nativo).
+                      Vazio = a carteira inteira do recorte. */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="relative w-[300px] max-w-full">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        list="clientes-da-serie"
+                        defaultValue=""
+                        placeholder="Ver um cliente só — digite o nome"
+                        className="pl-8 h-8"
+                        data-testid="input-cliente-serie"
+                        onChange={(e) => {
+                          const alvo = String(e.target.value || "").trim().toLocaleLowerCase("pt-BR");
+                          if (!alvo) { setClienteSerie(""); return; }
+                          const achado = clientes.find((c) => c.nome.toLocaleLowerCase("pt-BR") === alvo);
+                          if (achado) setClienteSerie(achado.chave);
+                        }}
+                      />
+                      <datalist id="clientes-da-serie">
+                        {clientes.slice(0, 1200).map((c) => <option key={c.chave} value={c.nome} />)}
+                      </datalist>
+                    </div>
+                    {clienteDaSerie ? (
+                      <Button size="sm" variant="ghost" className="h-8" data-testid="button-limpar-cliente-serie"
+                        onClick={() => { setClienteSerie(""); const el = document.querySelector('[data-testid="input-cliente-serie"]') as HTMLInputElement | null; if (el) el.value = ""; }}>
+                        Limpar
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
                 <Popover>
                   <PopoverTrigger asChild>
@@ -998,7 +1086,7 @@ export default function GestaoCarteiras() {
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
                   <Line type="linear" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                  {!filtrarVend && (d?.fonte?.mesesComNf || 0) > 0 ? (
+                  {!filtrarVend && !clienteDaSerie && (d?.fonte?.mesesComNf || 0) > 0 ? (
                     <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
                 </LineChart>
@@ -1103,6 +1191,7 @@ export default function GestaoCarteiras() {
                     <TableHead className="w-10">#</TableHead>
                     {thOrdenavel("nome", "Cliente")}
                     {thOrdenavel("conquista", "Data de conquista", "w-32")}
+                    {thOrdenavel("status", "Status atual", "w-24")}
                     {thOrdenavel("tipo", "Tipo", "w-16")}
                     {thOrdenavel("classe", "Classe", "w-16")}
                     {thOrdenavel("vendedor", "Vendedor")}
@@ -1164,6 +1253,20 @@ export default function GestaoCarteiras() {
                             </span>
                           ))}
                         </TableCell>
+                        {/* Status ATUAL do cadastro — não confundir com a situação
+                            da carteira (perdido é cadastro ativo que parou de comprar). */}
+                        <TableCell className="whitespace-nowrap">
+                          {c.cadastrado ? (
+                            <span
+                              className="text-xs px-1.5 py-0.5 rounded font-medium"
+                              style={c.ativo
+                                ? { background: `${COR_CONQUISTA.entrada}1a`, color: COR_CONQUISTA.entrada }
+                                : { background: `${COR_CONQUISTA.saida}1a`, color: COR_CONQUISTA.saida }}
+                            >{c.ativo ? "Ativo" : "Inativo"}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground" title="Faturou no período mas não tem cadastro casável por documento">sem cadastro</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${COR_TIPO[c.tipo] || CINZA}1a`, color: COR_TIPO[c.tipo] || CINZA }}>{c.tipo === "Não identificado" ? "—" : c.tipo}</span>
                         </TableCell>
@@ -1213,7 +1316,7 @@ export default function GestaoCarteiras() {
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={14} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
