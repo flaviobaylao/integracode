@@ -42,7 +42,7 @@ type Linha = {
   valorNota?: number;
   pagoNota?: number;
   saldoNota?: number;
-  situacao: string;
+  situacao: string | null;
   origem: string;
   cancelada?: boolean;
   diasAtraso?: number | null;
@@ -74,7 +74,7 @@ type DetalheNota = {
   saldo: number;
   parcelasQtd: number;
   origem?: string | null;
-  situacao: string;
+  situacao: string | null;
   cancelada?: boolean;
   parcelas: DetalheParcela[];
   pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
@@ -231,6 +231,7 @@ export default function ExtratoCliente() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [tipo, setTipo] = useState<"todos" | "NF" | "PAGAMENTO">("todos");
+  const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todos");
   const [busca, setBusca] = useState("");
   const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
   const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
@@ -297,6 +298,11 @@ export default function ExtratoCliente() {
   const linhas = useMemo(() => {
     let out = extrato?.linhas || [];
     if (tipo !== "todos") out = out.filter((l) => l.tipo === tipo);
+    if (situacaoFiltro !== "todos") {
+      out = out.filter((l) =>
+        situacaoFiltro === "__sem__" ? !l.situacao : String(l.situacao || "") === situacaoFiltro
+      );
+    }
     const q = busca.trim().toLowerCase();
     if (q) {
       out = out.filter(
@@ -326,7 +332,7 @@ export default function ExtratoCliente() {
       return String(a.documento).localeCompare(String(b.documento));
     });
     return out;
-  }, [extrato, tipo, busca, sortCol, sortDir]);
+  }, [extrato, tipo, situacaoFiltro, busca, sortCol, sortDir]);
 
   const totaisVisiveis = useMemo(() => {
     const deb = linhas.reduce((s, l) => s + (l.debito || 0), 0);
@@ -454,6 +460,25 @@ export default function ExtratoCliente() {
                 <option value="todos">Notas + Pagamentos</option>
                 <option value="NF">Somente notas</option>
                 <option value="PAGAMENTO">Somente pagamentos</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400 block">Situação</label>
+              <select
+                value={situacaoFiltro}
+                onChange={(e) => setSituacaoFiltro(e.target.value)}
+                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
+                data-testid="select-situacao"
+              >
+                <option value="todos">Todas as situações</option>
+                <option value="Em aberto">Em aberto</option>
+                <option value="Vencida">Vencida</option>
+                <option value="Parcial">Parcial</option>
+                <option value="Quitada">Quitada</option>
+                <option value="Recebido">Recebido</option>
+                <option value="Cancelada">Cancelada</option>
+                <option value="__sem__">Sem situação</option>
               </select>
             </div>
 
@@ -654,9 +679,11 @@ export default function ExtratoCliente() {
                             {l.credito ? fmtBRL(l.credito) : ""}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[l.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                              {l.situacao}
-                            </span>
+                            {l.situacao ? (
+                              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[l.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                                {l.situacao}
+                              </span>
+                            ) : null}
                             {l.tipo === "NF" && l.saldoNota != null && l.saldoNota > 0.009 && (l.pagoNota || 0) > 0 ? (
                               <div className="text-[10px] text-gray-500">falta {fmtBRL(l.saldoNota)}</div>
                             ) : null}
@@ -796,9 +823,11 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
                 <i className="fas fa-hand-holding-dollar" /> Pagamento{dPag?.nf ? ` — NF ${dPag.nf}` : ""}
               </span>
             )}
-            <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[linha.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
-              {linha.situacao}
-            </span>
+            {linha.situacao ? (
+              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[linha.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                {linha.situacao}
+              </span>
+            ) : null}
             {(isNota ? dNota?.cancelada : dPag?.estimado) ? (
               <span className="px-2 py-0.5 rounded-full border text-[11px] bg-gray-200 text-gray-600 border-gray-300">
                 {isNota ? "Cancelada" : "Data estimada"}
