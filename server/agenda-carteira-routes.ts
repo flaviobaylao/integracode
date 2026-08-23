@@ -292,6 +292,31 @@ export function registerAgendaCarteira(app: Express) {
         }
       } catch (e: any) { console.warn("[carteira-agenda] passado:", e?.message); }
 
+      // PEDIDO NA ULTIMA VISITA. O fechamento de um card grava sempre uma linha
+      // em order_history — com venda (status 'completed') ou sem venda. Entao a
+      // linha MAIS RECENTE de cada cliente e' o registro da ultima visita, e o
+      // valor dela responde "teve pedido?". Sem venda vira 0.
+      // Uma varredura so' (DISTINCT ON), nao um lateral por cliente.
+      const pedidoPorCliente = new Map<string, { valor: number; data: string | null }>();
+      try {
+        const pedidos = (await db.execute(sql.raw(`
+          SELECT DISTINCT ON (sc.customer_id)
+                 sc.customer_id,
+                 oh.order_date::date::text AS d,
+                 CASE WHEN oh.status = 'completed'
+                      THEN COALESCE(NULLIF(oh.total_value::text,'')::numeric, 0)
+                      ELSE 0 END::float AS valor
+          FROM order_history oh
+          JOIN sales_cards sc ON sc.id = oh.sales_card_id
+          WHERE oh.order_date >= (now() - interval '18 months')
+          ORDER BY sc.customer_id, oh.order_date DESC
+          LIMIT 100000`))).rows as any[];
+        for (const p of pedidos) {
+          const k = String(p.customer_id || "");
+          if (k) pedidoPorCliente.set(k, { valor: Number(p.valor || 0), data: p.d || null });
+        }
+      } catch (e: any) { console.warn("[carteira-agenda] pedidos:", e?.message); }
+
       const itens: any[] = [];
       for (const r of clientes) {
         const dias = diasDoCadastro(r.weekdays);
@@ -322,6 +347,8 @@ export function registerAgendaCarteira(app: Express) {
           periodicidade: String(r.periodicidade || "semanal"),
           dias,
           ultimaVisita: r.ultima_visita || null,
+          pedidoUltimaVisita: pedidoPorCliente.get(String(r.id))?.valor ?? 0,
+          dataUltimoPedido: pedidoPorCliente.get(String(r.id))?.data ?? null,
           datas,
         });
       }
@@ -356,6 +383,9 @@ export function registerAgendaCarteira(app: Express) {
             periodicidade: "retorno",
             dias: [NUM_DIA[d.getDay()]],
             ultimaVisita: null,
+            // Lead nao tem card de venda fechado — nao ha pedido anterior.
+            pedidoUltimaVisita: 0,
+            dataUltimoPedido: null,
             datas: [l.retorno],
           });
         }
