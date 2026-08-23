@@ -109,7 +109,7 @@ export default function CustomerManagement() {
   const [selectedVirtualType, setSelectedVirtualType] = useState('');
   const [selectedPeriodicity, setSelectedPeriodicity] = useState('');
   const [selectedPersonType, setSelectedPersonType] = useState('');
-  const [selectedCity, setSelectedCity] = useState('');
+  const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [selectedNeighborhood, setSelectedNeighborhood] = useState('');
   const [selectedCoords, setSelectedCoords] = useState(''); // "", "com", "sem"
   const [phoneFilter, setPhoneFilter] = useState('');
@@ -311,6 +311,26 @@ export default function CustomerManagement() {
     window.open(wazeUrl, '_blank');
   };
 
+  // Padroniza nomes de cidade: agrupa variações (acento, caixa, sufixo " (UF)")
+  // sob um único rótulo, escolhendo a melhor grafia existente entre as variações.
+  const cityKey = (c?: string | null) =>
+    String(c || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+      .replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, ' ').trim();
+  const cityBest = (() => {
+    const best = new Map<string, string>();
+    const score = (s: string) => (/[a-z]/.test(s) ? 2 : 0) + (/[À-ÿ]/.test(s) ? 1 : 0) + (s.includes('(') ? -3 : 0);
+    for (const c of (customers || [])) {
+      const raw = String((c as any).city || '').trim();
+      if (!raw) continue;
+      const k = cityKey(raw);
+      if (!k) continue;
+      const cur = best.get(k);
+      if (!cur || score(raw) > score(cur) || (score(raw) === score(cur) && raw.length < cur.length)) best.set(k, raw);
+    }
+    return best;
+  })();
+  const cityLabelOf = (c?: string | null) => cityBest.get(cityKey(c)) || (c ? String(c).trim() : '');
+
   const filteredCustomers = customers?.filter((customer: any) => {
     const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
     const fantasyName = customer.fantasyName || '';
@@ -375,7 +395,7 @@ export default function CustomerManagement() {
     const ptDigits = String(customer.cnpj || customer.cpf || '').replace(/\D/g, '');
     const personType = (customer as any).customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
     const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
-    const matchesCity = !selectedCity || String(customer.city || '').trim() === selectedCity;
+    const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(customer.city));
     const matchesNeighborhood = !selectedNeighborhood || String(customer.neighborhood || '').trim() === selectedNeighborhood;
     const matchesPhone = !phoneFilter || String(customer.phone || '').replace(/\D/g, '').includes(phoneFilter.replace(/\D/g, ''));
     const hasCoords = !!(customer.latitude && customer.longitude);
@@ -391,8 +411,8 @@ export default function CustomerManagement() {
     ...(Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b))) as string[]),
     ...((customers || []).some((c: any) => !c.segmentoPrincipal) ? ['(Sem segmento)'] : []),
   ];
-  const cities = Array.from(new Set((customers || []).map((c: any) => String(c.city || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
-  const neighborhoods = Array.from(new Set((customers || []).filter((c: any) => !selectedCity || String(c.city || '').trim() === selectedCity).map((c: any) => String(c.neighborhood || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
+  const cities = Array.from(new Set(Array.from(cityBest.values()))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
+  const neighborhoods = Array.from(new Set((customers || []).filter((c: any) => cityMulti.length === 0 || cityMulti.includes(cityLabelOf(c.city))).map((c: any) => String(c.neighborhood || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -615,14 +635,7 @@ export default function CustomerManagement() {
               </SelectContent>
             </Select>
 
-            <Select value={selectedCity} onValueChange={(val) => { setSelectedCity(val); setSelectedNeighborhood(''); }}>
-              <SelectTrigger className="w-[130px] h-9" data-testid="select-city-filter">
-                <SelectValue placeholder="Cidade" />
-              </SelectTrigger>
-              <SelectContent>
-                {cities.map((city: any) => (<SelectItem key={city} value={city}>{city}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            <MultiSelect label="Cidade" options={cities as string[]} selected={cityMulti} onChange={(v) => { setCityMulti(v); setSelectedNeighborhood(''); }} testId="filter-city-customers" />
 
             <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
               <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
