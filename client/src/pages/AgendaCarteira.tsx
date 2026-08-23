@@ -35,6 +35,8 @@ type Item = {
   periodicidade: string;
   dias: string[];
   ultimaVisita: string | null;
+  pedidoUltimaVisita?: number;
+  dataUltimoPedido?: string | null;
   datas: string[];
 };
 type Semana = { i: number; off: number; ini: string; fim: string; rotulo: string; atual: boolean; passada: boolean };
@@ -49,6 +51,7 @@ const DIAS = [
 const COD_LONGO: Record<string, string> = { Seg: "Segunda", Ter: "Terça", Qua: "Quarta", Qui: "Quinta", Sex: "Sexta", Sab: "Sábado", Dom: "Domingo" };
 const PERIODICIDADES = ["semanal", "quinzenal", "mensal"];
 const NUM = (v: any) => Number(v || 0).toLocaleString("pt-BR");
+const BRL = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 /** 'YYYY-MM-DD' -> dia da semana 1..5 (0 = fim de semana / invalido). */
 const diaDaData = (s: string) => {
   const [a, m, d] = String(s || "").split("-").map(Number);
@@ -62,6 +65,24 @@ const SEMANAS_FRENTE = 8;
 /** "esta semana", "3 sem. atrás", "+2 sem." — o off e' relativo a semana vigente. */
 const rotuloSemana = (s: { off: number }) =>
   s.off === 0 ? "Esta semana" : s.off < 0 ? `${-s.off} sem. atrás` : `+${s.off} sem.`;
+
+// ── Cidade: o cadastro tem "GOIANIA", "Goiânia", "goiania " e afins. Aqui a
+// grafia e' padronizada para o filtro e a coluna nao brigarem entre si.
+/** Chave de agrupamento: sem acento, sem caixa, sem espaço sobrando. */
+const chaveCidade = (s: any) =>
+  String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+/** Preposições ficam em minúscula, como se escreve "Aparecida de Goiânia". */
+const MINUSCULAS = new Set(["de", "da", "do", "das", "dos", "e", "d'"]);
+const tituloCidade = (s: any) =>
+  String(s || "")
+    .toLocaleLowerCase("pt-BR")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((w, i) => (i > 0 && MINUSCULAS.has(w) ? w : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1)))
+    .join(" ");
+/** Quantos caracteres acentuados a grafia tem — a mais acentuada é a melhor. */
+const acentos = (s: any) => (String(s || "").normalize("NFD").match(/[\u0300-\u036f]/g) || []).length;
 
 const dataBR = (s: any) => {
   const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -148,12 +169,31 @@ export default function AgendaCarteira() {
   const conta = (s: number, d: number, c: string) => pivo.get(`${s}|${d}|${c}`) || 0;
   const totalSemana = (s: number, c: string) => DIAS.reduce((t, x) => t + conta(s, x.n, c), 0);
 
+  // Grafia canônica de cada cidade: entre as variações do cadastro, ganha a que
+  // tem mais acento (é a que carrega mais informação) e ela vai para Title Case.
+  const cidadePadrao = useMemo(() => {
+    const melhor = new Map<string, string>();
+    for (const i of todos) {
+      const bruta = String(i.cidade || "").trim();
+      if (!bruta) continue;
+      const k = chaveCidade(bruta);
+      const atual = melhor.get(k);
+      if (!atual || acentos(bruta) > acentos(atual)) melhor.set(k, bruta);
+    }
+    const m = new Map<string, string>();
+    for (const [k, bruta] of melhor) m.set(k, tituloCidade(bruta));
+    return (c: any) => {
+      const k = chaveCidade(c);
+      return k ? m.get(k) || tituloCidade(c) : "";
+    };
+  }, [todos]);
+
   // Rótulos de cada coluna filtrável — as mesmas palavras que aparecem na tabela.
   const rotuloTipo = (i: Item) => (i.tipo === "lead" ? "Lead" : "Cliente");
   const rotuloCanal = (i: Item) => (i.canal === "virtual" ? "Virtual" : "Presencial");
   const rotuloPeriodo = (i: Item) => i.periodicidade || "—";
   const rotulosDia = (i: Item) => (i.dias.length ? i.dias.map((d) => COD_LONGO[d] || d) : ["—"]);
-  const rotuloCidade = (i: Item) => i.cidade || "(sem cidade)";
+  const rotuloCidade = (i: Item) => cidadePadrao(i.cidade) || "(sem cidade)";
 
   /** Opções de um filtro: o que existe na base, já pelo vendedor escolhido. */
   const opcoesDe = (fn: (i: Item) => string[] | string) =>
@@ -167,7 +207,7 @@ export default function AgendaCarteira() {
     () => DIAS.map((d) => d.longo).filter((l) => base.some((i) => rotulosDia(i).includes(l))),
     [base],
   );
-  const opCidade = useMemo(() => opcoesDe(rotuloCidade), [base]);
+  const opCidade = useMemo(() => opcoesDe(rotuloCidade), [base, cidadePadrao]);
 
   // Escolha que sumiu da base (troquei de vendedor) não pode ficar filtrando escondida.
   useEffect(() => { setFTipo((v) => v.filter((x) => opTipo.includes(x))); }, [opTipo]);
@@ -198,10 +238,10 @@ export default function AgendaCarteira() {
     if (fCidade.length) l = l.filter((i) => fCidade.includes(rotuloCidade(i)));
     const alvo = busca.trim().toLocaleLowerCase("pt-BR");
     if (alvo.length >= 2) {
-      l = l.filter((i) => i.nome.toLocaleLowerCase("pt-BR").includes(alvo) || (i.cidade || "").toLocaleLowerCase("pt-BR").includes(alvo));
+      l = l.filter((i) => i.nome.toLocaleLowerCase("pt-BR").includes(alvo) || cidadePadrao(i.cidade).toLocaleLowerCase("pt-BR").includes(alvo));
     }
     return l;
-  }, [base, celula, busca, semanaDaData, fTipo, fCanal, fPeriodo, fDia, fCidade]);
+  }, [base, celula, busca, semanaDaData, fTipo, fCanal, fPeriodo, fDia, fCidade, cidadePadrao]);
 
   const valorCol = (i: Item, k: string): any => {
     switch (k) {
@@ -210,10 +250,9 @@ export default function AgendaCarteira() {
       case "canal": return i.canal;
       case "periodicidade": return i.periodicidade;
       case "dias": return i.dias.join(",");
-      case "cidade": return (i.cidade || "").toLocaleLowerCase("pt-BR");
+      case "cidade": return cidadePadrao(i.cidade).toLocaleLowerCase("pt-BR");
       case "vendedor": return i.vendedor.toLocaleLowerCase("pt-BR");
-      case "ultima": return i.ultimaVisita || "";
-      case "n": return i.datas.length;
+      case "pedido": return Number(i.pedidoUltimaVisita || 0);
       default: return "";
     }
   };
@@ -224,7 +263,7 @@ export default function AgendaCarteira() {
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       return String(va).localeCompare(String(vb), "pt-BR") * dir;
     });
-  }, [lista, ordCol, ordDir]);
+  }, [lista, ordCol, ordDir, cidadePadrao]);
 
   const clicaOrd = (k: string) => {
     if (ordCol !== k) { setOrdCol(k); setOrdDir("asc"); return; }
@@ -259,10 +298,10 @@ export default function AgendaCarteira() {
       Atendimento: i.canal === "virtual" ? "Virtual" : "Presencial",
       Periodicidade: i.periodicidade,
       "Dia(s) de atendimento": i.dias.map((d) => COD_LONGO[d] || d).join(", "),
-      Cidade: i.cidade,
+      Cidade: cidadePadrao(i.cidade),
       Vendedor: i.vendedor,
-      "Última visita concluída": i.ultimaVisita ? dataBR(i.ultimaVisita) : "",
-      "Atendimentos na janela": i.datas.length,
+      "Pedido na última visita (R$)": Number(i.pedidoUltimaVisita || 0),
+      "Data da última visita": i.dataUltimoPedido ? dataBR(i.dataUltimoPedido) : (i.ultimaVisita ? dataBR(i.ultimaVisita) : ""),
       Datas: i.datas.map(dataBR).join(" · "),
     }));
     exportToExcel(clientes, `agenda-carteira-clientes-${hoje || "janela"}`);
@@ -500,8 +539,7 @@ export default function AgendaCarteira() {
                       {th("dias", "Dia de atendimento", "w-40")}
                       {th("cidade", "Cidade")}
                       {th("vendedor", "Vendedor")}
-                      {th("ultima", "Última visita", "w-28")}
-                      {th("n", "Atend. na janela", "text-right w-24")}
+                      {th("pedido", "Pedido na última visita?", "text-right w-40")}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -527,15 +565,21 @@ export default function AgendaCarteira() {
                         </TableCell>
                         <TableCell className="text-sm capitalize">{i.periodicidade}</TableCell>
                         <TableCell className="text-sm">{i.dias.map((d) => COD_LONGO[d] || d).join(", ") || "—"}</TableCell>
-                        <TableCell className="text-sm">{i.cidade || "—"}</TableCell>
+                        <TableCell className="text-sm">{cidadePadrao(i.cidade) || "—"}</TableCell>
                         <TableCell className="text-sm">{i.vendedor}</TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">{i.ultimaVisita ? dataBR(i.ultimaVisita) : "—"}</TableCell>
-                        <TableCell className="text-right font-semibold">{i.datas.length}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          <span className={`text-sm font-semibold ${Number(i.pedidoUltimaVisita || 0) > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
+                            {BRL(i.pedidoUltimaVisita || 0)}
+                          </span>
+                          {i.dataUltimoPedido ? (
+                            <span className="block text-[11px] text-muted-foreground">{dataBR(i.dataUltimoPedido)}</span>
+                          ) : null}
+                        </TableCell>
                       </TableRow>
                     ))}
                     {listaOrdenada.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                           Nenhum atendimento nesse recorte.
                         </TableCell>
                       </TableRow>
