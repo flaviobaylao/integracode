@@ -38,11 +38,10 @@ import { calculateDeliveryDaysFromMultipleRoutes } from "@shared/deliveryDaysCal
 
 const TZ = "America/Sao_Paulo";
 
-/** 'YYYY-MM' do mes corrente em horario de Brasilia. */
-function mesCorrente(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit" })
-    .format(new Date())
-    .slice(0, 7);
+/** 'YYYY-MM-DD' de hoje em horario de Brasilia. */
+function hojeBrasilia(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date());
 }
 
 const iso = (d: Date) =>
@@ -50,25 +49,41 @@ const iso = (d: Date) =>
 
 const ddmm = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 
-export type SemanaMes = { i: number; ini: string; fim: string; rotulo: string };
+export type SemanaJanela = { i: number; off: number; ini: string; fim: string; rotulo: string; atual: boolean; passada: boolean };
+
+/** Quantas semanas para tras e para frente da semana vigente o quadro mostra. */
+export const SEMANAS_ATRAS = 8;
+export const SEMANAS_FRENTE = 8;
 
 /**
- * As semanas (seg–sex) de um mes. Regra: a semana pertence ao mes da SEGUNDA
- * dela. Logo a 1ª semana comeca na 1ª segunda do mes — se o dia 1º for terca,
- * a semana que o contem e' a ultima do mes anterior, como pediu o Flavio.
+ * A JANELA DESLIZANTE de semanas (seg–sex): as 8 passadas, a vigente e as 8
+ * proximas. Nao acompanha o mes — o quadro anda junto com a semana de hoje.
+ *
+ * Semana continua sendo segunda a sexta, ancorada na SEGUNDA. Fim de semana cai
+ * na semana que acabou de passar (sabado e domingo pertencem a segunda anterior),
+ * que e' como o vendedor le "esta semana" na sexta a tarde.
  */
-export function semanasDoMes(mes: string): SemanaMes[] {
-  const [ano, m] = mes.split("-").map(Number);
-  const primeiraSegunda = new Date(ano, m - 1, 1);
-  while (primeiraSegunda.getDay() !== 1) primeiraSegunda.setDate(primeiraSegunda.getDate() + 1);
+export function semanasDaJanela(ref: string): SemanaJanela[] {
+  const [a, m, d] = ref.split("-").map(Number);
+  const hoje = new Date(a, (m || 1) - 1, d || 1);
+  const segundaAtual = new Date(hoje);
+  segundaAtual.setDate(segundaAtual.getDate() - ((segundaAtual.getDay() + 6) % 7));
 
-  const out: SemanaMes[] = [];
-  const cursor = new Date(primeiraSegunda);
-  while (cursor.getMonth() === m - 1 && cursor.getFullYear() === ano) {
-    const sexta = new Date(cursor);
-    sexta.setDate(sexta.getDate() + 4);
-    out.push({ i: out.length + 1, ini: iso(cursor), fim: iso(sexta), rotulo: `${ddmm(cursor)} a ${ddmm(sexta)}` });
-    cursor.setDate(cursor.getDate() + 7);
+  const out: SemanaJanela[] = [];
+  for (let off = -SEMANAS_ATRAS; off <= SEMANAS_FRENTE; off++) {
+    const ini = new Date(segundaAtual);
+    ini.setDate(ini.getDate() + off * 7);
+    const fim = new Date(ini);
+    fim.setDate(fim.getDate() + 4);
+    out.push({
+      i: off + SEMANAS_ATRAS + 1,
+      off,
+      ini: iso(ini),
+      fim: iso(fim),
+      rotulo: `${ddmm(ini)} a ${ddmm(fim)}`,
+      atual: off === 0,
+      passada: off < 0,
+    });
   }
   return out;
 }
@@ -198,16 +213,26 @@ export function projetarDatas(params: {
 
 export function registerAgendaCarteira(app: Express) {
   // ---------------------------------------------------------------------------
-  // GET /api/carteira/agenda?mes=YYYY-MM
+  // GET /api/carteira/agenda   (janela deslizante: 8 semanas atras -> 8 a frente)
+  //
+  // PASSADO x FUTURO. O quadro cobre semanas que ja aconteceram e semanas que
+  // ainda vao acontecer, e as duas metades nao podem sair da mesma conta:
+  //   - ate HOJE  -> vem da AGENDA REAL (visit_agenda), o que de fato esteve
+  //                  marcado no dia. Projetar o passado a partir da ultima visita
+  //                  concluida devolveria vazio, porque a ancora fica no fim dele.
+  //   - de AMANHA -> vem da PROJECAO do cadastro, ancorada na ultima visita
+  //                  concluida. E' o que faz mudanca de periodicidade/dia
+  //                  aparecer na hora, como o Flavio pediu.
   // ---------------------------------------------------------------------------
   app.get("/api/carteira/agenda", authenticateUser, async (req: Request, res: Response) => {
     try {
       const esc = escopo(req);
-      const mes = (String(req.query.mes || "").match(/^\d{4}-\d{2}$/) ? String(req.query.mes) : mesCorrente());
-      const semanas = semanasDoMes(mes);
-      if (!semanas.length) return res.json({ mes, semanas: [], itens: [] });
+      const hoje = String(req.query.ref || "").match(/^\d{4}-\d{2}-\d{2}$/) ? String(req.query.ref) : hojeBrasilia();
+      const semanas = semanasDaJanela(hoje);
       const ini = semanas[0].ini;
       const fim = semanas[semanas.length - 1].fim;
+      // 1º dia projetado: o quadro so' projeta o que ainda nao aconteceu.
+      const amanha = (() => { const d = dataLocal(hoje); d.setDate(d.getDate() + 1); return iso(d); })();
 
       const filtroCarteira = esc.restrito
         ? ` AND c.seller_id IN (${esc.ids.map((i) => `'${i}'`).join(",")})`
@@ -216,11 +241,13 @@ export function registerAgendaCarteira(app: Express) {
         ? ` AND (l.assigned_to IN (${esc.ids.map((i) => `'${i}'`).join(",")}))`
         : "";
 
-      // Clientes ativos do cadastro + a ultima visita CONCLUIDA de cada um.
+      // Clientes do cadastro + a ultima visita CONCLUIDA de cada um. Entra quem
+      // esta ativo hoje E TAMBEM quem foi inativado mas teve visita na janela —
+      // senao o passado do quadro ficaria menor do que realmente foi.
       const clientes = (await db.execute(sql.raw(`
         SELECT c.id, c.name, c.fantasy_name, c.city, c.weekdays, c.visit_periodicity::text AS periodicidade,
                COALESCE(c.virtual_service,false) AS virtual, COALESCE(c.is_lead,false) AS is_lead,
-               c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
+               c.is_active, c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
                COALESCE(vend.nome,'Sem vendedor') AS vendedor,
                va.ultima::text AS ultima_visita
         FROM customers c
@@ -240,21 +267,48 @@ export function registerAgendaCarteira(app: Express) {
           WHERE v.customer_id = c.id AND v.visit_status = 'completed'
         ) va ON TRUE
         WHERE COALESCE(c.is_supplier,false) = false
-          AND c.is_active = true
-          AND COALESCE(c.omie_status,'ativo') = 'ativo'
+          AND (
+            (c.is_active = true AND COALESCE(c.omie_status,'ativo') = 'ativo')
+            OR EXISTS (SELECT 1 FROM visit_agenda vj
+                        WHERE vj.customer_id = c.id
+                          AND vj.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date)
+          )
           ${filtroCarteira}
         LIMIT 20000`))).rows as any[];
+
+      // O que REALMENTE esteve na agenda ate hoje, dentro da janela.
+      const passadoPorCliente = new Map<string, string[]>();
+      try {
+        const passado = (await db.execute(sql.raw(`
+          SELECT v.customer_id, v.scheduled_date::date::text AS d
+          FROM visit_agenda v
+          WHERE v.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date
+          LIMIT 400000`))).rows as any[];
+        for (const p of passado) {
+          const k = String(p.customer_id || "");
+          if (!k || !p.d) continue;
+          const l = passadoPorCliente.get(k);
+          if (l) { if (!l.includes(p.d)) l.push(p.d); } else passadoPorCliente.set(k, [p.d]);
+        }
+      } catch (e: any) { console.warn("[carteira-agenda] passado:", e?.message); }
 
       const itens: any[] = [];
       for (const r of clientes) {
         const dias = diasDoCadastro(r.weekdays);
-        const datas = projetarDatas({
+        // Futuro: projetado do cadastro. Passado: o que esteve marcado de fato.
+        const futuro = projetarDatas({
           dias,
           periodicidade: String(r.periodicidade || "semanal"),
           ancora: r.ultima_visita || null,
           inicioFornecimento: r.inicio_fornecimento || null,
-          ini, fim,
+          ini: amanha, fim,
         });
+        const anteriores = (passadoPorCliente.get(String(r.id)) || []).filter((d) => {
+          const w = dataLocal(d).getDay();
+          return w >= 1 && w <= 5;
+        });
+        const datas = Array.from(new Set([...anteriores, ...futuro])).sort();
+        if (!datas.length) continue;
         itens.push({
           id: String(r.id),
           tipo: r.is_lead ? "lead" : "cliente",
@@ -262,6 +316,7 @@ export function registerAgendaCarteira(app: Express) {
           cidade: r.city || "",
           vendedor: String(r.vendedor || "Sem vendedor"),
           sellerId: String(r.seller_id || ""),
+          ativo: r.is_active !== false,
           // Lead e' SEMPRE presencial, mesmo que o cadastro esteja marcado virtual.
           canal: r.is_lead ? "presencial" : (r.virtual ? "virtual" : "presencial"),
           periodicidade: String(r.periodicidade || "semanal"),
@@ -296,6 +351,7 @@ export function registerAgendaCarteira(app: Express) {
             cidade: l.city || "",
             vendedor: String(l.vendedor || "Sem vendedor"),
             sellerId: String(l.assigned_to || ""),
+            ativo: true,
             canal: "presencial",
             periodicidade: "retorno",
             dias: [NUM_DIA[d.getDay()]],
@@ -308,7 +364,7 @@ export function registerAgendaCarteira(app: Express) {
       }
 
       res.json({
-        mes, semanas, itens,
+        hoje, semanas, itens,
         escopo: { restrito: esc.restrito, papel: esc.papel, vendedor: esc.nome },
         podeEditarVisita: ADMINS_VISITA.includes(esc.email),
       });
