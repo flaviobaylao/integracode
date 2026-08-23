@@ -642,19 +642,20 @@ export default function GestaoCarteiras() {
         </div>
       </div>
 
-      {/* Abas da tela */}
-      <div className="flex gap-1 border-b">
+      {/* Abas da tela — cada assunto com a sua cor, para nao se confundirem:
+          azul = dinheiro da carteira, âmbar = agenda de atendimento. */}
+      <div className="flex gap-2 border-b">
         {([
-          { k: "carteira", rotulo: "Carteira" },
-          { k: "agenda", rotulo: "Agenda da carteira" },
+          { k: "carteira", rotulo: "Carteira", ativa: "border-blue-600 text-blue-700 bg-blue-50", parada: "text-blue-700/60 hover:text-blue-700 hover:bg-blue-50/50" },
+          { k: "agenda", rotulo: "Agenda da carteira", ativa: "border-amber-500 text-amber-700 bg-amber-50", parada: "text-amber-700/60 hover:text-amber-700 hover:bg-amber-50/50" },
         ] as const).map((t) => (
           <button
             key={t.k}
             type="button"
             data-testid={`aba-${t.k}`}
             onClick={() => setAba(t.k)}
-            className={`px-4 py-2 text-sm -mb-px border-b-2 transition ${
-              aba === t.k ? "border-blue-600 text-foreground font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+            className={`px-4 py-2 text-sm -mb-px border-b-2 rounded-t-md transition ${
+              aba === t.k ? `${t.ativa} font-semibold` : `border-transparent ${t.parada}`
             }`}
           >
             {t.rotulo}

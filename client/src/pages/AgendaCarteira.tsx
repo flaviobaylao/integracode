@@ -2,16 +2,18 @@
 // -----------------------------------------------------------------------------
 // GESTAO DE CARTEIRAS — aba "Agenda da carteira".
 //
-// Tabela dinamica de nº de atendimentos por dia da semana, uma coluna por semana
-// do mes, separando PRESENCIAL de VIRTUAL. Abaixo, a relacao de clientes que
-// sustenta cada numero — clicar em qualquer numero filtra a relacao.
+// Tabela dinamica de nº de atendimentos por dia da semana, uma coluna por semana,
+// separando PRESENCIAL de VIRTUAL. Abaixo, a relacao de clientes que sustenta
+// cada numero — clicar em qualquer numero filtra a relacao.
 //
-// A semana e' de segunda a sexta e pertence ao mes da SEGUNDA dela (o servidor
-// monta as semanas; aqui so' se pinta). A cadencia vem projetada do cadastro,
-// ancorada na ultima visita concluida, entao mudar periodicidade ou dia de
-// atendimento muda o quadro na hora.
+// JANELA DESLIZANTE: 8 semanas passadas, a vigente e 8 proximas. Nao acompanha
+// o mes — anda junto com a semana de hoje. A semana e' de segunda a sexta.
+//
+// Ate hoje o quadro mostra a AGENDA REAL (o que esteve marcado); de amanha em
+// diante, a PROJECAO do cadastro ancorada na ultima visita concluida — e' o que
+// faz mudanca de periodicidade ou de dia aparecer na hora.
 // -----------------------------------------------------------------------------
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,7 +37,7 @@ type Item = {
   ultimaVisita: string | null;
   datas: string[];
 };
-type Semana = { i: number; ini: string; fim: string; rotulo: string };
+type Semana = { i: number; off: number; ini: string; fim: string; rotulo: string; atual: boolean; passada: boolean };
 
 const DIAS = [
   { n: 1, curto: "2ª", longo: "Segunda", cod: "Seg" },
@@ -47,11 +49,6 @@ const DIAS = [
 const COD_LONGO: Record<string, string> = { Seg: "Segunda", Ter: "Terça", Qua: "Quarta", Qui: "Quinta", Sex: "Sexta", Sab: "Sábado", Dom: "Domingo" };
 const PERIODICIDADES = ["semanal", "quinzenal", "mensal"];
 const NUM = (v: any) => Number(v || 0).toLocaleString("pt-BR");
-const MES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const labelMes = (m: string) => {
-  const [a, b] = String(m || "").split("-");
-  return b ? `${MES_ABREV[Number(b) - 1]}/${a}` : m;
-};
 /** 'YYYY-MM-DD' -> dia da semana 1..5 (0 = fim de semana / invalido). */
 const diaDaData = (s: string) => {
   const [a, m, d] = String(s || "").split("-").map(Number);
@@ -59,14 +56,19 @@ const diaDaData = (s: string) => {
   const w = new Date(a, m - 1, d).getDay();
   return w >= 1 && w <= 5 ? w : 0;
 };
+/** Quantas semanas para tras e para frente o quadro cobre (espelha o servidor). */
+const SEMANAS_ATRAS = 8;
+const SEMANAS_FRENTE = 8;
+/** "esta semana", "3 sem. atrás", "+2 sem." — o off e' relativo a semana vigente. */
+const rotuloSemana = (s: { off: number }) =>
+  s.off === 0 ? "Esta semana" : s.off < 0 ? `${-s.off} sem. atrás` : `+${s.off} sem.`;
+
 const dataBR = (s: any) => {
   const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : "—";
 };
 
 export default function AgendaCarteira() {
-  const hoje = new Date();
-  const [mes, setMes] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
   const [vendedores, setVendedores] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   // Celula clicada na tabela dinamica: { semana, dia, canal } — filtra a lista.
@@ -74,12 +76,16 @@ export default function AgendaCarteira() {
   const [ordCol, setOrdCol] = useState("nome");
   const [ordDir, setOrdDir] = useState<"asc" | "desc">("asc");
   const [editando, setEditando] = useState<string>("");
+  // O quadro abre com 8 semanas de passado a esquerda; sem isso o usuario cai
+  // olhando junho. Rolamos ate a semana vigente assim que ela existe no DOM.
+  const rolagem = useRef<HTMLDivElement | null>(null);
+  const jaRolou = useRef(false);
 
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery<any>({
-    queryKey: ["/api/carteira/agenda", mes],
+    queryKey: ["/api/carteira/agenda"],
     queryFn: async () => {
-      const r = await fetch(`/api/carteira/agenda?mes=${mes}`, { credentials: "include" });
+      const r = await fetch("/api/carteira/agenda", { credentials: "include" });
       if (!r.ok) throw new Error("Falha ao carregar a agenda da carteira");
       return r.json();
     },
@@ -87,27 +93,29 @@ export default function AgendaCarteira() {
 
   const semanas: Semana[] = data?.semanas || [];
   const todos: Item[] = data?.itens || [];
+  const hoje: string = data?.hoje || "";
+  const semanaAtual = semanas.find((s) => s.atual);
   const escopoRestrito = data?.escopo?.restrito === true;
   const podeEditarVisita = data?.podeEditarVisita === true;
 
-  // Opções do filtro de vendedor: quem realmente tem alguém na agenda do mês.
+  // Opções do filtro de vendedor: quem realmente tem alguém na janela.
   const opcoesVend = useMemo(() => {
     const c = new Map<string, number>();
     for (const i of todos) if (i.datas.length) c.set(i.vendedor, (c.get(i.vendedor) || 0) + 1);
     return Array.from(c.entries()).sort((a, b) => b[1] - a[1]).map(([v]) => v);
   }, [todos]);
-  // O filtro guarda o nome puro — nunca um rótulo com contagem, que muda com o mês.
+  // O filtro guarda o nome puro — nunca um rótulo com contagem, que muda sozinho.
   useEffect(() => {
     setVendedores((sel) => sel.filter((v) => opcoesVend.includes(v)));
   }, [opcoesVend]);
 
-  // Base do quadro: só quem tem atendimento projetado no mês, já pelo vendedor filtrado.
+  // Base do quadro: só quem tem atendimento na janela, já pelo vendedor filtrado.
   const base = useMemo(() => {
     const sel = new Set(vendedores);
     return todos.filter((i) => i.datas.length > 0 && (sel.size === 0 || sel.has(i.vendedor)));
   }, [todos, vendedores]);
 
-  /** Índice da semana de uma data (1..n); 0 se cair fora das semanas do mês. */
+  /** Índice da semana de uma data (1..17); 0 se cair fora da janela. */
   const semanaDaData = useMemo(() => {
     const faixas = semanas.map((s) => [s.ini, s.fim, s.i] as [string, string, number]);
     return (d: string) => {
@@ -132,8 +140,6 @@ export default function AgendaCarteira() {
   }, [base, semanaDaData]);
   const conta = (s: number, d: number, c: string) => pivo.get(`${s}|${d}|${c}`) || 0;
   const totalSemana = (s: number, c: string) => DIAS.reduce((t, x) => t + conta(s, x.n, c), 0);
-  const totalDia = (d: number, c: string) => semanas.reduce((t, s) => t + conta(s.i, d, c), 0);
-  const totalGeral = (c: string) => semanas.reduce((t, s) => t + totalSemana(s.i, c), 0);
 
   // Lista de baixo: obedece a célula clicada e a busca por cliente.
   const lista = useMemo(() => {
@@ -190,27 +196,16 @@ export default function AgendaCarteira() {
     );
   };
 
-  const opcoesMes = useMemo(() => {
-    const out: string[] = [];
-    const d = new Date(hoje.getFullYear(), hoje.getMonth() + 2, 1);
-    for (let i = 0; i < 18; i++) {
-      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-      d.setMonth(d.getMonth() - 1);
-    }
-    return out;
-  }, [hoje.getFullYear(), hoje.getMonth()]);
-
   const exportar = () => {
     const quadro: Record<string, any>[] = [];
     for (const canal of ["presencial", "virtual"]) {
       for (const dia of DIAS) {
         const linha: Record<string, any> = { Canal: canal === "presencial" ? "PRESENCIAL" : "VIRTUAL", Dia: dia.curto };
-        for (const s of semanas) linha[`${s.i}ª sem (${s.rotulo})`] = conta(s.i, dia.n, canal);
-        linha["Total"] = totalDia(dia.n, canal);
+        for (const s of semanas) linha[`${rotuloSemana(s)} (${s.rotulo})`] = conta(s.i, dia.n, canal);
         quadro.push(linha);
       }
     }
-    exportToExcel(quadro, `agenda-carteira-${mes}`);
+    exportToExcel(quadro, `agenda-carteira-${hoje || "janela"}`);
     const clientes = listaOrdenada.map((i) => ({
       Cliente: i.nome,
       Tipo: i.tipo === "lead" ? "Lead" : "Cliente",
@@ -220,14 +215,24 @@ export default function AgendaCarteira() {
       Cidade: i.cidade,
       Vendedor: i.vendedor,
       "Última visita concluída": i.ultimaVisita ? dataBR(i.ultimaVisita) : "",
-      "Atendimentos no mês": i.datas.length,
+      "Atendimentos na janela": i.datas.length,
       Datas: i.datas.map(dataBR).join(" · "),
     }));
-    exportToExcel(clientes, `agenda-carteira-clientes-${mes}`);
+    exportToExcel(clientes, `agenda-carteira-clientes-${hoje || "janela"}`);
   };
 
+  useEffect(() => {
+    if (jaRolou.current || !semanas.length) return;
+    const box = rolagem.current;
+    const alvo = box?.querySelector<HTMLElement>("[data-semana-atual='1']");
+    if (!box || !alvo) return;
+    box.scrollLeft = Math.max(0, alvo.offsetLeft - 220);
+    jaRolou.current = true;
+  }, [semanas.length]);
+
+  const semanaPorI = (i: number) => semanas.find((s) => s.i === i);
   const rotuloCelula = celula
-    ? `${celula.s}ª semana · ${DIAS.find((d) => d.n === celula.d)?.longo} · ${celula.c === "virtual" ? "virtual" : "presencial"}`
+    ? `${(() => { const sm = semanaPorI(celula.s); return sm ? `${rotuloSemana(sm)} (${sm.rotulo})` : `semana ${celula.s}`; })()} · ${DIAS.find((d) => d.n === celula.d)?.longo} · ${celula.c === "virtual" ? "virtual" : "presencial"}`
     : "";
 
   return (
@@ -235,12 +240,10 @@ export default function AgendaCarteira() {
       {/* Filtros da aba */}
       <Card>
         <CardContent className="py-3 px-4 flex flex-wrap items-end gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Mês</label>
-            <Select value={mes} onValueChange={(v) => { setMes(v); setCelula(null); }}>
-              <SelectTrigger className="w-[150px]" data-testid="select-mes-agenda"><SelectValue /></SelectTrigger>
-              <SelectContent>{opcoesMes.map((m) => <SelectItem key={m} value={m}>{labelMes(m)}</SelectItem>)}</SelectContent>
-            </Select>
+          <div className="pt-[21px]">
+            <div className="px-3 py-2 border rounded-md text-sm bg-muted/40 text-muted-foreground whitespace-nowrap" data-testid="selo-semana-vigente">
+              Semana vigente: <span className="font-medium text-foreground">{semanaAtual ? semanaAtual.rotulo : "—"}</span>
+            </div>
           </div>
           <div className="pt-[21px]">
             {escopoRestrito ? (
@@ -272,10 +275,10 @@ export default function AgendaCarteira() {
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <CalendarDays className="h-5 w-5 text-blue-600" />
-                    Atendimentos por dia da semana — {labelMes(mes)}
+                    Atendimentos por dia da semana
                   </CardTitle>
                   <CardDescription>
-                    {semanas.length} semanas · clique em um número para ver quem está por trás dele
+                    {SEMANAS_ATRAS} semanas passadas, a vigente e {SEMANAS_FRENTE} à frente · clique em um número para ver quem está por trás dele
                   </CardDescription>
                 </div>
                 <Popover>
@@ -287,50 +290,60 @@ export default function AgendaCarteira() {
                   <PopoverContent align="end" className="w-96 text-sm space-y-2">
                     <p className="font-semibold">Como o quadro é montado</p>
                     <p>
-                      <b>Semana</b> vai de segunda a sexta e pertence ao mês da <b>segunda-feira</b> dela. Se o dia 1º cai
-                      no meio da última semana do mês anterior, essa semana ainda é do mês anterior — a 1ª semana do mês
-                      novo é a seguinte.
+                      <b>Janela deslizante</b>: as {SEMANAS_ATRAS} semanas passadas, a vigente e as {SEMANAS_FRENTE}{" "}
+                      próximas. Não acompanha o mês — anda junto com a semana de hoje. Cada semana vai de segunda a
+                      sexta, ancorada na segunda-feira.
                     </p>
                     <p>
-                      <b>Âncora</b> é a última visita <i>concluída</i> do cliente, o mesmo raciocínio da montagem da Rota
-                      do Dia. A cadência (semanal, quinzenal, mensal) é contada a partir dela. Quem nunca teve visita
-                      concluída entra pela primeira data válida do mês.
+                      <b>Até hoje</b> o quadro mostra a agenda <i>real</i>: o que de fato esteve marcado no dia (colunas
+                      em tom apagado). <b>De amanhã em diante</b> é projeção do cadastro — por isso mudar periodicidade
+                      ou dia de atendimento muda o número na hora.
+                    </p>
+                    <p>
+                      <b>Âncora</b> da projeção é a última visita <i>concluída</i> do cliente, o mesmo raciocínio da
+                      montagem da Rota do Dia. A cadência (semanal, quinzenal, mensal) é contada a partir dela. Quem
+                      nunca teve visita concluída entra pela primeira data válida da janela.
                     </p>
                     <p>
                       <b>Leads são sempre presenciais</b> e entram pela data de próximo contato. Cliente marcado como
                       atendimento virtual no cadastro conta em VIRTUAL; o resto, em PRESENCIAL.
                     </p>
                     <p className="text-muted-foreground text-xs">
-                      Quem atende em mais de um dia da semana aparece em todos eles na semana visitada.
+                      Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
+                      atendimentos, não clientes distintos.
                     </p>
                   </PopoverContent>
                 </Popover>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto border rounded-md">
+              <div className="overflow-x-auto border rounded-md" ref={rolagem}>
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-muted/60">
                       <th className="text-left px-3 py-2 font-semibold sticky left-0 bg-muted/60 z-10">Dia</th>
                       {semanas.map((s) => (
-                        <th key={s.i} colSpan={2} className="px-2 py-2 text-center font-semibold border-l">
-                          {s.i}ª semana
-                          <span className="block text-[11px] font-normal text-muted-foreground">{s.rotulo}</span>
+                        <th
+                          key={s.i}
+                          colSpan={2}
+                          data-semana-atual={s.atual ? "1" : undefined}
+                          className={`px-2 py-2 text-center font-semibold border-l whitespace-nowrap ${
+                            s.atual ? "bg-blue-100 text-blue-900" : s.passada ? "text-muted-foreground" : ""
+                          }`}
+                        >
+                          {rotuloSemana(s)}
+                          <span className={`block text-[11px] font-normal ${s.atual ? "text-blue-800" : "text-muted-foreground"}`}>{s.rotulo}</span>
                         </th>
                       ))}
-                      <th colSpan={2} className="px-2 py-2 text-center font-semibold border-l bg-muted">Total</th>
                     </tr>
                     <tr className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-1 sticky left-0 bg-muted/40 z-10"></th>
                       {semanas.map((s) => (
                         <Fragment key={s.i}>
-                          <th className="px-2 py-1 text-center border-l">Presencial</th>
-                          <th className="px-2 py-1 text-center">Virtual</th>
+                          <th className={`px-2 py-1 text-center border-l ${s.atual ? "bg-blue-50" : ""}`}>Presencial</th>
+                          <th className={`px-2 py-1 text-center ${s.atual ? "bg-blue-50" : ""}`}>Virtual</th>
                         </Fragment>
                       ))}
-                      <th className="px-2 py-1 text-center border-l bg-muted">Presencial</th>
-                      <th className="px-2 py-1 text-center bg-muted">Virtual</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -344,17 +357,23 @@ export default function AgendaCarteira() {
                             const v = conta(s.i, dia.n, canal);
                             const ativa = celula && celula.s === s.i && celula.d === dia.n && celula.c === canal;
                             return (
-                              <td key={`${s.i}-${canal}`} className={`px-2 py-2 text-center ${canal === "presencial" ? "border-l" : ""}`}>
+                              <td
+                                key={`${s.i}-${canal}`}
+                                className={`px-2 py-2 text-center ${canal === "presencial" ? "border-l" : ""} ${s.atual ? "bg-blue-50/60" : ""}`}
+                              >
                                 <button
                                   type="button"
                                   data-testid={`celula-${s.i}-${dia.n}-${canal}`}
                                   onClick={() => setCelula(ativa ? null : { s: s.i, d: dia.n, c: canal })}
                                   disabled={v === 0}
+                                  title={s.passada ? "Semana passada — agenda real" : "Projeção do cadastro"}
                                   className={`min-w-[2.25rem] px-2 py-0.5 rounded transition ${
                                     v === 0
                                       ? "text-muted-foreground/40 cursor-default"
                                       : ativa
                                       ? "bg-blue-600 text-white font-semibold"
+                                      : s.passada
+                                      ? "text-muted-foreground hover:bg-muted font-normal"
                                       : "hover:bg-blue-100 font-medium"
                                   }`}
                                 >
@@ -364,8 +383,6 @@ export default function AgendaCarteira() {
                             );
                           }),
                         )}
-                        <td className="px-2 py-2 text-center border-l bg-muted/40 font-semibold">{totalDia(dia.n, "presencial") || "—"}</td>
-                        <td className="px-2 py-2 text-center bg-muted/40 font-semibold">{totalDia(dia.n, "virtual") || "—"}</td>
                       </tr>
                     ))}
                     <tr className="border-t-2 bg-muted/50 font-semibold">
@@ -376,8 +393,6 @@ export default function AgendaCarteira() {
                           <td className="px-2 py-2 text-center">{totalSemana(s.i, "virtual") || "—"}</td>
                         </Fragment>
                       ))}
-                      <td className="px-2 py-2 text-center border-l bg-muted">{totalGeral("presencial") || "—"}</td>
-                      <td className="px-2 py-2 text-center bg-muted">{totalGeral("virtual") || "—"}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -392,7 +407,7 @@ export default function AgendaCarteira() {
                 <div>
                   <CardTitle>Clientes da agenda</CardTitle>
                   <CardDescription>
-                    {celula ? <>Filtrado por <span className="font-medium text-foreground">{rotuloCelula}</span></> : "Todos os atendimentos projetados no mês"}
+                    {celula ? <>Filtrado por <span className="font-medium text-foreground">{rotuloCelula}</span></> : "Todos os atendimentos da janela — 8 semanas atrás até 8 à frente"}
                     {" · "}clique no nome para alterar periodicidade, dia e cidade
                   </CardDescription>
                 </div>
@@ -429,7 +444,7 @@ export default function AgendaCarteira() {
                       {th("cidade", "Cidade")}
                       {th("vendedor", "Vendedor")}
                       {th("ultima", "Última visita", "w-28")}
-                      {th("n", "Atend. no mês", "text-right w-24")}
+                      {th("n", "Atend. na janela", "text-right w-24")}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
