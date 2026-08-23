@@ -703,6 +703,8 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   distanceFromPrevious: decimal("distance_from_previous", { precision: 10, scale: 2 }), // Distância da parada anterior em km
   isPriority: boolean("is_priority").notNull().default(false),
   status: varchar("status").notNull().default('pendente'), // pendente, efetuada, em_pausa, devolvida
+  deliveryStartedAt: timestamp("delivery_started_at"), // Quando o entregador tocou "Iniciar Entrega" (chegada ao cliente)
+  deliveryDurationSeconds: integer("delivery_duration_seconds"), // Duração da entrega em segundos (início → comprovante/devolução)
   checkInTime: timestamp("check_in_time"), // Horário real de check-in
   checkInLatitude: decimal("check_in_latitude", { precision: 10, scale: 8 }), // Coordenadas do check-in
   checkInLongitude: decimal("check_in_longitude", { precision: 11, scale: 8 }),
