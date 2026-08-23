@@ -441,11 +441,19 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
+      // Notas de DEVOLUÇÃO DE VENDA e faturamento de outra praça ([GYN]) são
+      // informativas no extrato: NÃO ganham tag de situação e o seu valor NÃO
+      // entra no saldo devedor / vencido / a vencer.
+      const foraDaDivida = (d: any) => /DEVOLU|\[GYN\]/i.test(String(d || ""));
+
       for (const n of Array.from(notas.values())) {
         const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
         const saldoTitulo = Math.max(0, n.valor - n.pago);
         const vencido = !cancelada && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
-        const situacao = cancelada
+        const semTag = foraDaDivida(n.descricao);
+        const situacao = semTag
+          ? null
+          : cancelada
           ? "Cancelada"
           : saldoTitulo <= 0.009
           ? "Quitada"
@@ -628,7 +636,12 @@ export function registerCustomerStatementRoutes(app: Express): void {
       );
       const totalFaturado = notasArr.reduce((s, n) => s + n.valor, 0);
       const totalPago = linhas.filter((l) => l.tipo === "PAGAMENTO").reduce((s, l) => s + l.credito, 0);
-      const abertos = notasArr.filter((n) => n.valor - n.pago > 0.009);
+      // DEVOLUÇÃO DE VENDA / [GYN] não entram na dívida: fora do saldo/vencido/a vencer.
+      const notasDivida = notasArr.filter((n) => !foraDaDivida(n.descricao));
+      const saldoDevGyn = notasArr
+        .filter((n) => foraDaDivida(n.descricao))
+        .reduce((s, n) => s + (n.valor - n.pago), 0);
+      const abertos = notasDivida.filter((n) => n.valor - n.pago > 0.009);
       const vencidos = abertos.filter((n) => estaVencido(n.vencimento, hojeDia));
       const datas = notasArr.map((n) => n.data).filter(Boolean).sort() as string[];
       const atrasos = linhas
@@ -638,7 +651,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const resumo = {
         totalFaturado: Math.round(totalFaturado * 100) / 100,
         totalPago: Math.round(totalPago * 100) / 100,
-        saldoDevedor: Math.round((totalFaturado - totalPago) * 100) / 100,
+        saldoDevedor: Math.round((totalFaturado - totalPago - saldoDevGyn) * 100) / 100,
         totalVencido: Math.round(vencidos.reduce((s, n) => s + (n.valor - n.pago), 0) * 100) / 100,
         totalAVencer:
           Math.round(
