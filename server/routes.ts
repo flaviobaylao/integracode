@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { fireAutomation, fireOrderAutomation } from './automation-engine';
+import { ensureEntregaTempoSchema, registrarTempoEntregaCliente, notifyRotaIniciada, notifyEntregaFinalizada, testarNotificacoesRota } from './rota-entrega-notificacoes';
 import { createServer, type Server } from "http";
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 import { storage } from "./storage";
@@ -526,6 +527,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   try {
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS installment_schedule text`);
   } catch (e: any) { console.warn('⚠️ ALTER installment_schedule:', e?.message); }
+
+  // Garante as colunas de tempo de entrega (paradas + cadastro do cliente) — aditivo e idempotente.
+  // Precisa rodar no boot: delivery_started_at/delivery_duration_seconds entraram no schema Drizzle
+  // e qualquer select da tabela quebraria sem a coluna no banco.
+  try {
+    await ensureEntregaTempoSchema();
+  } catch (e: any) { console.warn('⚠️ ensureEntregaTempoSchema:', e?.message); }
 
   // Auto-resolve default Omie instance ID for env-var-based service
   await resolveDefaultInstanceId(storage);
@@ -15701,10 +15709,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .returning();
       
       console.log(`✅ [DRIVER-START] Rota ${routeId} iniciada`);
+
+      // 📲 Aviso de WhatsApp: rota iniciada → 1ª entrega próxima (vendedor do pedido,
+      // coordenadores/admins e números fixos). Fire-and-forget: nunca trava o início da rota.
+      notifyRotaIniciada(routeId).catch(() => {});
+
       res.json({ message: "Rota iniciada com sucesso", route: updatedRoute[0] });
     } catch (error: any) {
       console.error("Error starting route:", error);
       res.status(500).json({ message: "Failed to start route", error: error.message });
+    }
+  });
+
+  // ▶️ INICIAR ENTREGA: o entregador toca ao CHEGAR no cliente. Marca delivery_started_at;
+  // a entrega termina no comprovante (complete-delivery) ou na devolução (return), e a
+  // diferença vira o tempo da entrega (gravado na parada e no cadastro do cliente).
+  app.post("/api/delivery-routes/stops/:stopId/start-delivery", authenticateUser, async (req: any, res) => {
+    try {
+      const { stopId } = req.params;
+      const userEmail = (req as any).currentUser?.email;
+
+      const stop = await db.select().from(deliveryRouteStops)
+        .where(eq(deliveryRouteStops.id, stopId))
+        .limit(1);
+      if (stop.length === 0) {
+        return res.status(404).json({ message: "Parada não encontrada" });
+      }
+
+      const route = await db.select().from(deliveryRoutes)
+        .where(eq(deliveryRoutes.id, stop[0].routeId))
+        .limit(1);
+      if (route.length === 0) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+
+      const normalizedUserEmail = userEmail?.toLowerCase().trim();
+      const routeDriverEmail = route[0].driverEmail?.toLowerCase().trim();
+      if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
+        return res.status(403).json({ message: "Você não tem permissão para esta parada" });
+      }
+
+      if (!['pendente', 'pending'].includes(String(stop[0].status))) {
+        return res.status(400).json({ message: "Esta entrega já foi concluída" });
+      }
+
+      // Idempotente: se já foi iniciada, mantém o horário original (não zera o cronômetro).
+      if (stop[0].deliveryStartedAt) {
+        return res.json({ message: "Entrega já iniciada", stop: stop[0], startedAt: stop[0].deliveryStartedAt });
+      }
+
+      const now = agora();
+      const updatedStop = await db.update(deliveryRouteStops)
+        .set({ deliveryStartedAt: now, updatedAt: now })
+        .where(eq(deliveryRouteStops.id, stopId))
+        .returning();
+
+      console.log(`▶️ [START-DELIVERY] Motorista ${userEmail} iniciou a entrega da parada ${stopId} às ${now.toISOString()}`);
+      res.json({ message: "Entrega iniciada", stop: updatedStop[0], startedAt: now });
+    } catch (error: any) {
+      console.error("Error starting delivery:", error);
+      res.status(500).json({ message: "Falha ao iniciar entrega", error: error.message });
+    }
+  });
+
+  // 🧪 Teste dos avisos de rota/entrega: envia as 3 mensagens de exemplo SOMENTE para o
+  // número de teste (system_settings 'automations_test_number', padrão 5562995782812).
+  app.post("/api/admin/rota-notificacoes/test", async (_req: any, res) => {
+    try {
+      const r = await testarNotificacoesRota();
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || String(e) });
     }
   });
   
@@ -16041,11 +16116,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const now = agora();
       const currentPhotos = (stop[0].photos as string[]) || [];
-      
-      // Marcar como entregue (check-in e check-out simultâneos)
+
+      // ⏱️ Tempo da entrega: do "Iniciar Entrega" (delivery_started_at) até a foto do comprovante.
+      const inicioEntrega: Date | null = stop[0].deliveryStartedAt ? new Date(stop[0].deliveryStartedAt as any) : null;
+      const duracaoSeg: number | null = inicioEntrega
+        ? Math.max(0, Math.round((now.getTime() - inicioEntrega.getTime()) / 1000))
+        : null;
+
+      // Marcar como entregue (check-in = início da entrega quando cronometrada)
       const updatedStop = await db.update(deliveryRouteStops)
-        .set({ 
-          checkInTime: now,
+        .set({
+          checkInTime: inicioEntrega || now,
           checkInLatitude: latitude?.toString(),
           checkInLongitude: longitude?.toString(),
           checkOutTime: now,
@@ -16053,29 +16134,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkOutLongitude: longitude?.toString(),
           photos: [...currentPhotos, photoUrl],
           status: 'efetuada',
+          deliveryDurationSeconds: duracaoSeg,
           completedAt: now,
           updatedAt: now
         })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
 
-      // Automacao: entrega.finalizada (fire-and-forget)
-      (async () => {
-        let sellerPhone: any = null;
-        try {
-          const c = await storage.getCustomer(stop[0].customerId);
-          if ((c as any)?.sellerId) {
-            const u = await storage.getUser((c as any).sellerId);
-            sellerPhone = (u as any)?.phone || null;
-          }
-        } catch {}
-        await fireAutomation('entrega.finalizada', {
-          customer: { name: stop[0].customerName || 'Cliente' },
-          delivery: { orderNumber: stop[0].orderNumber || (stop[0].salesCardId ? `INT-${String(stop[0].salesCardId).substring(0, 8)}` : '') },
-          driver: { name: route[0].driverName || '' },
-          sellerPhone,
-        });
-      })().catch(() => {});
+      // 🗂️ Cadastro do cliente: registra o tempo desta entrega e recalcula o tempo MÉDIO
+      // (só entregas efetuadas e cronometradas entram na média). Fire-and-forget.
+      if (duracaoSeg != null && stop[0].customerId) {
+        registrarTempoEntregaCliente(String(stop[0].customerId), duracaoSeg, now).catch(() => {});
+      }
+
+      // 📲 Aviso de WhatsApp: entrega efetuada (com início/fim/tempo) + PRÓXIMA entrega da rota.
+      // Substitui a automação antiga 'entrega.finalizada'. Fire-and-forget.
+      notifyEntregaFinalizada({
+        stop: updatedStop[0] || stop[0],
+        route: route[0],
+        tipo: 'efetuada',
+        inicio: inicioEntrega,
+        fim: now,
+        duracaoSeg,
+      }).catch(() => {});
 
       // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO
       // Estratégia: tentar via billingId primeiro, depois via omieOrderId direto da parada
@@ -16281,22 +16362,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const now = agora();
       const currentPhotos = (stop[0].photos as string[]) || [];
       const currentNotes = stop[0].notes || '';
-      
+
+      // ⏱️ Tempo da parada: do "Iniciar Entrega" até a devolução (fica na parada;
+      // devolução NÃO entra na média de tempo de entrega do cliente).
+      const inicioEntregaDev: Date | null = stop[0].deliveryStartedAt ? new Date(stop[0].deliveryStartedAt as any) : null;
+      const duracaoSegDev: number | null = inicioEntregaDev
+        ? Math.max(0, Math.round((now.getTime() - inicioEntregaDev.getTime()) / 1000))
+        : null;
+
       // Marcar como devolvida com o motivo
       const returnNotes = `[DEVOLUÇÃO ${now.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}] ${reason.trim()}`;
-      
+
       const updatedStop = await db.update(deliveryRouteStops)
-        .set({ 
-          checkInTime: now,
+        .set({
+          checkInTime: inicioEntregaDev || now,
           checkInLatitude: latitude?.toString(),
           checkInLongitude: longitude?.toString(),
           photos: photoUrl ? [...currentPhotos, photoUrl] : currentPhotos,
           status: 'devolvida',
+          deliveryDurationSeconds: duracaoSegDev,
           notes: currentNotes ? `${currentNotes}\n\n${returnNotes}` : returnNotes,
           updatedAt: now
         })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
+
+      // 📲 Aviso de WhatsApp: pedido devolvido (com motivo e tempos) + PRÓXIMA entrega. Fire-and-forget.
+      notifyEntregaFinalizada({
+        stop: updatedStop[0] || stop[0],
+        route: route[0],
+        tipo: 'devolvida',
+        inicio: inicioEntregaDev,
+        fim: now,
+        duracaoSeg: duracaoSegDev,
+        motivo: reason.trim(),
+      }).catch(() => {});
       
       // Alterar etapa no Omie para "Aguardando Rota" (80) usando omieOrderId da parada
       const returnStopOmieOrderId = stop[0].omieOrderId;
