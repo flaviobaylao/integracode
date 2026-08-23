@@ -158,7 +158,122 @@ export function sinalDePagamento(pontualidade: number | null, debito: number): "
 /** As 8 classes na ordem em que aparecem na tela: A+, A-, B+, B-, C+, C-, D+, D-. */
 export const CLASSES_ORDEM: string[] = CLASSE_LETRAS.flatMap((l) => [`${l}+`, `${l}-`]);
 
+/** Escopo de quem chama: vendedor e telemarketing so enxergam a propria carteira. */
+function escopoDoUsuario(req: any) {
+  const usuario: any = req?.currentUser || req?.user || null;
+  const papel = String(usuario?.role || "");
+  const restrito = ["vendedor", "telemarketing"].includes(papel);
+  const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const idsCarteira: string[] = [];
+  if (restrito) {
+    const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
+    add(usuario?.id);
+    const codigos: any[] = [];
+    if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
+    const mapa = usuario?.omieVendorCodes;
+    if (mapa && typeof mapa === "object") for (const v of Object.values(mapa)) if (v) codigos.push(v);
+    for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
+    if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
+  }
+  const nome = [usuario?.firstName, usuario?.lastName].filter(Boolean).join(" ").trim() || usuario?.email || "";
+  return { usuario, papel, restrito, idsCarteira, nome };
+}
+
+/** SQL: as chaves de cliente da carteira do usuario (so faz sentido quando
+ *  restrito). Mesma chave do dashboard: doc so' digitos, ou 'N|' + nome em
+ *  maiusculas quando o cadastro nao tem CNPJ/CPF. */
+function sqlDocsDaCarteira(ids: string[]): string {
+  const dentro = `COALESCE(is_supplier,false) = false AND seller_id IN (${ids.map((i) => `'${i}'`).join(",")})`;
+  return `SELECT DISTINCT NULLIF(regexp_replace(COALESCE(NULLIF(cnpj,''),NULLIF(cpf,''),''),'[^0-9]','','g'),'') AS doc
+          FROM customers WHERE ${dentro}
+          UNION
+          SELECT DISTINCT 'N|' || COALESCE(NULLIF(UPPER(TRIM(COALESCE(name,''))),''),'?') AS doc
+          FROM customers WHERE ${dentro}`;
+}
+
+// ── ANOTACOES DA CARTEIRA ────────────────────────────────────────────────────
+// Registro em texto livre por cliente (o "relogio" ao lado do nome). Guarda quem
+// escreveu e quando. A tabela nasce sob demanda, como a de auditoria de cliente.
+let __anotacoesProntas = false;
+async function ensureAnotacoes(): Promise<void> {
+  if (__anotacoesProntas) return;
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS carteira_anotacoes (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      chave varchar NOT NULL,
+      customer_id varchar,
+      cliente_nome varchar,
+      balde varchar,
+      texto text NOT NULL,
+      autor_id varchar,
+      autor_nome varchar,
+      created_at timestamptz DEFAULT now()
+    )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_carteira_anot_chave ON carteira_anotacoes (chave, created_at DESC)`);
+  __anotacoesProntas = true;
+}
+
 export function registerCarteira(app: Express) {
+  // ---------------------------------------------------------------------------
+  // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
+  // ---------------------------------------------------------------------------
+  app.get("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureAnotacoes();
+      const esc = escopoDoUsuario(req);
+      const filtro = esc.restrito
+        ? ` WHERE a.chave IN (${sqlDocsDaCarteira(esc.idsCarteira)})`
+        : "";
+      const rows = (await db.execute(sql.raw(`
+        SELECT a.id, a.chave, a.cliente_nome, a.balde, a.texto, a.autor_nome,
+               to_char(a.created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY HH24:MI') AS quando,
+               a.created_at
+        FROM carteira_anotacoes a${filtro}
+        ORDER BY a.created_at DESC
+        LIMIT 5000`))).rows as any[];
+      res.json(rows.map((r) => ({
+        id: String(r.id), chave: String(r.chave), cliente: r.cliente_nome || "",
+        balde: r.balde || "", texto: String(r.texto || ""),
+        autor: r.autor_nome || "—", quando: r.quando || "",
+      })));
+    } catch (e: any) {
+      console.error("[carteira-anotacoes GET]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/carteira/anotacoes — grava um registro no cliente.
+  // ---------------------------------------------------------------------------
+  app.post("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureAnotacoes();
+      const esc = escopoDoUsuario(req);
+      const b: any = req.body || {};
+      const chave = String(b.chave || "").trim();
+      const texto = String(b.texto || "").trim();
+      if (!chave) return res.status(400).json({ ok: false, error: "Cliente não informado." });
+      if (!texto) return res.status(400).json({ ok: false, error: "Escreva alguma coisa antes de salvar." });
+      if (texto.length > 4000) return res.status(400).json({ ok: false, error: "Texto muito longo (máx. 4000)." });
+      // Vendedor so anota em cliente da carteira dele.
+      if (esc.restrito) {
+        const ok = (await db.execute(sql.raw(
+          `SELECT 1 FROM (${sqlDocsDaCarteira(esc.idsCarteira)}) t WHERE t.doc = ${sql.raw("'" + chave.replace(/'/g, "''") + "'")} LIMIT 1`
+        ))).rows as any[];
+        if (!ok.length) return res.status(403).json({ ok: false, error: "Esse cliente não está na sua carteira." });
+      }
+      await db.execute(sql`
+        INSERT INTO carteira_anotacoes (chave, customer_id, cliente_nome, balde, texto, autor_id, autor_nome)
+        VALUES (${chave}, ${b.customerId || null}, ${String(b.clienteNome || "").slice(0, 200)},
+                ${String(b.balde || "").slice(0, 40)}, ${texto}, ${esc.usuario?.id || null}, ${esc.nome || "—"})`);
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("[carteira-anotacoes POST]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+
   // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
   // ---------------------------------------------------------------------------
