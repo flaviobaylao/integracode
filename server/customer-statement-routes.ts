@@ -441,10 +441,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
-      // Notas de DEVOLUÇÃO DE VENDA e faturamento de outra praça ([GYN]) são
-      // informativas no extrato: NÃO ganham tag de situação e o seu valor NÃO
-      // entra no saldo devedor / vencido / a vencer.
-      const foraDaDivida = (d: any) => /DEVOLU|\[GYN\]/i.test(String(d || ""));
+      // Operações informativas (não são dívida): DEVOLUÇÃO DE VENDA, faturamento de
+      // outra praça ([GYN]), TROCA DE MERCADORIA e REMESSA DE AMOSTRA GRÁTIS.
+      // Não ganham tag de situação e o seu valor NÃO entra no saldo devedor /
+      // vencido / a vencer.
+      const foraDaDivida = (d: any) => /DEVOLU|\[GYN\]|TROCA|AMOSTRA/i.test(String(d || ""));
 
       for (const n of Array.from(notas.values())) {
         const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
