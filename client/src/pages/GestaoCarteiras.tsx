@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   LineChart, Line, BarChart, Bar, LabelList, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
-import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
+import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, ArrowDown, ChevronsUpDown, Clock } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
@@ -82,6 +83,102 @@ const baseNome = (r: string) => String(r || "").replace(/\s*\([\d.,]+\)\s*$/, ""
 /** Rótulo dentro da fatia: só nas fatias com folga (>=6%), para não colidir. */
 const rotuloFatia = (p: any) => (p.percent >= 0.06 ? `${(p.percent * 100).toFixed(0)}%` : "");
 
+// ── Anotações por cliente (o "relóginho" ao lado do nome) ─────────────────────
+type Anotacao = { id: string; chave: string; cliente: string; balde: string; texto: string; autor: string; quando: string };
+
+/** Relógio ao lado do nome do cliente: abre o histórico e deixa escrever mais um
+ *  registro. Cada registro guarda quem escreveu e quando — nada é editável
+ *  depois de salvo, porque o valor disso é ser um diário, não um campo. */
+function RelogioAnotacoes(props: { chave: string; nome: string; balde: string; notas: Anotacao[]; onSalvo: () => void }) {
+  const { chave, nome, balde, notas } = props;
+  const [aberto, setAberto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  const n = notas.length;
+
+  const salvar = async () => {
+    const t = texto.trim();
+    if (!t || salvando) return;
+    setSalvando(true); setErro("");
+    try {
+      const r = await fetch("/api/carteira/anotacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ chave, clienteNome: nome, balde, texto: t }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || "Não deu para salvar o registro.");
+      setTexto("");
+      props.onSalvo();
+    } catch (e: any) {
+      setErro(e?.message || "Não deu para salvar o registro.");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid={`btn-anotacao-${chave}`}
+          title={n ? `${n} ${n === 1 ? "registro" : "registros"}` : "Sem registros — clique para escrever"}
+          className={`relative inline-flex items-center align-middle mr-1.5 shrink-0 rounded p-0.5 hover:bg-muted transition ${n ? "text-primary" : "text-muted-foreground/60"}`}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          {n ? (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-[3px] rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-[14px] text-center">
+              {n > 9 ? "9+" : n}
+            </span>
+          ) : null}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
+        <div className="px-3 py-2 border-b">
+          <p className="text-sm font-semibold leading-tight">{nome}</p>
+          <p className="text-xs text-muted-foreground">
+            {n ? `${n} ${n === 1 ? "registro" : "registros"}` : "Nenhum registro ainda"}
+          </p>
+        </div>
+        <div className="max-h-56 overflow-auto px-3 py-2 space-y-2">
+          {n === 0 ? (
+            <p className="text-xs text-muted-foreground py-2">
+              Escreva o que ficou combinado com esse cliente. O registro fica com o seu nome e a data.
+            </p>
+          ) : (
+            notas.map((a) => (
+              <div key={a.id} className="text-xs border-l-2 border-muted pl-2">
+                <p className="whitespace-pre-wrap break-words">{a.texto}</p>
+                <p className="text-muted-foreground mt-0.5">{a.autor} · {a.quando}</p>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="border-t p-2 space-y-2">
+          <Textarea
+            value={texto}
+            onChange={(e) => setTexto(e.target.value.slice(0, 4000))}
+            placeholder="Novo registro…"
+            rows={3}
+            className="text-xs resize-none"
+            data-testid={`txt-anotacao-${chave}`}
+          />
+          {erro ? <p className="text-xs text-destructive">{erro}</p> : null}
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="h-7 text-xs" disabled={!texto.trim() || salvando} onClick={salvar} data-testid={`btn-salvar-anotacao-${chave}`}>
+              {salvando ? "Salvando…" : "Salvar registro"}
+            </Button>
+            <span className="text-[10px] text-muted-foreground ml-auto">{texto.length}/4000</span>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function GestaoCarteiras() {
   const hoje = new Date();
   const mesHoje = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
@@ -113,6 +210,30 @@ export default function GestaoCarteiras() {
       return r.json();
     },
   });
+
+  // Anotações da carteira: uma busca só para a tela inteira, indexada por
+  // cliente. O relógio é frequente demais para valer uma requisição por linha.
+  const qc = useQueryClient();
+  const { data: anotacoes = [] } = useQuery<Anotacao[]>({
+    queryKey: ["/api/carteira/anotacoes"],
+    queryFn: async () => {
+      const r = await fetch("/api/carteira/anotacoes", { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 30000,
+  });
+  const anotacoesPorChave = useMemo(() => {
+    const m = new Map<string, Anotacao[]>();
+    for (const a of anotacoes || []) {
+      const k = String(a?.chave || "");
+      if (!k) continue;
+      const lista = m.get(k);
+      if (lista) lista.push(a); else m.set(k, [a]);
+    }
+    return m;
+  }, [anotacoes]);
+  const recarregaAnotacoes = () => { qc.invalidateQueries({ queryKey: ["/api/carteira/anotacoes"] }); };
 
   // Vendedores ATIVOS -- mesma fonte usada em "Vendedores" e no filtro de
   // "Clientes Ativos". O dropdown de vendedor lista somente quem esta ativo.
@@ -762,6 +883,13 @@ export default function GestaoCarteiras() {
                             <TableRow key={c.chave} data-testid={`row-situacao-${i}`}>
                               <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
                               <TableCell className="font-medium leading-tight">
+                                <RelogioAnotacoes
+                                  chave={c.chave}
+                                  nome={c.nome}
+                                  balde={balde}
+                                  notas={anotacoesPorChave.get(c.chave) || []}
+                                  onSalvo={recarregaAnotacoes}
+                                />
                                 {c.nome}
                                 <span className="block text-xs text-muted-foreground">
                                   {c.vendedor}{c.cidade ? ` · ${c.cidade}` : ""}
