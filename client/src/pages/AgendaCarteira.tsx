@@ -71,6 +71,13 @@ const dataBR = (s: any) => {
 export default function AgendaCarteira() {
   const [vendedores, setVendedores] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
+  // Filtros da relacao de baixo (vazio = todos). Guardam o RÓTULO que aparece na
+  // coluna, para o usuario nao ter que traduzir "Seg" -> "Segunda" de cabeca.
+  const [fTipo, setFTipo] = useState<string[]>([]);
+  const [fCanal, setFCanal] = useState<string[]>([]);
+  const [fPeriodo, setFPeriodo] = useState<string[]>([]);
+  const [fDia, setFDia] = useState<string[]>([]);
+  const [fCidade, setFCidade] = useState<string[]>([]);
   // Celula clicada na tabela dinamica: { semana, dia, canal } — filtra a lista.
   const [celula, setCelula] = useState<{ s: number; d: number; c: string } | null>(null);
   const [ordCol, setOrdCol] = useState("nome");
@@ -141,7 +148,41 @@ export default function AgendaCarteira() {
   const conta = (s: number, d: number, c: string) => pivo.get(`${s}|${d}|${c}`) || 0;
   const totalSemana = (s: number, c: string) => DIAS.reduce((t, x) => t + conta(s, x.n, c), 0);
 
-  // Lista de baixo: obedece a célula clicada e a busca por cliente.
+  // Rótulos de cada coluna filtrável — as mesmas palavras que aparecem na tabela.
+  const rotuloTipo = (i: Item) => (i.tipo === "lead" ? "Lead" : "Cliente");
+  const rotuloCanal = (i: Item) => (i.canal === "virtual" ? "Virtual" : "Presencial");
+  const rotuloPeriodo = (i: Item) => i.periodicidade || "—";
+  const rotulosDia = (i: Item) => (i.dias.length ? i.dias.map((d) => COD_LONGO[d] || d) : ["—"]);
+  const rotuloCidade = (i: Item) => i.cidade || "(sem cidade)";
+
+  /** Opções de um filtro: o que existe na base, já pelo vendedor escolhido. */
+  const opcoesDe = (fn: (i: Item) => string[] | string) =>
+    Array.from(new Set(base.flatMap((i) => { const v = fn(i); return Array.isArray(v) ? v : [v]; })))
+      .sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  const opTipo = useMemo(() => opcoesDe(rotuloTipo), [base]);
+  const opCanal = useMemo(() => opcoesDe(rotuloCanal), [base]);
+  const opPeriodo = useMemo(() => opcoesDe(rotuloPeriodo), [base]);
+  const opDia = useMemo(
+    () => DIAS.map((d) => d.longo).filter((l) => base.some((i) => rotulosDia(i).includes(l))),
+    [base],
+  );
+  const opCidade = useMemo(() => opcoesDe(rotuloCidade), [base]);
+
+  // Escolha que sumiu da base (troquei de vendedor) não pode ficar filtrando escondida.
+  useEffect(() => { setFTipo((v) => v.filter((x) => opTipo.includes(x))); }, [opTipo]);
+  useEffect(() => { setFCanal((v) => v.filter((x) => opCanal.includes(x))); }, [opCanal]);
+  useEffect(() => { setFPeriodo((v) => v.filter((x) => opPeriodo.includes(x))); }, [opPeriodo]);
+  useEffect(() => { setFDia((v) => v.filter((x) => opDia.includes(x))); }, [opDia]);
+  useEffect(() => { setFCidade((v) => v.filter((x) => opCidade.includes(x))); }, [opCidade]);
+
+  const temFiltroColuna = fTipo.length + fCanal.length + fPeriodo.length + fDia.length + fCidade.length > 0;
+  const limparTudo = () => {
+    setCelula(null); setBusca("");
+    setFTipo([]); setFCanal([]); setFPeriodo([]); setFDia([]); setFCidade([]);
+  };
+
+  // Lista de baixo: obedece a célula clicada, os filtros de coluna e a busca.
   const lista = useMemo(() => {
     let l = base;
     if (celula) {
@@ -149,12 +190,18 @@ export default function AgendaCarteira() {
         (i) => i.canal === celula.c && i.datas.some((dt) => semanaDaData(dt) === celula.s && diaDaData(dt) === celula.d),
       );
     }
+    if (fTipo.length) l = l.filter((i) => fTipo.includes(rotuloTipo(i)));
+    if (fCanal.length) l = l.filter((i) => fCanal.includes(rotuloCanal(i)));
+    if (fPeriodo.length) l = l.filter((i) => fPeriodo.includes(rotuloPeriodo(i)));
+    // Cliente com dois dias entra se QUALQUER um deles estiver escolhido.
+    if (fDia.length) l = l.filter((i) => rotulosDia(i).some((d) => fDia.includes(d)));
+    if (fCidade.length) l = l.filter((i) => fCidade.includes(rotuloCidade(i)));
     const alvo = busca.trim().toLocaleLowerCase("pt-BR");
     if (alvo.length >= 2) {
       l = l.filter((i) => i.nome.toLocaleLowerCase("pt-BR").includes(alvo) || (i.cidade || "").toLocaleLowerCase("pt-BR").includes(alvo));
     }
     return l;
-  }, [base, celula, busca, semanaDaData]);
+  }, [base, celula, busca, semanaDaData, fTipo, fCanal, fPeriodo, fDia, fCidade]);
 
   const valorCol = (i: Item, k: string): any => {
     switch (k) {
@@ -412,9 +459,9 @@ export default function AgendaCarteira() {
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  {celula ? (
-                    <Button size="sm" variant="ghost" onClick={() => setCelula(null)} data-testid="button-limpar-celula">
-                      Limpar filtro
+                  {celula || temFiltroColuna || busca ? (
+                    <Button size="sm" variant="ghost" onClick={limparTudo} data-testid="button-limpar-celula">
+                      Limpar filtros
                     </Button>
                   ) : null}
                   <div className="relative">
@@ -428,6 +475,16 @@ export default function AgendaCarteira() {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Filtros das colunas da relação — mesmos rótulos que aparecem na
+                  tabela, para ninguém ter que traduzir "Seg" de cabeça. */}
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <MultiSelect label="Tipo" options={opTipo} selected={fTipo} onChange={setFTipo} testId="filtro-tipo" />
+                <MultiSelect label="Atendimento" options={opCanal} selected={fCanal} onChange={setFCanal} testId="filtro-atendimento" />
+                <MultiSelect label="Periodicidade" options={opPeriodo} selected={fPeriodo} onChange={setFPeriodo} testId="filtro-periodicidade" />
+                <MultiSelect label="Dia de atendimento" options={opDia} selected={fDia} onChange={setFDia} testId="filtro-dia" />
+                <MultiSelect label="Cidade" options={opCidade} selected={fCidade} onChange={setFCidade} testId="filtro-cidade" />
               </div>
             </CardHeader>
             <CardContent>
@@ -487,8 +544,17 @@ export default function AgendaCarteira() {
                 </Table>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                {NUM(listaOrdenada.length)} {listaOrdenada.length === 1 ? "cliente" : "clientes"} na relação
-                {celula ? ` · ${rotuloCelula}` : ""}.
+                {NUM(listaOrdenada.length)} de {NUM(base.length)} {base.length === 1 ? "cliente" : "clientes"} na relação
+                {celula ? ` · ${rotuloCelula}` : ""}
+                {temFiltroColuna
+                  ? ` · ${[
+                      fTipo.length ? `tipo: ${fTipo.join(", ")}` : "",
+                      fCanal.length ? `atendimento: ${fCanal.join(", ")}` : "",
+                      fPeriodo.length ? `periodicidade: ${fPeriodo.join(", ")}` : "",
+                      fDia.length ? `dia: ${fDia.join(", ")}` : "",
+                      fCidade.length ? `cidade: ${fCidade.join(", ")}` : "",
+                    ].filter(Boolean).join(" · ")}`
+                  : ""}.
               </p>
             </CardContent>
           </Card>
