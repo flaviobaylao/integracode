@@ -337,18 +337,6 @@ export default function GestaoCarteiras() {
   const totalMais = useMemo(() => clientes.filter((c) => sinalDe(c) === "+").length, [clientes]);
 
   // ATRASO DO ÚLTIMO TÍTULO — o retrato mais recente do cliente, não o histórico.
-  // Vem pronto do servidor: se o último título já foi baixado, é a diferença entre
-  // pagamento e vencimento; se ainda está vencido em aberto, é o atraso que está
-  // correndo hoje; se ainda não venceu, é zero. `null` = título sem data de baixa
-  // registrada (importação antiga do Omie), aí não há o que medir.
-  const ATRASO_ROTULO: Record<string, string> = {
-    pago_em_dia: "Último título pago em dia",
-    pago_atrasado: "Último título pago com atraso",
-    vencido: "Último título vencido e ainda em aberto — o atraso está correndo",
-    a_vencer: "Último título ainda não venceu",
-    sem_data: "Último título sem data de baixa registrada — não dá para medir",
-  };
-
   // Valor usado na ordenação de cada coluna clicável (texto ordena A-Z, número por valor).
   const valorDaColuna = (c: Cliente, k: string): string | number => {
     switch (k) {
@@ -364,7 +352,6 @@ export default function GestaoCarteiras() {
       case "mesesComCompra": return c.mesesComCompra || 0;
       case "ultimaCompra": return c.ultimaCompra || "";
       case "debito": return c.debito || 0;
-      case "atraso": return c.atrasoUltimo == null ? -1 : c.atrasoUltimo;
       default: return "";
     }
   };
@@ -1201,7 +1188,6 @@ export default function GestaoCarteiras() {
                     {thOrdenavel("mesesComCompra", "Meses c/ compra", "text-right w-24", true)}
                     {thOrdenavel("ultimaCompra", "Última compra", "w-24")}
                     {thOrdenavel("debito", "Débito", "text-right w-28", true)}
-                    {thOrdenavel("atraso", "Atraso do último título", "text-right w-32", true)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1288,35 +1274,11 @@ export default function GestaoCarteiras() {
                         <TableCell className={`text-right whitespace-nowrap ${(c.debito || 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
                           {(c.debito || 0) > 0 ? BRL(c.debito) : "—"}
                         </TableCell>
-                        {(() => {
-                          const at = c.atrasoUltimo;
-                          const sit = c.situacaoUltimo || "sem_data";
-                          const venc = c.vencimentoUltimo ? c.vencimentoUltimo.split("-").reverse().join("/") : "";
-                          const texto =
-                            at == null ? "—"
-                            : sit === "a_vencer" ? "a vencer"
-                            : at === 0 ? "em dia"
-                            : `${NUM(at)} ${at === 1 ? "dia" : "dias"}`;
-                          const cor =
-                            at == null ? "text-muted-foreground"
-                            : sit === "vencido" ? "text-destructive font-medium"
-                            : at === 0 ? "text-emerald-600"
-                            : at > 15 ? "text-destructive font-medium"
-                            : "";
-                          return (
-                            <TableCell
-                              className={`text-right whitespace-nowrap ${cor}`}
-                              title={`${ATRASO_ROTULO[sit] || ""}${venc ? ` · venceu em ${venc}` : ""}`}
-                            >
-                              {texto}
-                            </TableCell>
-                          );
-                        })()}
                       </TableRow>
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={14} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
