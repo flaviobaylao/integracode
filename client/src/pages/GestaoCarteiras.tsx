@@ -13,6 +13,7 @@ import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
+import AgendaCarteira from "@/pages/AgendaCarteira";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
 // Classe e ordinal: rampa de UM tom (azul), escuro (A) -> claro (D).
@@ -201,6 +202,9 @@ export default function GestaoCarteiras() {
   // Aba do quadro de ticket medio: a distribuicao crua ou a classe A+/A-/.../D-.
   const [abaQuadro, setAbaQuadro] = useState<"ticket" | "classes">("ticket");
   const [visiveis, setVisiveis] = useState(50);
+  // Aba da tela: a carteira (faturamento, classe, situacao) ou a agenda de
+  // atendimentos do mes. Sao dois assuntos com recortes de tempo diferentes.
+  const [aba, setAba] = useState<"carteira" | "agenda">("carteira");
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/reports/gestao-carteiras", inicio, fim],
@@ -638,6 +642,28 @@ export default function GestaoCarteiras() {
         </div>
       </div>
 
+      {/* Abas da tela */}
+      <div className="flex gap-1 border-b">
+        {([
+          { k: "carteira", rotulo: "Carteira" },
+          { k: "agenda", rotulo: "Agenda da carteira" },
+        ] as const).map((t) => (
+          <button
+            key={t.k}
+            type="button"
+            data-testid={`aba-${t.k}`}
+            onClick={() => setAba(t.k)}
+            className={`px-4 py-2 text-sm -mb-px border-b-2 transition ${
+              aba === t.k ? "border-blue-600 text-foreground font-semibold" : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.rotulo}
+          </button>
+        ))}
+      </div>
+
+      {aba === "agenda" ? <AgendaCarteira /> : (
+      <>
       {/* Filtros — uma linha acima dos gráficos */}
       <Card>
         <CardContent className="py-3 px-4 flex flex-wrap items-end gap-3">
@@ -1436,6 +1462,8 @@ export default function GestaoCarteiras() {
             </CardContent>
           </Card>
         </>
+      )}
+      </>
       )}
     </div>
   );
