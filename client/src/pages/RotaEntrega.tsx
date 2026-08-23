@@ -27,6 +27,8 @@ interface DeliveryStop {
   estimatedArrival: string | null;
   estimatedDuration: number;
   isPriority: boolean;
+  deliveryStartedAt: string | null;
+  deliveryDurationSeconds: number | null;
   completedAt: string | null;
   photos: string[] | null;
   notes: string | null;
@@ -261,6 +263,40 @@ export default function RotaEntrega() {
       });
     },
   });
+
+  // ▶️ Iniciar Entrega: tocado quando o entregador CHEGA no cliente. A partir daqui o
+  // tempo da entrega é cronometrado até a foto do comprovante ou a devolução.
+  const startDeliveryMutation = useMutation({
+    mutationFn: async (stopId: string) => {
+      return await apiRequest('POST', `/api/delivery-routes/stops/${stopId}/start-delivery`, {});
+    },
+    onSuccess: () => {
+      toast({ title: "Entrega iniciada", description: "Registre a foto do comprovante ao concluir." });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao iniciar entrega",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Relógio para o cronômetro "em entrega há X min" (re-render a cada 30s)
+  const [, setTickRelogio] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTickRelogio(x => x + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const fmtDuracaoSeg = (seg: number) => {
+    const s = Math.max(0, Math.round(seg));
+    const min = Math.floor(s / 60);
+    if (min >= 60) return `${Math.floor(min / 60)}h ${min % 60}min`;
+    if (min < 10 && s % 60 > 0) return `${min}min ${s % 60}s`;
+    return `${min} min`;
+  };
 
   const handlePhotoCapture = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -514,6 +550,7 @@ export default function RotaEntrega() {
             const isReturned = delivery.status === 'devolvida';
             const isPending = delivery.status === 'pendente' || delivery.status === 'pending';
             const canAct = (delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && isPending;
+            const emEntrega = !!delivery.deliveryStartedAt && isPending;
 
             return (
               <Card
@@ -559,6 +596,15 @@ export default function RotaEntrega() {
                         {statusLabels[delivery.status]}
                       </Badge>
                       
+                      {/* Em entrega: chegada + cronômetro */}
+                      {emEntrega && (
+                        <p className="text-xs text-blue-700 font-medium flex items-center gap-1 mt-1">
+                          <Clock className="h-3 w-3" />
+                          Em entrega desde {formatInTimeZone(new Date(delivery.deliveryStartedAt!), 'America/Sao_Paulo', 'HH:mm')}
+                          {' · '}{fmtDuracaoSeg((Date.now() - new Date(delivery.deliveryStartedAt!).getTime()) / 1000)}
+                        </p>
+                      )}
+
                       {/* Motivo de devolução */}
                       {delivery.status === 'devolvida' && delivery.notes && (
                         <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-lg">
@@ -578,6 +624,12 @@ export default function RotaEntrega() {
                         <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
                           <CheckCircle className="h-3 w-3" />
                           Concluído: {formatInTimeZone(new Date(delivery.completedAt), 'America/Sao_Paulo', 'HH:mm')}
+                          {delivery.deliveryStartedAt && (
+                            <> · início {formatInTimeZone(new Date(delivery.deliveryStartedAt), 'America/Sao_Paulo', 'HH:mm')}</>
+                          )}
+                          {delivery.deliveryDurationSeconds != null && (
+                            <> · ⏱️ {fmtDuracaoSeg(delivery.deliveryDurationSeconds)}</>
+                          )}
                         </p>
                       )}
                       
@@ -624,8 +676,23 @@ export default function RotaEntrega() {
                       Waze
                     </Button>
 
-                    {/* Delivery Button - Only when pending and route started */}
-                    {canAct && (
+                    {/* Iniciar Entrega: obrigatório ao CHEGAR no cliente — só depois
+                        aparecem Entregar/Devolver (o tempo da entrega é cronometrado) */}
+                    {canAct && !emEntrega && (
+                      <Button
+                        size="lg"
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 h-12"
+                        onClick={() => startDeliveryMutation.mutate(delivery.id)}
+                        disabled={startDeliveryMutation.isPending}
+                        data-testid={`btn-iniciar-entrega-${delivery.id}`}
+                      >
+                        <PlayCircle className="h-5 w-5 mr-2" />
+                        {startDeliveryMutation.isPending ? 'Iniciando...' : 'Iniciar Entrega'}
+                      </Button>
+                    )}
+
+                    {/* Entregar/Devolver: somente com a entrega iniciada */}
+                    {canAct && emEntrega && (
                       <>
                         <Button
                           size="lg"
