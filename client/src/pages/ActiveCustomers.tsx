@@ -229,7 +229,7 @@ export default function ActiveCustomers() {
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
   const [selectedPhone, setSelectedPhone] = useState<string>("");
-  const [selectedCity, setSelectedCity] = useState<string>("");
+  const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>("");
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -861,18 +861,31 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
-  const cities = Array.from(
-    new Set(
-      activeCustomers
-        .map(ac => ac.customer?.city?.trim())
-        .filter(Boolean) as string[]
-    )
-  ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  // Padroniza nomes de cidade: agrupa variações (acento, caixa, sufixo " (UF)")
+  // sob um único rótulo, escolhendo a melhor grafia existente entre as variações.
+  const cityKey = (c?: string | null) =>
+    String(c || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()
+      .replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+/g, " ").trim();
+  const { cities, cityLabelOf } = (() => {
+    const best = new Map<string, string>();
+    const score = (s: string) => (/[a-z]/.test(s) ? 2 : 0) + (/[À-ÿ]/.test(s) ? 1 : 0) + (s.includes("(") ? -3 : 0);
+    for (const ac of activeCustomers) {
+      const raw = ac.customer?.city?.trim();
+      if (!raw) continue;
+      const k = cityKey(raw);
+      if (!k) continue;
+      const cur = best.get(k);
+      if (!cur || score(raw) > score(cur) || (score(raw) === score(cur) && raw.length < cur.length)) best.set(k, raw);
+    }
+    const cityLabelOf = (c?: string | null) => best.get(cityKey(c)) || (c ? String(c).trim() : "");
+    const cities = Array.from(new Set(Array.from(best.values()))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return { cities, cityLabelOf };
+  })();
 
   const neighborhoods = Array.from(
     new Set(
       activeCustomers
-        .filter(ac => !selectedCity || ac.customer?.city?.trim() === selectedCity)
+        .filter(ac => cityMulti.length === 0 || cityMulti.includes(cityLabelOf(ac.customer?.city)))
         .map(ac => ac.customer?.neighborhood?.trim())
         .filter(Boolean) as string[]
     )
@@ -948,7 +961,7 @@ export default function ActiveCustomers() {
       const customerPhone = (ac.customer?.phone || '').replace(/\D/g, '');
       const matchesPhone = !phoneDigits || customerPhone.includes(phoneDigits);
       
-      const matchesCity = !selectedCity || ac.customer?.city?.trim() === selectedCity;
+      const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(ac.customer?.city));
       const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
       
       const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId));
@@ -1365,18 +1378,7 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
-              <Select value={selectedCity} onValueChange={(val) => { setSelectedCity(val); setSelectedNeighborhood(""); }}>
-                <SelectTrigger className="w-[130px] h-9" data-testid="select-city-filter">
-                  <SelectValue placeholder="Cidade" />
-                </SelectTrigger>
-                <SelectContent>
-                  {cities.map((city) => (
-                    <SelectItem key={city} value={city}>
-                      {city}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setSelectedNeighborhood(""); }} testId="filter-city-active" />
 
               <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
                 <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
@@ -1422,7 +1424,7 @@ export default function ActiveCustomers() {
                   setSelectedDate("");
                   setSelectedPositivation("");
                   setSelectedPhone("");
-                  setSelectedCity("");
+                  setCityMulti([]);
                   setSelectedNeighborhood("");
                   setSelectedPersonType("");
                   setSelectedCustomerIds(new Set());
@@ -1454,7 +1456,7 @@ export default function ActiveCustomers() {
                   🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || selectedCity || selectedNeighborhood) && (
+              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || cityMulti.length > 0 || selectedNeighborhood) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1638,7 +1640,7 @@ export default function ActiveCustomers() {
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
-                            {searchTerm || selectedSeller || selectedPhone || selectedCity || selectedNeighborhood ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                            {searchTerm || selectedSeller || selectedPhone || cityMulti.length > 0 || selectedNeighborhood ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
