@@ -164,11 +164,19 @@ export default function RotaEntrega() {
   // da câmera), trava o auto-reload do app (SW/atualização). Sem isso, ao voltar da câmera
   // o app recarregava na home e a foto/entrega era perdida. Ao fechar, libera (e aplica
   // um reload que tenha ficado pendente). Guardas definidas em client/index.html.
+  // ⚠️ SEM cleanup nesta dependência: o cleanup do React roda ANTES do próximo efeito, então
+  // qualquer mudança de dependência (ex.: isSubmitting false→true ao confirmar a foto) liberava
+  // a trava por um instante e disparava o reload adiado NO MEIO do upload da foto — o app
+  // recarregava e voltava para a listagem do dia SEM registrar a entrega. A liberação agora
+  // acontece só quando o estado realmente fica ocioso, e só ao desmontar a página.
   useEffect(() => {
     const hold = showDeliveryModal || showReturnModal || isSubmitting;
     try { (window as any).__setReloadHold?.(hold); } catch {}
-    return () => { try { (window as any).__setReloadHold?.(false); } catch {} };
   }, [showDeliveryModal, showReturnModal, isSubmitting]);
+
+  useEffect(() => {
+    return () => { try { (window as any).__setReloadHold?.(false); } catch {} };
+  }, []);
 
   const closeDeliveryModal = () => {
     if (isSubmitting) return;
