@@ -228,6 +228,7 @@ export default function BillingPipeline() {
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
+  const [driverFilter, setDriverFilter] = useState<Set<string>>(new Set()); // entregador (cards em rota)
   // Filtro de datas (por data de criação do pedido). Vazios = sem filtro; só executa quando preenchidos.
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -857,6 +858,11 @@ export default function BillingPipeline() {
     .sort((a, b) => a.localeCompare(b))
     .map((v) => ({ value: v, label: v }));
 
+  // Entregadores presentes nos cards em rota (deliveryDriverName vem do enriquecimento do backend)
+  const driverOptions = Array.from(new Set((items || []).map((i: any) => i.deliveryDriverName).filter(Boolean) as string[]))
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
+
   const toggleInSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (v: string) =>
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
 
@@ -952,6 +958,14 @@ export default function BillingPipeline() {
             onClear={() => setInstanceFilter(new Set())}
             testid="select-instance-pipeline"
           />
+          <MultiSelectFilter
+            label="Entregador"
+            options={driverOptions}
+            selected={driverFilter}
+            onToggle={toggleInSet(setDriverFilter)}
+            onClear={() => setDriverFilter(new Set())}
+            testid="select-driver-pipeline"
+          />
           {/* Filtro de datas (de/até por data de criação do pedido). Vazios = sem filtro. */}
           <div className="flex items-center gap-1 text-sm">
             <span className="text-gray-500 text-xs">De</span>
@@ -975,9 +989,9 @@ export default function BillingPipeline() {
               aria-label="Data final"
             />
           </div>
-          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || search || dateFrom || dateTo) && (
+          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || driverFilter.size > 0 || search || dateFrom || dateTo) && (
             <button
-              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); setDateFrom(''); setDateTo(''); }}
+              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); setDriverFilter(new Set()); setDateFrom(''); setDateTo(''); }}
               className="text-gray-400 hover:text-gray-600 text-sm"
               data-testid="clear-all-filters-pipeline"
             >Limpar filtros ×</button>
@@ -1145,6 +1159,9 @@ export default function BillingPipeline() {
               const matchesOp = opFilter.size === 0 || (cat != null && opFilter.has(cat));
               // (4) Instância — múltipla seleção
               const matchesInstance = instanceFilter.size === 0 || (!!i.omieInstanceName && instanceFilter.has(i.omieInstanceName));
+              // (4b) Entregador — múltipla seleção (só cards em rota têm deliveryDriverName;
+              // com o filtro ativo, cards sem entregador ficam de fora)
+              const matchesDriver = driverFilter.size === 0 || (!!i.deliveryDriverName && driverFilter.has(i.deliveryDriverName));
               // (5) Datas de/até — por data de criação (America/Sao_Paulo). Só filtra quando preenchido.
               let matchesDate = true;
               if (dateFrom || dateTo) {
@@ -1157,7 +1174,7 @@ export default function BillingPipeline() {
                   if (dateTo && dISO > dateTo) matchesDate = false;
                 }
               }
-              return matchesText && matchesSeller && matchesOp && matchesInstance && matchesDate;
+              return matchesText && matchesSeller && matchesOp && matchesInstance && matchesDriver && matchesDate;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             // Classificação por data de criação (A-Z = mais antigos primeiro / Z-A = mais recentes primeiro).
