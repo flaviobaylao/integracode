@@ -14802,6 +14802,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         })
       );
+
+      // ⏱️ Tempo médio MEDIDO de entrega por cliente — referência no card do entregador.
+      // Best-effort: nunca derruba a listagem das rotas.
+      try {
+        const idsCli = Array.from(new Set(
+          routesWithStops.flatMap((r: any) => (r.stops || []).map((s: any) => String(s.customerId || ''))).filter(Boolean)
+        ));
+        if (idsCli.length > 0) {
+          const medias: any = await db.execute(sql`
+            SELECT id, entrega_tempo_medio_seg AS seg, COALESCE(entregas_cronometradas, 0) AS n
+            FROM customers WHERE id IN (${sql.join(idsCli.map((i: string) => sql`${i}`), sql`, `)})`);
+          const mapaMedia = new Map<string, any>((medias?.rows || []).map((r: any) => [String(r.id), r]));
+          for (const r of routesWithStops as any[]) {
+            for (const s of (r.stops || [])) {
+              const m = mapaMedia.get(String(s.customerId || ''));
+              (s as any).tempoMedioEntregaSeg = m && m.seg != null ? Number(m.seg) : null;
+              (s as any).entregasCronometradas = m ? Number(m.n || 0) : 0;
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn('[DRIVER-ROUTES] tempo médio por cliente (ignorado):', e?.message);
+      }
       
       console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas para ${userEmail}`);
       res.json(routesWithStops);

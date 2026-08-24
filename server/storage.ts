@@ -3248,6 +3248,8 @@ export class DatabaseStorage implements IStorage {
         COALESCE(c.delivery_time_slots, '[]'::jsonb) as "deliveryTimeSlots",
         COALESCE(c.delivery_saturday_time_slots, '[]'::jsonb) as "deliverySaturdayTimeSlots",
         COALESCE(c.average_delivery_time, 10) as "averageDeliveryTime",
+        c.entrega_tempo_medio_seg as "entregaTempoMedioSeg",
+        COALESCE(c.entregas_cronometradas, 0) as "entregasCronometradas",
         c.id as "customerId",
         c.weekdays as "customerWeekdays",
         bp.omie_instance_id as "omieInstanceId"
@@ -3294,6 +3296,8 @@ export class DatabaseStorage implements IStorage {
         customerLongitude: row.customerLongitude ? parseFloat(row.customerLongitude) : null,
         customerWeekdays: row.customerWeekdays || null,
         averageDeliveryTime: row.averageDeliveryTime || 10,
+        entregaTempoMedioSeg: row.entregaTempoMedioSeg != null ? Number(row.entregaTempoMedioSeg) : null,
+        entregasCronometradas: Number(row.entregasCronometradas || 0),
         exclusiveVehicle: row.exclusiveVehicle || false,
         vehicleTypes: this.parseJsonField(row.vehicleTypes, []),
         isUrgent: row.isUrgent || false,
