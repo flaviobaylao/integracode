@@ -23059,6 +23059,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // MANUTENÇÃO: recalcula total_actual_distance (km real) de rotas com valor
+  // suspeito (> minKm) ou casa inválida (start 0,0/nula), aplicando a regra que
+  // ignora coordenada (0,0). Corrige a km fantasma já gravada. Admin, idempotente.
+  // ──────────────────────────────────────────────────────────────────────────
+  app.post('/api/admin/recalc-actual-distances', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const minKm = Number(req.query.minKm || 300);
+      const found: any = await db.execute(sql`
+        SELECT id, seller_id, route_date, COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) AS km
+        FROM daily_routes
+        WHERE COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) > ${minKm}
+           OR COALESCE(start_latitude::text, '') !~ '[1-9]'
+      `);
+      const routes = (found?.rows || []) as any[];
+      const { recalculateRouteDistance } = await import('./actualRouteService');
+      const changed: any[] = [];
+      for (const r of routes) {
+        const before = Number(r.km || 0);
+        try {
+          await recalculateRouteDistance(String(r.id), storage);
+          const after = await storage.getDailyRoute(String(r.id));
+          const km2 = Number(after?.totalActualDistance || 0);
+          if (Math.abs(km2 - before) > 0.01) changed.push({ id: r.id, sellerId: r.seller_id, date: r.route_date, before, after: km2 });
+        } catch (e: any) {
+          console.error('recalc falhou p/ rota', r.id, e?.message);
+        }
+      }
+      res.json({ verificadas: routes.length, corrigidas: changed.length, detalhes: changed.slice(0, 100) });
+    } catch (error: any) {
+      console.error('Erro no recalc de distâncias:', error);
+      res.status(500).json({ message: 'Erro no recalc de distâncias', error: error?.message });
+    }
+  });
+
   // Buscar pedidos do dia e débitos para clientes de uma rota
   app.get('/api/daily-routes/:routeId/customer-info', authenticateUser, async (req: any, res) => {
     try {
