@@ -23025,6 +23025,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM daily_routes dr
         LEFT JOIN users u ON u.id = dr.seller_id
         WHERE dr.seller_id IS NOT NULL AND dr.seller_id <> ''
+          AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
         GROUP BY dr.seller_id, date_trunc('month', dr.route_date), u.first_name, u.last_name, u.email, u.role
       `);
       const rows = (r?.rows || []) as any[];
@@ -23046,8 +23047,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         s.total = Math.round((s.total + km) * 10) / 10;
         s.totalDias += dias;
       }
-      const months = Array.from(monthsSet).sort();
-      const sellers = Array.from(sellersMap.values()).sort((a, b) => b.total - a.total);
+      // Só meses e vendedores com km real (>0): remove meses vazios e carteiras sem rodagem.
+      const monthTotals: Record<string, number> = {};
+      for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
+      const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
+      const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
       res.json({ months, sellers, geradoEm: getBrazilDateString() });
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
