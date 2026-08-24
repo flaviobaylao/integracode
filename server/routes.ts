@@ -23006,6 +23006,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // KILOMETRAGEM VENDEDORES (Administração): histórico de KM MENSAL de todos os
+  // vendedores com Rota do Dia. Soma daily_routes.total_actual_distance (km) por
+  // vendedor e por mês, e devolve a matriz (vendedor × mês) já pivotada, com o
+  // nome do vendedor resolvido (first+last → email → id) e a função (role).
+  // ──────────────────────────────────────────────────────────────────────────
+  app.get('/api/admin/km-vendedores', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`
+        SELECT
+          dr.seller_id AS seller_id,
+          to_char(date_trunc('month', dr.route_date), 'YYYY-MM') AS mes,
+          SUM(COALESCE(dr.total_actual_distance::numeric, 0)) AS km,
+          COUNT(*) FILTER (WHERE COALESCE(dr.total_actual_distance::numeric, 0) > 0) AS dias,
+          COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name,
+          u.role AS role
+        FROM daily_routes dr
+        LEFT JOIN users u ON u.id = dr.seller_id
+        WHERE dr.seller_id IS NOT NULL AND dr.seller_id <> ''
+        GROUP BY dr.seller_id, date_trunc('month', dr.route_date), u.first_name, u.last_name, u.email, u.role
+      `);
+      const rows = (r?.rows || []) as any[];
+      const monthsSet = new Set<string>();
+      const sellersMap = new Map<string, any>();
+      for (const row of rows) {
+        const mes = String(row.mes);
+        monthsSet.add(mes);
+        const sid = String(row.seller_id);
+        let s = sellersMap.get(sid);
+        if (!s) {
+          s = { sellerId: sid, sellerName: row.seller_name || sid, role: row.role || null, byMonth: {}, diasByMonth: {}, total: 0, totalDias: 0 };
+          sellersMap.set(sid, s);
+        }
+        const km = Math.round(Number(row.km || 0) * 10) / 10;
+        const dias = Number(row.dias || 0);
+        s.byMonth[mes] = km;
+        s.diasByMonth[mes] = dias;
+        s.total = Math.round((s.total + km) * 10) / 10;
+        s.totalDias += dias;
+      }
+      const months = Array.from(monthsSet).sort();
+      const sellers = Array.from(sellersMap.values()).sort((a, b) => b.total - a.total);
+      res.json({ months, sellers, geradoEm: getBrazilDateString() });
+    } catch (error: any) {
+      console.error('Erro ao montar km de vendedores:', error);
+      res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
+    }
+  });
+
   // Buscar pedidos do dia e débitos para clientes de uma rota
   app.get('/api/daily-routes/:routeId/customer-info', authenticateUser, async (req: any, res) => {
     try {
