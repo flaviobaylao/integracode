@@ -258,6 +258,14 @@ export const customers = pgTable("customers", {
   
   // Tempo médio de entrega em minutos (calculado com base em check-ins/check-outs dos entregadores)
   averageDeliveryTime: integer("average_delivery_time").notNull().default(10),
+
+  // Tempo de entrega MEDIDO (cronômetro do entregador: Iniciar Entrega → comprovante).
+  // Colunas criadas pelo ensureEntregaTempoSchema (boot); alimentadas no complete-delivery.
+  entregasCronometradas: integer("entregas_cronometradas").default(0),
+  entregaTempoMedioSeg: integer("entrega_tempo_medio_seg"),
+  entregaTempoUltimoSeg: integer("entrega_tempo_ultimo_seg"),
+  entregaUltimaEm: timestamp("entrega_ultima_em"),
+
   
   // Configurações de entrega (preferências padrão do cliente)
   exclusiveVehicle: boolean("exclusive_vehicle").notNull().default(false), // Se requer veículo exclusivo para entrega
@@ -2240,6 +2248,8 @@ export interface PendingDelivery {
   customerLongitude: string | null;
   customerWeekdays: string[] | null;
   averageDeliveryTime: number;
+  entregaTempoMedioSeg?: number | null; // tempo médio MEDIDO (segundos)
+  entregasCronometradas?: number;       // nº de entregas cronometradas
   exclusiveVehicle: boolean;
   vehicleTypes: string[];
   isUrgent: boolean;
