@@ -29,6 +29,8 @@ interface DeliveryStop {
   isPriority: boolean;
   deliveryStartedAt: string | null;
   deliveryDurationSeconds: number | null;
+  tempoMedioEntregaSeg?: number | null;
+  entregasCronometradas?: number;
   completedAt: string | null;
   photos: string[] | null;
   notes: string | null;
@@ -596,6 +598,14 @@ export default function RotaEntrega() {
                         {statusLabels[delivery.status]}
                       </Badge>
                       
+                      {/* Tempo médio histórico deste cliente (referência) */}
+                      {!isCompleted && !isReturned && delivery.tempoMedioEntregaSeg != null && (delivery.entregasCronometradas || 0) > 0 && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
+                          <Clock className="h-3 w-3" />
+                          Média deste cliente: {fmtDuracaoSeg(delivery.tempoMedioEntregaSeg)} ({delivery.entregasCronometradas} entrega{(delivery.entregasCronometradas || 0) > 1 ? 's' : ''})
+                        </p>
+                      )}
+
                       {/* Em entrega: chegada + cronômetro */}
                       {emEntrega && (
                         <p className="text-xs text-blue-700 font-medium flex items-center gap-1 mt-1">

@@ -90,6 +90,8 @@ interface DeliveryOrder {
   customerLongitude: string;
   customerWeekdays: string | null;  // Dia da rota/visita do vendedor (ex: "Terça")
   averageDeliveryTime: number;
+  entregaTempoMedioSeg?: number | null;
+  entregasCronometradas?: number;
   exclusiveVehicle: boolean;
   vehicleTypes: string[];
   isUrgent: boolean;
@@ -1035,6 +1037,11 @@ export default function DeliveryManagement() {
                             <Clock className="h-3 w-3 mr-1" />
                             ~{order.averageDeliveryTime} min
                           </span>
+                          {order.entregaTempoMedioSeg != null && (order.entregasCronometradas || 0) > 0 && (
+                            <span className="flex items-center text-emerald-700 font-medium" title={`Tempo médio MEDIDO nas entregas (${order.entregasCronometradas} cronometrada${(order.entregasCronometradas || 0) > 1 ? 's' : ''})`}>
+                              ⏱️ média real: {Math.round(order.entregaTempoMedioSeg / 60)} min ({order.entregasCronometradas})
+                            </span>
+                          )}
                           {order.exclusiveVehicle && order.vehicleTypes.length > 0 && (
                             <span className="flex items-center text-orange-600">
                               <Truck className="h-3 w-3 mr-1" />
