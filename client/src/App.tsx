@@ -28,6 +28,7 @@ import DriverManagement from "@/pages/DriverManagement";
 import DeliveryReports from "@/pages/DeliveryReports";
 import VisitRoutes from "@/pages/VisitRoutes";
 import RotaDoDia from "@/pages/RotaDoDia";
+import KmVendedores from "@/pages/KmVendedores";
 import RoutesManagement from "@/pages/RoutesManagement";
 import DeliveryRoutesList from "@/pages/DeliveryRoutesList";
 import RotaEntrega from "@/pages/RotaEntrega";
@@ -274,6 +275,7 @@ function Router() {
           <Route path="/delivery-reports" component={DeliveryReports} />
           <Route path="/visit-routes" component={VisitRoutes} />
           <Route path="/rota-do-dia" component={RotaDoDia} />
+          <Route path="/km-vendedores" component={KmVendedores} />
           <Route path="/routes-management" component={RoutesManagement} />
           <Route path="/check-in-photos" component={CheckInPhotos} />
           <Route path="/check-in-audit" component={CheckInAudit} />
