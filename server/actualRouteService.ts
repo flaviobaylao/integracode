@@ -3,6 +3,17 @@ import { calculateRealDistance } from './routingService';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora } from '@shared/tempo';
 
+// (24/ago/2026) Coordenada valida? Descarta (0,0)/nula/fora de faixa. Sem isto, uma
+// casa de vendedor nao configurada (start = 0,0 no golfo da Guine) inflava a km:
+// casa(0,0) -> check-in(Goiania) -> casa(0,0) somava ~5.710 km por perna (~11.421 km
+// de km fantasma). Trechos com ponta invalida passam a valer 0.
+function coordOk(lat: number, lon: number): boolean {
+  if (!isFinite(lat) || !isFinite(lon)) return false;
+  if (Math.abs(lat) < 0.001 && Math.abs(lon) < 0.001) return false; // (0,0) = nao configurada
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return false;
+  return true;
+}
+
 /**
  * Calcula a distância REAL percorrida baseada nos checkpoints (check-ins) realizados
  * Considera apenas visitas validadas (status !== 'cancelled')
@@ -47,6 +58,7 @@ export async function calculateActualRouteDistance(
   let previousLat = parseFloat(route.startLatitude);
   let previousLon = parseFloat(route.startLongitude);
   let previousName = 'Casa do Vendedor';
+  let haveOrigin = coordOk(previousLat, previousLon);
 
   for (const checkpoint of checkIns) {
     const currentLat = parseFloat(checkpoint.checkpointLatitude as any);
@@ -75,9 +87,10 @@ export async function calculateActualRouteDistance(
       validatedVisits++;
     }
 
-    // Calcular distância real apenas para visitas validadas
+    // Calcular distancia real apenas para visitas validadas E com coordenadas
+    // validas nas duas pontas (evita km fantasma vinda de (0,0)/coordenada nula).
     let distance = 0;
-    if (checkpoint.validationStatus !== 'cancelled') {
+    if (checkpoint.validationStatus !== 'cancelled' && haveOrigin && coordOk(currentLat, currentLon)) {
       try {
         const distanceMeters = await calculateRealDistance(
           previousLat,
@@ -100,16 +113,21 @@ export async function calculateActualRouteDistance(
       validationStatus: checkpoint.validationStatus || 'validated'
     });
 
-    // Se validada, atualizar ponto anterior
-    if (checkpoint.validationStatus !== 'cancelled') {
+    // Se validada e com coordenada valida, vira o novo ponto de referencia (e passa
+    // a haver origem, mesmo que a casa fosse invalida: o 1o check-in valido ancora).
+    if (checkpoint.validationStatus !== 'cancelled' && coordOk(currentLat, currentLon)) {
       previousLat = currentLat;
       previousLon = currentLon;
       previousName = customerName;
+      haveOrigin = true;
     }
   }
 
-  // Distância de retorno para casa (se houve algum check-in validado)
-  if (validatedVisits > 0) {
+  // Distancia de retorno para casa (so se a casa tiver coordenada valida; casa (0,0)
+  // nao gera perna de retorno - era metade da km fantasma).
+  const homeLatChk = parseFloat(route.startLatitude);
+  const homeLonChk = parseFloat(route.startLongitude);
+  if (validatedVisits > 0 && haveOrigin && coordOk(homeLatChk, homeLonChk)) {
     try {
       const homeLat = parseFloat(route.startLatitude);
       const homeLon = parseFloat(route.startLongitude);
