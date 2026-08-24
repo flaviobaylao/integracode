@@ -885,6 +885,23 @@ export default function CustomerEditModal({
           <div className="space-y-4 border-t pt-4">
             <h3 className="font-semibold text-lg">Configurações de Recebimento</h3>
 
+            {/* ⏱️ Tempo de entrega MEDIDO (cronômetro do entregador: Iniciar Entrega → comprovante) */}
+            {(customer as any)?.entregasCronometradas > 0 && (customer as any)?.entregaTempoMedioSeg != null && (
+              <div className="border border-sky-200 bg-sky-50 p-4 rounded-lg space-y-1" data-testid="bloco-tempo-entrega">
+                <Label className="text-sm font-medium text-sky-900 flex items-center gap-2">
+                  <i className="fas fa-stopwatch text-sky-700"></i>
+                  Tempo de entrega (medido nas entregas)
+                </Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-sky-900">
+                  <div><span className="block text-xs text-sky-700">Tempo médio</span><b>{Math.round(((customer as any).entregaTempoMedioSeg || 0) / 60)} min</b></div>
+                  <div><span className="block text-xs text-sky-700">Última entrega</span><b>{(customer as any).entregaTempoUltimoSeg != null ? Math.round(((customer as any).entregaTempoUltimoSeg || 0) / 60) + ' min' : '—'}</b></div>
+                  <div><span className="block text-xs text-sky-700">Entregas cronometradas</span><b>{(customer as any).entregasCronometradas}</b></div>
+                  <div><span className="block text-xs text-sky-700">Última entrega em</span><b>{(customer as any).entregaUltimaEm ? new Date((customer as any).entregaUltimaEm).toLocaleDateString('pt-BR') : '—'}</b></div>
+                </div>
+                <p className="text-xs text-sky-700">Cronometrado pelo entregador (Iniciar Entrega → foto do comprovante). Somente leitura — será usado na montagem das rotas de entrega.</p>
+              </div>
+            )}
+
             {/* Dados de Pagamento Padrão (condição de pagamento do cliente) */}
             <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-emerald-900 flex items-center gap-2">
