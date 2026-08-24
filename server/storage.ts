@@ -8724,6 +8724,36 @@ export class DatabaseStorage implements IStorage {
         for (const r of rowsB) if (paidSet.has(String(r.salesCardId))) (r as any).paidOnline = true;
       }
     } catch {}
+    // Enriquece cards EM ROTA com o ENTREGADOR e a DATA PROGRAMADA da rota.
+    // Fonte: delivery_route_stops.billing_id = id do card do pipeline (e' assim que o
+    // POST /api/delivery-routes/save vincula as paradas) -> delivery_routes (driver_name,
+    // route_date). Pega a parada mais recente por card e ignora rotas canceladas.
+    try {
+      const rowsC = rows as any[];
+      const emRotaIds = rowsC
+        .filter(r => ['em_rota', 'em_rota_bsb'].includes(String(r.stage || '')))
+        .map(r => String(r.id));
+      if (emRotaIds.length) {
+        const idList = sql.join(emRotaIds.map((i: string) => sql`${i}`), sql`, `);
+        const q: any = await db.execute(sql`
+          SELECT DISTINCT ON (s.billing_id)
+                 s.billing_id AS bid, r.driver_name AS driver, r.route_date::text AS rdate
+          FROM delivery_route_stops s
+          JOIN delivery_routes r ON r.id = s.route_id
+          WHERE s.billing_id IN (${idList})
+            AND COALESCE(r.status, '') NOT IN ('cancelled', 'cancelada')
+          ORDER BY s.billing_id, s.created_at DESC NULLS LAST`);
+        const byBid = new Map<string, any>();
+        for (const x of (q.rows || q) as any[]) if (x.bid) byBid.set(String(x.bid), x);
+        for (const r of rowsC) {
+          const info = byBid.get(String(r.id));
+          if (info) {
+            (r as any).deliveryDriverName = info.driver || null;
+            (r as any).deliveryRouteDate = info.rdate || null;
+          }
+        }
+      }
+    } catch {}
     return rows as any;
   }
 
