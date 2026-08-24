@@ -86,9 +86,19 @@
         window.location.reload();
         return true;
       };
+      // Liberar a trava NAO recarrega na hora: espera 4s e confere de novo se a trava
+      // continua livre. Assim, uma liberacao de um instante (re-render do React, modal que
+      // fecha e reabre) nunca derruba o app no meio do envio da foto do comprovante.
       window.__setReloadHold = function (v) {
         window.__HOLD_RELOAD = !!v;
-        if (!v && window.__pendingReload) { window.__pendingReload = false; window.location.reload(); }
+        if (!v && window.__pendingReload) {
+          setTimeout(function () {
+            if (!window.__HOLD_RELOAD && window.__pendingReload) {
+              window.__pendingReload = false;
+              window.location.reload();
+            }
+          }, 4000);
+        }
       };
     </script>
 
