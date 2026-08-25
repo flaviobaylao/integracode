@@ -224,7 +224,6 @@ export const customers = pgTable("customers", {
   segmentoPrincipal: varchar("segmento_principal"), // Segmento de negócio derivado do CNAE do CNPJ
   phone: varchar("phone").notNull(),
   contact: varchar("contact"), // Nome do contato principal
-  particularidades: text("particularidades"), // Texto livre com particularidades do cliente (aceita ditado por voz)
   email: varchar("email"),
   address: text("address").notNull(),
   city: varchar("city"),
@@ -1613,14 +1612,15 @@ export type ExportedReport = typeof exportedReports.$inferSelect;
 export type InsertExportedReport = z.infer<typeof insertExportedReportSchema>;
 
 // Payment methods type for frontend forms
-export type PaymentMethod = 'a_vista' | 'boleto' | 'pix';
+export type PaymentMethod = 'a_vista' | 'boleto' | 'pix' | 'card';
 export type OperationType = 'venda' | 'troca' | 'amostra' | 'transferencia';
 
 // Mapeamento dos métodos de pagamento para contas do Omie
 export const PAYMENT_METHOD_TO_OMIE_ACCOUNT = {
   'a_vista': 4081856009,  // Omie.CASH (à vista)
   'boleto': 3275551305,   // BB - FILIAL (boleto)
-  'pix': 4081856009       // Omie.CASH (PIX)
+  'pix': 4081856009,      // Omie.CASH (PIX)
+  'card': 4081856009      // Omie.CASH (cartão via link Cielo — dinheiro já entrou)
 } as const;
 
 // Mapeamento de dias de boleto para código de parcela do Omie (códigos reais da API)
@@ -1640,7 +1640,8 @@ export const BOLETO_DAYS_OPTIONS = [7, 14, 21, 28, 32, 35] as const;
 export const PAYMENT_METHOD_LABELS = {
   'a_vista': 'À Vista',
   'boleto': 'Boleto',
-  'pix': 'PIX'
+  'pix': 'PIX',
+  'card': 'Cartão'
 } as const;
 
 export const OPERATION_TYPE_LABELS = {
