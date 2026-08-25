@@ -22,6 +22,7 @@
 
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { timingSafeEqual } from 'crypto';
 
 const HOST_LOJA = 'https://loja.bebahonest.com.br';
 
@@ -531,6 +532,83 @@ export async function csvGoogleAds(dias = 90): Promise<string> {
     out.push([esc(l.gclid), esc(l.nome), esc(l.quando), l.valor.toFixed(2), esc(l.moeda), esc(l.pedido)].join(','));
   }
   return out.join('\n') + '\n';
+}
+
+// ---------------------------------------------------------------------------
+// PULSO DO FIO — o unico numero que decide se a verba do Google esta medindo
+// ---------------------------------------------------------------------------
+/**
+ * Contadores agregados do fio de atribuicao, para leitura por uma tarefa
+ * agendada que roda SEM o navegador do Flavio.
+ *
+ * Por que existe: /api/mkt/google exige login de admin, e o check diario roda
+ * na nuvem, sem sessao. Sem esta rota, a unica forma de saber se o gclid comecou
+ * a chegar e alguem abrir o painel na mao — o que nao acontece no fim de semana,
+ * que e justamente quando a campanha continua gastando.
+ *
+ * O que ele NAO devolve, de proposito: receita, ticket, nome de cliente, telefone,
+ * pedido individual. So contagem. Se a chave vazar, o que se aprende e quantos
+ * pedidos vieram de anuncio — nada que identifique alguem.
+ */
+export async function pulsoDoFio(dias = 30): Promise<{
+  gclidChegou: boolean; pedidosComGclid: number; pedidosNoPeriodo: number;
+  hotsitePedidos: number; hotsiteComCampanha: number; coberturaPct: number;
+  medindo: boolean; dias: number; em: string;
+}> {
+  const d = Math.max(1, Math.min(365, Number(dias) || 30));
+  const conv = await conversoesOffline(d);
+
+  let hotsitePedidos = 0, hotsiteComCampanha = 0;
+  try {
+    const r: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS pedidos,
+             COALESCE(SUM(CASE WHEN campaign_id IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS com_campanha
+        FROM sales_cards
+       WHERE source IN ('hotsite','website')
+         AND created_at >= NOW() - (${String(d)}::text || ' days')::interval`);
+    hotsitePedidos = Number(r.rows?.[0]?.pedidos || 0);
+    hotsiteComCampanha = Number(r.rows?.[0]?.com_campanha || 0);
+  } catch { /* sem a tabela o resto do pulso ainda vale */ }
+
+  const cfg = await configGoogle();
+  return {
+    gclidChegou: conv.comGclid > 0,
+    pedidosComGclid: conv.comGclid,
+    pedidosNoPeriodo: conv.totalPedidos,
+    hotsitePedidos,
+    hotsiteComCampanha,
+    coberturaPct: hotsitePedidos ? Math.round((hotsiteComCampanha / hotsitePedidos) * 100) : 0,
+    medindo: !!(cfg.ga4Id || cfg.adsId),
+    dias: d,
+    em: new Date().toISOString(),
+  };
+}
+
+/**
+ * Confere a chave da rota de pulso.
+ *
+ * Sem MKT_PULSO_KEY no ambiente a rota nao existe (404, e nao 401): rota que
+ * responde 401 anuncia que ha algo ali. timingSafeEqual porque comparacao de
+ * segredo com === vaza o tamanho do prefixo correto pelo tempo de resposta;
+ * ele exige buffers do mesmo tamanho, entao o try/catch e obrigatorio.
+ */
+export function chaveDoPulsoConfere(recebida: any): boolean {
+  // `require('crypto')` aqui dentro NAO funciona: o pacote e ESM ("type":"module"),
+  // entao `require` nem existe — lancava, caia no catch, e a chave CERTA era
+  // recusada. O endpoint teria dado 404 para sempre, em silencio. Import no topo.
+  //
+  // O try envolve o corpo inteiro, e nao so a comparacao, porque String(recebida)
+  // lanca se alguem mandar um objeto com toString() que lanca (ou um Symbol).
+  // Entrada de rota vem da internet: nao pode derrubar o processo.
+  try {
+    const esperada = process.env.MKT_PULSO_KEY;
+    if (!esperada) return false;
+    if (typeof recebida !== 'string') return false;  // so string vale
+    const a = Buffer.from(recebida);
+    const b = Buffer.from(esperada);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch { return false; }
 }
 
 // ---------------------------------------------------------------------------
