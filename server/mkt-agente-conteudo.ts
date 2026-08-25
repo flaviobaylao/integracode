@@ -347,6 +347,8 @@ export function montarPrompt(o: {
     '- Descreva apenas o que esta NA FOTO descrita abaixo. Se a foto nao mostra,',
     '  nao escreva.',
     '- Termine com uma chamada para o link, escrito exatamente como recebido.',
+    '  O endereco fecha a peca SOZINHO: nada de ponto, virgula ou parentese',
+    '  colado nele. O Instagram engole o sinal para dentro do link e ele morre.',
     '- Devolva SO um JSON: {"titulo": "...", "copy": "..."}. Nada fora do JSON.',
     '- O titulo e interno, para a fila de aprovacao: curto e descritivo.',
   ].join('\n');
@@ -382,6 +384,31 @@ async function escrever(sistema: string, pedido: string): Promise<{ titulo: stri
   } catch {
     return null;
   }
+}
+
+/**
+ * Descola do endereco a pontuacao que o modelo gruda nele.
+ *
+ * ACHADO NA PRIMEIRA PECA REAL (25/08): a copy terminou em
+ * "...Conheca mais em https://loja.bebahonest.com.br/r/bio-instagram." — com
+ * ponto colado. Instagram, WhatsApp e boa parte dos clientes puxam esse ponto
+ * PARA DENTRO do link ao transformar o texto em clicavel, e o endereco quebra.
+ *
+ * O prompt ja pede para nao colar. Isso nao basta: a regra "escrito exatamente
+ * como recebido" ja estava la e o modelo colou o ponto mesmo assim. Instrucao
+ * de prompt e pedido, nao garantia — a garantia tem que ser codigo depois.
+ *
+ * Tira so o que esta ENCOSTADO no endereco exato. Perder uma virgula e nota de
+ * rodape; link morto e a peca inteira perdida.
+ */
+export function soltarPontuacaoDoLink(copy: string, url: string): string {
+  const texto = String(copy || '');
+  const alvo = String(url || '');
+  if (!texto || !alvo) return texto;
+  try {
+    const escapado = alvo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return texto.replace(new RegExp(escapado + '[.,;:!?)\\]>"\'”»]+', 'g'), () => alvo).trim();
+  } catch { return texto; }
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +480,10 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
 
   const texto = await escrever(sistema, pedido);
   if (!texto) return { ok: false, modo: m, saldo, assunto: a.assunto, criativoId: criativo.id, motivo: 'o modelo nao devolveu texto utilizavel' };
+
+  // O prompt pede para nao colar pontuacao no endereco. Isso e pedido; a
+  // garantia e esta linha.
+  texto.copy = soltarPontuacaoDoLink(texto.copy, enderecoNaCopy);
 
   // O titulo carrega [b2b]/[b2c] porque e por ele que publicoDaVez le o historico
   // (mkt_pieces nao tem coluna de publico e criar uma so para isso seria migracao
