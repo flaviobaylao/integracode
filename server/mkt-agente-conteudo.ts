@@ -34,6 +34,10 @@ const PADRAO = {
   mkt_conteudo_por_semana: '3',   // ritmo — decisao editorial, nao minha
   mkt_conteudo_b2b_pct: '70',     // o negocio e 70% revenda; a pauta segue o negocio
   mkt_conteudo_canal: 'instagram',
+  // Endereco publico que entra NA COPY. Sem ele a chamada saia como `/r/slug`,
+  // que numa legenda de Instagram nao e link nenhum. Fica em system_settings
+  // para trocar de dominio sem deploy.
+  mkt_conteudo_base_url: 'https://loja.bebahonest.com.br',
 };
 
 async function cfg(chave: keyof typeof PADRAO): Promise<string> {
@@ -241,6 +245,29 @@ export async function escolherLink(canal: string): Promise<{ slug: string; desti
   } catch { return null; }
 }
 
+/**
+ * O endereco que vai NA COPY — sempre o `/r/<slug>` absoluto, nunca o destino.
+ *
+ * ACHADO EM PRODUCAO (25/08), rodando o agente em modo test: a copy saiu com
+ * "Acesse: /r/bio-instagram". Caminho relativo numa legenda de Instagram nao e
+ * link — ninguem clica, e a peca vai ao ar cega.
+ *
+ * A regra antiga era `destino.startsWith('http') ? destino : '/r/'+slug`, e o
+ * ramo do `http` era o pior dos dois: mandar o cliente direto ao destino PULA o
+ * /r/, que e justamente onde o clique e gravado e os utm sao colados. A peca
+ * ficaria clicavel e sem origem — exatamente o buraco que a Central existe para
+ * fechar. Hoje os cinco links tem destino '/shop' (relativo), entao so o
+ * primeiro sintoma apareceu; um dia alguem cadastra um destino absoluto e a
+ * atribuicao some sem aviso.
+ *
+ * Por isso: o tracker SEMPRE, e absoluto.
+ */
+export async function linkPublico(slug: string): Promise<string> {
+  let base = (await cfg('mkt_conteudo_base_url')).trim();
+  if (!/^https?:\/\//i.test(base)) base = PADRAO.mkt_conteudo_base_url;
+  return base.replace(/\/+$/, '') + '/r/' + String(slug || '').replace(/^\/+/, '');
+}
+
 // ---------------------------------------------------------------------------
 // 5. O texto
 // ---------------------------------------------------------------------------
@@ -415,9 +442,12 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
     return { ok: false, modo: m, saldo, assunto: a.assunto, motivo: 'base de conhecimento vazia: sem fato o modelo inventa, e ja inventou' };
   }
 
+  // Sempre o tracker absoluto: e ele que grava o clique e cola os utm.
+  const enderecoNaCopy = await linkPublico(link.slug);
+
   const { sistema, pedido } = montarPrompt({
     cartao, publico: a.assunto.publico, gancho: a.assunto.gancho, canal,
-    criativo, link: link.destino.startsWith('http') ? link.destino : ('/r/' + link.slug),
+    criativo, link: enderecoNaCopy,
     fatos,
   });
 
@@ -432,7 +462,7 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
   if (m === 'test') {
     return {
       ok: true, modo: m, criou: false, saldo, assunto: a.assunto, criativoId: criativo.id,
-      link: '/r/' + link.slug, titulo, copy: texto.copy, motivo: 'modo test: nada foi gravado',
+      link: enderecoNaCopy, titulo, copy: texto.copy, motivo: 'modo test: nada foi gravado',
     };
   }
 
@@ -448,7 +478,7 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
 
   return {
     ok: true, modo: m, criou: true, pieceId: c.id, estado: rev.estado, veredito: rev.veredito,
-    saldo, assunto: a.assunto, criativoId: criativo.id, link: '/r/' + link.slug,
+    saldo, assunto: a.assunto, criativoId: criativo.id, link: enderecoNaCopy,
     titulo, copy: texto.copy,
   };
 }
@@ -493,7 +523,7 @@ export async function prontidao(): Promise<{
   }
 
   const l = await escolherLink(canal).catch(() => null);
-  add('link', !!l, l ? ('/r/' + l.slug) : 'nenhum link rastreavel cadastrado: a peca sairia sem origem');
+  add('link', !!l, l ? (await linkPublico(l.slug)) : 'nenhum link rastreavel cadastrado: a peca sairia sem origem');
 
   let cartao = '';
   try { const { blocoDePrompt } = await import('./mkt-marca'); cartao = String((await blocoDePrompt()) || '').trim(); } catch { cartao = ''; }
