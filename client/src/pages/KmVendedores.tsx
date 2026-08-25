@@ -1,14 +1,17 @@
 // ============================================================================
-// INTEGRA 2.0 — KILOMETRAGEM VENDEDORES (Ago/2026)
+// INTEGRA 2.0 - KILOMETRAGEM VENDEDORES (Ago/2026)
 // Modulo de Administracao: historico de KM MENSAL de todos os vendedores que
 // tem Rota do Dia. Fonte: soma de daily_routes.total_actual_distance por
 // vendedor e por mes (km realizada). Enquanto o rastreamento GPS nao entra em
 // producao, a km e a estimativa por check-in + rota por ruas (OSRM).
 //
-// Pagamento por km: tarifa R$/km editavel (global, admin), persistida em
-// config_global. O valor a pagar = km do mes x tarifa. O mes so e considerado
-// FECHADO (valor a pagar definitivo) no ultimo dia do mes apos as 20h (SP).
+// Pagamento por km: cada vendedor tem sua propria tarifa R$/km, editavel direto
+// na linha (admin), persistida em config_global. Duas tarifas de referencia
+// (GO e DF) ficam no topo e servem de atalho para preencher a linha. O valor a
+// pagar = km do mes x tarifa do vendedor. O mes so e considerado FECHADO (valor
+// definitivo) no ultimo dia do mes apos as 20h (SP).
 // Endpoints: GET /api/admin/km-vendedores | POST /api/admin/km-vendedores/rate
+//            POST /api/admin/km-vendedores/seller-rate
 // ============================================================================
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -28,14 +31,16 @@ type SellerRow = {
   diasByMonth: Record<string, number>;
   total: number;
   totalDias: number;
+  sellerRate?: number;
 };
-type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; mesAtual?: string; mesFechado?: boolean };
+type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; mesAtual?: string; mesFechado?: boolean };
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
 function fmtMes(iso: string): string { const [y, m] = iso.split("-"); return `${MES_LABEL[m] || m}/${(y || "").slice(2)}`; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function ultimoDiaDoMes(iso: string): number { if (!iso) return 0; const [y, m] = iso.split("-").map(Number); return new Date(y, m, 0).getDate(); }
+function parseRate(s: string | number | undefined | null): number { const n = parseFloat(String(s ?? "").replace(",", ".")); return isFinite(n) && n >= 0 ? n : 0; }
 
 const ROLE_LABEL: Record<string, string> = { vendedor: "Vendedor", telemarketing: "Telemarketing", coordinator: "Coordenacao", administrative: "Administrativo", admin: "Admin", motorista: "Motorista", industria: "Industria" };
 
@@ -45,8 +50,13 @@ export default function KmVendedores() {
   const { toast } = useToast();
   const [busca, setBusca] = useState<string>("");
   const [showInfo, setShowInfo] = useState<boolean>(false);
-  const [rate, setRate] = useState<string>("");
-  const [rateLoaded, setRateLoaded] = useState<boolean>(false);
+  // Tarifas de referencia (GO e DF) no topo
+  const [rateGO, setRateGO] = useState<string>("");
+  const [rateDF, setRateDF] = useState<string>("");
+  const [ratesLoaded, setRatesLoaded] = useState<boolean>(false);
+  // Tarifa R$/km por vendedor (editavel na linha)
+  const [sellerRates, setSellerRates] = useState<Record<string, string>>({});
+  const [sellerRatesLoaded, setSellerRatesLoaded] = useState<boolean>(false);
 
   const { data, isLoading } = useQuery<Resp>({
     queryKey: ["/api/admin/km-vendedores"],
@@ -59,18 +69,62 @@ export default function KmVendedores() {
   const mesAtualCol = months.length ? months[months.length - 1] : "";
   const mesPagto = data?.mesAtual || mesAtualCol;
   const mesFechado = !!data?.mesFechado;
-  const savedRate = Number(data?.ratePerKm || 0);
+  const savedGO = Number(data?.ratePerKmGO ?? data?.ratePerKm ?? 0);
+  const savedDF = Number(data?.ratePerKmDF ?? data?.ratePerKm ?? 0);
 
-  useEffect(() => { if (data && !rateLoaded) { setRate(String(data.ratePerKm ?? 0)); setRateLoaded(true); } }, [data, rateLoaded]);
+  useEffect(() => {
+    if (data && !ratesLoaded) {
+      setRateGO(String(data.ratePerKmGO ?? data.ratePerKm ?? 0));
+      setRateDF(String(data.ratePerKmDF ?? data.ratePerKm ?? 0));
+      setRatesLoaded(true);
+    }
+  }, [data, ratesLoaded]);
 
-  const rateNum = (() => { const n = parseFloat((rate || "").replace(",", ".")); return isFinite(n) && n >= 0 ? n : 0; })();
-  const dirty = rateLoaded && rateNum !== savedRate;
+  useEffect(() => {
+    if (data && !sellerRatesLoaded) {
+      const init: Record<string, string> = {};
+      for (const s of data.sellers || []) init[s.sellerId] = String(s.sellerRate ?? 0);
+      setSellerRates(init);
+      setSellerRatesLoaded(true);
+    }
+  }, [data, sellerRatesLoaded]);
 
-  const saveMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/admin/km-vendedores/rate", { ratePerKm: rateNum }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores"] }); toast({ title: "Valor por km salvo", description: `${fmtBRL(rateNum)} por km.` }); },
-    onError: () => toast({ title: "Erro ao salvar o valor por km", variant: "destructive" }),
+  const rateGONum = parseRate(rateGO);
+  const rateDFNum = parseRate(rateDF);
+  const ratesDirty = ratesLoaded && (rateGONum !== savedGO || rateDFNum !== savedDF);
+
+  const saveRatesMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/admin/km-vendedores/rate", { ratePerKmGO: rateGONum, ratePerKmDF: rateDFNum }),
+    onSuccess: () => { toast({ title: "Tarifas de referencia salvas", description: `GO ${fmtBRL(rateGONum)}/km, DF ${fmtBRL(rateDFNum)}/km.` }); },
+    onError: () => toast({ title: "Erro ao salvar as tarifas", variant: "destructive" }),
   });
+
+  const sellerRateMut = useMutation({
+    mutationFn: (p: { sellerId: string; rate: number }) => apiRequest("POST", "/api/admin/km-vendedores/seller-rate", p),
+    onError: () => toast({ title: "Erro ao salvar a tarifa do vendedor", variant: "destructive" }),
+  });
+
+  // Tarifa efetiva de um vendedor (valor local editado; se vazio, cai no que veio do servidor).
+  const rateOf = (r: SellerRow) => {
+    const raw = sellerRates[r.sellerId];
+    if (raw !== undefined && raw !== "") return parseRate(raw);
+    return Number(r.sellerRate ?? 0) || 0;
+  };
+  // Salva a tarifa da linha (se mudou) no servidor.
+  const commitSellerRate = (r: SellerRow) => {
+    if (!isAdmin) return;
+    const val = parseRate(sellerRates[r.sellerId]);
+    if (Math.abs(val - (Number(r.sellerRate ?? 0) || 0)) < 1e-9) return; // nada mudou
+    sellerRateMut.mutate({ sellerId: r.sellerId, rate: val });
+    r.sellerRate = val; // reflete localmente para evitar re-save
+  };
+  // Preenche a linha com uma tarifa de referencia (GO/DF) e salva.
+  const applyRef = (r: SellerRow, val: number) => {
+    if (!isAdmin) return;
+    setSellerRates((m) => ({ ...m, [r.sellerId]: String(val) }));
+    sellerRateMut.mutate({ sellerId: r.sellerId, rate: val });
+    r.sellerRate = val;
+  };
 
   const rows = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -83,28 +137,33 @@ export default function KmVendedores() {
     for (const mo of months) t[mo] = rows.reduce((s, r) => s + (r.byMonth[mo] || 0), 0);
     return t;
   }, [months, rows]);
-  const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateNum;
+  const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateOf(r);
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
   // Exporta TODAS as colunas para .xlsx FORMATADO: cabecalho em negrito, faixas
-  // alternadas, km com separador de milhar, coluna R$ em moeda (traco para zero) e
-  // linha de Total.
+  // alternadas, km com separador de milhar, coluna R$/km e coluna R$ a pagar em
+  // moeda (traco para zero) e linha de Total.
   function exportarExcel() {
     const meses = months;
-    const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), `R$ a pagar (${fmtMes(mesPagto)})`];
+    const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), "R$/km", `R$ a pagar (${fmtMes(mesPagto)})`];
     const dataRows = rows.map((r) => [
       r.sellerName,
       r.role ? (ROLE_LABEL[r.role] || r.role) : "",
       ...meses.map((mo) => r.byMonth[mo] || 0),
+      Number(rateOf(r).toFixed(2)),
       Number(valorSeller(r).toFixed(2)),
     ]);
-    const totalRow: any[] = ["Total", "", ...meses.map(() => null), Number(totalPagar.toFixed(2))];
+    const totalRow: any[] = ["Total", "", ...meses.map(() => null), null, Number(totalPagar.toFixed(2))];
     const aoa: any[][] = [headers, ...dataRows, totalRow];
     const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
     const nCols = headers.length;
     const lastRow = aoa.length - 1;
     const KM_FMT = "#,##0";
     const BRL_FMT = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
+    const firstMonthCol = 2;
+    const lastMonthCol = nCols - 3; // ultima coluna de mes
+    const rateCol = nCols - 2;      // coluna R$/km
+    const payCol = nCols - 1;       // coluna R$ a pagar
     const thin = { style: "thin", color: { rgb: "D0D5DD" } };
     const borderAll: any = { top: thin, bottom: thin, left: thin, right: thin };
     for (let R = 0; R <= lastRow; R++) {
@@ -120,15 +179,15 @@ export default function KmVendedores() {
           s.fill = { fgColor: { rgb: "E9EDF5" } };
           s.alignment.horizontal = C <= 1 ? "left" : "center";
         } else {
-          if (C >= 2 && C <= nCols - 2) { cell.z = KM_FMT; s.numFmt = KM_FMT; }
-          if (C === nCols - 1) { cell.z = BRL_FMT; s.numFmt = BRL_FMT; }
+          if (C >= firstMonthCol && C <= lastMonthCol) { cell.z = KM_FMT; s.numFmt = KM_FMT; }
+          if (C === rateCol || C === payCol) { cell.z = BRL_FMT; s.numFmt = BRL_FMT; }
           if (isTotal) { s.font = { bold: true }; s.fill = { fgColor: { rgb: "D9D9D9" } }; }
           else if (band) { s.fill = { fgColor: { rgb: "F3F5F9" } }; }
         }
         cell.s = s;
       }
     }
-    ws["!cols"] = [{ wch: 18 }, { wch: 13 }, ...meses.map(() => ({ wch: 10 })), { wch: 20 }];
+    ws["!cols"] = [{ wch: 18 }, { wch: 13 }, ...meses.map(() => ({ wch: 10 })), { wch: 11 }, { wch: 20 }];
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, "Km Vendedores");
     XLSXStyle.writeFile(wb, `km-vendedores-${mesPagto || "geral"}.xlsx`);
@@ -163,6 +222,7 @@ export default function KmVendedores() {
               <li>O total e recalculado a cada check-in. Sem check-in, a rota fica 0 km.</li>
               <li>Mede a distancia entre os pontos de check-in; desvios ou paradas sem registro nao entram, e casa em (0,0) e ignorada para nao inflar.</li>
             </ul>
+            <p className="text-muted-foreground mt-2">O valor a pagar usa a tarifa R$/km de cada vendedor (coluna R$/km). As tarifas GO e DF no topo servem de atalho para preencher a linha.</p>
             <button type="button" onClick={() => setShowInfo(false)} className="mt-2 text-indigo-600 hover:underline">Fechar</button>
           </div>
         )}
@@ -171,36 +231,31 @@ export default function KmVendedores() {
           <div className="text-xs text-muted-foreground mt-1">Soma da km executada em cada mes. Hoje a km e medida pelos check-ins + rota por ruas (OSRM); passara a refletir o trajeto GPS quando o rastreamento continuo entrar no ar.</div>
 
           <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-3">
-            <div className="sm:w-64">
-              <label className="block text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mb-1 flex items-center gap-1"><DollarSign className="w-3 h-3" /> Valor pago por km (R$)</label>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">R$</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={rate}
-                  disabled={!isAdmin}
-                  onChange={(e) => setRate(e.target.value)}
-                  placeholder="0,00"
-                  className="w-28 rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                />
-                <span className="text-sm text-muted-foreground">/ km</span>
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mb-1 flex items-center gap-1"><DollarSign className="w-3 h-3" /> Tarifas de referencia (R$/km)</label>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-semibold text-muted-foreground w-6">GO</span>
+                  <span className="text-sm text-muted-foreground">R$</span>
+                  <input type="text" inputMode="decimal" value={rateGO} disabled={!isAdmin} onChange={(e) => setRateGO(e.target.value)} placeholder="0,00" className="w-24 rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-60" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-semibold text-muted-foreground w-6">DF</span>
+                  <span className="text-sm text-muted-foreground">R$</span>
+                  <input type="text" inputMode="decimal" value={rateDF} disabled={!isAdmin} onChange={(e) => setRateDF(e.target.value)} placeholder="0,00" className="w-24 rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-60" />
+                </div>
                 {isAdmin ? (
-                  <button
-                    onClick={() => saveMut.mutate()}
-                    disabled={!dirty || saveMut.isPending}
-                    className="rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm font-semibold disabled:opacity-50"
-                  >{saveMut.isPending ? "Salvando..." : "Salvar"}</button>
+                  <button onClick={() => saveRatesMut.mutate()} disabled={!ratesDirty || saveRatesMut.isPending} className="rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm font-semibold disabled:opacity-50">{saveRatesMut.isPending ? "Salvando..." : "Salvar"}</button>
                 ) : null}
               </div>
-              {!isAdmin ? <div className="text-[11px] text-muted-foreground mt-1">Somente o admin pode alterar o valor por km.</div> : null}
+              <div className="text-[11px] text-muted-foreground mt-1">{isAdmin ? "GO e DF sao atalhos para preencher a coluna R$/km de cada vendedor. O calculo usa a tarifa da linha." : "Somente o admin pode alterar as tarifas."}</div>
             </div>
 
             <div className="flex-1">
               <div className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${mesFechado ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
                 {mesFechado
-                  ? `Mes ${fmtMes(mesPagto)} FECHADO — valor a pagar definitivo.`
-                  : `Previa de ${fmtMes(mesPagto)} — fecha em ${ultimoDiaDoMes(mesPagto)}/${mesPagto.split("-")[1]} as 20h.`}
+                  ? `Mes ${fmtMes(mesPagto)} FECHADO - valor a pagar definitivo.`
+                  : `Previa de ${fmtMes(mesPagto)} - fecha em ${ultimoDiaDoMes(mesPagto)}/${mesPagto.split("-")[1]} as 20h.`}
               </div>
             </div>
           </div>
@@ -229,12 +284,13 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <th key={mo} className={`text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap ${mo === mesAtualCol ? "text-indigo-600" : ""}`}>{fmtMes(mo)}</th>
                     ))}
+                    <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">R$/km</th>
                     <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">R$ a pagar ({fmtMes(mesPagto)})</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
-                    <tr><td colSpan={months.length + 2} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
+                    <tr><td colSpan={months.length + 3} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
                   ) : rows.map((r) => (
                     <tr key={r.sellerId} className="border-t align-top hover:bg-muted/40">
                       <td className="py-2 px-3 bg-background sticky left-0">
@@ -246,7 +302,30 @@ export default function KmVendedores() {
                           {r.byMonth[mo] ? fmtKm(r.byMonth[mo]) : <span className="text-gray-300">-</span>}
                         </td>
                       ))}
-                      <td className={`py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap ${mesFechado ? "text-green-700" : "text-amber-700"}`} title={`${fmtKm(r.byMonth[mesPagto] || 0)} km x ${fmtBRL(rateNum)}/km`}>{fmtBRL(valorSeller(r))}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
+                        {isAdmin ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <div className="flex flex-col gap-0.5">
+                              <button type="button" title={`Usar tarifa GO (${fmtBRL(rateGONum)})`} onClick={() => applyRef(r, rateGONum)} className="text-[9px] leading-none px-1 py-0.5 rounded border text-indigo-600 hover:bg-indigo-50">GO</button>
+                              <button type="button" title={`Usar tarifa DF (${fmtBRL(rateDFNum)})`} onClick={() => applyRef(r, rateDFNum)} className="text-[9px] leading-none px-1 py-0.5 rounded border text-indigo-600 hover:bg-indigo-50">DF</button>
+                            </div>
+                            <span className="text-xs text-muted-foreground">R$</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={sellerRates[r.sellerId] ?? ""}
+                              onChange={(e) => setSellerRates((m) => ({ ...m, [r.sellerId]: e.target.value }))}
+                              onBlur={() => commitSellerRate(r)}
+                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              placeholder="0,00"
+                              className="w-20 rounded-md border bg-background px-2 py-1 text-sm text-right"
+                            />
+                          </div>
+                        ) : (
+                          <span className="tabular-nums">{fmtBRL(rateOf(r))}</span>
+                        )}
+                      </td>
+                      <td className={`py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap ${mesFechado ? "text-green-700" : "text-amber-700"}`} title={`${fmtKm(r.byMonth[mesPagto] || 0)} km x ${fmtBRL(rateOf(r))}/km`}>{fmtBRL(valorSeller(r))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -256,13 +335,14 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <td key={mo} className="py-2 px-3 text-right tabular-nums whitespace-nowrap">{fmtKm(totalPorMes[mo] || 0)}</td>
                     ))}
+                    <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">-</td>
                     <td className={`py-2 px-3 text-right tabular-nums ${mesFechado ? "text-green-700" : "text-amber-700"}`}>{fmtBRL(totalPagar)}</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           )}
-          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). "R$ a pagar" = km do mes de {fmtMes(mesPagto)} x {fmtBRL(rateNum)}/km. O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
+          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). "R$ a pagar" = km do mes de {fmtMes(mesPagto)} x a tarifa R$/km do vendedor (coluna R$/km). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
         </CardContent>
       </Card>
     </div>
