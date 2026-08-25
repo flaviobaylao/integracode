@@ -455,28 +455,21 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     //   `sellerId: walletSellerId || (... : effectiveSellerId)`
     // e a carteira ganhava de TODO mundo, inclusive de quem tinha acabado de lancar o pedido.
     const isInstagram = String(salesCard.source || '') === 'instagram';
-    // REGRA DE ATRIBUIÇÃO DE VENDEDOR (precedência):
-    //  1) IMPLANTADOR HUMANO (registeringUser) — quem lançou o pedido leva a venda, mesmo que o
-    //     cliente seja de outra carteira.
-    //  2) CANAL DIGITAL (Hotsite / Instagram / Loja / IA), SEM implantador humano — a venda é do
-    //     VENDEDOR DA CARTEIRA do cliente (customer.sellerId ATUAL). Assim, se o cliente comprou no
-    //     Hotsite a 1ª vez (carteira padrão "HOTSITE") e depois foi rezoneado para um vendedor, os
-    //     próximos pedidos do Hotsite passam a ser desse vendedor — nunca mais "HOTSITE".
-    //  3) Pedido IMPLANTADO por humano mas reprocessado sem createdBy (ex.: LIBERAR um bloqueado
-    //     'system-liberacao-manual', canal 'integra'/telemarketing) — mantém o vendedor gravado no
-    //     card (o implantador). A carteira NÃO sobrescreve (ex.: amostra/troca de "Honest 1" não
-    //     pode virar o dono da carteira ao mudar de etapa).
-    // O que separa (2) de (3) é o CANAL: digital = carteira manda; implantado = card manda.
-    const _src = String(salesCard.source || '').toLowerCase();
-    const _isDigitalChannel = ['hotsite', 'instagram', 'website', 'chatgpt-ai', 'ia'].includes(_src);
+    // Se o card JÁ tem um vendedor humano real (o implantador), ELE manda — a carteira do
+    // cadastro NÃO sobrescreve. A carteira só roteia pedido de canal digital SEM implantador
+    // (sellerId vazio ou placeholder tipo 'instagram'/'chatgpt-ai'/'system').
+    // CORRIGE: ao LIBERAR um pedido bloqueado (createdBy 'system-liberacao-manual', sem
+    // registeringUser), o vendedor voltava para o dono da carteira em vez de manter quem
+    // implantou (ex.: amostra/troca de "Honest 1" reaparecia como "Gabriel R" ao mudar de etapa).
+    const cardSellerIsReal = !!(salesCard.sellerId && !['chatgpt-ai', 'instagram', 'system'].includes(String(salesCard.sellerId)));
     const pedidoSellerId = registeringUser
       ? registeringUser.id
-      : (_isDigitalChannel ? (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)) : effectiveSellerId);
+      : (cardSellerIsReal ? effectiveSellerId : (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)));
     const pedidoSellerName = registeringUser
       ? `${registeringUser.firstName || ''} ${registeringUser.lastName || ''}`.trim()
-      : (_isDigitalChannel
-          ? (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)))
-          : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null));
+      : (cardSellerIsReal
+          ? (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)
+          : (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null))));
     console.log(`👤 [BILLING-PIPELINE] Vendedor do pedido: ${pedidoSellerName || pedidoSellerId} `
       + `(implantador=${registeringUser ? registeringUser.email : 'nenhum'}; carteira=${walletSellerName || '-'})`);
 
@@ -2520,7 +2513,15 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     totalProducts: totalValue.toFixed(2),
     totalInvoice: totalValue.toFixed(2),
     // Forma de pagamento EFETIVA (cadastro do cliente sobrepoe a venda) — a mesma dos titulos/boleto.
-    paymentMethod: (await resolveCondicaoPagamento(item)).effForma || item.paymentMethod || 'a_vista',
+    // EXCECAO (25/ago/2026): pedido PRE-PAGO na loja (hotsite/Google Pay/link/maquininha) ja esta
+    // quitado. A condicao cadastrada do cliente (ex.: boleto 7 dias) NAO pode valer aqui: faria a
+    // NF-e sair com tPag=15 e bloco <cobr>/<dup> de um titulo que nasce baixado — a SEFAZ rejeita
+    // ("Dados de cobranca nao devem ser informadas para pagamento a vista"). Ver getHotsitePaidMethod.
+    paymentMethod: (await (async () => {
+      const pago = await getHotsitePaidMethod(item.salesCardId);
+      if (pago) return pago === 'pix' ? 'pix' : 'cartao';
+      return (await resolveCondicaoPagamento(item)).effForma || item.paymentMethod || 'a_vista';
+    })()),
     salesCardId: item.salesCardId || null,
     notes: `Pedido pipeline interno - ${item.orderNumber || item.salesCardId}`,
     // INSTANTE -> UTC real. Era nowBrazil(), que gravava hora de parede de Brasilia

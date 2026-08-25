@@ -21,6 +21,16 @@ import os from 'os';
 import path from 'path';
 import https from 'https';
 import zlib from 'zlib';
+
+// Formas de pagamento liquidadas NO ATO: indPag=0 e XML SEM bloco <cobr>/<dup>.
+// Inclui as variantes de cartao vindas do hotsite ('card'), do link de pagamento do
+// vendedor e da maquininha LIO - nesses casos o pedido ja chega PAGO.
+const PAID_AT_ONCE = new Set([
+  'a_vista', 'dinheiro', 'pix',
+  'cartao', 'cartao_credito', 'card', 'credit_card',
+  'cartao_debito', 'debit_card',
+]);
+
 // [2.0] objectStorage removido: certificado vem do banco (pfx_data cifrado)
 
 // ─── Ambiente ─────────────────────────────────────────────────────────────────
@@ -1518,7 +1528,10 @@ function buildDocumento(
     },
     ...(!isNFCe ? (() => {
       const pm = String(invoice.paymentMethod || 'a_prazo').trim().toLowerCase();
-      const isAVista = pm === 'a_vista' || pm === 'dinheiro' || pm === 'pix' || pm === 'cartao_debito' || pm === 'debit_card';
+      // 25/ago/2026 - Cartao (credito/debito) e pagamento liquidado NO ATO (hotsite,
+      // Google Pay, link de pagamento, maquininha). A SEFAZ rejeita <cobr>/<dup> quando
+      // o pagamento e a vista (tPag 03/04). Fonte unica: PAID_AT_ONCE.
+      const isAVista = PAID_AT_ONCE.has(pm);
       // ESPELHO NF <-> BOLETO: se ha titulos ligados a esta NF, as duplicatas saem deles
       // (uma por parcela, mesmo valor e vencimento do boleto), independente da forma
       // gravada na nota — o titulo e a fonte de verdade da cobranca.
@@ -1572,7 +1585,7 @@ function buildDocumento(
             indPag: (() => {
               const pm = String(invoice.paymentMethod || 'a_prazo').trim().toLowerCase();
               if (pm === 'sem_pagamento') return '0';
-              if (pm === 'a_vista' || pm === 'dinheiro' || pm === 'pix' || pm === 'cartao_debito' || pm === 'debit_card') return '0';
+              if (PAID_AT_ONCE.has(pm)) return '0';
               return '1';
             })(),
           } : {}),
