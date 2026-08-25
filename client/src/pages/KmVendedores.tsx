@@ -17,7 +17,8 @@ import { usePermissions } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Route as RouteIcon, Search, DollarSign } from "lucide-react";
+import { Route as RouteIcon, Search, DollarSign, Download } from "lucide-react";
+import { exportToExcel } from "@/lib/tableTools";
 
 type SellerRow = {
   sellerId: string;
@@ -84,6 +85,48 @@ export default function KmVendedores() {
   const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateNum;
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
+  // Exporta TODAS as colunas visiveis (Vendedor, Funcao, meses 2026, R$ a pagar) para .xlsx.
+  function exportarExcel() {
+    const linhas = rows.map((r) => {
+      const o: Record<string, any> = { Vendedor: r.sellerName, "Funcao": r.role ? (ROLE_LABEL[r.role] || r.role) : "" };
+      for (const mo of months) o[fmtMes(mo)] = r.byMonth[mo] || 0;
+      o[`R$ a pagar (${fmtMes(mesPagto)})`] = Number(valorSeller(r).toFixed(2));
+      return o;
+    });
+    exportToExcel(linhas, `km-vendedores-${mesPagto || "geral"}`);
+  }
+
+  // Exporta um PDF compacto (Vendedor, km do mes vigente, R$ a pagar) para compartilhar no WhatsApp.
+  async function exportarPDF() {
+    try {
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default as any;
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      doc.setFontSize(15); doc.setTextColor(79, 70, 229);
+      doc.text("Kilometragem - Valor a pagar", 14, 16);
+      doc.setFontSize(10); doc.setTextColor(0, 0, 0);
+      doc.text(`Mes: ${fmtMes(mesPagto)}     R$/km: ${fmtBRL(rateNum)}`, 14, 23);
+      doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+      doc.text(`${mesFechado ? "FECHADO (definitivo)" : "Previa (fecha no ultimo dia as 20h)"} - gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`, 14, 29);
+      autoTable(doc, {
+        startY: 34,
+        head: [["Vendedor", `Km ${fmtMes(mesPagto)}`, "R$ a pagar"]],
+        body: rows.map((r) => [r.sellerName, fmtKm(r.byMonth[mesPagto] || 0), fmtBRL(valorSeller(r))]),
+        foot: [["Total", fmtKm(rows.reduce((s, r) => s + (r.byMonth[mesPagto] || 0), 0)), fmtBRL(totalPagar)]],
+        theme: "striped",
+        headStyles: { fillColor: [79, 70, 229] },
+        footStyles: { fillColor: [238, 242, 255], textColor: [0, 0, 0], fontStyle: "bold" },
+        columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } },
+        styles: { fontSize: 10, cellPadding: 2 },
+        margin: { left: 14, right: 14 },
+      });
+      doc.save(`km-a-pagar-${mesPagto || "geral"}.pdf`);
+    } catch (e) {
+      console.error("exportarPDF:", e);
+      alert("Falha ao gerar o PDF.");
+    }
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
       <BackToDashboardButton />
@@ -136,6 +179,11 @@ export default function KmVendedores() {
                   : `Previa de ${fmtMes(mesPagto)} — fecha em ${ultimoDiaDoMes(mesPagto)}/${mesPagto.split("-")[1]} as 20h.`}
               </div>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <button type="button" onClick={exportarPDF} className="inline-flex items-center gap-1 px-3 py-2 border rounded-md text-sm bg-rose-600 text-white hover:bg-rose-700"><Download className="w-4 h-4" /> Exportar PDF (WhatsApp)</button>
+            <button type="button" onClick={exportarExcel} className="inline-flex items-center gap-1 px-3 py-2 border rounded-md text-sm bg-emerald-600 text-white hover:bg-emerald-700"><Download className="w-4 h-4" /> Exportar Excel</button>
           </div>
 
           <div className="relative mt-3 sm:w-72">
