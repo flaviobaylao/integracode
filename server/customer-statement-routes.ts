@@ -442,10 +442,13 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const linhas: any[] = [];
 
       // Operações informativas (não são dívida): DEVOLUÇÃO DE VENDA, faturamento de
-      // outra praça ([GYN]), TROCA DE MERCADORIA e REMESSA DE AMOSTRA GRÁTIS.
+      // outra praça ([GYN]), TROCA DE MERCADORIA, REMESSA DE AMOSTRA GRÁTIS e
+      // "Outra saída de mercadoria ou prestação de serviço não especificado"
+      // (CFOP 5949/6949 — bonificação, brinde, remessa: não gera cobrança).
       // Não ganham tag de situação e o seu valor NÃO entra no saldo devedor /
       // vencido / a vencer.
-      const foraDaDivida = (d: any) => /DEVOLU|\[GYN\]|\[IND\]|TROCA|AMOSTRA/i.test(String(d || ""));
+      const foraDaDivida = (d: any) =>
+        /DEVOLU|\[GYN\]|\[IND\]|TROCA|AMOSTRA|OUTRAS?\s+SA[IÍ]DAS?/i.test(String(d || ""));
 
       for (const n of Array.from(notas.values())) {
         const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
@@ -637,7 +640,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
       );
       const totalFaturado = notasArr.reduce((s, n) => s + n.valor, 0);
       const totalPago = linhas.filter((l) => l.tipo === "PAGAMENTO").reduce((s, l) => s + l.credito, 0);
-      // DEVOLUÇÃO DE VENDA / [GYN] não entram na dívida: fora do saldo/vencido/a vencer.
+      // DEVOLUÇÃO / [GYN] / TROCA / AMOSTRA / OUTRA SAÍDA não entram na dívida:
+      // ficam fora do saldo devedor, do vencido e do a vencer.
       const notasDivida = notasArr.filter((n) => !foraDaDivida(n.descricao));
       const saldoDevGyn = notasArr
         .filter((n) => foraDaDivida(n.descricao))
