@@ -4616,6 +4616,24 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // PULSO DO FIO — leitura por chave, para a tarefa agendada que roda sem navegador.
+  //
+  // Unica rota de /api/mkt que NAO passa por authenticateUser, e por isso ela:
+  //   1. so existe se MKT_PULSO_KEY estiver no ambiente (senao 404, nem se anuncia);
+  //   2. compara a chave em tempo constante (ver chaveDoPulsoConfere);
+  //   3. devolve SO contagem — nada de receita, cliente, telefone ou pedido.
+  // Cache desligado: o valor do check de amanha nao pode vir do CDN de hoje.
+  app.get("/api/mkt/pulso", async (req: any, res: any) => {
+    try {
+      const { chaveDoPulsoConfere, pulsoDoFio } = await import('./mkt-google');
+      if (!process.env.MKT_PULSO_KEY) return res.status(404).end();
+      const k = req.query?.k ?? req.headers['x-pulso-key'];
+      if (!chaveDoPulsoConfere(k)) return res.status(404).end();
+      res.set('Cache-Control', 'no-store');
+      res.json(await pulsoDoFio(Number(req.query?.dias) || 30));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   app.get("/api/mkt/google/conversoes", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       const { conversoesOffline } = await import('./mkt-google');
