@@ -23052,13 +23052,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
       const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
       const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
-      // Tarifa R$/km (config_global) + status do mes atual: FECHADO no ultimo dia do mes apos as 20h (SP).
-      let ratePerKm = 0;
+      // Tarifas R$/km por regiao (GO e DF) em config_global + status do mes atual:
+      // FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
+      let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0;
       try {
         const cr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`);
         const v = cr?.rows?.[0]?.valor;
-        if (v) { const parsed = JSON.parse(String(v)); ratePerKm = Number(parsed?.ratePerKm || 0) || 0; }
+        if (v) {
+          const parsed = JSON.parse(String(v));
+          ratePerKm = Number(parsed?.ratePerKm || 0) || 0;
+          ratePerKmGO = Number(parsed?.ratePerKmGO ?? parsed?.ratePerKm ?? 0) || 0;
+          ratePerKmDF = Number(parsed?.ratePerKmDF ?? parsed?.ratePerKm ?? 0) || 0;
+        }
       } catch (e) { /* sem tarifa configurada ainda */ }
+      // Tarifa R$/km por vendedor (editavel direto na linha). Se o vendedor ainda
+      // nao tem tarifa propria, cai no padrao da tarifa GO. Persistido em config_global.
+      let sellerRateMap: Record<string, number> = {};
+      try {
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_rates' LIMIT 1`);
+        const rv = rg?.rows?.[0]?.valor;
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') sellerRateMap = pm; }
+      } catch (e) { /* sem tarifas por vendedor ainda */ }
+      for (const s of sellers) {
+        const has = Object.prototype.hasOwnProperty.call(sellerRateMap, s.sellerId);
+        const v = Number(sellerRateMap[s.sellerId]);
+        s.sellerRate = has && isFinite(v) && v >= 0 ? v : ratePerKmGO;
+      }
       let mesAtual = ''; let mesFechado = false;
       try {
         const ni: any = await db.execute(sql`
@@ -23070,25 +23089,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mesAtual = String(nrow.mes_atual || '');
         mesFechado = nrow.fechado === true || nrow.fechado === 't';
       } catch (e) { /* fallback */ }
-      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, mesAtual, mesFechado });
+      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, ratePerKmGO, ratePerKmDF, mesAtual, mesFechado });
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
       res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
     }
   });
 
-  // Salva a tarifa R$/km paga ao vendedor (global). Admin apenas. Persistido em config_global.
+  // Salva as tarifas R$/km por regiao (GO e DF) pagas ao vendedor. Admin apenas.
+  // Persistido em config_global. Aceita ratePerKmGO/ratePerKmDF; ratePerKm legado
+  // continua aceito como fallback para as duas regioes.
   app.post('/api/admin/km-vendedores/rate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
-      const rate = Number(req.body?.ratePerKm);
-      if (!isFinite(rate) || rate < 0) return res.status(400).json({ message: 'Valor por km invalido' });
+      const b = req.body || {};
+      const legacy = Number(b.ratePerKm);
+      const go = Number(b.ratePerKmGO ?? b.ratePerKm);
+      const df = Number(b.ratePerKmDF ?? b.ratePerKm);
+      if (!isFinite(go) || go < 0 || !isFinite(df) || df < 0) return res.status(400).json({ message: 'Valor por km invalido' });
       await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
-      const valor = JSON.stringify({ ratePerKm: rate });
-      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
-      res.json({ ok: true, ratePerKm: rate });
+      // ratePerKm legado = tarifa GO, para nao quebrar leitores antigos do campo.
+      const ratePerKm = isFinite(legacy) && legacy >= 0 ? legacy : go;
+      const valor = JSON.stringify({ ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor (GO e DF)') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
     } catch (error: any) {
       console.error('Erro ao salvar tarifa km:', error);
       res.status(500).json({ message: 'Erro ao salvar tarifa', error: error?.message });
+    }
+  });
+
+  // Salva a tarifa R$/km de um vendedor especifico (editada direto na linha).
+  // Admin apenas. Persistido em config_global (mapa sellerId -> numero R$/km).
+  app.post('/api/admin/km-vendedores/seller-rate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const sellerId = String(req.body?.sellerId || '').trim();
+      const rate = Number(req.body?.rate);
+      if (!sellerId) return res.status(400).json({ message: 'sellerId obrigatorio' });
+      if (!isFinite(rate) || rate < 0) return res.status(400).json({ message: 'Valor por km invalido' });
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+      let map: Record<string, number> = {};
+      try {
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_rates' LIMIT 1`);
+        const rv = rg?.rows?.[0]?.valor;
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') map = pm; }
+      } catch (e) { /* primeiro registro */ }
+      map[sellerId] = rate;
+      const valor = JSON.stringify(map);
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_seller_rates', ${valor}, 'Valor R$ por km por vendedor') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, sellerId, rate });
+    } catch (error: any) {
+      console.error('Erro ao salvar tarifa do vendedor:', error);
+      res.status(500).json({ message: 'Erro ao salvar tarifa do vendedor', error: error?.message });
     }
   });
 
