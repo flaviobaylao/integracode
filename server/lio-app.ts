@@ -94,6 +94,11 @@ async function ensureSchema(): Promise<void> {
     `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS cielo_code varchar`,
     `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS terminal varchar`,
     `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS installments int`,
+    // Estorno feito na maquininha (app do balcao, botao "Cancelar a ultima
+    // venda"). Guardado em coluna propria e nao no campo `error`: cancelamento
+    // nao e falha, e misturar os dois esconderia estornos reais na listagem.
+    `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS cancelado_em timestamp`,
+    `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS cancelamento_payload text`,
   ]) {
     try { await db.execute(sql.raw(alter)); } catch { /* coluna ja existe / banco antigo */ }
   }
@@ -339,6 +344,54 @@ export function registerLioApp(app: Express): void {
     }
   });
 
+  /**
+   * O app informa que a venda foi ESTORNADA na maquininha.
+   *
+   * DECISAO DELIBERADA: esta rota REGISTRA o estorno e NAO desfaz o lancamento
+   * no financeiro. Reverter automaticamente um valor ja baixado significaria um
+   * app de balcao emitindo lancamento contabil sem ninguem olhando — e um
+   * toque errado no aparelho viraria buraco no caixa. O pedido fica marcado
+   * como CANCELADO_APOS_PAGO, com o payload do estorno guardado, e aparece na
+   * listagem do admin para tratamento humano.
+   *
+   * Idempotente: reenviar nao muda nada alem do payload.
+   */
+  app.post('/api/lio-app/pedido/:id/cancelado', autenticarDispositivo, async (req: ReqDispositivo, res) => {
+    const id = String(req.params.id);
+    try {
+      await ensureSchema();
+      const payload = JSON.stringify(req.body || {});
+
+      const existe: any = await db.execute(sql`SELECT id, liquidado, status FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
+      const linha = ((existe.rows || existe) as any[])[0];
+      if (!linha) return res.status(404).json({ message: 'Pedido nao encontrado.' });
+
+      // Nunca voltamos `liquidado` para false: o dinheiro entrou de fato e o
+      // faturamento correspondente existe. O que muda e o status visivel.
+      await db.execute(sql`UPDATE lio_pedidos SET
+          status = 'CANCELADO_APOS_PAGO',
+          cancelado_em = COALESCE(cancelado_em, now()),
+          cancelamento_payload = ${payload},
+          updated_at = now()
+        WHERE id = ${id}`);
+
+      console.warn(
+        `↩️ [LIO-APP] Estorno registrado no pedido ${id} (dispositivo ${req.dispositivo?.nome || '?'}). ` +
+        `O lancamento no financeiro NAO foi revertido automaticamente — tratar manualmente.`
+      );
+
+      res.json({
+        ok: true,
+        registrado: true,
+        financeiroRevertido: false,
+        message: 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.',
+      });
+    } catch (e: any) {
+      console.error(`❌ [LIO-APP] Falha ao registrar estorno de ${id}:`, e?.message || e);
+      res.status(500).json({ message: String(e?.message || e) });
+    }
+  });
+
   // =========================================================================
   // ROTAS ADMIN (sessao do INTEGRA)
   // =========================================================================
@@ -454,6 +507,9 @@ export function registerLioApp(app: Express): void {
         total: linhas.length,
         pagos: linhas.filter(l => l.liquidado).length,
         aguardando: linhas.filter(l => !l.liquidado && l.status === 'AGUARDANDO').length,
+        // Estornos na maquininha ficam em contador proprio: sao os que exigem
+        // tratamento manual no financeiro e nao podem sumir no meio da lista.
+        canceladosAposPago: linhas.filter(l => l.status === 'CANCELADO_APOS_PAGO').length,
         pedidos: linhas,
       });
     } catch (e: any) {
