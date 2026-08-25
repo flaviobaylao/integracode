@@ -2791,6 +2791,45 @@ async function ensureInstallmentScheduleColumn(): Promise<void> {
 // ou PIX). Retorna o metodo p/ a baixa ('cartao'|'pix') ou null se nao houve pagamento online
 // confirmado. As tabelas sao criadas sob demanda pela loja (CREATE TABLE IF NOT EXISTS), entao
 // cada consulta tem try/catch proprio (tabela pode nao existir se nunca houve pagamento).
+// ---------------------------------------------------------------------------
+// CARTAO — cobranca do titulo pelo LINK de pagamento (Cielo Link, MATRIZ).
+// Espelha generateBoletoForReceivable/generatePixForReceivable: fire-and-forget,
+// nunca lanca, nunca bloqueia o faturamento. Ao pagar, o webhook da Cielo baixa
+// o titulo (settleReceivableByLink) e cancela boleto/PIX antigos.
+// ---------------------------------------------------------------------------
+async function generatePaymentLinkForReceivable(rcv: any, item: any): Promise<void> {
+  try {
+    const { createPaymentLink, mensagemLinkPagamento, enviarLinkPorWhatsapp } = await import('./payment-link');
+    const saldo = Math.round((parseFloat(rcv.amount || '0') - parseFloat(rcv.amountPaid || '0')) * 100) / 100;
+    if (!(saldo > 0)) return;
+    const out = await createPaymentLink({
+      kind: 'receivable',
+      receivableId: rcv.id,
+      orderNumber: rcv.titleNumber || item?.orderNumber || null,
+      channel: 'faturamento',
+      customerName: rcv.customerName || item?.customerName || null,
+      customerDocument: rcv.customerDocument || item?.customerDocument || null,
+      amount: saldo,
+      description: `Titulo ${rcv.titleNumber || ''}`.trim(),
+      createdBy: 'sistema (faturamento cartao)',
+    });
+    if (!out.ok || !out.url) { console.warn('[BILLING-PIPELINE] link de cartao do titulo nao gerado:', out.error); return; }
+    // Telefone: o do cadastro do cliente (mesma ordem do envio de documentos).
+    let phone: string | null = null;
+    try {
+      const q: any = await db.execute(sql`SELECT COALESCE(NULLIF(notification_whatsapp, ''), phone) AS p
+        FROM customers WHERE id = ${rcv.customerId} LIMIT 1`);
+      phone = (q.rows || q)[0]?.p || null;
+    } catch {}
+    void enviarLinkPorWhatsapp(phone, mensagemLinkPagamento({
+      customerName: rcv.customerName, orderNumber: rcv.titleNumber, amount: saldo, url: out.url,
+    }));
+    console.log(`\u{1F4B3} [BILLING-PIPELINE] link de cartao gerado p/ titulo ${rcv.titleNumber || rcv.id}`);
+  } catch (e: any) {
+    console.warn('[BILLING-PIPELINE] generatePaymentLinkForReceivable (segue):', e?.message || e);
+  }
+}
+
 export async function getHotsitePaidMethod(salesCardId: string | null | undefined): Promise<string | null> {
   if (!salesCardId) return null;
   try {
@@ -2833,7 +2872,9 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   // do cadastro; senao usa a forma da venda + default (pix=5, boleto=7, a vista=0).
   const { effForma, prazoDays } = await resolveCondicaoPagamento(item);
 
-  const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix' };
+  // 'card' e a forma que o VENDEDOR escolhe na tela de pedido (mesmo valor do enum do
+  // banco usado pela loja). Sem ele o titulo nascia como 'outros' e sem cobranca nenhuma.
+  const methodMap: Record<string, string> = { 'a_vista': 'dinheiro', 'dinheiro': 'dinheiro', 'boleto': 'boleto', 'pix': 'pix', 'card': 'cartao', 'cartao': 'cartao' };
   const paymentMethod: string | null = methodMap[effForma] || 'outros';
 
   // O numero do TITULO deve ser o numero da NF-e (nao o id do pedido). Busca o
@@ -2866,6 +2907,9 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   const emitCharge = (rcv: any) => {
     if (paidOnline) return; // dinheiro ja recebido na loja -> sem boleto/PIX de cobranca
     if (effForma === 'boleto') { void generateBoletoForReceivable(rcv, item); }
+    // CARTAO (25/ago/2026): a cobranca do titulo e o LINK de pagamento. Sem isto o
+    // titulo de um pedido no cartao nascia em aberto e sem nenhuma forma de pagar.
+    else if (effForma === 'card' || effForma === 'cartao') { void generatePaymentLinkForReceivable(rcv, item); }
     else if (effForma === 'pix' || effForma === 'a_vista' || effForma === 'dinheiro') { void generatePixForReceivable(rcv, item); }
   };
 

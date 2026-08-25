@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
+import PaymentLinkDialog from '@/components/PaymentLinkDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -79,6 +80,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   boleto: 'Boleto',
   pix: 'PIX',
   cartao: 'Cartão',
+  card: 'Cartão',
   dinheiro: 'Dinheiro',
 };
 
@@ -233,6 +235,8 @@ export default function BillingPipeline() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
+  // CARTAO: pedido cujo link de pagamento esta sendo exibido.
+  const [linkPedido, setLinkPedido] = useState<{ id: string; nome?: string | null; numero?: string | null } | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   // Observação carimbada (data/hora/quem) — adicionada em Bloqueados/Agendado/Pedido/A Faturar.
@@ -1279,6 +1283,19 @@ export default function BillingPipeline() {
                   <Badge className={STAGES.find(s => s.key === detailItem.stage)?.badgeColor || 'bg-gray-100'}>
                     {STAGES.find(s => s.key === detailItem.stage)?.label || detailItem.stage}
                   </Badge>
+                  {/* CARTAO: gerar/mostrar o link de pagamento do pedido (25/ago/2026).
+                      So aparece se o pedido ainda nao esta pago online. */}
+                  {!editMode && detailItem.salesCardId && !detailItem.paidOnline && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                      onClick={() => setLinkPedido({ id: detailItem.salesCardId, nome: detailItem.customerName || null, numero: detailItem.orderNumber || null })}
+                      data-testid="button-payment-link"
+                    >
+                      💳 Link de pagamento
+                    </Button>
+                  )}
                   {!editMode ? (
                     (canEdit || canSellerEditItem(detailItem)) ? (
                       <Button size="sm" variant="outline" className="text-xs" onClick={startEdit} data-testid="button-edit-order">✏️ Editar</Button>
@@ -1739,6 +1756,16 @@ export default function BillingPipeline() {
         </DialogContent>
       </Dialog>
 
+      {/* CARTAO: link de pagamento do pedido */}
+      <PaymentLinkDialog
+        open={!!linkPedido}
+        onOpenChange={(o) => { if (!o) setLinkPedido(null); }}
+        salesCardId={linkPedido?.id}
+        customerName={linkPedido?.nome}
+        orderNumber={linkPedido?.numero}
+        autoSendWhatsapp
+      />
+
     </div>
   );
 }
@@ -1874,7 +1901,7 @@ function KanbanCard({
               <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
               Pago
             </Badge>
-          ) : (item.source === 'hotsite' || item.source === 'instagram' || item.sellerId === 'chatgpt-ai' || String(item.createdBy || '').includes('chatgpt')) && (
+          ) : (item.source === 'hotsite' || item.source === 'instagram' || item.paymentMethod === 'card' || item.paymentMethod === 'cartao' || item.sellerId === 'chatgpt-ai' || String(item.createdBy || '').includes('chatgpt')) && (
             <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50 font-semibold" title="Pagamento ainda não confirmado">
               <Ban className="h-2.5 w-2.5 mr-0.5" />
               Não pago

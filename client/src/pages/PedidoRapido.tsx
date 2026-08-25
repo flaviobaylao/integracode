@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { ShoppingCart, Store, MapPin, Minus, Plus, Trash2, ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { ShoppingCart, Store, MapPin, Minus, Plus, Trash2, ArrowLeft, Check, Loader2, CreditCard, ExternalLink, Copy } from 'lucide-react';
+import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -94,6 +95,9 @@ export default function PedidoRapido() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
+  // CARTAO: link de pagamento devolvido pelo servidor ao criar o pedido.
+  const [payUrl, setPayUrl] = useState<string | null>(null);
+  const [payQr, setPayQr] = useState<string | null>(null);
   const [customerData, setCustomerData] = useState<CustomerData>({
     name: '',
     phone: '',
@@ -272,6 +276,8 @@ export default function PedidoRapido() {
         })),
         totalAmount: cartTotal,
         paymentMethod: customerData.paymentMethod,
+        // Cartao: pedimos ao servidor o LINK de pagamento junto com o pedido.
+        wantPaymentLink: customerData.paymentMethod === 'card',
         source: 'hotsite',
         priceTable: convertPriceTable(priceTable),
       };
@@ -289,6 +295,10 @@ export default function PedidoRapido() {
 
       const result = await response.json();
       setOrderNumber(result.orderNumber);
+      setPayUrl(result.paymentUrl || null);
+      if (result.paymentUrl) {
+        try { setPayQr(await QRCode.toDataURL(result.paymentUrl, { width: 320, margin: 1 })); } catch {}
+      }
       setCart([]);
       setStep('success');
     } catch (error: any) {
@@ -305,6 +315,8 @@ export default function PedidoRapido() {
     setResellerLocation(null);
     setCart([]);
     setOrderNumber('');
+    setPayUrl(null);
+    setPayQr(null);
     setCustomerData({
       name: '',
       phone: phoneFromUrl,
@@ -328,9 +340,47 @@ export default function PedidoRapido() {
               <p className="text-sm text-gray-600">Número do pedido:</p>
               <p className="text-2xl font-mono font-bold text-green-600" data-testid="order-number-display">{orderNumber}</p>
             </div>
-            <p className="text-sm text-gray-600 mb-6">
-              Nossa equipe entrará em contato pelo WhatsApp para confirmar a entrega.
-            </p>
+            {payUrl ? (
+              <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-left" data-testid="bloco-pagamento-cartao">
+                <p className="flex items-center gap-2 font-semibold text-blue-900">
+                  <CreditCard className="h-4 w-4" /> Falta pagar
+                </p>
+                <p className="mt-1 text-sm text-blue-800">
+                  Toque no botão abaixo (ou aponte a câmera para o QR) para pagar no cartão, à vista.
+                  O pedido é confirmado automaticamente assim que o pagamento for aprovado.
+                </p>
+                {payQr && (
+                  <img src={payQr} alt="QR Code do pagamento" className="mx-auto my-3 h-40 w-40 rounded border bg-white p-1" data-testid="qr-pagamento" />
+                )}
+                <Button
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  onClick={() => window.open(payUrl, '_blank', 'noopener')}
+                  data-testid="btn-pagar-cartao"
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" /> Pagar agora
+                </Button>
+                <Button
+                  variant="outline"
+                  className="mt-2 w-full"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(payUrl);
+                      toast({ title: 'Link copiado' });
+                    } catch {
+                      toast({ title: 'Copie o link', description: payUrl });
+                    }
+                  }}
+                  data-testid="btn-copiar-link"
+                >
+                  <Copy className="mr-2 h-4 w-4" /> Copiar link
+                </Button>
+                <p className="mt-2 text-xs text-blue-700">Também enviamos este link no seu WhatsApp.</p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600 mb-6">
+                Nossa equipe entrará em contato pelo WhatsApp para confirmar a entrega.
+              </p>
+            )}
             <Button onClick={reset} className="w-full bg-green-600 hover:bg-green-700" data-testid="btn-new-order">
               Fazer Novo Pedido
             </Button>

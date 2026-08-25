@@ -25976,12 +25976,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (_e2) {}
       console.log('✅ Pedido salvo com ID:', salesCard.id, 'Source:', salesCard.source);
-      
+
+      // ── CARTAO: LINK DE PAGAMENTO (regra de 25/ago/2026) ──────────────────
+      // Quem escolhe cartao precisa de um caminho para PAGAR. So geramos o link
+      // quando o chamador pede (`wantPaymentLink`) — o checkout do hotsite NAO
+      // pede, porque la a Cielo ja cobrou ANTES de criar o pedido e um link aqui
+      // seria uma segunda cobranca do mesmo pedido. Nunca quebra a criacao.
+      let _payLink: { url: string; token: string; amount: number } | null = null;
+      if (validatedData.paymentMethod === 'card' && (req.body?.wantPaymentLink === true)) {
+        try {
+          const { createPaymentLink, orderAlreadyPaid, mensagemLinkPagamento, enviarLinkPorWhatsapp } = await import('./payment-link');
+          if (!(await orderAlreadyPaid(salesCard.id))) {
+            const _pl = await createPaymentLink({
+              kind: 'order',
+              salesCardId: salesCard.id,
+              orderNumber,
+              channel: String(validatedData.source || 'hotsite'),
+              customerName: validatedData.customer.name,
+              customerDocument: cpfLimpo || null,
+              customerPhone: validatedData.customer.phone || null,
+              amount: validatedData.totalAmount,
+              createdBy: 'pedido-publico',
+            });
+            if (_pl.ok && _pl.url) {
+              _payLink = { url: _pl.url, token: _pl.token!, amount: _pl.amount || validatedData.totalAmount };
+              void enviarLinkPorWhatsapp(validatedData.customer.phone, mensagemLinkPagamento({
+                customerName: validatedData.customer.name, orderNumber,
+                amount: _payLink.amount, url: _payLink.url,
+              }));
+            } else {
+              console.warn('[PUBLIC-ORDER] link de cartao nao gerado:', _pl.error);
+            }
+          }
+        } catch (_ple: any) { console.warn('[PUBLIC-ORDER] link de cartao (segue):', _ple?.message); }
+      }
+
       res.status(201).json({
         success: true,
         orderId: salesCard.id,
         orderNumber,
         message: 'Pedido criado com sucesso!',
+        paymentUrl: _payLink?.url || null,
+        paymentToken: _payLink?.token || null,
       referralDiscount: _refPct > 0 ? { pct: _refPct, amount: _refDiscount, total: validatedData.totalAmount, mode: _refMode } : null,
         couponDiscount: _cupAplicado ? { code: _cupAplicado.code, amount: _cupAplicado.discount, total: _cupAplicado.total } : null,
         customerId,
