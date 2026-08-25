@@ -23052,10 +23052,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
       const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
       const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
-      res.json({ months, sellers, geradoEm: getBrazilDateString() });
+      // Tarifa R$/km (config_global) + status do mes atual: FECHADO no ultimo dia do mes apos as 20h (SP).
+      let ratePerKm = 0;
+      try {
+        const cr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`);
+        const v = cr?.rows?.[0]?.valor;
+        if (v) { const parsed = JSON.parse(String(v)); ratePerKm = Number(parsed?.ratePerKm || 0) || 0; }
+      } catch (e) { /* sem tarifa configurada ainda */ }
+      let mesAtual = ''; let mesFechado = false;
+      try {
+        const ni: any = await db.execute(sql`
+          SELECT to_char((now() AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM') AS mes_atual,
+            ((now() AT TIME ZONE 'America/Sao_Paulo')::date = (date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')) + interval '1 month' - interval '1 day')::date
+             AND extract(hour from (now() AT TIME ZONE 'America/Sao_Paulo')) >= 20) AS fechado
+        `);
+        const nrow = (ni?.rows || [])[0] || {};
+        mesAtual = String(nrow.mes_atual || '');
+        mesFechado = nrow.fechado === true || nrow.fechado === 't';
+      } catch (e) { /* fallback */ }
+      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, mesAtual, mesFechado });
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
       res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
+    }
+  });
+
+  // Salva a tarifa R$/km paga ao vendedor (global). Admin apenas. Persistido em config_global.
+  app.post('/api/admin/km-vendedores/rate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const rate = Number(req.body?.ratePerKm);
+      if (!isFinite(rate) || rate < 0) return res.status(400).json({ message: 'Valor por km invalido' });
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+      const valor = JSON.stringify({ ratePerKm: rate });
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, ratePerKm: rate });
+    } catch (error: any) {
+      console.error('Erro ao salvar tarifa km:', error);
+      res.status(500).json({ message: 'Erro ao salvar tarifa', error: error?.message });
     }
   });
 
