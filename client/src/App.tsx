@@ -75,6 +75,7 @@ import OmieStageLogs from "@/pages/OmieStageLogs";
 import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
+import FluxoEntregas from "@/pages/FluxoEntregas";
 import Financial from "@/pages/Financial";
 import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
@@ -330,6 +331,7 @@ function Router() {
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
           <Route path="/estoque" component={Inventory} />
           <Route path="/billing-pipeline" component={BillingPipeline} />
+          <Route path="/fluxo-entregas" component={FluxoEntregas} />
           <Route path="/financeiro" component={Financial} />
           <Route path="/industria" component={Industry} />
           <Route path="/relatorios" component={Reports} />
