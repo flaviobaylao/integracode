@@ -33,6 +33,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { authenticateUser } from './authMiddleware';
+import { registerLioPdv, registrarRecebimentoBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
 
 // statusCode do retorno da Cielo — o campo que separa venda de estorno.
 // Ignorar isso significa dar baixa num cancelamento como se fosse venda.
@@ -135,6 +136,10 @@ async function ensureSchema(): Promise<void> {
     created_at timestamp DEFAULT now()
   )`));
 
+  // Colunas do PDV (tabela de preco, cliente, titulo gerado). Ficam no modulo
+  // do PDV para manter junto o que muda junto.
+  await ensurePdvSchema();
+
   _schemaPronto = true;
 }
 
@@ -226,12 +231,11 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
   const ganhou = (claim.rowCount ?? claim?.rows?.length ?? 0) === 1;
   if (!ganhou) return { liquidado: false, motivo: 'ja_liquidado' };
 
-  const r: any = await db.execute(sql`SELECT sales_card_id FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
-  const salesCardId = ((r.rows || r) as any[])[0]?.sales_card_id;
-  if (!salesCardId) {
-    console.log(`✅ [LIO-APP] Pedido ${id} pago (venda avulsa, sem pedido do INTEGRA).`);
-    return { liquidado: true, motivo: 'sem_sales_card' };
-  }
+  const r: any = await db.execute(sql`SELECT sales_card_id, reference, amount, origem,
+      cliente_id, cliente_nome, forma_pagamento
+    FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
+  const pedido = ((r.rows || r) as any[])[0] || {};
+  const salesCardId = pedido.sales_card_id;
 
   const detalhe = [
     d.brand ? `bandeira ${d.brand}` : null,
@@ -239,6 +243,39 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
     d.authCode ? `aut. ${d.authCode}` : null,
     d.statusCode === STATUS_CODE_PIX ? 'via Pix' : null,
   ].filter(Boolean).join(', ');
+
+  if (!salesCardId) {
+    // VENDA DE BALCAO / AVULSA.
+    //
+    // Antes isto so imprimia uma linha de log e acabava — o dinheiro entrava na
+    // maquininha e nao aparecia em lugar nenhum do financeiro. Servia enquanto
+    // o app era so um teste de deep link; num PDV seria um caixa que vende e
+    // nao contabiliza.
+    //
+    // Nao vira sales_card de proposito: aquilo e card de visita recorrente e
+    // exige cliente, vendedor e dia de rota. Vai direto para receivables, que e
+    // onde o dinheiro mora.
+    const valorCentavos = d.paidAmount && d.paidAmount > 0
+      ? Math.round(d.paidAmount)
+      : (reaisParaCentavos(pedido.amount) ?? 0);
+
+    const forma = pedido.forma_pagamento
+      || (d.statusCode === STATUS_CODE_PIX ? 'pix'
+        : (Number(d.installments) > 1 ? 'cartao_credito' : 'cartao'));
+
+    const { receivableId, motivo } = await registrarRecebimentoBalcao({
+      id,
+      reference: String(pedido.reference || id),
+      valorCentavos,
+      clienteId: pedido.cliente_id || null,
+      clienteNome: pedido.cliente_nome || null,
+      formaPagamento: forma,
+      detalhe: detalhe || null,
+    });
+
+    console.log(`✅ [LIO-APP] Pedido ${id} pago (balcao). Financeiro: ${receivableId || motivo}.`);
+    return { liquidado: true, motivo: receivableId ? 'recebimento_lancado' : (motivo || 'sem_sales_card') };
+  }
 
   try {
     await db.execute(sql`UPDATE sales_cards SET notes = COALESCE(notes,'') ||
@@ -263,6 +300,11 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
 // Rotas
 // ---------------------------------------------------------------------------
 export function registerLioApp(app: Express): void {
+
+  // Rotas do PDV (catalogo, imagem, clientes, venda). Recebem o MESMO
+  // autenticador de dispositivo daqui — um so lugar decide quem é um aparelho
+  // autorizado.
+  registerLioPdv(app, autenticarDispositivo as any);
 
   // =========================================================================
   // ROTAS DO APP (token de dispositivo)
