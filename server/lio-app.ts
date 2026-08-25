@@ -116,7 +116,42 @@ async function ensureSchema(): Promise<void> {
     await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_lio_pedidos_fila ON lio_pedidos (status, origem)`));
   } catch { /* noop */ }
 
+  // Pareamento por codigo curto.
+  //
+  // POR QUE EXISTE: o token do dispositivo tem 64 caracteres hexadecimais.
+  // Digitar isso na tela de uma maquininha e lento e erra-se com facilidade —
+  // e cada aparelho novo repetiria o sofrimento. O codigo curto e um portador
+  // temporario: o app troca 8 caracteres pelo token real e o registro morre ali.
+  //
+  // O token fica em claro nesta tabela DE PROPOSITO: o app ainda nao tem
+  // credencial nenhuma quando pede o pareamento, entao nao ha como entregar um
+  // hash. O que limita o risco e o prazo curto, o uso unico e a exclusao
+  // imediata no resgate.
+  await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS lio_pareamentos (
+    codigo varchar PRIMARY KEY,
+    dispositivo_id varchar NOT NULL,
+    token varchar NOT NULL,
+    expira_em timestamp NOT NULL,
+    created_at timestamp DEFAULT now()
+  )`));
+
   _schemaPronto = true;
+}
+
+/** Minutos de vida de um codigo de pareamento. */
+const PAREAMENTO_TTL_MIN = 15;
+
+/**
+ * Alfabeto sem caracteres ambiguos (sem I, L, O, U, 0, 1) — quem digita numa
+ * maquininha nao deve precisar decidir se aquilo e um O ou um zero.
+ */
+const ALFABETO_CODIGO = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+function gerarCodigo(tamanho = 8): string {
+  const bytes = randomBytes(tamanho);
+  let s = '';
+  for (let i = 0; i < tamanho; i++) s += ALFABETO_CODIGO[bytes[i] % ALFABETO_CODIGO.length];
+  return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +267,44 @@ export function registerLioApp(app: Express): void {
   // =========================================================================
   // ROTAS DO APP (token de dispositivo)
   // =========================================================================
+
+  /**
+   * Troca o codigo curto pelo token do dispositivo. ROTA PUBLICA, e tem de ser:
+   * o aparelho ainda nao possui credencial alguma quando chega aqui.
+   *
+   * O que protege: codigo de uso unico, prazo de 15 minutos e exclusao do
+   * registro no mesmo instante do resgate. Um codigo vazado depois disso nao
+   * vale nada, e o token continua revogavel a qualquer momento.
+   */
+  app.post('/api/lio-app/parear', async (req, res) => {
+    try {
+      await ensureSchema();
+      const codigo = String(req.body?.codigo || '').trim().toUpperCase();
+      if (!/^[0-9A-Z]{6,12}$/.test(codigo)) {
+        return res.status(400).json({ message: 'Codigo invalido.' });
+      }
+
+      // Faxina antes da consulta: codigo vencido nunca chega a ser comparado.
+      await db.execute(sql`DELETE FROM lio_pareamentos WHERE expira_em < now()`);
+
+      const r: any = await db.execute(sql`SELECT p.codigo, p.token, p.dispositivo_id, d.nome
+        FROM lio_pareamentos p JOIN lio_dispositivos d ON d.id = p.dispositivo_id
+        WHERE p.codigo = ${codigo} AND p.expira_em > now() LIMIT 1`);
+      const linha = ((r.rows || r) as any[])[0];
+      if (!linha) {
+        return res.status(404).json({ message: 'Codigo nao encontrado ou expirado. Gere outro no INTEGRA.' });
+      }
+
+      // Uso unico: some assim que e resgatado.
+      await db.execute(sql`DELETE FROM lio_pareamentos WHERE codigo = ${codigo}`);
+      console.log(`🔗 [LIO-APP] Aparelho pareado: ${linha.nome} (${linha.dispositivo_id})`);
+
+      res.json({ token: linha.token, dispositivo: { id: linha.dispositivo_id, nome: linha.nome } });
+    } catch (e: any) {
+      console.error('❌ [LIO-APP] Falha no pareamento:', e?.message || e);
+      res.status(500).json({ message: String(e?.message || e) });
+    }
+  });
 
   /**
    * Credenciais da Cielo entregues em runtime, apos o app se autenticar com o
@@ -469,6 +542,49 @@ export function registerLioApp(app: Express): void {
         aviso: 'Guarde este token agora: ele nao pode ser recuperado depois (guardamos so o hash).',
       });
     } catch (e: any) {
+      res.status(500).json({ message: String(e?.message || e) });
+    }
+  });
+
+  /**
+   * Cria o dispositivo E o codigo curto de pareamento numa tacada.
+   *
+   * E este o caminho recomendado para colocar uma maquininha nova no ar: o
+   * operador digita 8 caracteres em vez de 64, e o token nunca precisa ser
+   * lido, ditado ou anotado por ninguem.
+   */
+  app.post('/api/admin/lio-app/pareamento', authenticateUser, async (req: any, res) => {
+    try {
+      await ensureSchema();
+      const nome = String(req.body?.nome || '').trim();
+      if (!nome) return res.status(400).json({ message: 'nome e obrigatorio' });
+
+      const token = randomBytes(32).toString('hex');
+      const r: any = await db.execute(sql`INSERT INTO lio_dispositivos (nome, token_hash, merchant_code)
+        VALUES (${nome}, ${sha256(token)}, ${String(req.body?.merchantCode || '') || null}) RETURNING id`);
+      const dispositivoId = ((r.rows || r) as any[])[0]?.id;
+
+      // Colisao de codigo e improvavel (30^8), mas custa pouco tentar de novo.
+      let codigo = '';
+      for (let tentativa = 0; tentativa < 5; tentativa++) {
+        codigo = gerarCodigo();
+        try {
+          await db.execute(sql`INSERT INTO lio_pareamentos (codigo, dispositivo_id, token, expira_em)
+            VALUES (${codigo}, ${dispositivoId}, ${token}, now() + (${String(PAREAMENTO_TTL_MIN)} || ' minutes')::interval)`);
+          break;
+        } catch (e: any) {
+          if (tentativa === 4) throw e;
+        }
+      }
+
+      res.status(201).json({
+        codigo,
+        expiraEmMinutos: PAREAMENTO_TTL_MIN,
+        dispositivo: { id: dispositivoId, nome },
+        aviso: `Digite este codigo no app da maquininha em ate ${PAREAMENTO_TTL_MIN} minutos. Ele vale uma vez so.`,
+      });
+    } catch (e: any) {
+      console.error('❌ [LIO-APP] Falha ao gerar pareamento:', e?.message || e);
       res.status(500).json({ message: String(e?.message || e) });
     }
   });
