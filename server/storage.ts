@@ -8754,6 +8754,50 @@ export class DatabaseStorage implements IStorage {
         }
       }
     } catch {}
+    // Enriquece com os dados de LOCALIZACAO do cadastro do cliente (usado pelo modulo
+    // "Fluxo de Entregas": coluna Coordenadas "latitude, longitude" + endereco/cidade).
+    // Fonte unica: customers.latitude/longitude (a mesma do Mapa de Clientes e da
+    // roteirizacao). Casa por customerId e, como reforco, por CNPJ/CPF (cobre itens com
+    // customerId sintetico do tipo 'omie-client-...'). Bloco try/catch proprio: se falhar,
+    // o pipeline continua respondendo sem as colunas novas.
+    try {
+      const rowsD = rows as any[];
+      const custIds = Array.from(new Set(rowsD.map(r => r.customerId).filter(Boolean).map(String)));
+      const docs = Array.from(new Set(rowsD.map(r => String(r.customerDocument || '').replace(/\D/g, '')).filter(Boolean)));
+      if (custIds.length || docs.length) {
+        const conds: any[] = [];
+        if (custIds.length) conds.push(inArray(customers.id, custIds as any));
+        if (docs.length) { conds.push(inArray(customers.cnpj, docs as any)); conds.push(inArray(customers.cpf, docs as any)); }
+        const cs = await db.select({
+          id: customers.id, cnpj: customers.cnpj, cpf: customers.cpf,
+          lat: customers.latitude, lng: customers.longitude,
+          addr: customers.address, city: customers.city, neigh: customers.neighborhood,
+          uf: customers.state, zip: customers.zipCode, phone: customers.phone,
+        }).from(customers).where(or(...conds));
+        const byId = new Map<string, any>();
+        const byDoc = new Map<string, any>();
+        for (const c of cs as any[]) {
+          if (c.id) byId.set(String(c.id), c);
+          const d = String(c.cnpj || c.cpf || '').replace(/\D/g, '');
+          if (d && !byDoc.has(d)) byDoc.set(d, c);
+        }
+        for (const r of rowsD) {
+          let c = byId.get(String(r.customerId)) || null;
+          if (!c) { const d = String(r.customerDocument || '').replace(/\D/g, ''); if (d) c = byDoc.get(d) || null; }
+          if (!c) continue;
+          const lat = c.lat == null || c.lat === '' ? null : Number(c.lat);
+          const lng = c.lng == null || c.lng === '' ? null : Number(c.lng);
+          (r as any).customerLatitude = Number.isFinite(lat as any) ? lat : null;
+          (r as any).customerLongitude = Number.isFinite(lng as any) ? lng : null;
+          (r as any).customerAddress = c.addr || null;
+          (r as any).customerCity = c.city || null;
+          (r as any).customerNeighborhood = c.neigh || null;
+          (r as any).customerState = c.uf || null;
+          (r as any).customerZipCode = c.zip || null;
+          (r as any).customerPhone = c.phone || null;
+        }
+      }
+    } catch {}
     return rows as any;
   }
 
