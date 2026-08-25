@@ -66,6 +66,52 @@ function esc(s: any): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// ---------------------------------------------------------------------------
+// ENVIO DO LINK AO CLIENTE (WhatsApp) — usado quando o VENDEDOR escolhe Cartao
+// na tela de pedido. Fire-and-forget: falha de envio NUNCA derruba a criacao do
+// link (o vendedor sempre tem o link na tela para copiar / mostrar o QR).
+// ---------------------------------------------------------------------------
+export function mensagemLinkPagamento(args: { customerName?: string | null; orderNumber?: string | null; amount: number; url: string }): string {
+  const nome = String(args.customerName || '').trim().split(/\s+/)[0] || '';
+  const ped = args.orderNumber ? ` do pedido ${args.orderNumber}` : '';
+  return [
+    nome ? `Ola, ${nome}!` : 'Ola!',
+    `Segue o link para o pagamento${ped} na Honest Sucos: ${brl(args.amount)}.`,
+    '',
+    args.url,
+    '',
+    'Pagamento no cartao, a vista (1x), em ambiente seguro da Cielo.',
+    'Assim que o pagamento for aprovado o seu pedido e confirmado automaticamente.',
+  ].join('\n');
+}
+
+/** Manda o link por WhatsApp (UmblerTalk). Devolve o resultado sem lancar. */
+export async function enviarLinkPorWhatsapp(phone: string | null | undefined, texto: string): Promise<{ sent: boolean; to?: string; error?: string }> {
+  const digits = onlyDigits(phone);
+  if (!digits) return { sent: false, error: 'cliente sem telefone cadastrado' };
+  try {
+    const { sendUmblerTalkText } = await import('./chat-routes');
+    const r = await sendUmblerTalkText(digits, texto);
+    if (!r.success) return { sent: false, to: digits, error: r.error || 'falha no envio' };
+    console.log(`[PAY-LINK] link enviado por WhatsApp para ${digits}`);
+    return { sent: true, to: digits };
+  } catch (e: any) {
+    return { sent: false, to: digits, error: e?.message || String(e) };
+  }
+}
+
+/** Telefone do cliente de um pedido, na mesma ordem de preferencia do envio de documentos. */
+async function telefoneDoPedido(salesCardId: string): Promise<{ phone: string | null; customerId: string | null }> {
+  try {
+    const q: any = await db.execute(sql`SELECT sc.customer_id,
+        COALESCE(NULLIF(cu.notification_whatsapp, ''), cu.phone) AS phone
+      FROM sales_cards sc LEFT JOIN customers cu ON cu.id = sc.customer_id
+      WHERE sc.id = ${salesCardId} LIMIT 1`);
+    const r = (q.rows || q)[0];
+    return { phone: r?.phone ? String(r.phone) : null, customerId: r?.customer_id ? String(r.customer_id) : null };
+  } catch { return { phone: null, customerId: null }; }
+}
+
 let _plReady = false;
 async function ensurePaymentLinkTable(): Promise<void> {
   if (_plReady) return;
@@ -409,6 +455,15 @@ async function afterApproved(link: any, sale: any, opts: { wallet?: string; last
   // Titulo de Contas a Receber: baixa o recebivel e encerra aqui (nao e pedido novo).
   if (String(link.kind || '') === 'receivable' || link.receivable_id) {
     await settleReceivableByLink(link, sale, opts);
+    // Confirma ao cliente que o titulo foi pago (mesmo canal do link).
+    try {
+      const nome = String(link.customer_name || '').trim().split(/\s+/)[0] || '';
+      await enviarLinkPorWhatsapp(link.customer_phone, [
+        nome ? `${nome}, pagamento aprovado!` : 'Pagamento aprovado!',
+        `Recebemos ${brl(link.amount)} no cartao${link.order_number ? ` (titulo ${link.order_number})` : ''}. O titulo ja consta como PAGO.`,
+        'Obrigado por comprar na Honest Sucos!',
+      ].join('\n'));
+    } catch { /* mensagem nunca desfaz pagamento */ }
     return;
   }
   const merchantOrderId = link.merchant_order_id;
@@ -443,12 +498,40 @@ async function afterApproved(link: any, sale: any, opts: { wallet?: string; last
   } catch {}
 
   // Empurra imediatamente para o pipeline de faturamento (mesmo caminho da loja).
+  // E daqui que sai o badge PAGO e a baixa automatica do titulo ao faturar
+  // (getHotsitePaidMethod le o hotsite_card_payments gravado acima).
   try {
     const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
     await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [link.sales_card_id] } as any);
   } catch (e: any) {
     console.warn('⚠️ [PAY-LINK] envio imediato ao pipeline falhou:', e?.message || e);
   }
+
+  // CONFIRMACAO AO CLIENTE. Idempotente por construcao: applyCieloLinkStatus e o
+  // /card so chamam afterApproved uma vez (link ja 'paid' nao e reprocessado).
+  // Fire-and-forget: falha de mensagem nunca desfaz um pagamento aprovado.
+  try {
+    await confirmarPedidoAoCliente(link, sale);
+  } catch (e: any) {
+    console.warn('⚠️ [PAY-LINK] confirmacao ao cliente falhou:', e?.message || e);
+  }
+}
+
+// Avisa o cliente que o pagamento foi aprovado e o pedido esta confirmado.
+// Canal: o mesmo WhatsApp por onde o link foi enviado (ou o telefone do cadastro).
+async function confirmarPedidoAoCliente(link: any, sale: any): Promise<void> {
+  const doPedido = link.sales_card_id ? await telefoneDoPedido(String(link.sales_card_id)) : { phone: null, customerId: null };
+  const phone = link.customer_phone || doPedido.phone;
+  const nome = String(link.customer_name || '').trim().split(/\s+/)[0] || '';
+  const ped = link.order_number ? ` (pedido ${link.order_number})` : '';
+  const texto = [
+    nome ? `${nome}, pagamento aprovado!` : 'Pagamento aprovado!',
+    `Recebemos ${brl(link.amount)} no cartao${ped}. Seu pedido esta CONFIRMADO e ja foi para a separacao.`,
+    sale?.paymentId ? `Comprovante Cielo: ${String(sale.paymentId).slice(0, 8)}…` : '',
+    'Obrigado por comprar na Honest Sucos!',
+  ].filter(Boolean).join('\n');
+  const r = await enviarLinkPorWhatsapp(phone, texto);
+  if (!r.sent) console.warn('⚠️ [PAY-LINK] confirmacao nao enviada:', r.error);
 }
 
 // Marca a tentativa ANTES de cobrar e devolve o merchantOrderId usado.
@@ -571,10 +654,12 @@ export function registerPaymentLink(app: Express): void {
       let name = b.customerName || null;
       let doc = b.customerDocument || null;
       let orderNumber = b.orderNumber || null;
+      let phone = b.customerPhone || null;
 
       // Se veio um pedido, o valor e SEMPRE o do pedido (nunca o que o cliente digita).
       if (b.salesCardId) {
-        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, sc.order_number, cu.name AS cname, cu.cpf_cnpj AS cdoc
+        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, sc.order_number, cu.name AS cname, cu.cpf_cnpj AS cdoc,
+            COALESCE(NULLIF(cu.notification_whatsapp, ''), cu.phone) AS cphone
           FROM sales_cards sc LEFT JOIN customers cu ON cu.id = sc.customer_id
           WHERE sc.id = ${String(b.salesCardId)} LIMIT 1`);
         const row = (c.rows || c)[0];
@@ -583,6 +668,7 @@ export function registerPaymentLink(app: Express): void {
         name = name || row.cname || null;
         doc = doc || row.cdoc || null;
         orderNumber = orderNumber || row.order_number || null;
+        phone = phone || (row.cphone ? String(row.cphone) : null);
       }
       if (!(amount > 0)) return res.status(400).json({ message: 'Valor invalido' });
 
@@ -594,17 +680,93 @@ export function registerPaymentLink(app: Express): void {
         channel: b.channel || 'manual',
         customerName: name,
         customerDocument: doc,
-        customerPhone: b.customerPhone || null,
+        customerPhone: phone,
         amount,
         description: b.description || null,
         ttlHours: b.ttlHours,
         createdBy: (req as any).currentUser?.email || (req as any).currentUser?.id || 'atendente',
       });
       if (!out.ok) return res.status(400).json({ message: out.error || 'Falha ao criar o link' });
-      return res.json(out);
+
+      // Envio ao cliente por WhatsApp. So quando pedido explicitamente pelo chamador
+      // (a tela do vendedor manda sendWhatsapp:true). Nunca derruba a criacao do link:
+      // se o envio falhar, o vendedor ainda tem o link/QR na tela.
+      let whatsapp: any = undefined;
+      if (b.sendWhatsapp) {
+        whatsapp = await enviarLinkPorWhatsapp(
+          phone,
+          mensagemLinkPagamento({ customerName: name, orderNumber, amount: out.amount || amount, url: out.url! }),
+        );
+      }
+      return res.json({ ...out, customerName: name, customerPhone: phone, whatsapp });
     } catch (e: any) {
       console.error('\u274c [PAY-LINK] create:', e?.message || e);
       return res.status(500).json({ message: 'Erro ao criar o link de pagamento.' });
+    }
+  });
+
+  // ------------------------------------------ estado do link de UM pedido
+  // A tela do vendedor consulta aqui (poll leve) para trocar "Aguardando pagamento"
+  // por "PAGO" sem precisar recarregar a pagina.
+  app.get('/api/payment-links/order/:salesCardId', authenticateUser, async (req: any, res) => {
+    try {
+      await ensurePaymentLinkTable();
+      const cardId = String(req.params.salesCardId || '');
+      if (!cardId) return res.status(400).json({ message: 'Pedido nao informado' });
+      const q: any = await db.execute(sql`SELECT token, status, amount, checkout_url, provider, expires_at,
+             paid_at, customer_phone, customer_name, order_number, attempts
+        FROM payment_links WHERE sales_card_id = ${cardId}
+        ORDER BY (status = 'paid') DESC, created_at DESC LIMIT 1`);
+      const row = (q.rows || q)[0];
+      const paid = await orderAlreadyPaid(cardId);
+      if (!row) return res.json({ exists: false, paid });
+      return res.json({
+        exists: true,
+        paid: paid || String(row.status) === 'paid',
+        status: row.status,
+        token: row.token,
+        url: `${LINK_BASE}/pay/${row.token}`,
+        amount: Number(row.amount),
+        provider: row.provider || null,
+        expiresAt: row.expires_at || null,
+        paidAt: row.paid_at || null,
+        attempts: Number(row.attempts || 0),
+        customerName: row.customer_name || null,
+        customerPhone: row.customer_phone || null,
+        orderNumber: row.order_number || null,
+      });
+    } catch (e: any) {
+      console.error('❌ [PAY-LINK] order status:', e?.message || e);
+      return res.status(500).json({ message: 'Erro ao consultar o link do pedido.' });
+    }
+  });
+
+  // ------------------------------------------ reenviar o link por WhatsApp
+  // Nao cria link novo: reenvia o MESMO token (evita 2 links vivos no mesmo pedido).
+  app.post('/api/payment-links/:token/resend', authenticateUser, async (req: any, res) => {
+    try {
+      await ensurePaymentLinkTable();
+      const q: any = await db.execute(sql`SELECT token, status, amount, customer_name, customer_phone, order_number, sales_card_id
+        FROM payment_links WHERE token = ${String(req.params.token)} LIMIT 1`);
+      const link = (q.rows || q)[0];
+      if (!link) return res.status(404).json({ message: 'Link nao encontrado' });
+      if (String(link.status) === 'paid') return res.status(409).json({ message: 'Pagamento ja realizado' });
+      if (String(link.status) !== 'pending') return res.status(409).json({ message: `Link ${link.status}` });
+
+      let phone = req.body?.customerPhone || link.customer_phone || null;
+      if (!phone && link.sales_card_id) phone = (await telefoneDoPedido(String(link.sales_card_id))).phone;
+
+      const out = await enviarLinkPorWhatsapp(phone, mensagemLinkPagamento({
+        customerName: link.customer_name, orderNumber: link.order_number,
+        amount: Number(link.amount), url: `${LINK_BASE}/pay/${link.token}`,
+      }));
+      if (!out.sent) return res.status(400).json({ message: out.error || 'Falha ao enviar', ...out });
+      // Guarda o telefone efetivamente usado para o reenvio/confirmacao seguintes.
+      try { await db.execute(sql`UPDATE payment_links SET customer_phone = ${onlyDigits(phone)}, updated_at = now() WHERE token = ${link.token}`); } catch {}
+      return res.json(out);
+    } catch (e: any) {
+      console.error('❌ [PAY-LINK] resend:', e?.message || e);
+      return res.status(500).json({ message: 'Erro ao reenviar o link.' });
     }
   });
 
