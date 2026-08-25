@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import PaymentLinkDialog from "./PaymentLinkDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -194,6 +195,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
   }, [customerVisitPeriodicity]);
 
+  // CARTAO: pedido cujo link de pagamento sera exibido apos finalizar.
+  const [linkPedido, setLinkPedido] = useState<{ id: string; nome?: string | null } | null>(null);
+
   // Mutation para atualizar e FINALIZAR a venda (fecha modal)
   const updateCardMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
@@ -201,9 +205,19 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      // CARTAO -> disponibiliza o LINK de pagamento (regra de 25/ago/2026).
+      const ehCartao = paymentMethod === 'card';
+      if (ehCartao && (card as any)?.id) {
+        setLinkPedido({
+          id: String((card as any).id),
+          nome: (card as any)?.customer?.name || (card as any)?.customerName || null,
+        });
+      }
       toast({
         title: "Sucesso",
-        description: "Venda finalizada com sucesso!",
+        description: ehCartao
+          ? "Venda finalizada. Gerando o link de pagamento no cartão..."
+          : "Venda finalizada com sucesso!",
       });
       onClose();
     },
@@ -1529,6 +1543,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       <SelectItem value="a_vista">À Vista</SelectItem>
                       <SelectItem value="boleto">Boleto</SelectItem>
                       <SelectItem value="pix">PIX</SelectItem>
+                      <SelectItem value="card">Cartão</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1873,6 +1888,14 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         </div>
       </DialogContent>
     </Dialog>
+
+    <PaymentLinkDialog
+      open={!!linkPedido}
+      onOpenChange={(o) => { if (!o) setLinkPedido(null); }}
+      salesCardId={linkPedido?.id}
+      customerName={linkPedido?.nome}
+      autoSendWhatsapp
+    />
     </>
   );
 }

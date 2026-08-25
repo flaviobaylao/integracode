@@ -540,9 +540,16 @@ export default function SalesCardModal({ isOpen, onClose, editingCard }: SalesCa
                   <SelectItem value="a_vista">À Vista</SelectItem>
                   <SelectItem value="boleto">Boleto</SelectItem>
                   <SelectItem value="pix">PIX</SelectItem>
+                  <SelectItem value="card">Cartão</SelectItem>
                 </SelectContent>
               </Select>
               {errors.paymentMethod && <p className="text-sm text-red-500 mt-1">{errors.paymentMethod}</p>}
+              {formData.paymentMethod === 'card' && (
+                <p className="mt-1 text-xs text-blue-700">
+                  O link de pagamento é gerado ao <strong>finalizar a venda</strong> (tela de pedido) ou pelo
+                  card do pedido no Pipeline de Faturamento.
+                </p>
+              )}
             </div>
 
             <div>

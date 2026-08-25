@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import WhatsAppButton from "./WhatsAppButton";
+import PaymentLinkDialog from "./PaymentLinkDialog";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { writeLine, brl } from '@/lib/pdfLayout';
@@ -47,6 +48,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   
   // Estados dos campos de pagamento
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('a_vista');
+  // CARTAO: quando o vendedor escolhe Cartao, ao finalizar a venda abrimos o dialog
+  // do LINK de pagamento (Cielo). Guardamos os dados do pedido aqui porque o
+  // SaleModal fecha e o `salesCard` da prop pode ser zerado pelo pai.
+  const [linkPedido, setLinkPedido] = useState<{ id: string; nome?: string | null; total: number } | null>(null);
   const [operationType, setOperationType] = useState<OperationType>('venda');
   const [boletoDays, setBoletoDays] = useState<number>(7);
   
@@ -627,11 +632,22 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      // CARTAO -> disponibiliza o LINK de pagamento (regra de 25/ago/2026).
+      const ehCartao = paymentMethod === 'card';
+      if (ehCartao && salesCard?.id) {
+        setLinkPedido({
+          id: String(salesCard.id),
+          nome: (salesCard as any)?.customer?.name || (salesCard as any)?.customerName || null,
+          total: totalSale,
+        });
+      }
       toast({
         title: "Sucesso!",
-        description: shouldBlockOrder 
-          ? "Pedido enviado para aprovação devido ao prazo do boleto"
-          : "Venda finalizada e enviada para Omie com sucesso!"
+        description: ehCartao
+          ? "Venda finalizada. Gerando o link de pagamento no cartão..."
+          : shouldBlockOrder
+            ? "Pedido enviado para aprovação devido ao prazo do boleto"
+            : "Venda finalizada e enviada para Omie com sucesso!"
       });
       onClose();
       resetForm();
@@ -771,6 +787,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   if (!salesCard) return null;
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="w-full max-w-[95vw] lg:max-w-6xl h-[95vh] lg:max-h-[90vh] overflow-hidden p-3 lg:p-6">
         <DialogHeader>
@@ -1172,6 +1189,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   </Select>
                 </div>
 
+                {/* CARTAO: o que vai acontecer ao finalizar */}
+                {paymentMethod === 'card' && (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800" data-testid="aviso-cartao">
+                    Ao finalizar, o sistema gera o <strong>link de pagamento</strong> e envia ao cliente por
+                    WhatsApp (você também vê o link e o QR na tela). O pedido é confirmado automaticamente
+                    assim que o pagamento for aprovado.
+                  </div>
+                )}
+
                 {/* Prazo do Boleto */}
                 {paymentMethod === 'boleto' && (
                   <div className="space-y-2">
@@ -1478,5 +1504,15 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         )}
       </DialogContent>
     </Dialog>
+
+    <PaymentLinkDialog
+      open={!!linkPedido}
+      onOpenChange={(o) => { if (!o) setLinkPedido(null); }}
+      salesCardId={linkPedido?.id}
+      customerName={linkPedido?.nome}
+      amountHint={linkPedido?.total}
+      autoSendWhatsapp
+    />
+    </>
   );
 }
