@@ -17,7 +17,7 @@ import { usePermissions } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Route as RouteIcon, Search, DollarSign, Download } from "lucide-react";
+import { Route as RouteIcon, Search, DollarSign, Download, Info } from "lucide-react";
 import { exportToExcel } from "@/lib/tableTools";
 
 type SellerRow = {
@@ -44,6 +44,7 @@ export default function KmVendedores() {
   const isAdmin = role === "admin";
   const { toast } = useToast();
   const [busca, setBusca] = useState<string>("");
+  const [showInfo, setShowInfo] = useState<boolean>(false);
   const [rate, setRate] = useState<string>("");
   const [rateLoaded, setRateLoaded] = useState<boolean>(false);
 
@@ -110,7 +111,24 @@ export default function KmVendedores() {
         </div>
       </div>
 
-      <Card>
+      <Card className="relative">
+        <button type="button" onClick={() => setShowInfo((v) => !v)} title="Como a km e calculada" aria-label="Como a km e calculada" className="absolute top-3 right-3 z-20 w-7 h-7 rounded-full border bg-background text-indigo-600 hover:bg-indigo-50 flex items-center justify-center">
+          <Info className="w-4 h-4" />
+        </button>
+        {showInfo && (
+          <div className="absolute top-11 right-3 z-30 w-[330px] max-w-[calc(100%-1.5rem)] rounded-lg border bg-background p-3 text-xs shadow-xl">
+            <div className="font-semibold text-sm mb-1 flex items-center gap-1"><Info className="w-3.5 h-3.5 text-indigo-600" /> Como a quilometragem e calculada</div>
+            <p className="text-muted-foreground mb-2">E a distancia executada, reconstruida a partir dos check-ins que o vendedor registra em cada visita.</p>
+            <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+              <li>Liga ponto a ponto na ordem cronologica: casa, check-in 1, check-in 2, ... e a volta para casa (a volta entra na soma).</li>
+              <li>Cada trecho e medido por rota de ruas (OSRM); se o OSRM falhar, usa linha reta (Haversine) como reserva.</li>
+              <li>So entram visitas validadas (check-in cancelado nao conta; "fora da rota" so apos o admin validar).</li>
+              <li>O total e recalculado a cada check-in. Sem check-in, a rota fica 0 km.</li>
+              <li>Mede a distancia entre os pontos de check-in; desvios ou paradas sem registro nao entram, e casa em (0,0) e ignorada para nao inflar.</li>
+            </ul>
+            <button type="button" onClick={() => setShowInfo(false)} className="mt-2 text-indigo-600 hover:underline">Fechar</button>
+          </div>
+        )}
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Historico mensal por vendedor</CardTitle>
           <div className="text-xs text-muted-foreground mt-1">Soma da km executada em cada mes. Hoje a km e medida pelos check-ins + rota por ruas (OSRM); passara a refletir o trajeto GPS quando o rastreamento continuo entrar no ar.</div>
