@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Route as RouteIcon, Search, DollarSign, Download, Info } from "lucide-react";
-import { exportToExcel } from "@/lib/tableTools";
+import * as XLSXStyle from "xlsx-js-style";
 
 type SellerRow = {
   sellerId: string;
@@ -86,15 +86,52 @@ export default function KmVendedores() {
   const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateNum;
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
-  // Exporta TODAS as colunas visiveis (Vendedor, Funcao, meses 2026, R$ a pagar) para .xlsx.
+  // Exporta TODAS as colunas para .xlsx FORMATADO: cabecalho em negrito, faixas
+  // alternadas, km com separador de milhar, coluna R$ em moeda (traco para zero) e
+  // linha de Total.
   function exportarExcel() {
-    const linhas = rows.map((r) => {
-      const o: Record<string, any> = { Vendedor: r.sellerName, "Funcao": r.role ? (ROLE_LABEL[r.role] || r.role) : "" };
-      for (const mo of months) o[fmtMes(mo)] = r.byMonth[mo] || 0;
-      o[`R$ a pagar (${fmtMes(mesPagto)})`] = Number(valorSeller(r).toFixed(2));
-      return o;
-    });
-    exportToExcel(linhas, `km-vendedores-${mesPagto || "geral"}`);
+    const meses = months;
+    const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), `R$ a pagar (${fmtMes(mesPagto)})`];
+    const dataRows = rows.map((r) => [
+      r.sellerName,
+      r.role ? (ROLE_LABEL[r.role] || r.role) : "",
+      ...meses.map((mo) => r.byMonth[mo] || 0),
+      Number(valorSeller(r).toFixed(2)),
+    ]);
+    const totalRow: any[] = ["Total", "", ...meses.map(() => null), Number(totalPagar.toFixed(2))];
+    const aoa: any[][] = [headers, ...dataRows, totalRow];
+    const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
+    const nCols = headers.length;
+    const lastRow = aoa.length - 1;
+    const KM_FMT = "#,##0";
+    const BRL_FMT = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
+    const thin = { style: "thin", color: { rgb: "D0D5DD" } };
+    const borderAll: any = { top: thin, bottom: thin, left: thin, right: thin };
+    for (let R = 0; R <= lastRow; R++) {
+      const isHeader = R === 0;
+      const isTotal = R === lastRow;
+      const band = !isHeader && !isTotal && R % 2 === 1;
+      for (let C = 0; C < nCols; C++) {
+        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
+        const cell: any = ws[addr] || (ws[addr] = { t: "s", v: "" });
+        const s: any = { border: borderAll, alignment: { vertical: "center", horizontal: C <= 1 ? "left" : "right" } };
+        if (isHeader) {
+          s.font = { bold: true, color: { rgb: "1F2937" } };
+          s.fill = { fgColor: { rgb: "E9EDF5" } };
+          s.alignment.horizontal = C <= 1 ? "left" : "center";
+        } else {
+          if (C >= 2 && C <= nCols - 2) { cell.z = KM_FMT; s.numFmt = KM_FMT; }
+          if (C === nCols - 1) { cell.z = BRL_FMT; s.numFmt = BRL_FMT; }
+          if (isTotal) { s.font = { bold: true }; s.fill = { fgColor: { rgb: "D9D9D9" } }; }
+          else if (band) { s.fill = { fgColor: { rgb: "F3F5F9" } }; }
+        }
+        cell.s = s;
+      }
+    }
+    ws["!cols"] = [{ wch: 18 }, { wch: 13 }, ...meses.map(() => ({ wch: 10 })), { wch: 20 }];
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, "Km Vendedores");
+    XLSXStyle.writeFile(wb, `km-vendedores-${mesPagto || "geral"}.xlsx`);
   }
 
   return (
