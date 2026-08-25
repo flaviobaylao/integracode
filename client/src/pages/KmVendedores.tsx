@@ -17,7 +17,7 @@ import { usePermissions } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Route as RouteIcon, Search, DollarSign, Download } from "lucide-react";
+import { Route as RouteIcon, Search, DollarSign, Download, Send } from "lucide-react";
 import { exportToExcel } from "@/lib/tableTools";
 
 type SellerRow = {
@@ -96,34 +96,90 @@ export default function KmVendedores() {
     exportToExcel(linhas, `km-vendedores-${mesPagto || "geral"}`);
   }
 
-  // Exporta um PDF compacto (Vendedor, km do mes vigente, R$ a pagar) para compartilhar no WhatsApp.
-  async function exportarPDF() {
+  // Gera uma imagem PNG (canvas) da tabela compacta, com as colunas centralizadas.
+  function gerarImagemTabela(): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      try {
+        const escala = 2;
+        const pad = 16;
+        const colW = [200, 110, 130];
+        const tabelaW = colW.reduce((a, b) => a + b, 0);
+        const W = tabelaW + pad * 2;
+        const tituloH = 74;
+        const headH = 34;
+        const rowH = 30;
+        const linhas = rows;
+        const H = tituloH + headH + (linhas.length + 1) * rowH + pad;
+        const canvas = document.createElement("canvas");
+        canvas.width = W * escala; canvas.height = H * escala;
+        const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+        ctx.scale(escala, escala);
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#4f46e5"; ctx.font = "bold 17px Arial";
+        ctx.fillText("Kilometragem - Valor a pagar", pad, 22);
+        ctx.fillStyle = "#111827"; ctx.font = "12px Arial";
+        ctx.fillText(`Mes ${fmtMes(mesPagto)}   |   R$/km: ${fmtBRL(rateNum)}`, pad, 44);
+        ctx.fillStyle = mesFechado ? "#047857" : "#b45309"; ctx.font = "bold 11px Arial";
+        ctx.fillText(mesFechado ? "FECHADO (valor definitivo)" : "PREVIA (fecha no ultimo dia as 20h)", pad, 61);
+        let y = tituloH;
+        ctx.fillStyle = "#4f46e5"; ctx.fillRect(pad, y, tabelaW, headH);
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 12px Arial"; ctx.textAlign = "center";
+        const heads = ["Vendedor", `Km ${fmtMes(mesPagto)}`, "R$ a pagar"];
+        let cx = pad;
+        for (let i = 0; i < 3; i++) { ctx.fillText(heads[i], cx + colW[i] / 2, y + headH / 2); cx += colW[i]; }
+        y += headH;
+        const desenharLinha = (cells: string[], bold: boolean, bg: string) => {
+          ctx.fillStyle = bg; ctx.fillRect(pad, y, tabelaW, rowH);
+          ctx.textAlign = "center";
+          let cx2 = pad;
+          for (let i = 0; i < 3; i++) {
+            ctx.fillStyle = i === 2 ? (mesFechado ? "#047857" : "#b45309") : "#111827";
+            ctx.font = (bold || i === 2) ? "bold 12px Arial" : "12px Arial";
+            let txt = cells[i];
+            const maxW = colW[i] - 10;
+            while (ctx.measureText(txt).width > maxW && txt.length > 1) txt = txt.slice(0, -2) + "...";
+            ctx.fillText(txt, cx2 + colW[i] / 2, y + rowH / 2);
+            cx2 += colW[i];
+          }
+          y += rowH;
+        };
+        linhas.forEach((r, idx) => desenharLinha([r.sellerName, fmtKm(r.byMonth[mesPagto] || 0), fmtBRL(valorSeller(r))], false, idx % 2 ? "#f3f4f6" : "#ffffff"));
+        desenharLinha(["Total", fmtKm(linhas.reduce((s, r) => s + (r.byMonth[mesPagto] || 0), 0)), fmtBRL(totalPagar)], true, "#eef2ff");
+        ctx.strokeStyle = "#e5e7eb"; ctx.strokeRect(pad, tituloH, tabelaW, headH + (linhas.length + 1) * rowH);
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("toBlob null")), "image/png");
+      } catch (e) { reject(e); }
+    });
+  }
+
+  // Envia por WhatsApp: gera a imagem, copia para a area de transferencia (ou baixa como
+  // alternativa) e abre o WhatsApp Web para colar (Ctrl+V) na conversa.
+  async function enviarWhatsapp() {
     try {
-      const { jsPDF } = await import("jspdf");
-      const autoTable = (await import("jspdf-autotable")).default as any;
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      doc.setFontSize(15); doc.setTextColor(79, 70, 229);
-      doc.text("Kilometragem - Valor a pagar", 14, 16);
-      doc.setFontSize(10); doc.setTextColor(0, 0, 0);
-      doc.text(`Mes: ${fmtMes(mesPagto)}     R$/km: ${fmtBRL(rateNum)}`, 14, 23);
-      doc.setFontSize(9); doc.setTextColor(120, 120, 120);
-      doc.text(`${mesFechado ? "FECHADO (definitivo)" : "Previa (fecha no ultimo dia as 20h)"} - gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`, 14, 29);
-      autoTable(doc, {
-        startY: 34,
-        head: [["Vendedor", `Km ${fmtMes(mesPagto)}`, "R$ a pagar"]],
-        body: rows.map((r) => [r.sellerName, fmtKm(r.byMonth[mesPagto] || 0), fmtBRL(valorSeller(r))]),
-        foot: [["Total", fmtKm(rows.reduce((s, r) => s + (r.byMonth[mesPagto] || 0), 0)), fmtBRL(totalPagar)]],
-        theme: "striped",
-        headStyles: { fillColor: [79, 70, 229] },
-        footStyles: { fillColor: [238, 242, 255], textColor: [0, 0, 0], fontStyle: "bold" },
-        columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } },
-        styles: { fontSize: 10, cellPadding: 2 },
-        margin: { left: 14, right: 14 },
+      const blob = await gerarImagemTabela();
+      let copiado = false;
+      try {
+        const CI = (window as any).ClipboardItem;
+        if (navigator.clipboard && CI) {
+          await navigator.clipboard.write([new CI({ "image/png": blob })]);
+          copiado = true;
+        }
+      } catch (e) { copiado = false; }
+      if (!copiado) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `km-a-pagar-${mesPagto || "geral"}.png`;
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+      window.open("https://web.whatsapp.com/", "_blank");
+      toast({
+        title: copiado ? "Imagem copiada" : "Imagem baixada",
+        description: copiado ? "No WhatsApp Web, abra a conversa e cole com Ctrl+V." : "Anexe a imagem baixada na conversa do WhatsApp.",
       });
-      doc.save(`km-a-pagar-${mesPagto || "geral"}.pdf`);
     } catch (e) {
-      console.error("exportarPDF:", e);
-      alert("Falha ao gerar o PDF.");
+      console.error("enviarWhatsapp:", e);
+      alert("Falha ao gerar a imagem.");
     }
   }
 
@@ -182,7 +238,7 @@ export default function KmVendedores() {
           </div>
 
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <button type="button" onClick={exportarPDF} className="inline-flex items-center gap-1 px-3 py-2 border rounded-md text-sm bg-rose-600 text-white hover:bg-rose-700"><Download className="w-4 h-4" /> Exportar PDF (WhatsApp)</button>
+            <button type="button" onClick={enviarWhatsapp} className="inline-flex items-center gap-1 px-3 py-2 border rounded-md text-sm bg-green-600 text-white hover:bg-green-700"><Send className="w-4 h-4" /> Enviar por WhatsApp</button>
             <button type="button" onClick={exportarExcel} className="inline-flex items-center gap-1 px-3 py-2 border rounded-md text-sm bg-emerald-600 text-white hover:bg-emerald-700"><Download className="w-4 h-4" /> Exportar Excel</button>
           </div>
 
