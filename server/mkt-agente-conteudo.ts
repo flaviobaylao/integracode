@@ -454,6 +454,64 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
 }
 
 // ---------------------------------------------------------------------------
+// Prontidao — os portoes de `rodar()`, conferidos ANTES de rodar
+// ---------------------------------------------------------------------------
+// ACHADO POR LEITURA DO CODIGO: `panorama()` calculava `impedimento` olhando so
+// o assunto. Mas `rodar()` para em mais quatro lugares depois dele — criativo,
+// link rastreavel, cartao de marca e base de conhecimento — e no fim ainda
+// precisa da chave de IA para escrever. Com o assunto resolvido a tela dizia
+// `impedimento: null` enquanto o agente nao produzia nada.
+//
+// Tela verde com agente parado e pior que tela vermelha: ninguem vai procurar
+// o que a tela afirma que esta certo.
+//
+// Nenhum portao aqui gasta dinheiro: sao leituras de banco e uma variavel de
+// ambiente. A unica chamada paga (o modelo escrevendo) continua so em `rodar()`.
+
+export type Portao = { id: string; ok: boolean; detalhe: string };
+
+export async function prontidao(): Promise<{
+  pronto: boolean; portoes: Portao[]; impedimento: string | null;
+  assunto: Assunto | null; disponiveis: any[];
+}> {
+  const portoes: Portao[] = [];
+  const add = (id: string, ok: boolean, detalhe: string) => { portoes.push({ id, ok, detalhe }); };
+
+  const canal = await cfg('mkt_conteudo_canal');
+
+  const a: any = await escolherAssunto().catch((e: any) => ({ ok: false, erro: String(e?.message || e) }));
+  const assunto: Assunto | null = (a.ok && a.assunto) ? a.assunto : null;
+  const disponiveis: any[] = a.disponiveis || [];
+  add('assunto', !!assunto,
+    assunto ? (assunto.publico + ' x ' + assunto.gancho) : (a.erro || 'sem assunto possivel'));
+
+  if (assunto) {
+    const c = await escolherCriativo(assunto.publico, assunto.gancho).catch(() => null);
+    add('criativo', !!c, c ? ('foto #' + c.id) : ('sem criativo elegivel para ' + assunto.publico + ' x ' + assunto.gancho));
+  } else {
+    add('criativo', false, 'depende do assunto');
+  }
+
+  const l = await escolherLink(canal).catch(() => null);
+  add('link', !!l, l ? ('/r/' + l.slug) : 'nenhum link rastreavel cadastrado: a peca sairia sem origem');
+
+  let cartao = '';
+  try { const { blocoDePrompt } = await import('./mkt-marca'); cartao = String((await blocoDePrompt()) || '').trim(); } catch { cartao = ''; }
+  add('cartao_de_marca', !!cartao,
+    cartao ? (cartao.length + ' caracteres') : 'cartao de marca indisponivel: escrever sem ele e escrever sem voz');
+
+  const fatos = await fatosDaEmpresa().catch(() => '');
+  add('base_de_conhecimento', !!fatos,
+    fatos ? (fatos.length + ' caracteres') : 'base de conhecimento vazia: sem fato o modelo inventa, e ja inventou');
+
+  add('chave_de_ia', !!process.env.OPENAI_API_KEY,
+    process.env.OPENAI_API_KEY ? 'presente' : 'OPENAI_API_KEY ausente: o agente escreveria peca vazia');
+
+  const primeiro = portoes.find(p => !p.ok);
+  return { pronto: !primeiro, portoes, impedimento: primeiro ? primeiro.detalhe : null, assunto, disponiveis };
+}
+
+// ---------------------------------------------------------------------------
 // Panorama para a tela
 // ---------------------------------------------------------------------------
 
@@ -461,7 +519,10 @@ export async function panorama(): Promise<any> {
   const m = await modo();
   const saldo = await saldoDaSemana();
   const p = await parametros();
-  const a = await escolherAssunto().catch(() => ({ ok: false } as any));
+  const pr: any = await prontidao().catch((e: any) => ({
+    pronto: false, portoes: [], impedimento: 'falha ao conferir prontidao: ' + String(e?.message || e),
+    assunto: null, disponiveis: [],
+  }));
   let noAr = 0;
   try {
     const r: any = await db.execute(sql`
@@ -471,8 +532,10 @@ export async function panorama(): Promise<any> {
   return {
     ok: true, modo: m, parametros: p, saldo, pecasDoAgente: noAr,
     temChaveIA: !!process.env.OPENAI_API_KEY,
-    proximoAssunto: a.ok ? a.assunto : null,
-    ganchosComFoto: a.disponiveis || [],
-    impedimento: a.ok ? null : a.erro,
+    proximoAssunto: pr.assunto,
+    ganchosComFoto: pr.disponiveis || [],
+    pronto: pr.pronto,
+    portoes: pr.portoes,
+    impedimento: pr.impedimento,
   };
 }
