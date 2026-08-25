@@ -77,6 +77,7 @@ export function ensureDocDeliverySchema(): Promise<void> {
   if (_schemaPronto) return _schemaPronto;
   _schemaPronto = (async () => {
     try {
+      await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS particularidades text`);
       await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS notification_whatsapp varchar`);
       await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_danfe_whatsapp boolean DEFAULT false`);
       await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS send_xml_whatsapp boolean DEFAULT false`);
