@@ -179,7 +179,23 @@ app.use((req, res, next) => {
   app.get('/', (req, res, next) => {
     const host = String(req.headers.host || '').toLowerCase();
     if (host.startsWith('loja.bebahonest.com.br')) {
-      return res.redirect(302, '/shop');
+      // A QUERY TEM QUE ATRAVESSAR O REDIRECT.
+      //
+      // `res.redirect(302, '/shop')` jogava fora tudo que vinha depois do "?".
+      // Medido em 25/ago/2026:
+      //     loja.bebahonest.com.br/?gclid=TESTE_ABC123  ->  /shop   (sem gclid)
+      //
+      // Quem paga esse defeito e a atribuicao inteira. O gclid so existe na URL
+      // do clique de anuncio; se ele morre aqui, o hotsite nao tem o que capturar
+      // (hotsite/src/utils/origem.ts), o pedido nasce sem utm->>'gclid', e
+      // conversoesOffline() nao acha nada para exportar. O circuito ficaria
+      // tecnicamente correto de ponta a ponta e ainda assim devolveria zero —
+      // que e o pior tipo de defeito, porque nada acusa.
+      //
+      // Vale para gclid, fbclid, utm_* e cid do /r/:slug: qualquer coisa na query.
+      const i = req.originalUrl.indexOf('?');
+      const query = i >= 0 ? req.originalUrl.slice(i) : '';
+      return res.redirect(302, '/shop' + query);
     }
     next();
   });
