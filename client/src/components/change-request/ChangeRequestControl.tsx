@@ -177,16 +177,21 @@ export function ChangeRequestControl(props: ControlProps) {
   const [modalidade, setModalidade] = useState<string>("");
   const [inicioAtendimento, setInicioAtendimento] = useState<string>("");
   const [outro, setOutro] = useState<string>("");
+  const [inativarTexto, setInativarTexto] = useState<string>("");
 
   // 💬 Resposta/reenvio da conversa (vendedor).
   const [replyText, setReplyText] = useState<string>("");
 
   // Fase 2: gravação de áudio transcrito (Whisper) para o campo "Outro".
   const [recording, setRecording] = useState(false);
+  const [recordTarget, setRecordTarget] = useState<"outro" | "inativar">("outro");
+  const recordTargetRef = useRef<"outro" | "inativar">("outro");
   const [transcribing, setTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const startRecording = async () => {
+  const startRecording = async (target: "outro" | "inativar" = "outro") => {
+    recordTargetRef.current = target;
+    setRecordTarget(target);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mr = new MediaRecorder(stream);
@@ -199,7 +204,10 @@ export function ChangeRequestControl(props: ControlProps) {
         setTranscribing(true);
         try {
           const resp = await apiRequest("POST", "/api/change-requests/transcribe", { audio: dataUrl });
-          if (resp?.text) setOutro((prev) => (prev ? prev.trim() + " " : "") + resp.text);
+          if (resp?.text) {
+            const add = (prev: string) => (prev ? prev.trim() + " " : "") + resp.text;
+            if (recordTargetRef.current === "inativar") setInativarTexto(add); else setOutro(add);
+          }
           else toast({ title: "Nada transcrito", description: "Não consegui entender o áudio. Tente de novo." });
         } catch (e: any) {
           toast({ title: "Falha na transcrição", description: e?.message || "Tente novamente.", variant: "destructive" });
@@ -216,7 +224,7 @@ export function ChangeRequestControl(props: ControlProps) {
 
   const resetForm = () => {
     setSelected(new Set()); setPeriodicidade(""); setDiaRota(new Set());
-    setAreaVendas(""); setModalidade(""); setInicioAtendimento(""); setOutro("");
+    setAreaVendas(""); setModalidade(""); setInicioAtendimento(""); setOutro(""); setInativarTexto("");
   };
 
   const toggleType = (k: string) => {
@@ -242,6 +250,7 @@ export function ChangeRequestControl(props: ControlProps) {
       if (selected.has("area_vendas") && areaVendas) details.areaVendas = areaVendas;
       if (selected.has("presencial_virtual") && modalidade) details.modalidade = modalidade;
       if (selected.has("inicio_atendimento") && inicioAtendimento) details.inicioAtendimento = inicioAtendimento;
+      if (selected.has("inativar") && inativarTexto.trim()) details.inativar = inativarTexto.trim();
       if (selected.has("outro") && outro.trim()) details.outro = outro.trim();
       return apiRequest("POST", "/api/change-requests", {
         entityType, entityId, customerId: customerId || null, entityName: entityName || null,
@@ -413,6 +422,31 @@ export function ChangeRequestControl(props: ControlProps) {
                   </div>
                 )}
 
+                {selected.has("inativar") && t.key === "inativar" && (
+                  <div className="mt-2 ml-6">
+                    <Textarea
+                      value={inativarTexto}
+                      onChange={(e) => setInativarTexto(e.target.value)}
+                      placeholder="Descreva o motivo da inativação… (ou grave um áudio) (opcional)"
+                      rows={3}
+                      data-testid="cr-inativar-texto"
+                    />
+                    <div className="flex items-center gap-2 mt-2">
+                      {!(recording && recordTarget === "inativar") ? (
+                        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={(e) => { stop(e); startRecording("inativar"); }} disabled={transcribing} data-testid="cr-inativar-audio-record">
+                          <Mic className="h-3.5 w-3.5" /> Gravar áudio
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" variant="destructive" className="gap-1" onClick={(e) => { stop(e); stopRecording(); }} data-testid="cr-inativar-audio-stop">
+                          <Square className="h-3.5 w-3.5" /> Parar
+                        </Button>
+                      )}
+                      {recording && recordTarget === "inativar" && <span className="text-xs text-red-600 animate-pulse">gravando…</span>}
+                      {transcribing && recordTarget === "inativar" && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> transcrevendo…</span>}
+                    </div>
+                  </div>
+                )}
+
                 {selected.has("outro") && t.key === "outro" && (
                   <div className="mt-2 ml-6">
                     <Textarea
@@ -423,8 +457,8 @@ export function ChangeRequestControl(props: ControlProps) {
                       data-testid="cr-outro-texto"
                     />
                     <div className="flex items-center gap-2 mt-2">
-                      {!recording ? (
-                        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={(e) => { stop(e); startRecording(); }} disabled={transcribing} data-testid="cr-audio-record">
+                      {!(recording && recordTarget === "outro") ? (
+                        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={(e) => { stop(e); startRecording("outro"); }} disabled={transcribing} data-testid="cr-audio-record">
                           <Mic className="h-3.5 w-3.5" /> Gravar áudio
                         </Button>
                       ) : (
@@ -432,8 +466,8 @@ export function ChangeRequestControl(props: ControlProps) {
                           <Square className="h-3.5 w-3.5" /> Parar
                         </Button>
                       )}
-                      {recording && <span className="text-xs text-red-600 animate-pulse">gravando…</span>}
-                      {transcribing && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> transcrevendo…</span>}
+                      {recording && recordTarget === "outro" && <span className="text-xs text-red-600 animate-pulse">gravando…</span>}
+                      {transcribing && recordTarget === "outro" && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> transcrevendo…</span>}
                     </div>
                   </div>
                 )}
@@ -471,6 +505,7 @@ export function ChangeRequestControl(props: ControlProps) {
                   {state.details.areaVendas && <div>Área de vendas: {state.details.areaVendas}</div>}
                   {state.details.modalidade && <div>Modalidade: {state.details.modalidade === "virtual" ? "Virtual" : "Presencial"}</div>}
                   {state.details.inicioAtendimento && <div>Início de atendimento: {state.details.inicioAtendimento}</div>}
+                  {state.details.inativar && <div>Inativar: {state.details.inativar}</div>}
                   {state.details.outro && <div>Outro: {state.details.outro}</div>}
                 </div>
               )}
