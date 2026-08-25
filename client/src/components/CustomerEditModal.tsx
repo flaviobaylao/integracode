@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import ParticularidadesField from "@/components/ParticularidadesField";
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { useMutation, useQuery } from "@/lib/queryClient";
 import {
@@ -102,6 +103,7 @@ export default function CustomerEditModal({
     stateRegistration: "",
     email: "",
     phone: "",
+    particularidades: "",
     address: "",
     city: "",
     state: "",
@@ -402,6 +404,7 @@ export default function CustomerEditModal({
         stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || "",
         email: customer.email || "",
         phone: formatPhone(customer.phone || ""),
+        particularidades: (customer as any).particularidades || "",
         address: customer.address || "",
         city: customer.city || "",
         state: customer.state || "",
@@ -880,6 +883,14 @@ export default function CustomerEditModal({
               </div>
             </div>
           )}
+
+          {/* Particularidades do cliente (texto livre + ditado por voz) */}
+          <div className="border-t pt-4">
+            <ParticularidadesField
+              value={formData.particularidades}
+              onChange={(v) => setFormData((prev) => ({ ...prev, particularidades: v }))}
+            />
+          </div>
 
           {/* Configurações de Recebimento */}
           <div className="space-y-4 border-t pt-4">

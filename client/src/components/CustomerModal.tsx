@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import ParticularidadesField from "@/components/ParticularidadesField";
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useForm } from "react-hook-form";
@@ -154,6 +155,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       fantasyName: '',
       phone: '',
       email: '',
+      particularidades: '',
       address: '',
       city: '',
       state: '',
@@ -209,6 +211,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         fantasyName: (customer as any).fantasyName || '',
         phone: formatPhone(customer.phone || ''),
         email: customer.email || '',
+        particularidades: (customer as any).particularidades || '',
         address: customer.address || '',
         city: (customer as any).city || '',
         state: (customer as any).state || '',
@@ -248,6 +251,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         fantasyName: '',
         phone: '',
         email: '',
+        particularidades: '',
         address: '',
         city: '',
         state: '',
@@ -1389,6 +1393,24 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                     )}
                   />
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Particularidades do cliente (texto livre + ditado por voz) */}
+            <Card>
+              <CardContent className="pt-6">
+                <FormField
+                  control={form.control}
+                  name={"particularidades" as any}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <ParticularidadesField value={(field.value as any) || ""} onChange={field.onChange} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </CardContent>
             </Card>
 
