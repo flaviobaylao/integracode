@@ -224,6 +224,7 @@ export const customers = pgTable("customers", {
   segmentoPrincipal: varchar("segmento_principal"), // Segmento de negócio derivado do CNAE do CNPJ
   phone: varchar("phone").notNull(),
   contact: varchar("contact"), // Nome do contato principal
+  particularidades: text("particularidades"), // Texto livre com particularidades do cliente (aceita ditado por voz)
   email: varchar("email"),
   address: text("address").notNull(),
   city: varchar("city"),
