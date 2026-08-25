@@ -52,7 +52,7 @@ export default function KmVendedores() {
     staleTime: 60_000,
     refetchOnMount: "always",
   });
-  const months = data?.months || [];
+  const months = (data?.months || []).filter((m) => m >= "2026-01");
   const sellers = data?.sellers || [];
   const mesAtualCol = months.length ? months[months.length - 1] : "";
   const mesPagto = data?.mesAtual || mesAtualCol;
@@ -81,7 +81,6 @@ export default function KmVendedores() {
     for (const mo of months) t[mo] = rows.reduce((s, r) => s + (r.byMonth[mo] || 0), 0);
     return t;
   }, [months, rows]);
-  const totalGeral = rows.reduce((s, r) => s + (r.total || 0), 0);
   const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateNum;
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
@@ -159,13 +158,12 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <th key={mo} className={`text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap ${mo === mesAtualCol ? "text-indigo-600" : ""}`}>{fmtMes(mo)}</th>
                     ))}
-                    <th className="text-right font-bold py-2 px-3 bg-background border-b">Total km</th>
                     <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">R$ a pagar ({fmtMes(mesPagto)})</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
-                    <tr><td colSpan={months.length + 3} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
+                    <tr><td colSpan={months.length + 2} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
                   ) : rows.map((r) => (
                     <tr key={r.sellerId} className="border-t align-top hover:bg-muted/40">
                       <td className="py-2 px-3 bg-background sticky left-0">
@@ -177,7 +175,6 @@ export default function KmVendedores() {
                           {r.byMonth[mo] ? fmtKm(r.byMonth[mo]) : <span className="text-gray-300">-</span>}
                         </td>
                       ))}
-                      <td className="py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap">{fmtKm(r.total)}</td>
                       <td className={`py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap ${mesFechado ? "text-green-700" : "text-amber-700"}`} title={`${fmtKm(r.byMonth[mesPagto] || 0)} km x ${fmtBRL(rateNum)}/km`}>{fmtBRL(valorSeller(r))}</td>
                     </tr>
                   ))}
@@ -188,7 +185,6 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <td key={mo} className="py-2 px-3 text-right tabular-nums whitespace-nowrap">{fmtKm(totalPorMes[mo] || 0)}</td>
                     ))}
-                    <td className="py-2 px-3 text-right tabular-nums">{fmtKm(totalGeral)}</td>
                     <td className={`py-2 px-3 text-right tabular-nums ${mesFechado ? "text-green-700" : "text-amber-700"}`}>{fmtBRL(totalPagar)}</td>
                   </tr>
                 </tfoot>
