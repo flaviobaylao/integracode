@@ -208,6 +208,79 @@ export async function registrarRecebimentoBalcao(pedido: {
   }
 }
 
+/**
+ * Desfaz no financeiro uma venda de balcao estornada na maquininha.
+ *
+ * POR QUE PRECISOU EXISTIR: enquanto venda de balcao nao gerava titulo, o
+ * cancelamento nao tinha o que reverter e registrar o estorno bastava. No
+ * momento em que passamos a lancar em receivables, um cancelamento sem esta
+ * funcao deixaria o titulo "recebida" de pe — dinheiro contado no fechamento de
+ * caixa que a Cielo ja devolveu ao cliente.
+ *
+ * SEGUE O PADRAO DA CASA (server/financial-routes.ts, estornar-baixa):
+ *   - recusa quando o titulo tem lastro bancario conciliado;
+ *   - apaga as baixas e zera amount_paid;
+ *   - carimba o motivo em `notes`, que e a trilha que gente le depois.
+ *
+ * DIFERENCA: la se estorna a BAIXA de um titulo que continua devido. Aqui a
+ * venda inteira deixou de existir, entao o titulo termina 'cancelada' — nao ha
+ * o que cobrar de um cliente que devolveu o produto.
+ */
+export async function estornarRecebimentoBalcao(
+  req: any,
+  pedido: { id: string; reference?: string | null; motivo?: string | null },
+): Promise<{ revertido: boolean; motivo: string; receivableId?: string; valor?: string }> {
+  await ensurePdvSchema();
+
+  const p: any = await db.execute(sql`SELECT receivable_id FROM lio_pedidos WHERE id = ${pedido.id} LIMIT 1`);
+  const receivableId = ((p.rows || p) as any[])[0]?.receivable_id;
+  if (!receivableId) return { revertido: false, motivo: 'sem_titulo' };
+
+  const t: any = await db.execute(sql`SELECT id, amount, amount_paid, status, notes
+    FROM receivables WHERE id = ${receivableId} AND deleted_at IS NULL LIMIT 1`);
+  const titulo = ((t.rows || t) as any[])[0];
+  if (!titulo) return { revertido: false, motivo: 'titulo_inexistente' };
+
+  // TRAVA: titulo com lastro bancario nao se mexe por aqui. Quem conciliou
+  // precisa desfazer a conciliacao antes — mesma regra do estorno manual.
+  try {
+    const q: any = await db.execute(sql`SELECT EXISTS(
+      SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = ${receivableId}) AS conciliado`);
+    if (((q.rows || q) as any[])[0]?.conciliado === true) {
+      return { revertido: false, motivo: 'conciliado', receivableId: String(receivableId) };
+    }
+  } catch { /* tabela ausente em ambiente antigo: segue */ }
+
+  const carimbo = `[VENDA CANCELADA NA MAQUININHA ${new Date().toISOString().slice(0, 10)}] `
+    + (pedido.motivo || 'estorno solicitado no balcao')
+    + ` (pedido ${pedido.reference || pedido.id}, R$ ${titulo.amount}).`;
+
+  await db.execute(sql`DELETE FROM receivable_payments WHERE receivable_id = ${receivableId}`);
+  await db.execute(sql`UPDATE receivables SET
+      amount_paid = '0.00',
+      status = 'cancelada',
+      notes = CASE WHEN COALESCE(notes,'') = '' THEN ${carimbo} ELSE notes || ${'\n' + carimbo} END,
+      updated_at = now(),
+      updated_by = 'lio-app'
+    WHERE id = ${receivableId}`);
+
+  // Auditoria e desejavel, nao critica: se falhar, o estorno ja aconteceu e
+  // derrubar a resposta aqui so faria o app achar que o cancelamento falhou.
+  try {
+    const { logFinancialAudit } = await import('./financial-audit');
+    await logFinancialAudit({
+      req, action: 'reverse', entity: 'receivable', entityId: String(receivableId),
+      before: titulo, amount: Number(titulo.amount || 0),
+      note: 'venda de balcao cancelada na maquininha: ' + (pedido.motivo || 'sem motivo informado'),
+    } as any);
+  } catch (e: any) {
+    console.warn('⚠️ [LIO-PDV] Estorno feito, auditoria falhou:', e?.message || e);
+  }
+
+  console.log(`↩️ [LIO-PDV] Titulo ${receivableId} cancelado (venda ${pedido.reference || pedido.id}).`);
+  return { revertido: true, motivo: 'cancelado', receivableId: String(receivableId), valor: String(titulo.amount) };
+}
+
 // ---------------------------------------------------------------------------
 // Rotas
 // ---------------------------------------------------------------------------

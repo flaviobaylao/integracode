@@ -33,7 +33,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { authenticateUser } from './authMiddleware';
-import { registerLioPdv, registrarRecebimentoBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
+import { registerLioPdv, registrarRecebimentoBalcao, estornarRecebimentoBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
 
 // statusCode do retorno da Cielo — o campo que separa venda de estorno.
 // Ignorar isso significa dar baixa num cancelamento como se fosse venda.
@@ -477,12 +477,15 @@ export function registerLioApp(app: Express): void {
       await ensureSchema();
       const payload = JSON.stringify(req.body || {});
 
-      const existe: any = await db.execute(sql`SELECT id, liquidado, status FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
+      const existe: any = await db.execute(sql`SELECT id, liquidado, status, reference, sales_card_id
+        FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
       const linha = ((existe.rows || existe) as any[])[0];
       if (!linha) return res.status(404).json({ message: 'Pedido nao encontrado.' });
 
-      // Nunca voltamos `liquidado` para false: o dinheiro entrou de fato e o
-      // faturamento correspondente existe. O que muda e o status visivel.
+      // Nunca voltamos `liquidado` para false: o dinheiro ENTROU de fato, e a
+      // marca de que ele entrou e o que impede uma segunda cobranca do mesmo
+      // pedido. O que o estorno muda e o status visivel e o titulo no
+      // financeiro — nao a historia do que aconteceu.
       await db.execute(sql`UPDATE lio_pedidos SET
           status = 'CANCELADO_APOS_PAGO',
           cancelado_em = COALESCE(cancelado_em, now()),
@@ -490,16 +493,46 @@ export function registerLioApp(app: Express): void {
           updated_at = now()
         WHERE id = ${id}`);
 
-      console.warn(
-        `↩️ [LIO-APP] Estorno registrado no pedido ${id} (dispositivo ${req.dispositivo?.nome || '?'}). ` +
-        `O lancamento no financeiro NAO foi revertido automaticamente — tratar manualmente.`
-      );
+      // Venda de balcao (sem sales_card) gerou titulo em receivables e portanto
+      // TEM o que reverter. Venda ligada a sales_card continua sendo tratada a
+      // mao de proposito: ali o faturamento passou pelo pipeline, pode ter nota
+      // fiscal emitida, e desfazer isso automaticamente seria temerario.
+      let financeiro: any = { revertido: false, motivo: 'com_sales_card_tratar_manualmente' };
+      if (!linha.sales_card_id) {
+        financeiro = await estornarRecebimentoBalcao(req, {
+          id,
+          reference: linha.reference,
+          motivo: String((req.body || {}).motivo || '').trim() || null,
+        });
+      }
+
+      if (financeiro.revertido) {
+        console.warn(`↩️ [LIO-APP] Estorno do pedido ${id}: titulo ${financeiro.receivableId} cancelado.`);
+      } else {
+        console.warn(
+          `↩️ [LIO-APP] Estorno registrado no pedido ${id} (dispositivo ${req.dispositivo?.nome || '?'}). ` +
+          `Financeiro NAO revertido automaticamente (${financeiro.motivo}) — tratar manualmente.`
+        );
+      }
+
+      // `conciliado` merece mensagem propria: nao e erro nosso, e o titulo ja
+      // tem lastro no extrato bancario. Mexer nele por aqui furaria a
+      // conciliacao — quem concilia desfaz primeiro.
+      const mensagem = financeiro.revertido
+        ? `Estorno registrado e titulo de R$ ${financeiro.valor} cancelado no financeiro.`
+        : financeiro.motivo === 'conciliado'
+          ? 'Estorno registrado, MAS o titulo ja esta conciliado no banco. Desfaca a conciliacao antes de estornar a baixa.'
+          : financeiro.motivo === 'sem_titulo'
+            ? 'Estorno registrado. Esta venda nao gerou titulo no financeiro.'
+            : 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.';
 
       res.json({
         ok: true,
         registrado: true,
-        financeiroRevertido: false,
-        message: 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.',
+        financeiroRevertido: !!financeiro.revertido,
+        financeiroMotivo: financeiro.motivo,
+        receivableId: financeiro.receivableId || null,
+        message: mensagem,
       });
     } catch (e: any) {
       console.error(`❌ [LIO-APP] Falha ao registrar estorno de ${id}:`, e?.message || e);
