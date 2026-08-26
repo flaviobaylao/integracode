@@ -122,7 +122,14 @@ app.use((req, res, next) => {
     // Deixar o multer processar essas requisições
     return next();
   }
-  express.json({ limit: '25mb' })(req, res, next);
+  // Webhook do Instagram (Meta): a assinatura X-Hub-Signature-256 e calculada sobre os BYTES
+  // originais do corpo. Sem guardar o corpo cru, o HMAC e feito sobre o JSON re-serializado e
+  // NUNCA bate -> toda DM era descartada em "[IG-HOOK] assinatura invalida". Guardamos o cru
+  // SO nessa rota, para nao dobrar a memoria dos uploads grandes do resto do sistema.
+  const precisaCorpoCru = req.path === '/api/instagram/webhook';
+  express.json(precisaCorpoCru
+    ? { limit: '25mb', verify: (r: any, _res: any, buf: Buffer) => { r.rawBody = buf.toString('utf8'); } }
+    : { limit: '25mb' })(req, res, next);
 });
 
 // Middleware condicional para urlencoded - NÃO processar requisições multipart/form-data
