@@ -613,6 +613,7 @@ function ClassificacaoTab() {
 function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: boolean; canBoleto?: boolean } = {}) {
   const [instanceId, setInstanceId] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
+  const [nfSearch, setNfSearch] = useState(''); // filtro dedicado por NF / numero do titulo
   const [statusFilter, setStatusFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
@@ -652,7 +653,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
 
   // Abre SEM filtro do usuario -> modo paginado rapido (1a pagina + resumo do servidor).
   // Assim que qualquer filtro do cliente e usado, busca o conjunto completo (filtra no cliente).
-  const noClientFilters = sellerMulti.length === 0 && !customerSearch && valueMin === '' && valueMax === '';
+  const noClientFilters = sellerMulti.length === 0 && !customerSearch && !nfSearch && valueMin === '' && valueMax === '';
   const [unifySel, setUnifySel] = useState<string[]>([]);
   const [unifyBusy, setUnifyBusy] = useState(false);
   const [unifyDate, setUnifyDate] = useState('');
@@ -729,6 +730,15 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
       const _doc = String(r.customerDocument || '');
       const hay = `${r.customerName || ''} ${r.titleNumber || ''} ${r.invoiceNumber || ''} ${_doc} ${_doc.replace(/\D/g, '')} ${formatDocumento(_doc)}`.toLowerCase();
       if (!hay.includes(q)) return false;
+    }
+    if (nfSearch) {
+      // Filtro dedicado por NF / numero do titulo. Aceita "106126", "NF-106126", "nf 106126"
+      // e tambem titulos "TIT-...": compara o texto cru E so os digitos dos dois lados.
+      const qn = nfSearch.trim().toLowerCase();
+      const qd = qn.replace(/\D/g, '');
+      const cands = [String(r.titleNumber || ''), String(r.invoiceNumber || '')].filter(Boolean);
+      const hit = cands.some((c) => c.toLowerCase().includes(qn)) || (!!qd && cands.some((c) => c.replace(/\D/g, '').includes(qd)));
+      if (!hit) return false;
     }
     if (valueMin !== '' && Number(r.amount || 0) < parseFloat(String(valueMin).replace(',', '.'))) return false;
     if (valueMax !== '' && Number(r.amount || 0) > parseFloat(String(valueMax).replace(',', '.'))) return false;
@@ -872,7 +882,14 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
           <Label className="text-xs">Cliente</Label>
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Buscar cliente ou NF..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[220px]" />
+            <Input placeholder="Buscar cliente ou CNPJ..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-8 w-[220px]" />
+          </div>
+        </div>
+        <div>
+          <Label className="text-xs">NF</Label>
+          <div className="relative">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input placeholder="Nº da NF / título" value={nfSearch} onChange={e => setNfSearch(e.target.value)} className="pl-8 w-[150px]" data-testid="filter-nf-receivables" />
           </div>
         </div>
         <div>
