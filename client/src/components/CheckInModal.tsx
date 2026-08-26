@@ -46,6 +46,9 @@ export default function CheckInModal({
   // GPS falhou (permissao negada / ambiente fechado / timeout): libera seguir p/ a camera
   // mesmo sem localizacao, para o check-in nao ficar travado.
   const [locFailed, setLocFailed] = useState(false);
+  // Captura de localizacao em andamento: trava cliques repetidos (que reiniciavam a
+  // busca do zero e deixavam o botao "sem efeito") e mostra o spinner de progresso.
+  const [capturing, setCapturing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Explicação do débito (quando o cliente tem débito em aberto). Transcrição por voz (pt-BR).
@@ -84,9 +87,11 @@ export default function CheckInModal({
 
   // Capturar localização
   const captureLocation = async () => {
+    if (capturing) return; // ja esta buscando: ignora cliques repetidos que reiniciavam a captura
     setStep('location');
     setLocFailed(false);
-    
+    setCapturing(true);
+
     try {
       if (!navigator.geolocation) {
         throw { code: 2, message: 'Dispositivo sem suporte a geolocalização' };
@@ -96,17 +101,12 @@ export default function CheckInModal({
       });
       let position: GeolocationPosition;
       try {
-        // 1a tentativa: aceita posicao recente em cache (rede/wifi) — resolve NA HORA se o navegador
-        // ja tem um fix (ex. do mapa da rota) e funciona bem em ambiente fechado (supermercado)
-        position = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+        // 1a tentativa: aceita um fix recente em cache (resolve NA HORA se o navegador ja tem
+        // posicao, ex. do mapa da rota) — funciona bem em ambiente fechado (supermercado).
+        position = await getPos({ enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
       } catch (e1) {
-        try {
-          // 2a: alta precisao (GPS) com tempo maior
-          position = await getPos({ enableHighAccuracy: true, timeout: 25000, maximumAge: 60000 });
-        } catch (e2) {
-          // 3a (ultima): qualquer posicao em cache, baixa precisao, tempo longo — o mais tolerante possivel
-          position = await getPos({ enableHighAccuracy: false, timeout: 30000, maximumAge: 600000 });
-        }
+        // 2a: alta precisao (GPS) com tempo suficiente para pegar o fix estando no cliente.
+        position = await getPos({ enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
       }
 
       const loc = {
@@ -144,6 +144,8 @@ export default function CheckInModal({
       });
       // Nao bloqueia o check-in: libera o botao "Continuar sem localizacao" p/ abrir a camera.
       setLocFailed(true);
+    } finally {
+      setCapturing(false);
     }
   };
 
@@ -351,10 +353,19 @@ export default function CheckInModal({
               <p className="text-gray-600 mb-6">
                 Primeiro, vamos capturar sua localização para registrar o check-in
               </p>
-              <Button onClick={captureLocation} data-testid="button-capture-location">
-                <MapPin className="mr-2 h-4 w-4" />
-                {locFailed ? 'Tentar Localização Novamente' : 'Capturar Localização'}
+              <Button onClick={captureLocation} disabled={capturing} data-testid="button-capture-location">
+                {capturing ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Capturando...</>
+                ) : (
+                  <><MapPin className="mr-2 h-4 w-4" /> {locFailed ? 'Tentar Localização Novamente' : 'Capturar Localização'}</>
+                )}
               </Button>
+
+              {capturing && (
+                <p className="text-xs text-gray-500 mt-3">
+                  Buscando o sinal de GPS. Pode levar alguns segundos. Mantenha esta tela aberta e nao clique varias vezes.
+                </p>
+              )}
 
               {/* Se o GPS falhar (ambiente fechado / permissao negada), NAO travar o check-in:
                   segue para a camera mesmo sem coordenadas. */}
