@@ -658,7 +658,14 @@ export function registerPaymentLink(app: Express): void {
 
       // Se veio um pedido, o valor e SEMPRE o do pedido (nunca o que o cliente digita).
       if (b.salesCardId) {
-        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, sc.order_number, cu.name AS cname, cu.cpf_cnpj AS cdoc,
+        // ATENCAO: a coluna e `cnpj` OU `cpf` — NAO existe `cpf_cnpj` em customers.
+        // Consultar cpf_cnpj fazia o Postgres derrubar a query inteira, e o catch
+        // do endpoint devolvia 500 com "Erro ao criar o link de pagamento", sem
+        // dizer o motivo. Resultado: o botao "Link de pagamento" no card do
+        // Pipeline nunca funcionou para pedido nenhum (o link avulso funcionava,
+        // porque este SELECT so roda quando vem salesCardId).
+        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, sc.order_number, cu.name AS cname,
+            COALESCE(NULLIF(cu.cnpj, ''), NULLIF(cu.cpf, '')) AS cdoc,
             COALESCE(NULLIF(cu.notification_whatsapp, ''), cu.phone) AS cphone
           FROM sales_cards sc LEFT JOIN customers cu ON cu.id = sc.customer_id
           WHERE sc.id = ${String(b.salesCardId)} LIMIT 1`);
