@@ -664,10 +664,15 @@ export function registerPaymentLink(app: Express): void {
         // dizer o motivo. Resultado: o botao "Link de pagamento" no card do
         // Pipeline nunca funcionou para pedido nenhum (o link avulso funcionava,
         // porque este SELECT so roda quando vem salesCardId).
-        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, sc.order_number, cu.name AS cname,
+        // SEGUNDA coluna inexistente na mesma consulta: `sales_cards` NAO tem
+        // `order_number`. Esse numero (INT-xxxxxxxx) vive em `billing_pipeline`,
+        // que e de onde o card da tela o exibe — por isso o JOIN abaixo.
+        const c: any = await db.execute(sql`SELECT sc.id, sc.sale_value, bp.order_number, cu.name AS cname,
             COALESCE(NULLIF(cu.cnpj, ''), NULLIF(cu.cpf, '')) AS cdoc,
             COALESCE(NULLIF(cu.notification_whatsapp, ''), cu.phone) AS cphone
-          FROM sales_cards sc LEFT JOIN customers cu ON cu.id = sc.customer_id
+          FROM sales_cards sc
+          LEFT JOIN customers cu ON cu.id = sc.customer_id
+          LEFT JOIN billing_pipeline bp ON bp.sales_card_id = sc.id
           WHERE sc.id = ${String(b.salesCardId)} LIMIT 1`);
         const row = (c.rows || c)[0];
         if (!row) return res.status(404).json({ message: 'Pedido nao encontrado' });
