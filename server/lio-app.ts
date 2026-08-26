@@ -198,7 +198,28 @@ export type RetornoPagamentoApp = {
   terminal?: string;
   statusCode?: string;
   paidAmount?: number; // centavos
+  /**
+   * O que o operador ESCOLHEU na tela: debito, credito ou pix.
+   *
+   * Vem do app e nao e deduzido aqui de proposito. Debito a vista e credito a
+   * vista chegam identicos no retorno da Cielo (statusCode=1, installments=1) —
+   * deduzir daria 'cartao' generico para os dois. Como MDR e prazo de repasse
+   * mudam entre debito e credito, sem esta distincao a conciliacao com o
+   * repasse da Cielo nao fecha. E dado que nao se recupera depois: a venda ja
+   * aconteceu e o retorno nao diz qual foi.
+   */
+  forma?: string;
 };
+
+/** Traduz a escolha do operador para o enum financial_payment_method. */
+function formaFinanceira(forma?: string, statusCode?: string, installments?: number): string {
+  const f = String(forma || '').toUpperCase();
+  if (f.includes('PIX') || statusCode === STATUS_CODE_PIX) return 'pix';
+  if (f.includes('DEBITO')) return 'cartao_debito';
+  if (f.includes('CREDITO')) return 'cartao_credito';
+  // Sem informacao do app (versoes antigas): so da para deduzir parcelado.
+  return Number(installments) > 1 ? 'cartao_credito' : 'cartao';
+}
 
 /**
  * Registra o pagamento e empurra para o pipeline. Idempotente por claim atomico
@@ -259,9 +280,7 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
       ? Math.round(d.paidAmount)
       : (reaisParaCentavos(pedido.amount) ?? 0);
 
-    const forma = pedido.forma_pagamento
-      || (d.statusCode === STATUS_CODE_PIX ? 'pix'
-        : (Number(d.installments) > 1 ? 'cartao_credito' : 'cartao'));
+    const forma = formaFinanceira(d.forma, d.statusCode, d.installments);
 
     const { receivableId, motivo } = await registrarRecebimentoBalcao({
       id,
@@ -432,6 +451,13 @@ export function registerLioApp(app: Express): void {
       const linha = ((existe.rows || existe) as any[])[0];
       if (!linha) return res.status(404).json({ message: 'Pedido nao encontrado.' });
       if (linha.liquidado === true) return res.json({ ok: true, jaLiquidado: true });
+
+      // Guarda a forma escolhida no pedido: e o que a conciliacao com o
+      // repasse da Cielo vai usar para separar debito de credito (MDR e prazo
+      // diferentes). Gravado ANTES de liquidar para nao se perder se o
+      // lancamento falhar e precisar ser refeito.
+      const formaEscolhida = formaFinanceira(b.forma, b.statusCode, b.installments);
+      await db.execute(sql`UPDATE lio_pedidos SET forma_pagamento = ${formaEscolhida} WHERE id = ${id}`);
 
       const r = await liquidarPedidoApp(id, b);
       res.json({ ok: true, ...r });
