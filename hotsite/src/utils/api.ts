@@ -95,6 +95,26 @@ export const api = {
     return response.json();
   },
 
+  // 🎟️ Cotação: pergunta ao servidor o total que ELE vai cobrar (com cupom/indicação).
+  // O carrinho não sabe descontar; sem isto a tela do cartão e a folha do Google Pay
+  // mostravam o preço cheio enquanto a Cielo cobrava o valor com desconto.
+  async quoteOrder(order: any): Promise<{
+    subtotal: number;
+    total: number;
+    discount: number;
+    couponDiscount?: { code: string; amount: number; total: number } | null;
+    referralDiscount?: { pct: number; amount: number; total: number } | null;
+  }> {
+    const response = await fetch(`${API_BASE}/orders/quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Não foi possível calcular o total');
+    return data;
+  },
+
   // 💳 Cartão pagar-antes (Cielo): autoriza+captura e, só se aprovado, cria o pedido.
   async payWithCard(order: any, card: { number: string; holder: string; expiry: string; cvv: string }, installments: number): Promise<{
     success: boolean;
