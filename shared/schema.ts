@@ -1337,6 +1337,7 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   (data) => {
     // Leads podem não ter CPF/CNPJ, mas clientes normais precisam
     if (data.isLead) return true; // Leads não precisam de CPF/CNPJ
+    if ((data as any).isSupplier) return true; // Fornecedores não precisam de CPF/CNPJ
     return data.cpf || data.cnpj; // Clientes normais precisam de um deles
   },
   {
