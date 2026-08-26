@@ -27,7 +27,7 @@ const MENU_CARD: Record<string, string> = {
   "check-in-audit": "Auditoria de Check-ins", "delivery-dashboard": "Dashboard de Entregas",
   "delivery-management": "Gestão de Entregas", "delivery-routes": "Resumo das Rotas",
   "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas",
-  products: "Produtos", "hotsite-pricing": "Tabela de Preços Hotsite", "hotsite-orders": "Pedidos do Site", canais: "Canais",
+  products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "billing-pipeline": "Pipeline Faturamento",
   "order-sale": "Pedido de Venda", "order-billing": "Faturar / Faturado", "order-billed": "Faturar / Faturado",
@@ -312,8 +312,16 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-box',
       items: [
         { id: 'products', label: 'Produtos', icon: 'fas fa-box', available: canAccessReports, badge: null },
-        // Tabela de Preços Hotsite e Pedidos do Site passaram a viver dentro de Canais (04/ago/2026).
-        // As rotas /hotsite-pricing e /hotsite-orders continuam valendo para links salvos.
+        // Pedidos do Site continua vivendo dentro de Canais (04/ago/2026).
+        //
+        // A Tabela de Precos VOLTOU para ca (26/ago/2026), e agora aparece nos DOIS lugares.
+        // Motivo: quando ela foi para Canais, as colunas retail_price/wholesale_price eram
+        // consumidas so pelo hotsite, e "Canais > Hotsite" descrevia bem onde mexer. Com o
+        // PDV do balcao na maquininha lendo as MESMAS colunas, elas deixaram de ser preco de
+        // canal e viraram preco de venda da empresa — e ninguem procura o preco do balcao
+        // dentro de "Canais". A duplicidade e proposital: mesma tela, dois caminhos, porque
+        // sao dois publicos com modelos mentais diferentes.
+        { id: 'hotsite-pricing', label: 'Preços de Venda', icon: 'fas fa-tags', available: canAccessReports, badge: null },
         { id: 'estoque', label: 'Gestão de Estoque', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
