@@ -41,6 +41,9 @@ function HotsiteContent() {
 
   // 💳 Cartão pagar-antes: pedido pendente + campos do formulário
   const [cardOrder, setCardOrder] = useState<any>(null);
+  // Cotação do servidor para o pedido no cartão (total já com cupom/indicação).
+  // É a mesma conta que a cobrança usa; a tela nunca calcula desconto por conta própria.
+  const [cardQuote, setCardQuote] = useState<any>(null);
   const [cardNumber, setCardNumber] = useState('');
   const [cardHolder, setCardHolder] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
@@ -308,6 +311,19 @@ function HotsiteContent() {
       // 💳 Cartão pagar-antes: abre o formulário de cartão — o pedido só é
       // registrado depois que a Cielo aprovar o pagamento.
       if (paymentMethod === 'card') {
+        // Pergunta ao servidor o valor que ELE vai cobrar (cupom > indicação > recompensa).
+        // Falha na cotação não impede a compra: a tela cai no subtotal e o servidor
+        // continua cobrando o valor correto — só o texto da tela fica sem o desconto.
+        let quote: any = null;
+        try {
+          quote = await api.quoteOrder(order);
+        } catch (e) {
+          console.warn('⚠️ cotação indisponível — exibindo subtotal', e);
+        }
+        setCardQuote(quote);
+        if (quote?.couponDiscount) setDiscountInfo({ ...quote.couponDiscount, tipo: 'cupom' });
+        else if (quote?.referralDiscount) setDiscountInfo({ ...quote.referralDiscount, tipo: 'indicacao' });
+        else setDiscountInfo(null);
         setCardOrder(order);
         setCardError('');
         setCardPendingMsg('');
@@ -349,7 +365,11 @@ function HotsiteContent() {
 
   // View: Pagamento com CARTÃO — o pedido só é registrado após aprovação da Cielo
   if (view === 'card' && cardOrder) {
-    const totalCard = Number(cardOrder.totalAmount) || 0;
+    // O valor cobrado é o do SERVIDOR (já com cupom/indicação). Sem cotação, cai no
+    // subtotal — nunca o contrário: a tela jamais anuncia menos do que será cobrado.
+    const subtotalCard = Number(cardOrder.totalAmount) || 0;
+    const totalCard = Number(cardQuote?.total) > 0 ? Number(cardQuote.total) : subtotalCard;
+    const descontoCard = Math.round((subtotalCard - totalCard) * 100) / 100;
     const fmtNum = (v: string) => v.replace(/\D/g, '').slice(0, 19).replace(/(\d{4})(?=\d)/g, '$1 ');
     const fmtExp = (v: string) => {
       const d = v.replace(/\D/g, '').slice(0, 4);
@@ -382,13 +402,23 @@ function HotsiteContent() {
         <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl">
           <div className="flex justify-center mb-3"><HonestLogo size="lg" className="text-honest-green" /></div>
           <h1 className="text-2xl font-bold text-honest-green text-center mb-1">Pagar com Cartão</h1>
-          <p className="text-3xl font-bold text-honest-orange text-center mb-4" data-testid="card-amount">R$ {totalCard.toFixed(2)}</p>
+          <p className="text-3xl font-bold text-honest-orange text-center mb-1" data-testid="card-amount">R$ {totalCard.toFixed(2)}</p>
+          {descontoCard > 0 && (
+            <p className="text-center text-sm text-green-700 mb-3" data-testid="card-discount">
+              <span className="line-through text-gray-400 mr-2">R$ {subtotalCard.toFixed(2)}</span>
+              {discountInfo?.tipo === 'cupom'
+                ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {descontoCard.toFixed(2)}</>
+                : <>Desconto aplicado: −R$ {descontoCard.toFixed(2)}</>}
+            </p>
+          )}
+          {descontoCard <= 0 && <div className="mb-3" />}
           {cardPendingMsg ? (
             <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800">✅ {cardPendingMsg}</div>
           ) : (
             <>
               <GooglePayButton
                 order={cardOrder}
+                amount={totalCard}
                 onSuccess={(r) => {
                   if (r.orderPending) {
                     setCardPendingMsg((r.message || 'Pagamento aprovado! Pedido em processamento.') + ' Código: ' + (r.paymentId || ''));
