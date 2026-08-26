@@ -45,8 +45,12 @@ function loadPayJs(): Promise<void> {
 // Botao Google Pay (loja): so aparece quando o backend informa googlePay.enabled
 // (Cielo configurada + Merchant ID do Google definido). Em aprovacao, manda o token
 // para /orders/card/pay-googlepay, que repassa para a Cielo (mesma conta do cartao).
-export function GooglePayButton({ order, onSuccess, onError }: {
+export function GooglePayButton({ order, amount, onSuccess, onError }: {
   order: any;
+  // Valor que o servidor vai cobrar (já com cupom/indicação). A carteira declara
+  // totalPriceStatus:'FINAL' — anunciar o subtotal e cobrar outro valor é divergência
+  // de integração, não só um texto errado. Sem `amount`, cai no subtotal do carrinho.
+  amount?: number;
   onSuccess: (r: any) => void;
   onError: (msg: string) => void;
 }) {
@@ -70,7 +74,7 @@ export function GooglePayButton({ order, onSuccess, onError }: {
         merchantInfo: { merchantId: gp.merchantId, merchantName: gp.merchantName },
         transactionInfo: {
           totalPriceStatus: 'FINAL',
-          totalPrice: (Number(order?.totalAmount) || 0).toFixed(2),
+          totalPrice: (Number(amount) > 0 ? Number(amount) : (Number(order?.totalAmount) || 0)).toFixed(2),
           currencyCode: 'BRL',
           countryCode: 'BR',
         },
