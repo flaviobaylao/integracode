@@ -64,13 +64,18 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
   const clientesAll = (data?.clientes || []) as any[];
   const [buscaCliente, setBuscaCliente] = useState<string>("");
   const [filtroMotivo, setFiltroMotivo] = useState<string>("");
+  const [filtroVendedor, setFiltroVendedor] = useState<string>("");
   const perLabel = (p: string) => (p === "semanal" ? "Semanal" : p === "quinzenal" ? "Quinzenal" : p === "mensal" ? "Mensal" : "");
   const clientes = clientesAll.filter((c) => {
     const okBusca = !buscaCliente.trim() || `${c.nome} ${c.cidade || ""} ${c.vendedor || ""}`.toLowerCase().includes(buscaCliente.trim().toLowerCase());
     const okMotivo = !filtroMotivo || (c.motivo || "") === filtroMotivo;
-    return okBusca && okMotivo;
+    const okVendedor = !filtroVendedor || (c.vendedor || "") === filtroVendedor;
+    return okBusca && okMotivo && okVendedor;
   });
   const motivosPresentes = Array.from(new Set(clientesAll.map((c) => c.motivo || ""))).filter(Boolean);
+  const vendedoresPresentes = Array.from(new Set(clientesAll.map((c) => c.vendedor || ""))).filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
+  // Data curta dd/mm p/ o historico de justificativas no card.
+  const fmtData = (iso: string) => { const p = String(iso || "").split("-"); return p.length === 3 ? `${p[2]}/${p[1]}` : String(iso || ""); };
   const porVendedor = (data?.porVendedor || []) as any[];
   const vendedores = (data?.vendedores || []) as any[];
   // Vendedores que JÁ fecharam a rota de hoje (reseta a cada dia).
@@ -226,44 +231,7 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
         <div className="rounded-xl bg-white border p-4"><div className="text-xs text-muted-foreground flex items-center gap-2"><ClipboardList className="w-4 h-4 text-amber-600" /> Sem justificativa</div><div className="text-3xl font-extrabold text-amber-600 mt-1">{totalPend}</div><div className="text-[11px] text-muted-foreground mt-1">pendências nos fechos</div></div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Por que não foram visitados</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-xs text-muted-foreground mb-3">Motivos informados pelos vendedores em {mesLabel(mes)}.</div>
-            {porMotivo.length === 0 ? <div className="text-sm text-muted-foreground">Sem justificativas neste mês.</div> : (
-              <div className="flex flex-col gap-3">
-                {porMotivo.map((m) => {
-                  const listaMot = clientesAll.filter((c) => (c.motivo || "") === m.motivo);
-                  return (
-                  <div key={m.motivo} className="group relative grid grid-cols-[150px_1fr_36px] items-center gap-3 cursor-help">
-                    <div className="text-xs text-gray-600 font-semibold text-right truncate" title={MOTIVO_LABEL[m.motivo] || m.motivo}>{MOTIVO_LABEL[m.motivo] || m.motivo}</div>
-                    <div className="bg-gray-100 rounded h-4 overflow-hidden"><div className="h-full bg-blue-600 rounded" style={{ width: `${Math.round((m.n / maxMotivo) * 100)}%` }} /></div>
-                    <div className="text-xs font-bold text-gray-800 tabular-nums">{m.n}</div>
-                    {/* Tooltip: lista de clientes desse motivo (hover) */}
-                    <div className="hidden group-hover:block absolute z-30 left-[150px] top-full mt-1 w-72 max-h-64 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl p-2 text-left">
-                      <div className="text-[11px] font-bold text-gray-700 mb-1">{MOTIVO_LABEL[m.motivo] || m.motivo} · {listaMot.length} cliente(s)</div>
-                      {listaMot.length === 0 ? <div className="text-[11px] text-muted-foreground">Sem clientes.</div> : (
-                        <ul className="space-y-0.5">
-                          {listaMot.slice(0, 40).map((c, i) => (
-                            <li key={i} className="text-[11px] text-gray-700 truncate">
-                              <span className="font-semibold">{c.nome}</span>
-                              {c.cidade ? <span className="text-gray-400"> · {c.cidade}</span> : null}
-                              {c.vendedor ? <span className="text-gray-400"> · {c.vendedor}</span> : null}
-                            </li>
-                          ))}
-                          {listaMot.length > 40 ? <li className="text-[11px] text-muted-foreground">+{listaMot.length - 40} mais…</li> : null}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
+      <div className="mb-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Clientes não visitados no mês</CardTitle></CardHeader>
           <CardContent>
@@ -283,6 +251,16 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
                 {motivosPresentes.map((mot) => {
                   const nMot = clientesAll.filter((c) => (c.motivo || "") === mot).length;
                   return <option key={mot} value={mot}>{(MOTIVO_LABEL[mot] || mot)} ({nMot})</option>;
+                })}
+              </select>
+            </div>
+            {/* Filtro por vendedor (nesta lista) */}
+            <div className="mb-2">
+              <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm bg-white" title="Filtrar por vendedor">
+                <option value="">Todos os vendedores</option>
+                {vendedoresPresentes.map((vd) => {
+                  const nVd = clientesAll.filter((c) => (c.vendedor || "") === vd).length;
+                  return <option key={vd} value={vd}>{vd} ({nVd})</option>;
                 })}
               </select>
             </div>
@@ -315,8 +293,21 @@ export default function FechamentoPainel({ embedded = false }: { embedded?: bool
                       {perLabel(c.periodicidade) ? <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">{perLabel(c.periodicidade)}</span> : null}
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${streakCls(c.n)}`}>{c.n}x</span>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">{c.vendedor || "—"} · último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div>
-                    {c.motivo === "outro" && c.obs ? <div className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 mt-1 break-words">✍️ {c.obs}</div> : null}
+                    <div className="text-[11px] text-muted-foreground">{c.vendedor || "—"}</div>
+                    {Array.isArray(c.registros) && c.registros.length > 0 ? (
+                      <div className="mt-1 flex flex-col gap-1">
+                        {c.registros.map((r: any, ri: number) => (
+                          <div key={ri} className="text-[11px] text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 break-words">
+                            <span className="font-bold tabular-nums text-gray-900">{fmtData(r.data)}</span>
+                            <span className="mx-1 text-gray-400">·</span>
+                            <span className="font-semibold">{MOTIVO_LABEL[r.motivo] || r.motivo}</span>
+                            {r.obs ? <span className="text-indigo-700"> — {r.obs}</span> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">último motivo: "{MOTIVO_LABEL[c.motivo] || c.motivo}"</div>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     <label className="flex flex-col items-center gap-0.5 cursor-pointer" title="Suspender justificativa de VISITA neste mês">
