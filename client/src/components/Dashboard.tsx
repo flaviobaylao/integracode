@@ -625,7 +625,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Column title="Bloqueados" color="red" count={blockedF.length} total={sum(blockedF, "total_amount")} items={blockedF.map((b) => ({ name: b.customer_name || b.customerName || "-", sub: `Debito vencido - ${b.seller_name || b.sellerName || ""}`, when: fmtDateTime(b.blocked_at || b.blockedAt || b.created_at), value: b.total_amount ?? b.totalAmount }))} />
+            <Column title="Bloqueados" color="red" count={blockedF.length} total={sum(blockedF, "total_amount")} items={blockedF.map((b) => ({ name: b.customer_name || b.customerName || "-", sub: `Debito vencido - ${b.seller_name || b.sellerName || ""}`, when: fmtDateTime(b.blocked_at || b.blockedAt || b.created_at), value: b.total_amount ?? b.totalAmount, tag: tipoTag(b.operation_type || b.operationType) }))} />
             <Column title="A faturar" color="yellow" count={aFaturarF.length} total={sum(aFaturarF, "sale_value")} items={aFaturarF.map((p) => ({ name: p.customer_name || p.customerName || "-", sub: `Pedido - ${p.seller_name || p.sellerName || ""}`, when: fmtDateTime(p.created_at || p.createdAt), value: p.sale_value ?? p.saleValue }))} />
             <Column title="NFs emitidas hoje" color="green" count={nfsHojeF.length} total={sum(nfsHojeF, "total_invoice")} items={nfsHojeF.map((n) => ({ name: n.customer_name || n.customerName || "-", sub: `NF ${n.invoice_number || n.invoiceNumber || ""} - ${n.seller_name || n.sellerName || ""}`, when: fmtDateTime(n.authorization_date || n.authorizationDate || n.emission_date), value: n.total_invoice ?? n.totalInvoice }))} />
           </div>
@@ -692,7 +692,18 @@ function Sparkline(props: { data: { d: string; v: number }[]; highlight?: string
   );
 }
 
-function Column(props: { title: string; color: "red" | "yellow" | "green"; count: number; total: number; items: { name: string; sub: string; when: string; value: any }[]; }) {
+function tipoTag(t?: string): { label: string; cls: string } {
+  const k = String(t || "venda").toLowerCase();
+  if (k.includes("amostra")) return { label: "Amostra", cls: "bg-amber-100 text-amber-700" };
+  if (k.includes("troca")) return { label: "Troca", cls: "bg-blue-100 text-blue-700" };
+  if (k.includes("transfer")) return { label: "Transf.", cls: "bg-purple-100 text-purple-700" };
+  if (k.includes("bonific")) return { label: "Bonif.", cls: "bg-pink-100 text-pink-700" };
+  if (k.includes("devol")) return { label: "Devol.", cls: "bg-orange-100 text-orange-700" };
+  if (k.includes("venda")) return { label: "Venda", cls: "bg-emerald-100 text-emerald-700" };
+  return { label: t ? String(t) : "Venda", cls: "bg-gray-100 text-gray-600" };
+}
+
+function Column(props: { title: string; color: "red" | "yellow" | "green"; count: number; total: number; items: { name: string; sub: string; when: string; value: any; tag?: { label: string; cls: string } }[]; }) {
   const head = props.color === "red" ? "bg-red-50 border-red-200 text-red-700" : props.color === "yellow" ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-green-50 border-green-200 text-green-700";
   return (
     <div className="border rounded-lg overflow-hidden">
@@ -703,7 +714,7 @@ function Column(props: { title: string; color: "red" | "yellow" | "green"; count
       <div className="max-h-80 overflow-y-auto divide-y">
         {props.items.length === 0 ? (<div className="px-3 py-4 text-xs text-gray-400">Nenhum item.</div>) : (props.items.map((it, i) => (
           <div key={i} className="px-3 py-2 flex items-start justify-between gap-2">
-            <div className="min-w-0"><div className="text-sm font-medium text-gray-800 truncate">{it.name}</div><div className="text-xs text-gray-500 truncate">{it.sub}</div><div className="text-[11px] text-gray-400">{it.when}</div></div>
+            <div className="min-w-0"><div className="flex items-center gap-1.5 min-w-0"><div className="text-sm font-medium text-gray-800 truncate">{it.name}</div>{it.tag ? (<span className={`shrink-0 text-[9px] leading-none px-1.5 py-0.5 rounded-full font-semibold ${it.tag.cls}`}>{it.tag.label}</span>) : null}</div><div className="text-xs text-gray-500 truncate">{it.sub}</div><div className="text-[11px] text-gray-400">{it.when}</div></div>
             <div className="text-sm font-semibold tabular-nums whitespace-nowrap">{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(it.value) || 0)}</div>
           </div>
         )))}
