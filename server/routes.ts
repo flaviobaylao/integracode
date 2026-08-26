@@ -12650,11 +12650,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Rota para sincronizar todos os produtos do Omie
   app.post('/api/omie/sync-products', authenticateUser, async (req: any, res) => {
+    // ===== ROTA DESATIVADA (26/ago/2026) — LEIA ANTES DE REATIVAR =====
+    //
+    // Esta rota APAGA TODOS OS PRODUTOS antes de importar (o `deleteProduct`
+    // em laço, logo abaixo). Isso fazia sentido quando o Omie era a fonte de
+    // verdade e o INTEGRA era espelho: limpar e reimportar garantia espelho
+    // fiel. Com o Omie descontinuado, o INTEGRA passou a ser a fonte — e o
+    // catálogo daqui não existe em lugar nenhum para ser reimportado.
+    //
+    // O QUE ACONTECERIA HOJE COM UM CLIQUE: os produtos seriam apagados e a
+    // importação não traria nada de volta. Junto com eles iriam preços de
+    // varejo e atacado, fotos e NCM — e o PDV do balcão, que lê essas mesmas
+    // colunas, ficaria sem catálogo no meio do expediente.
+    //
+    // A proteção que existia era acidental: `getOmieService()` lê apenas
+    // variáveis de ambiente e devolve null sem elas, então a rota respondia
+    // 503 ANTES de apagar. Frágil demais para o estrago que causa — bastava
+    // alguém repor a variável.
+    //
+    // A recusa abaixo vem PRIMEIRO, antes de qualquer escrita, de propósito.
+    return res.status(410).json({
+      message: 'Sincronização de produtos com o Omie foi desativada. O INTEGRA é a fonte de verdade do catálogo; '
+             + 'esta rota apagava todos os produtos antes de importar e não há de onde reimportá-los. '
+             + 'Para alterar produtos e preços use Produtos & Estoque → Preços de Venda.',
+      desativadaEm: '2026-08-26',
+    });
+
+    /* eslint-disable no-unreachable */
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
-        return res.status(503).json({ 
-          message: "Integração Omie não configurada" 
+        return res.status(503).json({
+          message: "Integração Omie não configurada"
         });
       }
 

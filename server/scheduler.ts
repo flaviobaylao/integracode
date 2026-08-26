@@ -563,20 +563,36 @@ async function syncOverdueDebts(horario: string) {
   }
 }
 
-// Sincronização completa automática de hora em hora a partir das 6h
-// Das 06:00 às 23:00 (6h, 7h, 8h, ..., 23h)
-// IMPORTANTE: Só executa em produção para evitar race condition dev+prod no mesmo banco
-if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
-  cron.schedule('0 6-23 * * *', () => {
-    const horario = `${String(componentesBR().hora).padStart(2, '0')}:00h`;
-    syncComplete(horario);
-  }, {
-    timezone: "America/Sao_Paulo"
-  });
-  console.log('✅ [SCHEDULER] Sincronização Omie horária ativada (ambiente de produção)');
-} else {
-  console.log('⚠️ [SCHEDULER] Sincronização Omie horária DESATIVADA (ambiente de desenvolvimento)');
-}
+// ===== SINCRONIZAÇÃO HORÁRIA COM O OMIE — DESLIGADA (26/ago/2026) =====
+//
+// POR QUE FOI DESLIGADA: o Omie foi descontinuado. O INTEGRA passou a ser a
+// fonte de verdade. Este cron rodava de hora em hora, das 06:00 às 23:00, e
+// continuava tentando falar com uma API que não existe mais — 18 tentativas
+// por dia gravando erro no log e escondendo problema de verdade no meio do
+// ruído.
+//
+// POR QUE NÃO BASTAVA "não ter credencial": a variável OMIE_APP_KEY já tinha
+// sido removida, mas `syncComplete` não depende dela — ele varre as empresas
+// do grupo (tabela omie_instances) e usa o appKey/appSecret gravado em cada
+// uma. Como essas empresas continuam ATIVAS por serem os CNPJs reais da
+// Honest, o cron seguia encontrando credencial e tentando sincronizar.
+//
+// ⚠️ NÃO "conserte" isto reativando o cron nem desativando as empresas do
+// grupo: `omie_instances` é o cadastro das empresas da Honest (cada uma com
+// seu CNPJ), não uma configuração do Omie. Desativá-las quebraria produtos,
+// títulos e tabelas de preço, que são segmentados por empresa.
+//
+// A função syncComplete e as rotas manuais foram mantidas de propósito: se um
+// dia for preciso reimportar histórico pontualmente, o código está aqui. O que
+// sai é a execução AUTOMÁTICA.
+//
+// if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
+//   cron.schedule('0 6-23 * * *', () => {
+//     const horario = `${String(componentesBR().hora).padStart(2, '0')}:00h`;
+//     syncComplete(horario);
+//   }, { timezone: "America/Sao_Paulo" });
+// }
+console.log('⛔ [SCHEDULER] Sincronização Omie horária DESLIGADA (Omie descontinuado — 26/ago/2026)');
 
 // ===== LIBERACAO AUTOMATICA DE PEDIDOS BLOQUEADOS POR DEBITO VENCIDO =====
 // Re-verifica de hora em hora (15 min apos o sync de debitos) se os clientes dos pedidos
