@@ -22,38 +22,11 @@ export default function ProductManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Mutation para sincronizar produtos do Omie
-  const syncProductsMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/omie/sync-products', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(error || 'Erro ao sincronizar produtos');
-      }
-      
-      return await response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
-      toast({
-        title: "Sincronização concluída",
-        description: `${data.imported} novos produtos, ${data.updated} atualizados${data.skipped ? `, ${data.skipped} inativos pulados` : ''}.`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro na sincronização",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  // A mutation de "Sincronizar Produtos" foi REMOVIDA em 26/ago/2026 junto com o
+  // botão. Ela chamava POST /api/omie/sync-products, rota que apagava todos os
+  // produtos antes de importar e que hoje responde 410. Removida por inteiro (e
+  // não só desligada) para ninguém reaproveitar a fiação achando que ainda serve:
+  // com o Omie descontinuado, o catálogo daqui não tem origem para reimportação.
 
   // Mutation para deletar imagem
   const deleteImageMutation = useMutation({
@@ -173,24 +146,22 @@ export default function ProductManagement() {
           >
             <i className="fas fa-cog mr-2"></i>Configurações Omie
           </Button>
-          <Button
-            className="bg-green-600 hover:bg-green-700 text-white"
-            onClick={() => syncProductsMutation.mutate()}
-            disabled={syncProductsMutation.isPending}
-            data-testid="button-sync-products"
-          >
-            {syncProductsMutation.isPending ? (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                Sincronizando...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Sincronizar Produtos
-              </>
-            )}
-          </Button>
+          {/*
+            BOTÃO "Sincronizar Produtos" REMOVIDO (26/ago/2026).
+
+            Ele chamava POST /api/omie/sync-products, que APAGA todos os
+            produtos antes de importar. Com o Omie descontinuado, o INTEGRA
+            virou a fonte de verdade do catálogo: apagar levaria junto preços
+            de varejo e atacado, fotos e NCM, sem nada de onde reimportar — e
+            derrubaria o PDV do balcão, que lê essas mesmas colunas.
+
+            A rota no servidor também foi desativada (responde 410). Este
+            botão sai da tela para ninguém bater numa porta fechada; a trava
+            que importa é a do servidor.
+
+            Preço de produto agora se altera em Produtos & Estoque →
+            Preços de Venda.
+          */}
         </div>
       </div>
 
