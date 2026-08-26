@@ -522,9 +522,11 @@ export function registerLioApp(app: Express): void {
         ? `Estorno registrado e titulo de R$ ${financeiro.valor} cancelado no financeiro.`
         : financeiro.motivo === 'conciliado'
           ? 'Estorno registrado, MAS o titulo ja esta conciliado no banco. Desfaca a conciliacao antes de estornar a baixa.'
-          : financeiro.motivo === 'sem_titulo'
-            ? 'Estorno registrado. Esta venda nao gerou titulo no financeiro.'
-            : 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.';
+          : financeiro.motivo === 'ja_cancelado'
+            ? `Estorno ja havia sido registrado; o titulo de R$ ${financeiro.valor} continua cancelado.`
+            : financeiro.motivo === 'sem_titulo'
+              ? 'Estorno registrado. Esta venda nao gerou titulo no financeiro.'
+              : 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.';
 
       res.json({
         ok: true,

@@ -241,6 +241,17 @@ export async function estornarRecebimentoBalcao(
   const titulo = ((t.rows || t) as any[])[0];
   if (!titulo) return { revertido: false, motivo: 'titulo_inexistente' };
 
+  // JA CANCELADO: sai antes de tocar em qualquer coisa.
+  //
+  // O app reenvia o cancelamento quando a rede oscila, e sem esta saida cada
+  // reenvio carimbava mais uma linha "[VENDA CANCELADA...]" no notes do titulo.
+  // O dinheiro ficava certo — apagar baixa ja apagada e inofensivo — mas a
+  // trilha que gente le para entender o que aconteceu enchia de repeticao, e
+  // a resposta dizia "revertido" para uma operacao que nao reverteu nada.
+  if (String(titulo.status) === 'cancelada') {
+    return { revertido: false, motivo: 'ja_cancelado', receivableId: String(receivableId), valor: String(titulo.amount) };
+  }
+
   // TRAVA: titulo com lastro bancario nao se mexe por aqui. Quem conciliou
   // precisa desfazer a conciliacao antes — mesma regra do estorno manual.
   try {
