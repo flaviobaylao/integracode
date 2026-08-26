@@ -361,6 +361,41 @@ export function friendlyDecline(code: string, msg: string): string {
 }
 
 export function registerHotsiteCard(app: Express): void {
+  // 🎟️ COTAÇÃO DO PEDIDO (26/ago/2026) — leitura pura: não cobra, não cria, não resgata.
+  //
+  // POR QUE EXISTE: no cartão e no Google Pay a tela mostrava `order.totalAmount`, que é a
+  // soma crua dos itens do carrinho (o front nunca desconta — ver hotsite/src/App.tsx,
+  // calculateTotal()). O servidor já cobrava o valor COM cupom (amountCents sai de
+  // computeServerTotal), então o cliente digitava o cupom, via o preço CHEIO na tela de
+  // cartão e na folha do Google Pay, e concluía que cupom não vale no cartão. No Google Pay
+  // é pior que estético: a carteira declara `totalPriceStatus:'FINAL'` — anunciar um valor
+  // e cobrar outro é divergência de integração.
+  //
+  // Devolve o MESMO cálculo que a cobrança usa. O resgate continua acontecendo uma única
+  // vez, no POST /api/public/orders, com o número do pedido como orderRef.
+  app.post('/api/public/orders/quote', async (req, res) => {
+    try {
+      const order = (req.body && req.body.order) || req.body || {};
+      const totals = await computeServerTotal(order);
+      if ('error' in totals) return res.status(400).json({ message: totals.error });
+      const desconto = Math.round((totals.subtotal - totals.total) * 100) / 100;
+      res.json({
+        subtotal: totals.subtotal,
+        total: totals.total,
+        discount: desconto > 0 ? desconto : 0,
+        couponDiscount: totals.cupom
+          ? { code: totals.cupom.code, amount: totals.cupom.discount, total: totals.total }
+          : null,
+        referralDiscount: (!totals.cupom && totals.refPct > 0)
+          ? { pct: totals.refPct, amount: totals.refDiscount, total: totals.total }
+          : null,
+      });
+    } catch (e: any) {
+      console.error('❌ [LOJA-COTACAO] falhou:', e?.message || e);
+      res.status(500).json({ message: 'Não foi possível calcular o total agora.' });
+    }
+  });
+
   // Paga com cartão e, SÓ se aprovado, cria o pedido (síncrono)
   app.post('/api/public/orders/card/pay', async (req, res) => {
     try {
