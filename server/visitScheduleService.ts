@@ -357,6 +357,7 @@ export async function syncFutureSalesCards(monthsAhead: number = 2): Promise<{
     .where(
       and(
         eq(customers.isActive, true),
+        sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao gera agenda de visitas
         isNotNull(customers.visitPeriodicity),
         isNotNull(customers.weekdays)
       )
@@ -577,6 +578,7 @@ export async function ensureFutureAgendaCoverage(monthsAhead: number = 2): Promi
     .where(
       and(
         eq(customers.isActive, true),
+        sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao gera agenda de visitas
         isNotNull(customers.visitPeriodicity),
         isNotNull(customers.weekdays)
       )
