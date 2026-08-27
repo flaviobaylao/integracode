@@ -1261,14 +1261,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.set('Pragma', 'no-cache');
       const allUsers = await storage.getUsers();
-      
-      const systemNames = new Set(['pdd', 'sistema', 'serasa innove', 'solut cobranças', 'solut cobrancas', 
-        'dm cred cobranca', 'dm cred cobrança', 'mw trading', 'loja honest', 'enviado via api', 
-        'mercasa', 'velis crm', 'devi 1', 'devi 2']);
-      
+
+      const systemNames = new Set(['pdd', 'sistema', 'serasa innove', 'solut cobranças', 'solut cobrancas',
+        'dm cred cobranca', 'dm cred cobrança', 'mw trading', 'loja honest', 'enviado via api',
+        'mercasa', 'velis crm', 'devi 1', 'devi 2', 'chatgpt-ai', 'instagram', 'chatgpt', 'sistema api']);
+
+      // Vendedores com PENDÊNCIA EM ABERTO: aparecem no picklist mesmo INATIVOS.
+      // "Em aberto" = pedido no pipeline ainda não entregue/faturado (e fora da lixeira).
+      const openSellerIds = new Set<string>();
+      try {
+        const pend: any = await db.execute(sql`
+          SELECT DISTINCT seller_id FROM billing_pipeline
+          WHERE seller_id IS NOT NULL
+            AND stage::text NOT IN ('entregue', 'faturado', 'lixeira')`);
+        for (const r of (pend.rows || [])) if (r.seller_id) openSellerIds.add(String(r.seller_id));
+      } catch (e: any) { console.warn('[SELLERS] pendências em aberto:', e?.message); }
+      const temPendencia = (u: any): boolean => {
+        if (openSellerIds.has(String(u.id))) return true;
+        const codes: string[] = [];
+        if (u.omieVendorCode) codes.push(String(u.omieVendorCode));
+        if (u.omieVendorCodes && typeof u.omieVendorCodes === 'object') {
+          for (const v of Object.values(u.omieVendorCodes as Record<string, string>)) if (v) codes.push(String(v));
+        }
+        return codes.some((c) => openSellerIds.has(c) || openSellerIds.has('omie-vendor-' + c));
+      };
+
       const activeSellersRaw = allUsers
         .filter(u => {
-          if (!u.isActive || (u.role !== 'vendedor' && u.role !== 'telemarketing')) return false;
+          if (u.role !== 'vendedor' && u.role !== 'telemarketing') return false;
+          // Regra: ATIVO ou (inativo COM pendência em aberto em seu nome).
+          if (!u.isActive && !temPendencia(u)) return false;
           const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
           if (systemNames.has(fullName)) return false;
           if (u.firstName && u.firstName.includes('@')) return false;
@@ -1303,7 +1325,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })[0];
           
           const allIds = [...new Set(group.map(s => s.id))];
-          return { id: primary.id, name: primary.name, allIds, sellerType: primary.sellerType, role: primary.role };
+          // Códigos Omie de todo o grupo (para o front resolver seller_id do pipeline)
+          const codeSet = new Set<string>();
+          for (const s of group) {
+            const c = (s as any).omieVendorCodes;
+            if (c && typeof c === 'object') for (const v of Object.values(c as Record<string, string>)) if (v) codeSet.add(String(v));
+          }
+          return { id: primary.id, name: primary.name, allIds, omieVendorCodes: Array.from(codeSet), sellerType: primary.sellerType, role: primary.role };
         })
         // Ordena por tipo (Externo CLT, Externo PJ, Telemarketing, Canal, depois sem tipo) e nome.
         .sort((a, b) => {
