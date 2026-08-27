@@ -24,28 +24,40 @@ export function useActiveSellers() {
   const [users, setUsers] = useState<any[]>([]);
   useEffect(() => {
     let alive = true;
-    fetch("/api/users", { credentials: "include" })
+    // Fonte unica da regra "ativo OU com pendencia em aberto": /api/sellers/active.
+    // Esse endpoint ja remove nomes-lixo (chatgpt-ai, instagram, e-mails...),
+    // unifica duplicados e mantem inativos SO se tiverem pendencia em aberto.
+    fetch("/api/sellers/active", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
       .then((d) => { if (alive) setUsers(Array.isArray(d) ? d : []); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
   return useMemo(() => {
-    const nameOf = (u: any) => (`${u.firstName || ""} ${u.lastName || ""}`.trim()) || u.email || String(u.id);
-    const externos = users.filter((u: any) => u.role === "vendedor" && u.isActive);
-    const internos = users.filter((u: any) => u.role === "telemarketing" && u.isActive);
+    const nameOf = (u: any) => String(u.name || u.id || "").trim();
+    const externos = users.filter((u: any) => u.role === "vendedor");
+    const internos = users.filter((u: any) => u.role === "telemarketing");
     const keyToName = new Map<string, string>();
     const activeNames = new Set<string>();
     const externosNames: string[] = [];
     const internosNames: string[] = [];
     const register = (u: any, bucket: string[]) => {
       const n = nameOf(u);
+      if (!n) return;
       if (!activeNames.has(n)) bucket.push(n);
       activeNames.add(n);
       keyToName.set(String(u.id), n);
-      if (u.omieVendorCode) {
-        keyToName.set(String(u.omieVendorCode), n);
-        keyToName.set("omie-vendor-" + String(u.omieVendorCode), n);
+      // allIds inclui ids como "omie-vendor-1234"; deriva tambem o codigo cru.
+      for (const rawId of (Array.isArray(u.allIds) ? u.allIds : [])) {
+        const idStr = String(rawId);
+        keyToName.set(idStr, n);
+        const m = idStr.match(/^omie-vendor-(.+)$/);
+        if (m) keyToName.set(m[1], n);
+      }
+      for (const code of (Array.isArray(u.omieVendorCodes) ? u.omieVendorCodes : [])) {
+        if (!code) continue;
+        keyToName.set(String(code), n);
+        keyToName.set("omie-vendor-" + String(code), n);
       }
     };
     for (const u of externos) register(u, externosNames);
