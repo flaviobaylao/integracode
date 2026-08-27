@@ -19,7 +19,7 @@ import {
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
   Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe,
-  Star, StarOff
+  Star, StarOff, Store
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -1894,6 +1894,19 @@ function KanbanCard({
           {item.source === 'instagram' && (
             <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-700 bg-purple-100 font-semibold" title="Pedido recebido pelo Instagram Direct (atendente IA)">
               INSTAGRAM
+            </Badge>
+          )}
+          {/*
+            BALCÃO — venda feita na maquininha Cielo Smart.
+            Preenchimento SÓLIDO de propósito: os demais selos deste card são
+            contornados, então o sólido separa à primeira vista o pedido que
+            nasceu presencial (dinheiro já recebido, sem entrega a combinar) dos
+            que vieram de canal remoto e ainda dependem de pagamento e rota.
+          */}
+          {item.source === 'balcao' && (
+            <Badge className="text-[10px] bg-emerald-600 hover:bg-emerald-600 text-white border-emerald-700 font-semibold" title="Venda presencial no balcão, cobrada na maquininha Cielo Smart">
+              <Store className="h-2.5 w-2.5 mr-0.5" />
+              BALCÃO
             </Badge>
           )}
           {item.paidOnline ? (
