@@ -366,6 +366,60 @@ export async function registrarRecebimentoBalcao(pedido: {
 }
 
 /**
+ * Tira do faturamento o pedido de uma venda estornada na maquininha.
+ *
+ * POR QUE PRECISOU EXISTIR: quando a venda de balcao passou a virar sales_card
+ * (para poder ser faturada), o cancelamento parou de ter efeito. A regra antiga
+ * dizia "pedido COM sales_card se trata a mao", escrita quando venda de balcao
+ * nunca tinha card. Depois da mudanca, TODA venda de balcao tem card — entao a
+ * regra passou a valer sempre e o estorno virou letra morta: o dinheiro voltava
+ * para o cliente e o pedido seguia caminhando para virar nota.
+ *
+ * O QUE DECIDE: se ja existe NOTA FISCAL emitida, nao mexe. Documento fiscal
+ * emitido nao se apaga por app — vira tratamento humano (carta de correcao,
+ * cancelamento junto a SEFAZ, o que o contador determinar). Sem nota, o pedido
+ * vai para a Lixeira do pipeline e o card fica 'cancelled'.
+ */
+export async function cancelarCardBalcao(
+  pedidoId: string,
+  motivo?: string | null,
+): Promise<{ cancelado: boolean; motivo: string; etapaAnterior?: string; notaFiscal?: string }> {
+  const r: any = await db.execute(sql`SELECT sales_card_id, reference FROM lio_pedidos WHERE id = ${pedidoId} LIMIT 1`);
+  const p = ((r.rows || r) as any[])[0];
+  const cardId = p?.sales_card_id;
+  if (!cardId) return { cancelado: false, motivo: 'sem_card' };
+
+  const b: any = await db.execute(sql`SELECT id, stage, invoice_number
+    FROM billing_pipeline WHERE sales_card_id = ${cardId} LIMIT 1`);
+  const linha = ((b.rows || b) as any[])[0];
+
+  // TRAVA FISCAL: com nota emitida, o app para aqui.
+  if (linha?.invoice_number) {
+    return { cancelado: false, motivo: 'ja_faturado', notaFiscal: String(linha.invoice_number) };
+  }
+
+  const carimbo = `\n[VENDA CANCELADA NA MAQUININHA ${new Date().toISOString().slice(0, 10)}] `
+    + (motivo || 'estorno solicitado no balcao') + ` — pedido ${p.reference}.`;
+
+  if (linha) {
+    // O valor 'lixeira' e adicionado ao enum em runtime pelo modulo do pipeline;
+    // repetimos aqui porque este caminho pode rodar antes daquele.
+    try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch { /* ja existe */ }
+    await db.execute(sql`UPDATE billing_pipeline
+      SET stage = 'lixeira', updated_at = now() WHERE id = ${linha.id}`);
+  }
+
+  await db.execute(sql`UPDATE sales_cards SET
+      status = 'cancelled',
+      notes = COALESCE(notes,'') || ${carimbo},
+      updated_at = now()
+    WHERE id = ${cardId}`);
+
+  console.log(`↩️ [LIO-PDV] Pedido ${p.reference} retirado do faturamento (card ${cardId}).`);
+  return { cancelado: true, motivo: 'retirado_do_faturamento', etapaAnterior: linha?.stage || undefined };
+}
+
+/**
  * Desfaz no financeiro uma venda de balcao estornada na maquininha.
  *
  * POR QUE PRECISOU EXISTIR: enquanto venda de balcao nao gerava titulo, o

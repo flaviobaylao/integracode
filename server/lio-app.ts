@@ -33,7 +33,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { authenticateUser } from './authMiddleware';
-import { registerLioPdv, registrarRecebimentoBalcao, estornarRecebimentoBalcao, criarSalesCardBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
+import { registerLioPdv, registrarRecebimentoBalcao, estornarRecebimentoBalcao, criarSalesCardBalcao, cancelarCardBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
 
 // statusCode do retorno da Cielo — o campo que separa venda de estorno.
 // Ignorar isso significa dar baixa num cancelamento como se fosse venda.
@@ -545,40 +545,54 @@ export function registerLioApp(app: Express): void {
           updated_at = now()
         WHERE id = ${id}`);
 
-      // Venda de balcao (sem sales_card) gerou titulo em receivables e portanto
-      // TEM o que reverter. Venda ligada a sales_card continua sendo tratada a
-      // mao de proposito: ali o faturamento passou pelo pipeline, pode ter nota
-      // fiscal emitida, e desfazer isso automaticamente seria temerario.
-      let financeiro: any = { revertido: false, motivo: 'com_sales_card_tratar_manualmente' };
-      if (!linha.sales_card_id) {
+      // O estorno tem DOIS destinos possiveis, e a venda de balcao passou pelos
+      // dois ao longo do tempo:
+      //
+      //   - venda ANTIGA, sem sales_card: gerou titulo direto em receivables ->
+      //     reverte o titulo.
+      //   - venda ATUAL, com sales_card: o dinheiro sai do faturamento -> tira o
+      //     pedido do pipeline.
+      //
+      // ATENCAO PARA QUEM MEXER AQUI: a regra anterior dizia "pedido COM
+      // sales_card se trata a mao". Isso fazia sentido quando venda de balcao
+      // NUNCA tinha card. Quando o PDV passou a criar card para poder faturar,
+      // a condicao virou sempre-verdadeira e o cancelamento deixou de fazer
+      // qualquer coisa: o dinheiro voltava ao cliente e o pedido seguia rumo a
+      // nota fiscal. Nao volte a tratar "tem card" como sinonimo de "nao mexer".
+      const motivoEstorno = String((req.body || {}).motivo || '').trim() || null;
+      let financeiro: any = { revertido: false, motivo: 'sem_titulo' };
+      let faturamento: any = { cancelado: false, motivo: 'sem_card' };
+
+      if (linha.sales_card_id) {
+        faturamento = await cancelarCardBalcao(id, motivoEstorno);
+      } else {
         financeiro = await estornarRecebimentoBalcao(req, {
           id,
           reference: linha.reference,
-          motivo: String((req.body || {}).motivo || '').trim() || null,
+          motivo: motivoEstorno,
         });
       }
 
-      if (financeiro.revertido) {
-        console.warn(`↩️ [LIO-APP] Estorno do pedido ${id}: titulo ${financeiro.receivableId} cancelado.`);
-      } else {
-        console.warn(
-          `↩️ [LIO-APP] Estorno registrado no pedido ${id} (dispositivo ${req.dispositivo?.nome || '?'}). ` +
-          `Financeiro NAO revertido automaticamente (${financeiro.motivo}) — tratar manualmente.`
-        );
-      }
+      console.warn(
+        `↩️ [LIO-APP] Estorno do pedido ${id} (dispositivo ${req.dispositivo?.nome || '?'}) — ` +
+        `faturamento: ${faturamento.motivo}; financeiro: ${financeiro.motivo}.`
+      );
 
-      // `conciliado` merece mensagem propria: nao e erro nosso, e o titulo ja
-      // tem lastro no extrato bancario. Mexer nele por aqui furaria a
-      // conciliacao — quem concilia desfaz primeiro.
-      const mensagem = financeiro.revertido
-        ? `Estorno registrado e titulo de R$ ${financeiro.valor} cancelado no financeiro.`
-        : financeiro.motivo === 'conciliado'
-          ? 'Estorno registrado, MAS o titulo ja esta conciliado no banco. Desfaca a conciliacao antes de estornar a baixa.'
-          : financeiro.motivo === 'ja_cancelado'
-            ? `Estorno ja havia sido registrado; o titulo de R$ ${financeiro.valor} continua cancelado.`
-            : financeiro.motivo === 'sem_titulo'
-              ? 'Estorno registrado. Esta venda nao gerou titulo no financeiro.'
-              : 'Estorno registrado. O lancamento no financeiro precisa ser tratado manualmente.';
+      // Cada desfecho tem mensagem propria porque a acao seguinte do operador
+      // muda: nota emitida exige gente, titulo conciliado exige desfazer a
+      // conciliacao antes, e o caminho normal nao exige nada.
+      const mensagem = faturamento.cancelado
+        ? 'Estorno registrado e pedido retirado do faturamento (movido para a Lixeira).'
+        : faturamento.motivo === 'ja_faturado'
+          ? `Estorno registrado, MAS a nota ${faturamento.notaFiscal} ja foi emitida para este pedido. `
+            + 'Cancelamento de nota fiscal e tratamento humano — procure o financeiro.'
+          : financeiro.revertido
+            ? `Estorno registrado e titulo de R$ ${financeiro.valor} cancelado no financeiro.`
+            : financeiro.motivo === 'conciliado'
+              ? 'Estorno registrado, MAS o titulo ja esta conciliado no banco. Desfaca a conciliacao antes de estornar a baixa.'
+              : financeiro.motivo === 'ja_cancelado'
+                ? `Estorno ja havia sido registrado; o titulo de R$ ${financeiro.valor} continua cancelado.`
+                : 'Estorno registrado. Esta venda nao gerou titulo nem pedido de faturamento.';
 
       res.json({
         ok: true,
@@ -586,6 +600,9 @@ export function registerLioApp(app: Express): void {
         financeiroRevertido: !!financeiro.revertido,
         financeiroMotivo: financeiro.motivo,
         receivableId: financeiro.receivableId || null,
+        faturamentoCancelado: !!faturamento.cancelado,
+        faturamentoMotivo: faturamento.motivo,
+        notaFiscal: faturamento.notaFiscal || null,
         message: mensagem,
       });
     } catch (e: any) {
