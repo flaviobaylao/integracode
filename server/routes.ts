@@ -23114,9 +23114,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
       const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
       const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
-      // Tarifas R$/km por regiao (GO e DF) em config_global + status do mes atual:
-      // FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
-      let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0;
+      // Tarifas R$/km de referencia (GO, DF e PSN personalizada) em config_global +
+      // status do mes atual: FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
+      let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0, ratePerKmPSN = 0;
       try {
         const cr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`);
         const v = cr?.rows?.[0]?.valor;
@@ -23125,20 +23125,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ratePerKm = Number(parsed?.ratePerKm || 0) || 0;
           ratePerKmGO = Number(parsed?.ratePerKmGO ?? parsed?.ratePerKm ?? 0) || 0;
           ratePerKmDF = Number(parsed?.ratePerKmDF ?? parsed?.ratePerKm ?? 0) || 0;
+          ratePerKmPSN = Number(parsed?.ratePerKmPSN ?? 0) || 0;
         }
       } catch (e) { /* sem tarifa configurada ainda */ }
-      // Tarifa R$/km por vendedor (editavel direto na linha). Se o vendedor ainda
-      // nao tem tarifa propria, cai no padrao da tarifa GO. Persistido em config_global.
-      let sellerRateMap: Record<string, number> = {};
+      // Escolha de tarifa por vendedor (GO | DF | PSN): o admin marca a coluna e o
+      // valor pago segue a tarifa de referencia da escolha. Persistido em config_global.
+      let regionMap: Record<string, string> = {};
       try {
-        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_rates' LIMIT 1`);
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_region' LIMIT 1`);
         const rv = rg?.rows?.[0]?.valor;
-        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') sellerRateMap = pm; }
-      } catch (e) { /* sem tarifas por vendedor ainda */ }
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') regionMap = pm; }
+      } catch (e) { /* sem escolhas ainda */ }
+      // Migracao: quem nao tem escolha explicita mas tem tarifa numerica antiga
+      // (km_seller_rates) herda GO/DF pela proximidade do valor salvo.
+      let oldRateMap: Record<string, number> = {};
+      try {
+        const rr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_rates' LIMIT 1`);
+        const rv2 = rr?.rows?.[0]?.valor;
+        if (rv2) { const pm2 = JSON.parse(String(rv2)); if (pm2 && typeof pm2 === 'object') oldRateMap = pm2; }
+      } catch (e) { /* sem tarifas antigas */ }
+      const normRegion = (x: any): string => { const u = String(x || '').toUpperCase(); return (u === 'DF' || u === 'PSN') ? u : 'GO'; };
       for (const s of sellers) {
-        const has = Object.prototype.hasOwnProperty.call(sellerRateMap, s.sellerId);
-        const v = Number(sellerRateMap[s.sellerId]);
-        s.sellerRate = has && isFinite(v) && v >= 0 ? v : ratePerKmGO;
+        let region: string;
+        if (Object.prototype.hasOwnProperty.call(regionMap, s.sellerId)) {
+          region = normRegion(regionMap[s.sellerId]);
+        } else if (Object.prototype.hasOwnProperty.call(oldRateMap, s.sellerId)) {
+          const num = Number(oldRateMap[s.sellerId]);
+          region = (isFinite(num) && Math.abs(num - ratePerKmDF) < 0.0005 && ratePerKmDF !== ratePerKmGO) ? 'DF' : 'GO';
+        } else {
+          region = 'GO';
+        }
+        s.region = region;
+        s.sellerRate = region === 'DF' ? ratePerKmDF : region === 'PSN' ? ratePerKmPSN : ratePerKmGO;
       }
       let mesAtual = ''; let mesFechado = false;
       try {
@@ -23151,32 +23169,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mesAtual = String(nrow.mes_atual || '');
         mesFechado = nrow.fechado === true || nrow.fechado === 't';
       } catch (e) { /* fallback */ }
-      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, ratePerKmGO, ratePerKmDF, mesAtual, mesFechado });
+      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, ratePerKmGO, ratePerKmDF, ratePerKmPSN, mesAtual, mesFechado });
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
       res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
     }
   });
 
-  // Salva as tarifas R$/km por regiao (GO e DF) pagas ao vendedor. Admin apenas.
-  // Persistido em config_global. Aceita ratePerKmGO/ratePerKmDF; ratePerKm legado
-  // continua aceito como fallback para as duas regioes.
+  // Salva as tarifas R$/km de referencia (GO, DF e PSN personalizada). Admin apenas.
+  // Persistido em config_global, fazendo merge com o que ja existe para nao zerar
+  // um campo que nao venha no corpo. ratePerKm legado continua aceito como fallback.
   app.post('/api/admin/km-vendedores/rate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const b = req.body || {};
-      const legacy = Number(b.ratePerKm);
-      const go = Number(b.ratePerKmGO ?? b.ratePerKm);
-      const df = Number(b.ratePerKmDF ?? b.ratePerKm);
-      if (!isFinite(go) || go < 0 || !isFinite(df) || df < 0) return res.status(400).json({ message: 'Valor por km invalido' });
       await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
-      // ratePerKm legado = tarifa GO, para nao quebrar leitores antigos do campo.
-      const ratePerKm = isFinite(legacy) && legacy >= 0 ? legacy : go;
-      const valor = JSON.stringify({ ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
-      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor (GO e DF)') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
-      res.json({ ok: true, ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
+      let cur: any = {};
+      try { const c: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`); const cv = c?.rows?.[0]?.valor; if (cv) cur = JSON.parse(String(cv)) || {}; } catch (e) { /* primeiro registro */ }
+      const pick = (k: string, fb: number) => { const v = Number(b[k]); return isFinite(v) && v >= 0 ? v : fb; };
+      const legacy = Number(b.ratePerKm);
+      const go = (b.ratePerKmGO != null) ? pick('ratePerKmGO', Number(cur.ratePerKmGO ?? cur.ratePerKm ?? 0) || 0) : (isFinite(legacy) && legacy >= 0 ? legacy : Number(cur.ratePerKmGO ?? cur.ratePerKm ?? 0) || 0);
+      const df = (b.ratePerKmDF != null) ? pick('ratePerKmDF', Number(cur.ratePerKmDF ?? cur.ratePerKm ?? 0) || 0) : (isFinite(legacy) && legacy >= 0 ? legacy : Number(cur.ratePerKmDF ?? cur.ratePerKm ?? 0) || 0);
+      const psn = (b.ratePerKmPSN != null) ? pick('ratePerKmPSN', Number(cur.ratePerKmPSN ?? 0) || 0) : (Number(cur.ratePerKmPSN ?? 0) || 0);
+      if (!isFinite(go) || go < 0 || !isFinite(df) || df < 0 || !isFinite(psn) || psn < 0) return res.status(400).json({ message: 'Valor por km invalido' });
+      const ratePerKm = isFinite(legacy) && legacy >= 0 ? legacy : go; // legado = tarifa GO
+      const valor = JSON.stringify({ ratePerKm, ratePerKmGO: go, ratePerKmDF: df, ratePerKmPSN: psn });
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor (GO, DF e PSN)') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, ratePerKm, ratePerKmGO: go, ratePerKmDF: df, ratePerKmPSN: psn });
     } catch (error: any) {
       console.error('Erro ao salvar tarifa km:', error);
       res.status(500).json({ message: 'Erro ao salvar tarifa', error: error?.message });
+    }
+  });
+
+  // Salva a escolha de tarifa (GO | DF | PSN) de um vendedor. Admin apenas.
+  // Persistido em config_global (mapa sellerId -> 'GO'|'DF'|'PSN').
+  app.post('/api/admin/km-vendedores/region', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const sellerId = String(req.body?.sellerId || '').trim();
+      const region = String(req.body?.region || '').trim().toUpperCase();
+      if (!sellerId) return res.status(400).json({ message: 'sellerId obrigatorio' });
+      if (region !== 'GO' && region !== 'DF' && region !== 'PSN') return res.status(400).json({ message: 'Regiao invalida (use GO, DF ou PSN)' });
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+      let map: Record<string, string> = {};
+      try {
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_region' LIMIT 1`);
+        const rv = rg?.rows?.[0]?.valor;
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') map = pm; }
+      } catch (e) { /* primeiro registro */ }
+      map[sellerId] = region;
+      const valor = JSON.stringify(map);
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_seller_region', ${valor}, 'Escolha de tarifa GO/DF/PSN por vendedor') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, sellerId, region });
+    } catch (error: any) {
+      console.error('Erro ao salvar regiao do vendedor:', error);
+      res.status(500).json({ message: 'Erro ao salvar regiao', error: error?.message });
     }
   });
 
