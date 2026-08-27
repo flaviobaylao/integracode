@@ -1909,7 +1909,14 @@ function KanbanCard({
               BALCÃO
             </Badge>
           )}
-          {item.paidOnline ? (
+          {/*
+            `item.source === 'balcao'` conta como pago SEM depender de consulta:
+            o card de balcao so e criado DEPOIS que a Cielo aprova a cobranca
+            (ver criarSalesCardBalcao, chamada dentro da liquidacao). Ou seja,
+            card de balcao que existe e venda que ja foi paga — sempre.
+            Deduzir aqui evita varrer 5 mil linhas para descobrir o obvio.
+          */}
+          {(item.paidOnline || item.source === 'balcao') ? (
             <Badge variant="outline" className="text-[10px] border-red-400 text-red-700 bg-red-100 font-semibold" title="Pagamento confirmado na loja (cartão/Google Pay/PIX)">
               <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
               Pago
