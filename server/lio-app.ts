@@ -33,7 +33,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { authenticateUser } from './authMiddleware';
-import { registerLioPdv, registrarRecebimentoBalcao, estornarRecebimentoBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
+import { registerLioPdv, registrarRecebimentoBalcao, estornarRecebimentoBalcao, criarSalesCardBalcao, reaisParaCentavos, ensurePdvSchema } from './lio-pdv';
 
 // statusCode do retorno da Cielo — o campo que separa venda de estorno.
 // Ignorar isso significa dar baixa num cancelamento como se fosse venda.
@@ -256,7 +256,33 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
       cliente_id, cliente_nome, forma_pagamento
     FROM lio_pedidos WHERE id = ${id} LIMIT 1`);
   const pedido = ((r.rows || r) as any[])[0] || {};
-  const salesCardId = pedido.sales_card_id;
+  let salesCardId = pedido.sales_card_id;
+
+  // VENDA DO PDV VIRA PEDIDO DE VENDA.
+  //
+  // O Pipeline de Faturamento e ancorado em sales_cards (sales_card_id e
+  // customer_id sao NOT NULL em billing_pipeline). Sem card, a venda entra no
+  // financeiro e NUNCA vira nota — foi o que aconteceu com as primeiras vendas
+  // do balcao. O card e criado aqui, depois do claim atomico, para que uma
+  // cobranca recusada nao deixe pedido de venda orfao no pipeline.
+  //
+  // SE FALHAR, NAO DERRUBA A VENDA: o dinheiro ja entrou na maquininha. O
+  // catch deixa salesCardId nulo e o fluxo cai no lancamento direto em
+  // receivables logo abaixo — pior que faturar, mas MUITO melhor que perder o
+  // registro do dinheiro. O erro fica no pedido para tratamento.
+  if (!salesCardId && String(pedido.origem || '') === 'pdv') {
+    try {
+      salesCardId = await criarSalesCardBalcao(id);
+    } catch (e: any) {
+      console.error(`❌ [LIO-APP] Falha ao criar o card de venda de ${id}:`, e?.message || e);
+      try {
+        await db.execute(sql`UPDATE lio_pedidos
+          SET error = ${'card de venda: ' + String(e?.message || e)}, updated_at = now()
+          WHERE id = ${id}`);
+      } catch { /* noop */ }
+      salesCardId = null;
+    }
+  }
 
   const detalhe = [
     d.brand ? `bandeira ${d.brand}` : null,

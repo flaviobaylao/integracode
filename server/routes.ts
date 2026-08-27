@@ -12391,6 +12391,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const pc: any = await db.execute(sql`SELECT DISTINCT order_id FROM hotsite_card_payments WHERE status = 'paid' AND order_id IN (${idList})`);
           for (const x of (pc.rows || pc) as any[]) if (x.order_id) paidSet.add(String(x.order_id));
         } catch {}
+        // BALCÃO: a venda da maquininha ja nasce paga. Sem isto o card mostraria
+        // "Pagamento ainda nao confirmado" numa venda que o cliente pagou na
+        // frente do operador.
+        try {
+          const lp: any = await db.execute(sql`SELECT DISTINCT sales_card_id FROM lio_pedidos WHERE liquidado = true AND sales_card_id IN (${idList})`);
+          for (const x of (lp.rows || lp) as any[]) if (x.sales_card_id) paidSet.add(String(x.sales_card_id));
+        } catch {}
         // Foto dos produtos anexada na troca (registrada em order_pipeline_audit com outcome='troca_photo').
         // Pega a mais recente por card para exibir no card bloqueado.
         try {

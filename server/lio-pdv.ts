@@ -120,6 +120,163 @@ export async function ensurePdvSchema(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Pedido de venda (sales_card) — porta de entrada do faturamento
+// ---------------------------------------------------------------------------
+
+/** Origem gravada no card. E o que o Pipeline usa para exibir o selo "Balcao". */
+export const ORIGEM_BALCAO = 'balcao';
+
+/** Nome do cliente usado quando a venda de balcao nao e identificada. */
+const CLIENTE_BALCAO_NOME = 'CONSUMIDOR BALCÃO';
+
+/**
+ * Cliente guarda-chuva das vendas de balcao nao identificadas.
+ *
+ * POR QUE UM SO, FIXO: sales_cards exige customer_id, e criar um cliente por
+ * venda avulsa encheria o cadastro de fantasmas — cada um entrando em rota,
+ * churn e carteira de vendedor. Um unico cliente concentra todas, fica claro no
+ * relatorio e nao suja nada.
+ *
+ * Nasce com virtual_service = true e is_active = false de proposito: os dois
+ * marcam "nao e cliente de visita", que e o que impede a roteirizacao e o radar
+ * de churn de irem atras dele.
+ */
+async function clienteBalcao(): Promise<string | null> {
+  try {
+    const j: any = await db.execute(sql`SELECT id FROM customers
+      WHERE name = ${CLIENTE_BALCAO_NOME} ORDER BY created_at ASC LIMIT 1`);
+    const existente = ((j.rows || j) as any[])[0]?.id;
+    if (existente) return String(existente);
+
+    const { getHotsiteDefaults } = await import('./canais-routes');
+    const cfg = await getHotsiteDefaults();
+    const vendedor = cfg.vendedorId || (await vendedorPadrao());
+    if (!vendedor) {
+      console.error('❌ [LIO-PDV] Nenhum vendedor disponivel para criar o cliente do balcao.');
+      return null;
+    }
+
+    const { storage } = await import('./storage');
+    const novo = await storage.createCustomer({
+      name: CLIENTE_BALCAO_NOME,
+      customerType: 'pessoa_fisica',
+      phone: '0000000000',
+      address: 'Venda presencial no balcao',
+      route: cfg.rota,
+      sellerId: vendedor,
+      weekdays: JSON.stringify([cfg.dia]),
+      visitPeriodicity: cfg.periodicidade,
+      virtualService: true,   // nao conta para meta de atendimento
+      isActive: false,        // fica fora de rota e do radar de churn
+    } as any);
+    console.log(`🆕 [LIO-PDV] Cliente do balcao criado: ${novo.id}`);
+    return String(novo.id);
+  } catch (e: any) {
+    console.error('❌ [LIO-PDV] Falha ao resolver o cliente do balcao:', e?.message || e);
+    return null;
+  }
+}
+
+async function vendedorPadrao(): Promise<string | null> {
+  try {
+    const r: any = await db.execute(sql`SELECT id FROM users
+      WHERE role = 'vendedor' AND is_active = true ORDER BY created_at ASC LIMIT 1`);
+    const v = ((r.rows || r) as any[])[0]?.id;
+    if (v) return String(v);
+    const a: any = await db.execute(sql`SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`);
+    return ((a.rows || a) as any[])[0]?.id ? String(((a.rows || a) as any[])[0].id) : null;
+  } catch { return null; }
+}
+
+/**
+ * Transforma a venda do balcao num pedido de venda (sales_card).
+ *
+ * POR QUE ISTO EXISTE: o Pipeline de Faturamento e ancorado em sales_cards —
+ * billing_pipeline.sales_card_id e customer_id sao NOT NULL. Sem card, a venda
+ * fica so no financeiro e NUNCA vira nota fiscal. Foi exatamente o que
+ * aconteceu com as primeiras vendas do PDV.
+ *
+ * Segue o caminho do HOTSITE, que ja resolvia o mesmo problema para venda de
+ * consumidor sem rota (ver POST /api/public/orders): mesmos defaults de dia,
+ * periodicidade e vendedor, lidos de Canais > Hotsite.
+ *
+ * Valores: o payload do pedido guarda unitPrice em CENTAVOS (contrato do deep
+ * link da Cielo); sales_cards trabalha em REAIS. A conversao acontece aqui, uma
+ * vez, e o total sai da soma dos itens — nunca de arredondar o total.
+ */
+export async function criarSalesCardBalcao(pedidoId: string): Promise<string | null> {
+  await ensurePdvSchema();
+
+  const r: any = await db.execute(sql`SELECT id, reference, payload, cliente_id, cliente_nome,
+      tabela_preco, forma_pagamento, sales_card_id
+    FROM lio_pedidos WHERE id = ${pedidoId} LIMIT 1`);
+  const p = ((r.rows || r) as any[])[0];
+  if (!p) return null;
+  if (p.sales_card_id) return String(p.sales_card_id); // idempotente
+
+  let itens: any[] = [];
+  try { itens = JSON.parse(String(p.payload || '{}')).itens || []; } catch { itens = []; }
+  if (!itens.length) {
+    console.warn(`⚠️ [LIO-PDV] Pedido ${pedidoId} sem itens no payload; card nao criado.`);
+    return null;
+  }
+
+  const customerId = p.cliente_id || (await clienteBalcao());
+  if (!customerId) return null;
+
+  const { getHotsiteDefaults } = await import('./canais-routes');
+  const cfg = await getHotsiteDefaults();
+  const sellerId = cfg.vendedorId || (await vendedorPadrao());
+  if (!sellerId) {
+    console.error('❌ [LIO-PDV] Nenhum vendedor disponivel; card do balcao nao criado.');
+    return null;
+  }
+
+  let totalCentavos = 0;
+  const produtos = itens.map((it: any) => {
+    const q = Number(it.quantity) || 0;
+    const unitCent = Number(it.unitPrice) || 0;
+    totalCentavos += unitCent * q;
+    return {
+      productId: it.produtoId || null,
+      name: it.name,
+      productName: it.name,
+      quantity: q,
+      unitPrice: unitCent / 100,
+      totalPrice: (unitCent * q) / 100,
+    };
+  });
+
+  const resumo = itens.map((it: any) => `${it.name} (${it.quantity}x)`).join(', ');
+  const { storage } = await import('./storage');
+  const card = await storage.createSalesCard({
+    customerId,
+    sellerId,
+    routeDay: cfg.dia,
+    recurrenceType: cfg.periodicidade,
+    // Venda de balcao NAO se repete: e um evento, nao uma visita recorrente.
+    // Deixar isRecurring true faria o sistema gerar um proximo card sozinho.
+    isRecurring: false,
+    status: 'pending',
+    paymentMethod: 'a_vista',
+    operationType: 'venda',
+    products: produtos,
+    saleValue: centavosParaReais(totalCentavos),
+    source: ORIGEM_BALCAO,
+    notes: `Venda no balcao pela maquininha — ${p.reference}\nItens: ${resumo}\n`
+         + `Total: R$ ${centavosParaReais(totalCentavos)}\nTabela: ${p.tabela_preco || 'varejo'}\n`
+         + `Pagamento: ${p.forma_pagamento || 'cartao'} (ja recebido na maquininha)`,
+    deliveryWeekdays: [],
+    deliveryTimeSlots: [],
+    deliverySaturdayTimeSlots: [],
+  } as any);
+
+  await db.execute(sql`UPDATE lio_pedidos SET sales_card_id = ${card.id}, updated_at = now() WHERE id = ${pedidoId}`);
+  console.log(`🧾 [LIO-PDV] Card de venda criado para ${p.reference}: ${card.id}`);
+  return String(card.id);
+}
+
+// ---------------------------------------------------------------------------
 // Recebimento no financeiro
 // ---------------------------------------------------------------------------
 

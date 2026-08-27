@@ -306,6 +306,13 @@ async function isOrderPrepaidOnline(salesCardId: string): Promise<boolean> {
     const r: any = await db.execute(sql`SELECT 1 FROM hotsite_card_payments WHERE status = 'paid' AND order_id = ${salesCardId} LIMIT 1`);
     if (((r.rows || r || []) as any[]).length > 0) return true;
   } catch { /* tabela pode não existir ainda */ }
+  // BALCÃO (maquininha Cielo Smart). Sem esta checagem o pipeline trataria uma
+  // venda JÁ RECEBIDA no aparelho como pendente e emitiria boleto ou PIX de
+  // cobrança — cobrando de novo quem já pagou no balcão.
+  try {
+    const r: any = await db.execute(sql`SELECT 1 FROM lio_pedidos WHERE sales_card_id = ${salesCardId} AND liquidado = true LIMIT 1`);
+    if (((r.rows || r || []) as any[]).length > 0) return true;
+  } catch { /* tabela pode não existir ainda */ }
   return false;
 }
 
