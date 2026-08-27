@@ -889,7 +889,13 @@ export default function BillingPipeline() {
   };
 
   // Opções dos filtros (apenas o que existe no pipeline)
+  // Mantem SO vendedores ativos OU com pendencia em aberto (fonte: /api/sellers/active),
+  // eliminando nomes-lixo (chatgpt-ai, instagram, e-mails), duplicados e inativos sem pendencia.
+  const allowedSellerNames = new Set(
+    (sellersList as any[]).map((s: any) => normName(String(s?.name || ''))).filter(Boolean),
+  );
   const sellerOptions = Array.from(new Set((items || []).map((i: any) => canonicalSeller(i))))
+    .filter((v) => allowedSellerNames.size === 0 || allowedSellerNames.has(normName(v)) || normName(v) === normName('Sem vendedor'))
     .sort((a, b) => a.localeCompare(b))
     .map((v) => ({ value: v, label: v }));
   const opOptions = Array.from(new Set((items || []).map((i: any) => operationCategory(i)).filter(Boolean) as string[]))
