@@ -223,6 +223,41 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// Caixa de "Adicionar observação" ISOLADA num componente próprio: o texto vive no estado LOCAL
+// aqui, então digitar re-renderiza só esta caixinha — não o pipeline inteiro (o que deixava a
+// digitação travada, pois o board com centenas de cards reconciliava a cada tecla).
+function AddNoteBox({ onAdd, pending }: { onAdd: (text: string) => Promise<void>; pending: boolean }) {
+  const [text, setText] = useState('');
+  const submit = async () => {
+    const t = text.trim();
+    if (!t) return;
+    try { await onAdd(t); setText(''); } catch { /* mantém o texto se falhar */ }
+  };
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Adicionar observação (registra data, hora e quem incluiu)</label>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={2}
+        placeholder="Escreva a observação..."
+        className="w-full border rounded px-2 py-1 text-sm"
+        data-testid="textarea-add-note"
+      />
+      <div className="flex justify-end mt-1">
+        <Button
+          size="sm"
+          onClick={submit}
+          disabled={!text.trim() || pending}
+          data-testid="button-add-note"
+        >
+          {pending ? 'Adicionando…' : 'Adicionar observação'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingPipeline() {
   const [search, setSearch] = useState('');
   // Classificação por data de criação em cada raia (asc = A-Z / mais antigos primeiro).
@@ -235,12 +270,18 @@ export default function BillingPipeline() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [detailItem, setDetailItem] = useState<BillingPipelineItem | null>(null);
+  // Registros internos do card (observações do pipeline). Ficam SÓ no card — não substituem a
+  // observação do vendedor e NUNCA vão para a NF (guardados em store separado no servidor).
+  const { data: cardNotes = [], refetch: refetchCardNotes } = useQuery<string[]>({
+    queryKey: ['/api/billing-pipeline', 'card-notes', detailItem?.id],
+    queryFn: async () => (detailItem ? await apiRequest('GET', `/api/billing-pipeline/${detailItem.id}/card-notes`) : []),
+    enabled: !!detailItem && ['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem?.stage || '')),
+    staleTime: 0,
+  });
   // CARTAO: pedido cujo link de pagamento esta sendo exibido.
   const [linkPedido, setLinkPedido] = useState<{ id: string; nome?: string | null; numero?: string | null } | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState<any>(null);
-  // Observação carimbada (data/hora/quem) — adicionada em Bloqueados/Agendado/Pedido/A Faturar.
-  const [newNote, setNewNote] = useState('');
   const { data: usersList = [] } = useQuery<any[]>({ queryKey: ['/api/users'] });
   // Pick-list de Vendedor (edição do card): SOMENTE vendedores ativos do módulo Vendedores
   // (role vendedor/telemarketing, ativos, sem nomes de sistema) — não todos os usuários.
@@ -405,13 +446,9 @@ export default function BillingPipeline() {
   });
   const addNoteMutation = useMutation({
     mutationFn: async ({ id, text }: { id: string; text: string }) => await apiRequest('POST', `/api/billing-pipeline/${id}/note`, { text }),
-    onSuccess: (r: any) => {
-      const notes = r && typeof r.notes === 'string' ? r.notes : undefined;
-      setDetailItem((prev) => (prev && notes !== undefined) ? ({ ...prev, notes } as any) : prev);
-      setNewNote('');
-      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
-      toast({ title: 'Observação adicionada', description: 'Registrada com data, hora e seu nome.' });
+    onSuccess: () => {
+      refetchCardNotes();
+      toast({ title: 'Observação adicionada', description: 'Registrada no card com data, hora e seu nome.' });
     },
     onError: (e: any) => toast({ title: 'Erro ao adicionar observação', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
   });
@@ -1268,7 +1305,7 @@ export default function BillingPipeline() {
       </div>
 
       {/* Detail Modal */}
-      <Dialog open={!!detailItem} onOpenChange={() => { setDetailItem(null); setEditMode(false); setNewNote(''); }}>
+      <Dialog open={!!detailItem} onOpenChange={() => { setDetailItem(null); setEditMode(false); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
@@ -1525,28 +1562,22 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage)) && (canEdit || canSellerEditItem(detailItem)) && (
+              {['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage)) && Array.isArray(cardNotes) && cardNotes.length > 0 && (
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Adicionar observação (registra data, hora e quem incluiu)</label>
-                  <textarea
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    rows={2}
-                    placeholder="Escreva a observação..."
-                    className="w-full border rounded px-2 py-1 text-sm"
-                    data-testid="textarea-add-note"
-                  />
-                  <div className="flex justify-end mt-1">
-                    <Button
-                      size="sm"
-                      onClick={() => { const t = newNote.trim(); if (t && detailItem) addNoteMutation.mutate({ id: detailItem.id, text: t }); }}
-                      disabled={!newNote.trim() || addNoteMutation.isPending}
-                      data-testid="button-add-note"
-                    >
-                      {addNoteMutation.isPending ? 'Adicionando…' : 'Adicionar observação'}
-                    </Button>
+                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Registros internos (ficam só no card — não vão para a NF)</label>
+                  <div className="space-y-1.5">
+                    {cardNotes.map((n, i) => (
+                      <p key={i} className="text-sm bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 p-2.5 rounded-lg whitespace-pre-line">{n}</p>
+                    ))}
                   </div>
                 </div>
+              )}
+
+              {['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage)) && (canEdit || canSellerEditItem(detailItem)) && (
+                <AddNoteBox
+                  pending={addNoteMutation.isPending}
+                  onAdd={async (text) => { if (detailItem) await addNoteMutation.mutateAsync({ id: detailItem.id, text }); }}
+                />
               )}
 
               {detailItem.stageHistory && detailItem.stageHistory.length > 0 && (
