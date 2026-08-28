@@ -469,7 +469,12 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       const isPJ = doc.length === 14;
       const enderecoFull = String(inp.endereco || '').trim() + (inp.bairro ? ', ' + inp.bairro : '') + (inp.cidade ? ', ' + inp.cidade : '') + (inp.cep ? ' - CEP ' + inp.cep : '');
       try {
-        customer = await storage.createCustomer({
+        // Cidade/UF padrao do canal (GOIÂNIA/GO) quando o cliente nao informou — sem
+        // UF o card trava no faturamento ("Cadastro incompleto: informe a UF") e a
+        // NF-e sai com CFOP errado. O que o cliente informou PREVALECE.
+        // Ver server/canal-local-padrao.ts.
+        const { aplicarLocalPadraoCanal } = await import('./canal-local-padrao');
+        customer = await storage.createCustomer(aplicarLocalPadraoCanal({
           name: String(inp.nome || 'Cliente Instagram').trim(),
           customerType: isPJ ? 'pessoa_juridica' : 'pessoa_fisica',
           cpf: isPJ ? null : doc,
@@ -488,7 +493,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
           visitPeriodicity: 'semanal',
           isConsumerClient: tipo !== 'revenda',
           isLead: true,
-        } as any);
+        }) as any);
       } catch {
         try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
     }
