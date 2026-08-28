@@ -11,7 +11,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+import { CIDADES_GO_DF } from "@/lib/cidadesGoDf";
 import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
@@ -60,6 +64,7 @@ export default function LeadsManagement() {
   const [justificativaLead, setJustificativaLead] = useState<Lead | null>(null);
   const [formData, setFormData] = useState({
     fantasyName: "",
+    city: "",
     latitude: "",
     longitude: "",
     contact: "",
@@ -70,6 +75,8 @@ export default function LeadsManagement() {
     temperature: "" as "" | "cold" | "warm" | "hot" | "very_hot",
     nextContactDate: "",
   });
+  // Pick-list de cidade (combobox pesquisável) no formulário de lead.
+  const [cityOpen, setCityOpen] = useState(false);
 
   // Filtros
   const [filterName, setFilterName] = useState("");
@@ -387,6 +394,7 @@ export default function LeadsManagement() {
   const resetForm = () => {
     setFormData({
       fantasyName: "",
+      city: "",
       latitude: "",
       longitude: "",
       contact: "",
@@ -506,6 +514,7 @@ export default function LeadsManagement() {
     setEditingLead(lead);
     setFormData({
       fantasyName: lead.fantasyName,
+      city: (lead as any).city || "",
       latitude: lead.latitude.toString(),
       longitude: lead.longitude.toString(),
       contact: lead.contact || "",
@@ -1209,6 +1218,57 @@ export default function LeadsManagement() {
               <Navigation className="h-4 w-4 mr-2" />
               Capturar Localização Atual
             </Button>
+
+            <div>
+              <Label htmlFor="city">Cidade</Label>
+              <Popover open={cityOpen} onOpenChange={setCityOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={cityOpen}
+                    className="w-full justify-between font-normal"
+                    data-testid="button-city"
+                  >
+                    <span className={cn(!formData.city && "text-muted-foreground")}>
+                      {formData.city || "Selecione o município..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar município (GO + DF)..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhum município encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {formData.city && (
+                          <CommandItem
+                            value="__limpar__"
+                            onSelect={() => { setFormData({ ...formData, city: "" }); setCityOpen(false); }}
+                            className="text-muted-foreground"
+                          >
+                            <X className="mr-2 h-4 w-4" />
+                            Limpar seleção
+                          </CommandItem>
+                        )}
+                        {CIDADES_GO_DF.map((cidade) => (
+                          <CommandItem
+                            key={cidade}
+                            value={cidade}
+                            onSelect={() => { setFormData({ ...formData, city: cidade }); setCityOpen(false); }}
+                          >
+                            <Check className={cn("mr-2 h-4 w-4", formData.city === cidade ? "opacity-100" : "opacity-0")} />
+                            {cidade}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
 
             <div>
               <Label htmlFor="contact">Contato</Label>
