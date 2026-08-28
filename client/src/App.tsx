@@ -76,6 +76,7 @@ import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
 import FluxoEntregas from "@/pages/FluxoEntregas";
+import GestaoProdutos from "@/pages/GestaoProdutos";
 import Financial from "@/pages/Financial";
 import Industry from "@/pages/Industry";
 import Reports from "@/pages/Reports";
@@ -332,6 +333,7 @@ function Router() {
           <Route path="/estoque" component={Inventory} />
           <Route path="/billing-pipeline" component={BillingPipeline} />
           <Route path="/fluxo-entregas" component={FluxoEntregas} />
+          <Route path="/gestao-produtos" component={GestaoProdutos} />
           <Route path="/financeiro" component={Financial} />
           <Route path="/industria" component={Industry} />
           <Route path="/relatorios" component={Reports} />
