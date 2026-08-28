@@ -22,6 +22,50 @@ function putDanfeLogo(doc: jsPDF, logo: string | null, x: number, y: number, w: 
   try { doc.addImage(logo, 'PNG', x, y, dw, dh); } catch (e) {}
 }
 
+// ── Codigo de barras CODE-128C da chave de acesso (obrigatorio no DANFE) ─────
+// Manual de Orientacao do Contribuinte / Ajuste SINIEF 07/05: a chave de 44
+// digitos deve ser impressa tambem em codigo de barras linear CODE-128C.
+const C128: number[][] = [
+  [2,1,2,2,2,2],[2,2,2,1,2,2],[2,2,2,2,2,1],[1,2,1,2,2,3],[1,2,1,3,2,2],[1,3,1,2,2,2],[1,2,2,2,1,3],[1,2,2,3,1,2],[1,3,2,2,1,2],[2,2,1,2,1,3],
+  [2,2,1,3,1,2],[2,3,1,2,1,2],[1,1,2,2,3,2],[1,2,2,1,3,2],[1,2,2,2,3,1],[1,1,3,2,2,2],[1,2,3,1,2,2],[1,2,3,2,2,1],[2,2,3,2,1,1],[2,2,1,1,3,2],
+  [2,2,1,2,3,1],[2,1,3,2,1,2],[2,2,3,1,1,2],[3,1,2,1,3,1],[3,1,1,2,2,2],[3,2,1,1,2,2],[3,2,1,2,2,1],[3,1,2,2,1,2],[3,2,2,1,1,2],[3,2,2,2,1,1],
+  [2,1,2,1,2,3],[2,1,2,3,2,1],[2,3,2,1,2,1],[1,1,1,3,2,3],[1,3,1,1,2,3],[1,3,1,3,2,1],[1,1,2,3,1,3],[1,3,2,1,1,3],[1,3,2,3,1,1],[2,1,1,3,1,3],
+  [2,3,1,1,1,3],[2,3,1,3,1,1],[1,1,2,1,3,3],[1,1,2,3,3,1],[1,3,2,1,3,1],[1,1,3,1,2,3],[1,1,3,3,2,1],[1,3,3,1,2,1],[3,1,3,1,2,1],[2,1,1,3,3,1],
+  [2,3,1,1,3,1],[2,1,3,1,1,3],[2,1,3,3,1,1],[2,1,3,1,3,1],[3,1,1,1,2,3],[3,1,1,3,2,1],[3,3,1,1,2,1],[3,1,2,1,1,3],[3,1,2,3,1,1],[3,3,2,1,1,1],
+  [3,1,4,1,1,1],[2,2,1,4,1,1],[4,3,1,1,1,1],[1,1,1,2,2,4],[1,1,1,4,2,2],[1,2,1,1,2,4],[1,2,1,4,2,1],[1,4,1,1,2,2],[1,4,1,2,2,1],[1,1,2,2,1,4],
+  [1,1,2,4,1,2],[1,2,2,1,1,4],[1,2,2,4,1,1],[1,4,2,1,1,2],[1,4,2,2,1,1],[2,4,1,2,1,1],[2,2,1,1,1,4],[4,1,3,1,1,1],[2,4,1,1,1,2],[1,3,4,1,1,1],
+  [1,1,1,2,4,2],[1,2,1,1,4,2],[1,2,1,2,4,1],[1,1,4,2,1,2],[1,2,4,1,1,2],[1,2,4,2,1,1],[4,1,1,2,1,2],[4,2,1,1,1,2],[4,2,1,2,1,1],[2,1,2,1,4,1],
+  [2,1,4,1,2,1],[4,1,2,1,2,1],[1,1,1,1,4,3],[1,1,1,3,4,1],[1,3,1,1,4,1],[1,1,4,1,1,3],[1,1,4,3,1,1],[4,1,1,1,1,3],[4,1,1,3,1,1],[1,1,3,1,4,1],
+  [1,1,4,1,3,1],[3,1,1,1,4,1],[4,1,1,1,3,1],[2,1,1,4,1,2],[2,1,1,2,1,4],[2,1,1,2,3,2],[2,3,3,1,1,1,2],
+];
+// Desenha a chave (44 digitos) em CODE-128C dentro da caixa (x,y,maxW,height).
+// Retorna a largura efetivamente usada, ou 0 se a chave for invalida.
+function drawCode128C(doc: jsPDF, raw: string, x: number, y: number, maxW: number, height: number): number {
+  let code = (raw || '').replace(/\D/g, '');
+  if (!code || code.length < 2) return 0;
+  if (code.length % 2 !== 0) code = '0' + code;
+  const values: number[] = [105]; // Start C
+  for (let i = 0; i < code.length; i += 2) values.push(parseInt(code.substr(i, 2), 10));
+  let sum = 105;
+  for (let i = 1; i < values.length; i++) sum += values[i] * i;
+  values.push(sum % 103);  // digito verificador
+  values.push(106);        // Stop (13 modulos)
+  let modules = 0;
+  for (const v of values) modules += (C128[v] || C128[0]).reduce((a, b) => a + b, 0);
+  const mw = Math.min(0.33, maxW / modules);
+  let cx = x;
+  doc.setFillColor(0, 0, 0);
+  for (const v of values) {
+    const pat = C128[v] || C128[0];
+    for (let j = 0; j < pat.length; j++) {
+      const w = pat[j] * mw;
+      if (j % 2 === 0) doc.rect(cx, y, w, height, 'F'); // barra
+      cx += w;
+    }
+  }
+  return modules * mw;
+}
+
 export interface DanfeInvoice {
   id: string;
   invoiceNumber: string;
@@ -277,7 +321,7 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   doc.text('Eletrônica', danfeCenterX, y + 15.5, { align: 'center' });
   doc.setFontSize(6);
   const isEntrada = invoice.operationType === 'entrada';
-  doc.text(`0 - ENTRADA`, danfeCenterX - 2, y + 19, { align: 'center' });
+  doc.text(`0 - ENTRADA`, danfeCenterX - 2, y + 18, { align: 'center' });
   doc.text(`1 - SAÍDA`, danfeCenterX - 2, y + 22, { align: 'center' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -297,19 +341,28 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   doc.setTextColor(100);
   doc.text('CHAVE DE ACESSO', keyColX + col3HeaderW / 2, y + 3, { align: 'center' });
   doc.setTextColor(0);
+  // Codigo de barras CODE-128C da chave, centralizado, ACIMA da chave em texto
+  const bcMaxW = col3HeaderW - 6;
+  const bcUsedW = drawCode128C(doc, accessKey, keyColX + 3, y + 4.5, bcMaxW, 9.5);
+  if (bcUsedW > 0 && bcUsedW < bcMaxW) {
+    // redesenha centralizado agora que sabemos a largura real
+    doc.setFillColor(255, 255, 255);
+    doc.rect(keyColX + 1, y + 4, col3HeaderW - 2, 10.5, 'F');
+    drawCode128C(doc, accessKey, keyColX + (col3HeaderW - bcUsedW) / 2, y + 4.5, bcMaxW, 9.5);
+  }
   doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
   if (formattedKey) {
     const keyLines = doc.splitTextToSize(formattedKey, col3HeaderW - 4);
-    doc.text(keyLines, keyColX + 2, y + 8);
+    doc.text(keyLines, keyColX + col3HeaderW / 2, y + 18, { align: 'center' });
   } else {
-    doc.text('N/A', keyColX + 2, y + 8);
+    doc.text('N/A', keyColX + col3HeaderW / 2, y + 18, { align: 'center' });
   }
   doc.setFontSize(5);
   doc.setFont('helvetica', 'normal');
-  doc.text('Consulta de autenticidade no portal nacional da NF-e', keyColX + 2, y + 18);
-  doc.text('www.nfe.fazenda.gov.br/portal', keyColX + 2, y + 21);
-  doc.text('ou no site da Sefaz Autorizadora', keyColX + 2, y + 24);
+  doc.text('Consulta de autenticidade no portal nacional da NF-e', keyColX + 2, y + 22);
+  doc.text('www.nfe.fazenda.gov.br/portal', keyColX + 2, y + 25);
+  doc.text('ou no site da Sefaz Autorizadora', keyColX + 2, y + 28);
 
   y += headerH;
 
