@@ -2877,6 +2877,9 @@ export const fiscalInvoiceItems = pgTable("fiscal_invoice_items", {
   discount: decimal("discount", { precision: 12, scale: 2 }).default('0'),
   lotNumber: varchar("lot_number"),
   lotId: varchar("lot_id"),
+  // Rastro completo do item: [{ lotId, lotNumber, quantity, manufacturingDate, expiryDate }].
+  // Um item pode consumir mais de um lote — lotNumber/lotId guardam o 1o (compatibilidade).
+  lots: jsonb("lots"),
   csosn: varchar("csosn"),
   cstIcms: varchar("cst_icms"),
   baseIcms: decimal("base_icms", { precision: 12, scale: 2 }).default('0'),
@@ -2989,6 +2992,9 @@ export const inventoryLots = pgTable("inventory_lots", {
   lotNumber: varchar("lot_number").notNull(),
   quantity: decimal("quantity", { precision: 12, scale: 4 }).notNull().default('0'),
   minQuantity: decimal("min_quantity", { precision: 12, scale: 4 }).default('0'),
+  // Rastreabilidade NF-e (grupo <rastro>): dFab e dVal do lote.
+  manufacturingDate: date("manufacturing_date"),
+  expiryDate: date("expiry_date"),
   isActive: boolean("is_active").notNull().default(true),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
