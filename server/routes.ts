@@ -21167,8 +21167,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Normaliza cidade: remove acentos, espacos nas pontas e caixa (goiânia == goiania).
           const _norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
-          // Cidades da rota do dia = cidades dos clientes presenciais (optimizedOrder, sem os "lead:").
-          const _custIds = Array.from(new Set(((route.optimizedOrder as string[]) || []).filter((s) => s && !String(s).startsWith('lead:'))));
+          // Cidades da rota do dia = cidades dos clientes presenciais. O optimizedOrder pode
+          // ter ids crus OU com prefixo ("customer:{id}"); resolve o UUID do cliente e ignora
+          // leads/virtuais/ids invalidos (senao o inArray quebraria com uuid invalido).
+          const _isUuid = (x: string) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(x);
+          const _custIds = Array.from(new Set(((route.optimizedOrder as string[]) || [])
+            .map((s) => {
+              const st = String(s);
+              if (st.startsWith('lead:')) return '';
+              const meta: any = (route.visitStops as any)?.[st];
+              if (meta && meta.entityType && meta.entityType !== 'customer') return '';
+              const cid = (meta && meta.entityId) ? String(meta.entityId) : (st.includes(':') ? String(st.split(':').pop()) : st);
+              return _isUuid(cid) ? cid : '';
+            })
+            .filter(Boolean)));
           const _routeCities = new Set<string>();
           if (_custIds.length > 0) {
             try {
