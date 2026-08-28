@@ -25932,7 +25932,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ Novo cliente do hotsite - usando configurações padrão: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
         
         // Criar novo cliente
-        const newCustomer = await storage.createCustomer({
+        // Cidade/UF padrao do canal (GOIÂNIA/GO) — o formulario do hotsite nao pede
+        // estado, e sem UF o card trava no faturamento ("Cadastro incompleto: informe
+        // a UF") e a NF-e sai com CFOP errado. Ver server/canal-local-padrao.ts.
+        const { aplicarLocalPadraoCanal } = await import('./canal-local-padrao');
+        const newCustomer = await storage.createCustomer(aplicarLocalPadraoCanal({
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
@@ -25947,7 +25951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           weekdays: JSON.stringify([_cfgCanal.dia]), // configuravel (default Dom)
           visitPeriodicity: _cfgCanal.periodicidade, // configuravel (default mensal)
           isActive: true
-        });
+        }) as any);
         
         customerId = newCustomer.id;
         
