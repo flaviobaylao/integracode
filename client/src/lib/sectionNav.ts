@@ -71,6 +71,8 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/industria": "Indústria",
   "/industria-dados": "Indústria",
   // Relatorios
+  // Gestão
+  "/gestao-produtos": "Gestão",
   "/relatorios": "Relatórios",
   "/relatorios-ia": "Relatórios",
   // Administracao
