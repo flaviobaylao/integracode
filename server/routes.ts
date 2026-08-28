@@ -27616,14 +27616,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('Erro ao registrar prospecção:', prospectionError);
       }
 
-      // 🗺️ Preenche o município (city) via geocode reverso — best-effort, não bloqueia a resposta.
-      (async () => {
-        try {
-          const { reverseGeocodeCity } = await import('./geocode-provider');
-          const cidade = await reverseGeocodeCity((lead as any).latitude, (lead as any).longitude);
-          if (cidade) await db.execute(sql`UPDATE leads SET city = ${cidade} WHERE id = ${lead.id}`);
-        } catch (_e) { /* silencioso: município é complementar */ }
-      })();
+      // 🗺️ Preenche o município (city) via geocode reverso - best-effort, não bloqueia a resposta.
+      // Só quando o cadastro NÃO informou a cidade (pick-list): não sobrescreve a escolha manual.
+      const _cidadeInformada = String((leadData as any)?.city || '').trim();
+      if (!_cidadeInformada) {
+        (async () => {
+          try {
+            const { reverseGeocodeCity } = await import('./geocode-provider');
+            const cidade = await reverseGeocodeCity((lead as any).latitude, (lead as any).longitude);
+            if (cidade) await db.execute(sql`UPDATE leads SET city = ${cidade} WHERE id = ${lead.id}`);
+          } catch (_e) { /* silencioso: município é complementar */ }
+        })();
+      }
 
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
