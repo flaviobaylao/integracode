@@ -2,8 +2,14 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { z } from "zod";
+import { ensureLoteColumns } from "./ensure-lote-columns";
+
+const dataOpcional = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve ser AAAA-MM-DD').nullable().optional()
+  .or(z.literal('').transform(() => null));
 
 export function registerInventoryRoutes(app: Express) {
+  // Colunas de rastreabilidade de lote (fabricacao/validade) — idempotente.
+  void ensureLoteColumns();
 
   // ============================================================================
   // INVENTORY LOTS CRUD
@@ -41,6 +47,8 @@ export function registerInventoryRoutes(app: Express) {
     lotNumber: z.string().min(1, 'Número do lote obrigatório'),
     quantity: z.string().or(z.number()).transform(v => String(v)),
     minQuantity: z.string().or(z.number()).transform(v => String(v)).optional(),
+    manufacturingDate: dataOpcional,
+    expiryDate: dataOpcional,
     notes: z.string().optional(),
   });
 
@@ -76,6 +84,8 @@ export function registerInventoryRoutes(app: Express) {
     lotNumber: z.string().min(1).optional(),
     quantity: z.string().or(z.number()).transform(v => String(v)).optional(),
     minQuantity: z.string().or(z.number()).transform(v => String(v)).optional(),
+    manufacturingDate: dataOpcional,
+    expiryDate: dataOpcional,
     isActive: z.boolean().optional(),
     notes: z.string().optional(),
   });
