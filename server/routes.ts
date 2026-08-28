@@ -21153,14 +21153,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // 📅 Retornos de lead do dia entram na ROTA como paradas de lead (sequência + mapa + otimização).
+      // 📅 Retornos de lead do dia entram na ROTA DO DIA como paradas de lead (sequência + mapa).
       // Idempotente e só para a data atual/futura (não altera rotas passadas). Só leads com coordenadas.
+      // REGRA DE CIDADE: na Rota do Dia o lead só entra se for da MESMA cidade dos clientes da rota
+      // (a Rota de Prospecção, tratada acima, mostra os leads do dia sem filtro de cidade).
       try {
         const todayBR = getBrazilDateString();
         if (date >= todayBR) {
           const { db: _dbLR } = await import('./db');
+          // Cidades da rota do dia = cidades dos clientes presenciais (optimizedOrder, sem os "lead:").
+          const _custIds = Array.from(new Set(((route.optimizedOrder as string[]) || []).filter((s) => s && !String(s).startsWith('lead:'))));
+          const _routeCities = new Set<string>();
+          if (_custIds.length > 0) {
+            try {
+              const { customers: _custTbl } = await import('../shared/schema');
+              const { inArray: _inArr } = await import('drizzle-orm');
+              const _cc: any = await _dbLR.select({ city: _custTbl.city }).from(_custTbl).where(_inArr(_custTbl.id, _custIds));
+              for (const r of (_cc || [])) { const c = String((r as any).city || '').trim().toLowerCase(); if (c) _routeCities.add(c); }
+            } catch (_ce) { /* sem cidades -> nenhum lead injetado na Rota do Dia */ }
+          }
           const leadRet: any = await _dbLR.execute(sql`
-            SELECT id FROM leads
+            SELECT id, city FROM leads
             WHERE status = 'scheduled'
               AND next_contact_date IS NOT NULL
               AND (next_contact_date)::date <= ${date}::date
@@ -21172,6 +21185,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const curStops: any = (route.visitStops as any) || {};
           let addedLead = false;
           for (const lr of (leadRet?.rows || [])) {
+            // Só injeta o lead na Rota do Dia se ele for da mesma cidade da rota.
+            const _lc = String((lr as any).city || '').trim().toLowerCase();
+            if (!_lc || !_routeCities.has(_lc)) continue;
             const stopId = `lead:${lr.id}`;
             if (!curOrder.includes(stopId) && !curStops[stopId]) {
               curOrder.push(stopId);
