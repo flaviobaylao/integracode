@@ -5366,6 +5366,73 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     }
   });
 
+  // ── GESTÃO · Relatório de Produtos Comercializados ───────────────────────
+  // GET /api/gestao/produtos-comercializados?de=YYYY-MM-DD&ate=YYYY-MM-DD — READ-ONLY
+  // Fonte-verdade = billing_pipeline (a mesma do Pipeline/Fluxo de Entregas):
+  // cada pedido carrega os itens em `products` (jsonb). Explode 1 linha por item,
+  // enriquece com cidade do cadastro (customers), código/NCM (products) e
+  // CFOP/status da NF (fiscal_invoices via sales_card_id). Lixeira fica de fora.
+  // Agregações e filtros ficam no cliente (padrão das demais telas).
+  app.get('/api/gestao/produtos-comercializados', async (req: Request, res: Response) => {
+    try {
+      const reDate = /^\d{4}-\d{2}-\d{2}$/;
+      const hoje = new Date();
+      const defAte = hoje.toISOString().slice(0, 10);
+      const defDe = new Date(hoje.getTime() - 29 * 86400000).toISOString().slice(0, 10);
+      let de = reDate.test(String(req.query.de)) ? String(req.query.de) : defDe;
+      let ate = reDate.test(String(req.query.ate)) ? String(req.query.ate) : defAte;
+      if (de > ate) { const t = de; de = ate; ate = t; }
+      // Teto de 2 anos por chamada — protege o servidor de um range aberto.
+      const spanDias = Math.round((Date.parse(ate) - Date.parse(de)) / 86400000);
+      if (spanDias > 731) de = new Date(Date.parse(ate) - 731 * 86400000).toISOString().slice(0, 10);
+
+      const result: any = await db.execute(sql`
+        SELECT
+          bp.id                       AS pipeline_id,
+          to_char(bp.created_at, 'YYYY-MM-DD') AS data,
+          bp.stage::text              AS stage,
+          bp.operation_type           AS operation_type,
+          bp.payment_method           AS payment_method,
+          bp.customer_id              AS customer_id,
+          bp.customer_name            AS customer_name,
+          c.city                      AS customer_city,
+          bp.seller_name              AS seller_name,
+          bp.omie_instance_name       AS instance_name,
+          bp.order_number             AS order_number,
+          bp.invoice_number           AS invoice_number,
+          fi.cfop                     AS cfop,
+          fi.status                   AS fiscal_status,
+          p->>'id'                    AS product_id,
+          COALESCE(NULLIF(btrim(p->>'name'), ''), 'Produto sem nome') AS product_name,
+          CASE WHEN p->>'quantity'   ~ '^-?[0-9]+([.][0-9]+)?$' THEN (p->>'quantity')::numeric   ELSE 0 END AS quantity,
+          CASE WHEN p->>'unitPrice'  ~ '^-?[0-9]+([.][0-9]+)?$' THEN (p->>'unitPrice')::numeric  ELSE 0 END AS unit_price,
+          CASE WHEN p->>'totalPrice' ~ '^-?[0-9]+([.][0-9]+)?$' THEN (p->>'totalPrice')::numeric ELSE 0 END AS total_price,
+          pr.omie_code                AS product_code,
+          pr.ncm                      AS ncm
+        FROM billing_pipeline bp
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(bp.products) = 'array' THEN bp.products ELSE '[]'::jsonb END
+        ) AS p
+        LEFT JOIN customers c ON c.id = bp.customer_id
+        LEFT JOIN products pr ON pr.id = p->>'id'
+        LEFT JOIN LATERAL (
+          SELECT f.cfop, f.status
+          FROM fiscal_invoices f
+          WHERE f.sales_card_id = bp.sales_card_id
+          ORDER BY (f.status IN ('authorized', 'autorizada')) DESC, f.created_at DESC
+          LIMIT 1
+        ) fi ON true
+        WHERE bp.created_at >= ${de}::date
+          AND bp.created_at < (${ate}::date + 1)
+          AND bp.stage::text NOT IN ('lixeira')
+      `);
+
+      res.json({ de, ate, itens: result.rows || [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Auditoria/correção de cadastro de clientes: 1.0 (Neon) vs 2.0 (Railway) ──
   // POST /api/admin/audit/customer-fields
   // Body: { applyFields?: string[] }  — sem applyFields = READ-ONLY (auditoria).
