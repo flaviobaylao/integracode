@@ -1888,36 +1888,12 @@ export function registerBillingPipelineRoutes(app: Express) {
   // ==========================================================================
   const STAGES_PRIORIZAVEIS = ['aguardando_rota', 'aguardando_rota_bsb', 'impresso', 'bsb'];
 
-  // REGISTRO INTERNO DO CARD (observação carimbada: data/hora/quem incluiu). Guardado num store
-  // SEPARADO (order_pipeline_audit, outcome='card_note'), keyed por sales_card_id. NUNCA grava em
-  // billing_pipeline.notes nem em sales_cards.notes. Consequências desejadas:
-  //   • NÃO substitui a observação do vendedor (fica em outro lugar);
-  //   • NUNCA aparece na NF (a emissão não lê este store — o infCpl usa a nota fiscal, não isto);
-  //   • fica só no card, para consulta interna no pipeline.
-  // Vale em Bloqueados/Agendado/Pedido/A Faturar. Managers em qualquer das 4; vendedor só no
-  // próprio pedido (Agendado/Pedido). order_pipeline_audit é criado no boot (server/index.ts).
-  const _resolveCardForNote = async (id: string): Promise<{ salesCardId: string | null; stage: string; sellerId: string } | null> => {
-    const it = await storage.getBillingPipelineItem(id);
-    if (it) return { salesCardId: (it as any).salesCardId || null, stage: String((it as any).stage || ''), sellerId: String((it as any).sellerId || '') };
-    const bo = await db.select().from(blockedOrders).where(eq(blockedOrders.id, id)).limit(1);
-    if (bo.length) return { salesCardId: String((bo[0] as any).salesCardId || ''), stage: 'bloqueado', sellerId: String((bo[0] as any).sellerId || '') };
-    return null;
-  };
-  const _readCardNotes = async (salesCardId: string): Promise<string[]> => {
-    const r: any = await db.execute(sql`SELECT error AS entry FROM order_pipeline_audit WHERE sales_card_id = ${salesCardId} AND outcome = 'card_note' ORDER BY created_at ASC`);
-    return ((r.rows || r || []) as any[]).map((x: any) => String(x.entry || '')).filter(Boolean);
-  };
-
-  app.get('/api/billing-pipeline/:id/card-notes', authenticateUser, async (req: any, res) => {
-    try {
-      const info = await _resolveCardForNote(req.params.id);
-      if (!info || !info.salesCardId) return res.json([]);
-      return res.json(await _readCardNotes(info.salesCardId));
-    } catch (error: any) {
-      return res.status(500).json({ message: error.message });
-    }
-  });
-
+  // Adiciona uma OBSERVAÇÃO carimbada (data/hora/quem incluiu) ao card. Append-only: nunca
+  // apaga o que já existe. Vale para os cards em Bloqueados, Agendado, Pedido e A Faturar.
+  // - Item do pipeline (agendado/pedido/a_faturar): grava em billing_pipeline.notes.
+  // - Pedido bloqueado (blocked_orders): grava em sales_cards.notes (fonte das observações do
+  //   card bloqueado). Managers (admin/coord/adm) em qualquer das 4 etapas; vendedor só no
+  //   próprio pedido (Agendado/Pedido).
   app.post('/api/billing-pipeline/:id/note', authenticateUser, async (req: any, res) => {
     try {
       const _u = req.currentUser || req.user;
@@ -1928,26 +1904,44 @@ export function registerBillingPipelineRoutes(app: Express) {
       const _text = String(req.body?.text ?? '').trim();
       if (!_text) return res.status(400).json({ message: 'Observação vazia' });
       if (_text.length > 2000) return res.status(400).json({ message: 'Observação muito longa (máx. 2000 caracteres)' });
-
-      const info = await _resolveCardForNote(req.params.id);
-      if (!info || !info.salesCardId) return res.status(404).json({ message: 'Pedido não encontrado' });
-      if (!_isManager) {
-        if (String(info.sellerId) !== String(_u.id) || !['agendado', 'pedido'].includes(info.stage)) {
-          return res.status(403).json({ message: 'Você só pode adicionar observações no seu próprio pedido (Agendado/Pedido).' });
-        }
-      } else if (!['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(info.stage)) {
-        return res.status(403).json({ message: 'Observação disponível apenas em Bloqueados, Agendado, Pedido e A Faturar.' });
-      }
-
       const _who = (`${_u?.firstName || ''} ${_u?.lastName || ''}`.trim()) || _u?.email || 'Usuário';
       const _p = paredeBR(agora()); // 2026-08-20T14:30:15
       const _dt = `${_p.slice(8, 10)}/${_p.slice(5, 7)}/${_p.slice(0, 4)} ${_p.slice(11, 16)}`;
       const _entry = `[${_dt} — ${_who}] ${_text}`;
 
-      // Grava SÓ no store interno (order_pipeline_audit). Nunca toca em notes da venda/pipeline → nunca vai à NF.
-      await db.execute(sql`INSERT INTO order_pipeline_audit (id, sales_card_id, outcome, error, created_at)
-        VALUES (gen_random_uuid(), ${info.salesCardId}, 'card_note', ${_entry}, now())`);
-      return res.json({ ok: true, notes: await _readCardNotes(info.salesCardId) });
+      // 1) Item do pipeline (agendado / pedido / a_faturar / ...)
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (item) {
+        const _stage = String(item.stage || '');
+        if (!_isManager) {
+          if (String(item.sellerId || '') !== String(_u.id) || !['agendado', 'pedido'].includes(_stage)) {
+            return res.status(403).json({ message: 'Você só pode adicionar observações no seu próprio pedido (Agendado/Pedido).' });
+          }
+        } else if (!['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(_stage)) {
+          return res.status(403).json({ message: 'Observação disponível apenas em Bloqueados, Agendado, Pedido e A Faturar.' });
+        }
+        const _newNotes = (item.notes ? String(item.notes) + '\n' : '') + _entry;
+        const updated = await storage.updateBillingPipelineItem(req.params.id, { notes: _newNotes } as any);
+        return res.json({ ok: true, notes: _newNotes, item: updated });
+      }
+
+      // 2) Pedido bloqueado (blocked_orders): a observação do card vem do sales_card.
+      const _bo = await db.select().from(blockedOrders).where(eq(blockedOrders.id, req.params.id)).limit(1);
+      if (_bo.length) {
+        const _order: any = _bo[0];
+        if (!_isManager && String(_order.sellerId || '') !== String(_u.id)) {
+          return res.status(403).json({ message: 'Você só pode adicionar observações no seu próprio pedido.' });
+        }
+        const _sc: any = await storage.getSalesCard(_order.salesCardId);
+        if (!_sc) return res.status(404).json({ message: 'Pedido (sales card) não encontrado' });
+        const _cur = _sc.notes ? String(_sc.notes) : '';
+        const _newNotes = (_cur ? _cur + '\n' : '') + _entry;
+        try { await storage.updateSalesCard(_order.salesCardId, { notes: _newNotes } as any); }
+        catch (e: any) { return res.status(500).json({ message: 'Falha ao gravar observação' }); }
+        return res.json({ ok: true, notes: _newNotes });
+      }
+
+      return res.status(404).json({ message: 'Pedido não encontrado' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -2505,8 +2499,36 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     if (__v && String(__v).replace(/\"/g, '') === 'producao') invEnv = 'producao';
   } catch {}
 
+  // ── MODELO DO DOCUMENTO: venda de balcao e NFC-e (65), nao NF-e (55) ────────
+  //
+  // A venda da maquininha nasce para o CONSUMIDOR BALCAO, um cliente sintetico
+  // que por definicao NAO tem CPF — no balcao ninguem pede documento de quem
+  // compra um suco. NF-e modelo 55 exige destinatario identificado, entao toda
+  // venda de balcao parava em MISSING_CUSTOMER_DOC (422) na hora de emitir.
+  // Documento de venda presencial a consumidor final e NFC-e: dispensa o CPF
+  // (consumidor nao identificado), nao leva enderDest e imprime com QR Code.
+  //
+  // SERIE PROPRIA (65). A numeracao aqui e MAX(invoice_number) por (CNPJ, serie).
+  // Se a NFC-e usasse a serie 1 da NF-e, os dois documentos disputariam a mesma
+  // sequencia — cada modelo tem a sua na SEFAZ, e misturar geraria buraco de
+  // numeracao dos dois lados. Serie separada resolve sem tocar na numeracao da
+  // NF-e, que continua exatamente como esta.
+  let modeloDoc = '55';
+  let serieDoc = '1';
+  try {
+    if (item.salesCardId) {
+      const _sc: any = await db.execute(sql`SELECT source FROM sales_cards WHERE id = ${item.salesCardId} LIMIT 1`);
+      const _src = String(((_sc.rows || _sc) as any[])[0]?.source || '').toLowerCase();
+      if (_src === 'balcao') { modeloDoc = '65'; serieDoc = '65'; }
+    }
+  } catch (e: any) {
+    // Sem conseguir ler a origem, mantem 55: emitir NF-e a mais e recuperavel;
+    // emitir NFC-e por engano para um cliente identificado, nao.
+    console.warn('[NFE] falha ao resolver a origem do card (segue como modelo 55):', e?.message);
+  }
+
   const invoice = await storage.createFiscalInvoiceAtomic({
-    series: '1',
+    series: serieDoc,
     status: 'draft',
     operationType: 'saida',
     issuerName,
@@ -2539,7 +2561,14 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     // ("Dados de cobranca nao devem ser informadas para pagamento a vista"). Ver getHotsitePaidMethod.
     paymentMethod: (await (async () => {
       const pago = await getHotsitePaidMethod(item.salesCardId);
-      if (pago) return pago === 'pix' ? 'pix' : 'cartao';
+      // Debito e credito eram achatados em 'cartao' (tPag 03). Num documento
+      // fiscal isso e informacao errada, e a NFC-e do balcao sabe a diferenca:
+      // a maquininha devolve a forma real. Preserva o que veio quando o mapa de
+      // tPag ja o reconhece; o resto continua caindo em 'cartao'.
+      if (pago) {
+        if (pago === 'pix' || pago === 'cartao_debito' || pago === 'cartao_credito') return pago;
+        return 'cartao';
+      }
       return (await resolveCondicaoPagamento(item)).effForma || item.paymentMethod || 'a_vista';
     })()),
     salesCardId: item.salesCardId || null,
@@ -2550,7 +2579,19 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     environment: invEnv,
     omieInstanceId: item.omieInstanceId || null,
     createdBy: user?.email || null,
-  }, '1', issuerCnpj);
+  }, serieDoc, issuerCnpj);
+
+  // invoice_model gravado por SQL cru: a coluna nasce por ensure no boot e nao
+  // esta no schema Drizzle (ver server/ensure-nfce.ts). Se o UPDATE falhar, a
+  // nota fica como 55 e o erro aparece no log — nunca uma NFC-e meio criada.
+  if (modeloDoc !== '55') {
+    try {
+      await db.execute(sql`UPDATE fiscal_invoices SET invoice_model = ${modeloDoc} WHERE id = ${invoice.id}`);
+      console.log(`🧾 [NFE] ${invoice.id} nasce como NFC-e (modelo 65, serie ${serieDoc}, n. ${invoice.invoiceNumber}) — venda de balcao.`);
+    } catch (e: any) {
+      console.error('❌ [NFE] nao foi possivel marcar a nota como NFC-e:', e?.message || e);
+    }
+  }
 
   // CSOSN do cliente (Simples): padrao '102'; '101' se marcado no cadastro. pCredSN (p/ 101) vem de system_settings 'fiscal_pcredsn'.
   // BSB sob ST -> CSOSN 500 (ICMS cobrado anteriormente por ST); demais
@@ -2867,6 +2908,16 @@ export async function getHotsitePaidMethod(salesCardId: string | null | undefine
   try {
     const p: any = await db.execute(sql`SELECT 1 FROM hotsite_pending_pix WHERE order_id = ${salesCardId} AND status = 'paid' LIMIT 1`);
     if (((p.rows || p) as any[]).length) return 'pix';
+  } catch {}
+  // BALCAO: a maquininha ja registrou COMO o cliente pagou (pix, debito ou
+  // credito). Sem esta consulta a venda caia no fallback 'a_vista' e a NFC-e
+  // saia com tPag=01 (dinheiro) — forma de pagamento errada num documento
+  // fiscal, e logo divergente do extrato da Cielo na conciliacao.
+  try {
+    const b: any = await db.execute(sql`SELECT forma_pagamento FROM lio_pedidos
+      WHERE sales_card_id = ${salesCardId} AND liquidado = true LIMIT 1`);
+    const forma = String(((b.rows || b) as any[])[0]?.forma_pagamento || '').toLowerCase();
+    if (forma) return forma; // 'pix' | 'cartao_debito' | 'cartao_credito' | 'cartao'
   } catch {}
   return null;
 }

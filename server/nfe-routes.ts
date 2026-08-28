@@ -473,6 +473,53 @@ export function registerNfeRoutes(app: Express) {
     }
   });
 
+  // ── CSC da NFC-e (modelo 65) ───────────────────────────────────────────────
+  //
+  // O CSC (Codigo de Seguranca do Contribuinte) e o segredo que assina o QR Code
+  // da NFC-e. Quem tem o CSC consegue forjar QR de nota do CNPJ, entao ele tem
+  // rota propria, separada do PUT geral do certificado, e por tres motivos:
+  //
+  //   1) NUNCA e devolvido. O GET responde apenas se existe e qual o ID do CSC
+  //      (que nao e segredo — e um indice de 1 a 6 digitos). O valor so entra.
+  //   2) Vai por SQL cru: as colunas nascem por ensure e nao estao no schema
+  //      Drizzle (ver server/ensure-nfce.ts), entao updateDigitalCertificate nao
+  //      as enxerga.
+  //   3) Fica fora do PUT geral para que um PATCH de cadastro nunca apague o CSC
+  //      por omissao de campo.
+  app.get('/api/digital-certificates/:id/csc', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
+    try {
+      const r: any = await db.execute(
+        sql`SELECT csc, id_csc FROM digital_certificates WHERE id = ${String(req.params.id)} LIMIT 1`
+      );
+      const row = ((r.rows || r) as any[])[0] || {};
+      res.json({ configurado: !!row.csc && !!row.id_csc, idCsc: row.id_csc || '' });
+    } catch (e: any) {
+      // Banco ainda sem as colunas: responde "nao configurado" em vez de erro.
+      res.json({ configurado: false, idCsc: '', indisponivel: true });
+    }
+  });
+
+  app.put('/api/digital-certificates/:id/csc', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
+    try {
+      const csc = String(req.body?.csc || '').trim();
+      const idCsc = String(req.body?.idCsc || '').trim();
+      if (!csc || !idCsc) {
+        return res.status(400).json({ message: 'Informe o CSC e o ID do CSC.' });
+      }
+      if (!/^\d{1,6}$/.test(idCsc)) {
+        return res.status(400).json({ message: 'O ID do CSC deve ter de 1 a 6 digitos.' });
+      }
+      await db.execute(
+        sql`UPDATE digital_certificates SET csc = ${csc}, id_csc = ${idCsc}, updated_at = now() WHERE id = ${String(req.params.id)}`
+      );
+      // Log sem o segredo: registra QUE mudou, nunca o valor.
+      console.log(`🔐 [NFC-E] CSC atualizado no certificado ${req.params.id} (ID CSC ${idCsc}) por ${req.user?.email || '?'}.`);
+      res.json({ ok: true, configurado: true, idCsc });
+    } catch (e: any) {
+      res.status(500).json({ message: 'Erro ao salvar o CSC', error: e?.message });
+    }
+  });
+
   app.delete('/api/digital-certificates/:id', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
       await storage.deleteDigitalCertificate(req.params.id);

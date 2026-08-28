@@ -8407,6 +8407,20 @@ export class DatabaseStorage implements IStorage {
 
   async getFiscalInvoice(id: string): Promise<FiscalInvoice | undefined> {
     const [invoice] = await db.select().from(fiscalInvoices).where(eq(fiscalInvoices.id, id));
+    if (!invoice) return invoice;
+    // MODELO DO DOCUMENTO (55 = NF-e, 65 = NFC-e) lido por SQL cru, DE PROPOSITO.
+    // A coluna nasce por ensure no boot (server/ensure-nfce.ts) e NAO esta
+    // declarada no schema Drizzle: se estivesse e o ALTER falhasse, o SELECT
+    // acima passaria a estourar e derrubaria a emissao de NF-e que ja funciona.
+    // Aqui, banco sem a coluna simplesmente cai no default '55' — o
+    // comportamento de antes da NFC-e existir.
+    try {
+      const r: any = await db.execute(sql`SELECT invoice_model FROM fiscal_invoices WHERE id = ${id} LIMIT 1`);
+      const m = ((r.rows || r) as any[])[0]?.invoice_model;
+      (invoice as any).invoiceModel = m ? String(m) : '55';
+    } catch {
+      (invoice as any).invoiceModel = '55';
+    }
     return invoice;
   }
 

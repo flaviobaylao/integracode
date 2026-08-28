@@ -558,12 +558,28 @@ async function loadCertFromStorage(certificateId: string): Promise<{
       return null;
     }
 
+    // CSC / ID CSC por SQL cru pelo mesmo motivo do invoice_model: as colunas
+    // nascem por ensure (server/ensure-nfce.ts) e nao estao no schema Drizzle,
+    // para que uma falha nelas jamais quebre a leitura de certificado da NF-e 55.
+    // Banco sem as colunas => sem CSC => a NFC-e para em MISSING_CSC com mensagem
+    // clara, e a NF-e 55 segue intacta.
+    let csc: string | undefined;
+    let idCsc: string | undefined;
+    try {
+      const r: any = await db.execute(
+        sql`SELECT csc, id_csc FROM digital_certificates WHERE id = ${certificateId} LIMIT 1`
+      );
+      const row = ((r.rows || r) as any[])[0] || {};
+      csc = row.csc ? String(row.csc) : undefined;
+      idCsc = row.id_csc ? String(row.id_csc) : undefined;
+    } catch { /* coluna ausente: segue sem CSC */ }
+
     return {
       pem: certData.pem,
       key: certData.key,
       password: rawPassword,
-      csc: (cert as any).csc || undefined,
-      idCsc: (cert as any).idCsc || undefined,
+      csc,
+      idCsc,
     };
   } catch (err: any) {
     console.error('[SEFAZ] Erro ao carregar certificado do Object Storage:', err.message);
@@ -1684,7 +1700,7 @@ export class SefazService {
       const cUF = UF_CODES[uf] || '52';
       const ambiente = SEFAZ_AMBIENTE[environment];
 
-      let certData: { pem: string; key: string; password: string } | null = null;
+      let certData: { pem: string; key: string; password: string; csc?: string; idCsc?: string } | null = null;
       if (certificateId) {
         certData = await loadCertFromStorage(certificateId);
       }
@@ -1803,7 +1819,7 @@ export class SefazService {
       const crt = crtForCnpj(issuerCnpj);
 
       // ── Carrega certificado ────────────────────────────────────────────────
-      let certData: { pem: string; key: string; password: string } | null = null;
+      let certData: { pem: string; key: string; password: string; csc?: string; idCsc?: string } | null = null;
 
       const certId =
         invoice.certificateId ||
